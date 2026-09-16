@@ -101,8 +101,21 @@ Do not drop tombstones, disable persistence, or clear caches selectively to manu
 There is no overall composite score and no timing threshold in CI. Correctness failures fail the job;
 performance results are artifacts for review, not a noisy merge gate. Smoke is correctness-only.
 
+## Explain the differences
+
+The [profiling contract](PROFILING.md) describes four independent diagnostic passes: CPU sampling,
+JS-heap allocation sampling, GC events, and structural work counters. These do not enter the clean
+speed-ratio tables. The [initial attribution report](ATTRIBUTION.md) records measured findings and
+optimization candidates without changing buffer semantics.
+
+```sh
+bun run bench:profile:check
+bun run bench:profile -- --profile standard
+bun run bench:profile -- --profile standard --only random-insertions --repeats 24
+```
+
 ## Next measurements
 
-Captured editor traces, browser-engine runs, allocation/GC profiling, longer sessions, native-coordinate
-range controls and multiple document sizes are follow-ups. A favorable cell is not proof that Singapore
-is globally faster. No speed claim is made until a measured report identifies the exact tested revision.
+Captured editor traces, browser-engine runs, longer sessions, native-coordinate range controls and
+multiple document sizes remain follow-ups. A favorable cell is not proof that Singapore is globally
+faster. Performance claims must identify the tested revision, runtime and fixture.
