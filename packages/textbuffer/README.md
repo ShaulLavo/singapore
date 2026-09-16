@@ -46,11 +46,11 @@ flowchart TD
 
 A `Piece` describes a slice of a string: `buffer`, `start`, and `length`. It also stores its `order`, `lineBreaks`, and `visible` flag. Splitting a piece creates two records that refer to the same source string.
 
-| Coordinate | Meaning |
-| --- | --- |
+| Coordinate      | Meaning                                                     |
+| --------------- | ----------------------------------------------------------- |
 | Document offset | Position in the current visible text, in UTF-16 code units. |
-| Buffer offset | Position in a source string. Anchors store this. |
-| Piece order | A numeric label that orders pieces, including deleted ones. |
+| Buffer offset   | Position in a source string. Anchors store this.            |
+| Piece order     | A numeric label that orders pieces, including deleted ones. |
 
 See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
 
@@ -58,13 +58,13 @@ See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
 
 Each node holds one piece and summaries of its subtree:
 
-| Field | Meaning |
-| --- | --- |
-| `subtreeLength` | Total slice length, including deleted pieces. |
-| `subtreeVisibleLength` | Length of the visible text. |
-| `subtreePieces` | Number of stored pieces. |
-| `subtreeLineBreaks` | Number of visible line breaks. |
-| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range. |
+| Field                                | Meaning                                       |
+| ------------------------------------ | --------------------------------------------- |
+| `subtreeLength`                      | Total slice length, including deleted pieces. |
+| `subtreeVisibleLength`               | Length of the visible text.                   |
+| `subtreePieces`                      | Number of stored pieces.                      |
+| `subtreeLineBreaks`                  | Number of visible line breaks.                |
+| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range.                    |
 
 Offset lookups use visible lengths to choose a branch. Line lookups use line-break counts. Order ranges let anchor resolution skip or sum whole subtrees.
 

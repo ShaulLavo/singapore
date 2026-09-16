@@ -58,7 +58,7 @@ jobs:
         if: always()
         run: |
           for report in packages/textbuffer/bench/results/*.md packages/textbuffer/bench/results/profile-*/report.md; do
-            [ -f "$report" ] && cat "$report" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
           done
       - name: Retain raw samples and provenance
         if: always()
