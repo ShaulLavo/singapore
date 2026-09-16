@@ -13,8 +13,6 @@ import { isHighSurrogate, isLowSurrogate } from './surrogates'
 import { allocateOrderBetween, PIECE_ORDER_MIN_GAP, PIECE_ORDER_STEP } from './orders'
 import { priorityForPiece } from './priority'
 
-const getSubtreeLength = (node: PieceTreeNode | null): number => (node ? node.subtreeLength : 0)
-
 export const getSubtreeVisibleLength = (node: PieceTreeNode | null): number =>
   node ? node.subtreeVisibleLength : 0
 
@@ -56,40 +54,43 @@ const cloneNode = (node: PieceTreeNode, epoch: number): PieceTreeNode => ({
 const own = (node: PieceTreeNode, epoch: number): PieceTreeNode =>
   node.epoch === epoch ? node : cloneNode(node, epoch)
 
-const computeSubtreeLength = (
-  piece: Piece,
-  left: PieceTreeNode | null,
-  right: PieceTreeNode | null,
-): number => piece.length + getSubtreeLength(left) + getSubtreeLength(right)
-
-const computeSubtreeVisibleLength = (
-  piece: Piece,
-  left: PieceTreeNode | null,
-  right: PieceTreeNode | null,
-): number =>
-  getPieceVisibleLength(piece) + getSubtreeVisibleLength(left) + getSubtreeVisibleLength(right)
-
-const computeSubtreePieces = (left: PieceTreeNode | null, right: PieceTreeNode | null): number =>
-  1 + getSubtreePieces(left) + getSubtreePieces(right)
-
-const computeSubtreeLineBreaks = (
-  piece: Piece,
-  left: PieceTreeNode | null,
-  right: PieceTreeNode | null,
-): number =>
-  getPieceVisibleLineBreaks(piece) + getSubtreeLineBreaks(left) + getSubtreeLineBreaks(right)
-
-const computeSubtreeMinOrder = (
-  piece: Piece,
-  left: PieceTreeNode | null,
-  right: PieceTreeNode | null,
-): number => Math.min(piece.order, getSubtreeMinOrder(left), getSubtreeMinOrder(right))
-
-const computeSubtreeMaxOrder = (
-  piece: Piece,
-  left: PieceTreeNode | null,
-  right: PieceTreeNode | null,
-): number => Math.max(piece.order, getSubtreeMaxOrder(left), getSubtreeMaxOrder(right))
+// One pass over the two children for all six summaries. This runs on every
+// node of every split and merge path, so the children are read once each
+// and the order bounds are compared inline rather than through Math.min.
+const summarize = (node: PieceTreeNode): PieceTreeNode => {
+  const piece = node.piece
+  const left = node.left
+  const right = node.right
+  let length = piece.length
+  let visible = piece.visible ? piece.length : 0
+  let lineBreaks = piece.visible ? piece.lineBreaks : 0
+  let pieces = 1
+  let minOrder = piece.order
+  let maxOrder = piece.order
+  if (left) {
+    length += left.subtreeLength
+    visible += left.subtreeVisibleLength
+    lineBreaks += left.subtreeLineBreaks
+    pieces += left.subtreePieces
+    if (left.subtreeMinOrder < minOrder) minOrder = left.subtreeMinOrder
+    if (left.subtreeMaxOrder > maxOrder) maxOrder = left.subtreeMaxOrder
+  }
+  if (right) {
+    length += right.subtreeLength
+    visible += right.subtreeVisibleLength
+    lineBreaks += right.subtreeLineBreaks
+    pieces += right.subtreePieces
+    if (right.subtreeMinOrder < minOrder) minOrder = right.subtreeMinOrder
+    if (right.subtreeMaxOrder > maxOrder) maxOrder = right.subtreeMaxOrder
+  }
+  node.subtreeLength = length
+  node.subtreeVisibleLength = visible
+  node.subtreePieces = pieces
+  node.subtreeLineBreaks = lineBreaks
+  node.subtreeMinOrder = minOrder
+  node.subtreeMaxOrder = maxOrder
+  return node
+}
 
 export const createNode = (
   piece: Piece,
@@ -97,30 +98,23 @@ export const createNode = (
   right: PieceTreeNode | null = null,
   priority = priorityForPiece(piece),
   epoch = PERSISTENT_EPOCH,
-): PieceTreeNode => ({
-  piece,
-  left,
-  right,
-  priority,
-  epoch,
-  subtreeLength: computeSubtreeLength(piece, left, right),
-  subtreeVisibleLength: computeSubtreeVisibleLength(piece, left, right),
-  subtreePieces: computeSubtreePieces(left, right),
-  subtreeLineBreaks: computeSubtreeLineBreaks(piece, left, right),
-  subtreeMinOrder: computeSubtreeMinOrder(piece, left, right),
-  subtreeMaxOrder: computeSubtreeMaxOrder(piece, left, right),
-})
+): PieceTreeNode =>
+  summarize({
+    piece,
+    left,
+    right,
+    priority,
+    epoch,
+    subtreeLength: 0,
+    subtreeVisibleLength: 0,
+    subtreePieces: 0,
+    subtreeLineBreaks: 0,
+    subtreeMinOrder: 0,
+    subtreeMaxOrder: 0,
+  })
 
-const updateNode = (node: PieceTreeNode | null): PieceTreeNode | null => {
-  if (!node) return node
-  node.subtreeLength = computeSubtreeLength(node.piece, node.left, node.right)
-  node.subtreeVisibleLength = computeSubtreeVisibleLength(node.piece, node.left, node.right)
-  node.subtreePieces = computeSubtreePieces(node.left, node.right)
-  node.subtreeLineBreaks = computeSubtreeLineBreaks(node.piece, node.left, node.right)
-  node.subtreeMinOrder = computeSubtreeMinOrder(node.piece, node.left, node.right)
-  node.subtreeMaxOrder = computeSubtreeMaxOrder(node.piece, node.left, node.right)
-  return node
-}
+const updateNode = (node: PieceTreeNode | null): PieceTreeNode | null =>
+  node ? summarize(node) : node
 
 export const merge = (
   left: PieceTreeNode | null,

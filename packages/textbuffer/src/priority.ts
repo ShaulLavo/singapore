@@ -2,11 +2,9 @@ import type { Piece } from './pieceTableTypes'
 
 export const DEFAULT_PIECE_TABLE_PRIORITY_SEED = 0
 
-type PriorityKind = 'piece' | 'reverse-index'
-
 const HASH_BASIS = 0x811c9dc5 | 0
 const UINT32_RANGE = 0x100000000
-const KIND_WORD: Record<PriorityKind, number> = { piece: 0, 'reverse-index': 1 }
+const REVERSE_INDEX_WORD = 1
 
 // One MurmurHash3 round per word. Everything stays a signed 32-bit integer so
 // V8 keeps it a Smi: an unsigned word above 2^31 would be boxed on every return.
@@ -42,18 +40,32 @@ const avalanche = (hash: number): number => {
 }
 
 // A signed 32-bit integer: only the order between priorities matters, and an
-// integer compares as a Smi where a fraction would be a boxed double.
+// integer compares as a Smi where a fraction would be a boxed double. The
+// hash covers what identifies a node in the sequence tree: (buffer, start)
+// is the insertion identity and the order places it. A split's left half
+// keeps all three and so keeps its parent's priority, which is the spot the
+// parent already held.
 export const priorityForPiece = (
   piece: Piece,
   seed = DEFAULT_PIECE_TABLE_PRIORITY_SEED,
-  kind: PriorityKind = 'piece',
 ): number => {
   let hash = mixNumber(HASH_BASIS, seed)
-  hash = mixWord(hash, KIND_WORD[kind])
   hash = mixWord(hash, piece.buffer)
   hash = mixWord(hash, piece.start)
-  hash = mixWord(hash, piece.length)
   hash = mixNumber(hash, piece.order)
-  hash = mixWord(hash, piece.visible ? 1 : 0)
+  return avalanche(hash)
+}
+
+// The reverse index is keyed by (buffer, start) and a rewrite on the same key
+// keeps its node's priority, so the key is all the priority ever depended on.
+export const priorityForReverseKey = (
+  buffer: number,
+  start: number,
+  seed = DEFAULT_PIECE_TABLE_PRIORITY_SEED,
+): number => {
+  let hash = mixNumber(HASH_BASIS, seed)
+  hash = mixWord(hash, REVERSE_INDEX_WORD)
+  hash = mixWord(hash, buffer)
+  hash = mixWord(hash, start)
   return avalanche(hash)
 }

@@ -5,7 +5,7 @@ import type {
   PieceTableTreeSnapshot,
 } from './pieceTableTypes'
 import { flattenNodes, PERSISTENT_EPOCH } from './tree'
-import { priorityForPiece } from './priority'
+import { priorityForReverseKey } from './priority'
 
 export const compareReverseKeys = (
   leftBuffer: PieceBufferId,
@@ -45,7 +45,7 @@ const createReverseIndexNode = (
   start: piece.start,
   piece,
   order: piece.order,
-  priority: priorityForPiece(piece, prioritySeed, 'reverse-index'),
+  priority: priorityForReverseKey(piece.buffer, piece.start, prioritySeed),
   epoch,
   left: null,
   right: null,

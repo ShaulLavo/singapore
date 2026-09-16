@@ -710,6 +710,23 @@
         "Input latency as an enforced budget"
       ],
       "baseline": "b7fea3c4e2330a2dbef3174ecfa965572eb5cc36"
+    },
+    {
+      "id": "E044",
+      "reference": "../docs/performance/e044-node-summaries.md",
+      "title": "Summarize a node in one pass and hash only what identifies it",
+      "status": "Completed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "S",
+      "dependsOn": [
+        "E043"
+      ],
+      "topics": [
+        "Input latency as an enforced budget"
+      ],
+      "baseline": "19670e402d077b8f883c6c09a5298ee56f5cc63b"
     }
   ]
 }
