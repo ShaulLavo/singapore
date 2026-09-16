@@ -101,7 +101,7 @@ class MinimapContribution implements EditorViewContribution {
       reservedLane: () => this.appliedReservedWidth,
     })
     this.decorationSubscription = decorations.subscribe(this.handleDecorationsChanged)
-    this.installPointerHandlers()
+    this.installInputHandlers()
     this.client.update(this.latestSnapshot, 'document')
   }
 
@@ -133,15 +133,45 @@ class MinimapContribution implements EditorViewContribution {
 
     this.disposed = true
     this.stopSliderDrag()
+    this.host.root.removeEventListener('wheel', this.handleWheel)
     this.decorationSubscription.dispose()
     this.client.dispose()
     this.context.reserveOverlayWidth(this.options.side, 0)
     this.host.root.remove()
   }
 
-  private installPointerHandlers(): void {
+  private installInputHandlers(): void {
+    this.host.root.addEventListener('wheel', this.handleWheel, { passive: false })
     this.host.root.addEventListener('pointerdown', this.handlePointerDown)
     this.host.slider.addEventListener('pointerdown', this.handleSliderPointerDown)
+  }
+
+  private readonly handleWheel = (event: WheelEvent): void => {
+    if (this.disposed || event.defaultPrevented || event.ctrlKey) return
+    if (this.context.getSnapshot().geometryCommitted === false) return
+
+    // The minimap is outside the scroll element, so native wheel scrolling cannot reach it.
+    const element = this.context.scrollElement
+    const mode = event.deltaMode
+    const lineHeight = this.latestSnapshot.metrics.rowHeight
+    const scaleX = mode === 1 ? lineHeight : mode === 2 ? element.clientWidth : 1
+    const scaleY = mode === 1 ? lineHeight : mode === 2 ? element.clientHeight : 1
+    let deltaX = event.deltaX * scaleX
+    let deltaY = event.deltaY * scaleY
+    if (event.shiftKey && deltaX === 0) {
+      deltaX = deltaY
+      deltaY = 0
+    }
+    if (deltaX === 0 && deltaY === 0) return
+
+    const previousTop = element.scrollTop
+    const previousLeft = element.scrollLeft
+    element.scrollBy({ left: deltaX, top: deltaY, behavior: 'instant' })
+
+    // Keep native scroll chaining at the editor's boundaries.
+    if (element.scrollTop !== previousTop || element.scrollLeft !== previousLeft) {
+      event.preventDefault()
+    }
   }
 
   private readonly reserveWidth = (_width: number): void => {
