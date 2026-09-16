@@ -50,6 +50,7 @@ export {
   readPieceTableTextRange,
   resolveAnchor,
   resolveAnchorLinear,
+  retainPieceTableSnapshot,
   streamPieceTablePieces,
   streamPieceTableTextChunks,
   UTF8_BYTE_ORDER_MARK,

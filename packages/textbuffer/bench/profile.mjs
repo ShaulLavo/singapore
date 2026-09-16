@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
+import { retentions } from './adapters.mjs'
 import { makeFixtures, profiles } from './fixtures.mjs'
 import { prepare } from './prepare.mjs'
 import { prepareProbes } from './probes.mjs'
@@ -17,11 +18,12 @@ export function profileOptions(args) {
     seed: 20260916,
     repeats: 12,
     modes: 'counters,cpu,heap,gc',
+    retention: 'always',
   }
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index].replace(/^--/, '')
     assert(
-      ['profile', 'seed', 'repeats', 'only', 'output', 'modes'].includes(name),
+      ['profile', 'seed', 'repeats', 'only', 'output', 'modes', 'retention'].includes(name),
       `Unknown option ${name}`,
     )
     const value = args[index + 1]
@@ -37,6 +39,7 @@ export function profileOptions(args) {
     Number.isSafeInteger(options.repeats) && options.repeats > 0 && options.repeats <= 100,
     'Invalid repeats',
   )
+  assert(retentions.includes(options.retention), 'Invalid retention')
   options.modes = options.modes.split(',')
   assert(
     options.modes.length && new Set(options.modes).size === options.modes.length,
@@ -60,7 +63,7 @@ export function profileMarkdown(report) {
     '# Textbuffer diagnostic attribution',
     '',
     `Node ${report.environment.node}; V8 ${report.environment.v8}; ${report.environment.cpu}.`,
-    `Fixture profile ${report.options.profile}, seed ${report.options.seed}; upstream ${report.upstream.commit}.`,
+    `Fixture profile ${report.options.profile}, seed ${report.options.seed}, retention ${report.options.retention}; upstream ${report.upstream.commit}.`,
     '',
     '**Diagnostic runs are not benchmark scores. CPU, sampled allocations, GC, and counters run in separate processes.**',
     'Setup, warmup, correctness checks and forced collections are outside each diagnostic window.',
@@ -244,6 +247,7 @@ export async function main(args = process.argv.slice(2)) {
               destination,
               rootsFile,
               String(profiles[options.profile].warmups),
+              options.retention,
             ],
             { cwd: packageRoot, encoding: 'utf8', timeout: 120000, maxBuffer: 32 * 1024 * 1024 },
           )

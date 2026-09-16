@@ -178,6 +178,9 @@ export type PieceTableBufferOptions = {
   // For callers that ingested the text themselves: the folded text no longer
   // carries the evidence, so their own finding is the only source left.
   readonly containsUnusualLineTerminators?: boolean
+  // Edits mutate in place between explicit retains instead of cloning every
+  // path. The caller then owns the retain points; see retainPieceTableSnapshot.
+  readonly transient?: boolean
 }
 
 export type AppendChunksToBuffersResult = {
@@ -466,6 +469,7 @@ export const createInitialBuffers = (
   return {
     original: originalBuffer,
     identity: {},
+    lineage: { epoch: 0, autoRetain: !options.transient },
     lineIndexes: chunks.lineIndexes,
     chunks,
     nextBufferSequence: 1,

@@ -5,15 +5,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import ts from 'typescript'
+import { retentions } from './adapters.mjs'
 import { makeFixtures, profiles } from './fixtures.mjs'
 import { prepare } from './prepare.mjs'
 import { benchRoot, consume, fileHashes, packageRoot, sha256, statistics } from './support.mjs'
 
 export function optionsFrom(args) {
-  const options = { profile: 'standard', seed: 20260916 }
+  const options = { profile: 'standard', seed: 20260916, retention: 'always' }
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index].replace(/^--/, '')
-    if (!['profile', 'samples', 'warmups', 'seed', 'output', 'only'].includes(key))
+    if (!['profile', 'samples', 'warmups', 'seed', 'output', 'only', 'retention'].includes(key))
       throw new Error(`Unknown option ${args[index]}`)
     const value = args[index + 1]
     if (!value || value.startsWith('--')) throw new Error(`Missing value for ${args[index]}`)
@@ -23,6 +24,7 @@ export function optionsFrom(args) {
   if (!profile) throw new Error(`Unknown profile ${options.profile}`)
   options.samples ??= profile.samples
   options.warmups ??= profile.warmups
+  if (!retentions.includes(options.retention)) throw new Error('Invalid retention')
   for (const [key, low, high] of [
     ['samples', 1, 99],
     ['warmups', 0, 20],
@@ -57,7 +59,7 @@ export function markdown(report) {
   const lines = [
     '# Textbuffer comparison',
     '',
-    `Profile: ${report.options.profile}. Node ${report.environment.node}, V8 ${report.environment.v8}.`,
+    `Profile: ${report.options.profile}, retention ${report.options.retention}. Node ${report.environment.node}, V8 ${report.environment.v8}.`,
     `Source commit: ${report.source.commit ?? 'unavailable (see source hashes)'}.`,
     `Microsoft standalone revision: ${report.upstream.commit}.`,
     '',
@@ -177,6 +179,7 @@ async function main() {
               filename,
               hash,
               String(options.warmups),
+              options.retention,
             ],
             {
               cwd: packageRoot,

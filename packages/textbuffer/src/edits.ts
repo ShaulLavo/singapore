@@ -11,7 +11,7 @@ import {
 import { assignPieceOrders } from './orders'
 import { applyReverseIndexChanges } from './reverseIndex'
 import { ensureValidRange, isHighSurrogate, isLowSurrogate, splitsSurrogatePair } from './reads'
-import { createSnapshotWithIndex } from './snapshot'
+import { createSnapshotWithIndex, editingEpoch } from './snapshot'
 import {
   createTreeFromPieces,
   getSubtreeMaxOrder,
@@ -187,22 +187,30 @@ const insertTextAt = (
   from: number,
   text: string,
 ): PieceTableTreeSnapshot => {
-  const coalesced = tryCoalesceInsert(snapshot, from, text)
+  const epoch = editingEpoch(snapshot)
+  const coalesced = tryCoalesceInsert(snapshot, from, text, epoch)
   if (coalesced) return coalesced
 
   const context: SplitContext = { changes: [], normalizeOrders: false }
-  const { left, right } = splitByVisibleOffset(snapshot.root, from, snapshot.buffers, context)
+  const { left, right } = splitByVisibleOffset(
+    snapshot.root,
+    from,
+    snapshot.buffers,
+    context,
+    epoch,
+  )
   const leftOrder = left ? getSubtreeMaxOrder(left) : null
   const rightOrder = right ? getSubtreeMinOrder(right) : null
   const appended = appendChunksToBuffers(snapshot.buffers, text)
   const ordered = assignPieceOrders(appended.pieces, leftOrder, rightOrder)
-  const insertionTree = createTreeFromPieces(ordered.pieces, appended.buffers.prioritySeed)
-  const merged = merge(merge(left, insertionTree), right)
+  const insertionTree = createTreeFromPieces(ordered.pieces, appended.buffers.prioritySeed, epoch)
+  const merged = merge(merge(left, insertionTree, epoch), right, epoch)
   for (const piece of ordered.pieces) context.changes.push(piece)
   const reverseIndexRoot = applyReverseIndexChanges(
     snapshot.reverseIndexRoot,
     context.changes,
     appended.buffers.prioritySeed,
+    epoch,
   )
 
   return createSnapshotWithIndex(
@@ -217,6 +225,7 @@ const tryCoalesceInsert = (
   snapshot: PieceTableTreeSnapshot,
   offset: number,
   text: string,
+  epoch: number,
 ): PieceTableTreeSnapshot | null => {
   const location = findVisiblePieceEndingAt(snapshot.root, offset)
   if (!location) return null
@@ -234,11 +243,12 @@ const tryCoalesceInsert = (
     length: piece.length + text.length,
     lineBreaks: piece.lineBreaks + countLineBreaks(text),
   }
-  const root = replacePieceEndingAt(snapshot.root, offset, pieceWithTail)
+  const root = replacePieceEndingAt(snapshot.root, offset, pieceWithTail, epoch)
   const reverseIndexRoot = applyReverseIndexChanges(
     snapshot.reverseIndexRoot,
     [pieceWithTail],
     buffers.prioritySeed,
+    epoch,
   )
 
   return createSnapshotWithIndex(buffers, root, reverseIndexRoot, false)
@@ -262,20 +272,29 @@ const deleteRange = (
 ): PieceTableTreeSnapshot => {
   if (to <= from) return snapshot
 
+  const epoch = editingEpoch(snapshot)
   const context: SplitContext = { changes: [], normalizeOrders: false }
-  const { left, right } = splitByVisibleOffset(snapshot.root, from, snapshot.buffers, context)
+  const { left, right } = splitByVisibleOffset(
+    snapshot.root,
+    from,
+    snapshot.buffers,
+    context,
+    epoch,
+  )
   const { left: deleted, right: tail } = splitByVisibleOffset(
     right,
     to - from,
     snapshot.buffers,
     context,
+    epoch,
   )
-  const invisible = markTreeInvisible(deleted, context.changes)
-  const merged = merge(merge(left, invisible), tail)
+  const invisible = markTreeInvisible(deleted, context.changes, epoch)
+  const merged = merge(merge(left, invisible, epoch), tail, epoch)
   const reverseIndexRoot = applyReverseIndexChanges(
     snapshot.reverseIndexRoot,
     context.changes,
     snapshot.buffers.prioritySeed,
+    epoch,
   )
   return createSnapshotWithIndex(
     snapshot.buffers,

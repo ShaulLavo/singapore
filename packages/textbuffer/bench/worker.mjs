@@ -128,13 +128,13 @@ export function validate(factory, fixture, result) {
 }
 
 async function main() {
-  const [engine, filename, expectedHash, warmupsText] = process.argv.slice(2)
+  const [engine, filename, expectedHash, warmupsText, retention = 'always'] = process.argv.slice(2)
   const bytes = readFileSync(filename)
   assert.equal(sha256(bytes), expectedHash, 'fixture identity')
   const fixture = JSON.parse(bytes.toString('utf8'))
   if (fixture.category === 'singapore-only')
     assert.equal(engine, 'singapore', 'unsupported semantics')
-  const factory = await loadAdapter(engine)
+  const factory = await loadAdapter(engine, {}, retention)
   const warmups = Number(warmupsText)
   assert(Number.isSafeInteger(warmups) && warmups >= 0 && warmups <= 20)
   for (let index = 0; index < warmups; index += 1) {
@@ -146,6 +146,7 @@ async function main() {
   process.stdout.write(
     JSON.stringify({
       engine,
+      retention: factory.retention ?? null,
       fixtureSha256: expectedHash,
       elapsedMs: result.elapsedMs,
       checksum: result.checksum,

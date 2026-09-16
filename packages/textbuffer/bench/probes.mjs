@@ -103,7 +103,8 @@ export function instrument(text, filename) {
       owner === 'reverseIndex.insertReverseIndexNode' &&
       ts.isReturnStatement(node) &&
       node.expression &&
-      ts.isObjectLiteralExpression(node.expression)
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'replaced'
     )
       add(node.getStart(source), counter(owner + '.replacementRecords'))
     if (
@@ -126,7 +127,9 @@ export function instrument(text, filename) {
 const requiredCounters = {
   singapore: [
     'tree.cloneNode.calls',
+    'tree.own.calls',
     'reverseIndex.cloneReverseIndexNode.calls',
+    'reverseIndex.ownReverseIndexNode.calls',
     'reverseIndex.insertReverseIndexNode.replacementRecords',
     'buffers.extendBufferLineIndex.calls',
     'buffers.extendBufferLineIndex.indexInputCodeUnits',

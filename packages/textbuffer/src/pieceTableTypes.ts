@@ -44,10 +44,22 @@ export type Piece = {
   readonly visible: boolean
 }
 
+// Ownership by epoch. A node whose epoch equals the lineage's current epoch
+// was created since the last retain, so no retained snapshot can see it and an
+// edit may mutate it in place. Retaining advances the epoch; every node then
+// reads as foreign and the next edit clones its path once, as before.
+export type PieceTableLineage = {
+  epoch: number
+  // Retain before every primitive edit, which is the persistent behaviour the
+  // editor gets today. Off only for a caller that retains explicitly.
+  readonly autoRetain: boolean
+}
+
 export type PieceTableBuffers = {
   // Shared across this document lineage, including divergent persistent versions.
   // Hosts can key WeakMap sidecars by this identity without putting UI caches in storage.
   readonly identity: object
+  readonly lineage: PieceTableLineage
   readonly original: PieceBufferId
   readonly chunks: PieceBufferChunks
   readonly nextBufferSequence: number
@@ -92,6 +104,7 @@ export type PieceTreeNode = {
   left: PieceTreeNode | null
   right: PieceTreeNode | null
   priority: number
+  epoch: number
   subtreeLength: number
   subtreeVisibleLength: number
   subtreePieces: number
@@ -106,6 +119,7 @@ export type PieceTableReverseIndexNode = {
   piece: Piece
   order: number
   priority: number
+  epoch: number
   left: PieceTableReverseIndexNode | null
   right: PieceTableReverseIndexNode | null
 }
@@ -116,6 +130,11 @@ export type PieceTableTreeSnapshot = {
   readonly reverseIndexRoot: PieceTableReverseIndexNode | null
   readonly length: number
   readonly pieceCount: number
+  // The lineage epoch this snapshot was created in. Equal to the current epoch
+  // means transient: editing it mutates its nodes, so it is consumed by that
+  // edit. A second edit of a consumed snapshot is a contract violation.
+  readonly epoch: number
+  consumed: boolean
 }
 
 export type PieceTableEdit = {

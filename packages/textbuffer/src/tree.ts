@@ -26,11 +26,16 @@ export const getPieceVisibleLength = (piece: Piece): number => (piece.visible ? 
 export const getPieceVisibleLineBreaks = (piece: Piece): number =>
   piece.visible ? piece.lineBreaks : 0
 
-const cloneNode = (node: PieceTreeNode): PieceTreeNode => ({
+// NaN never equals itself, so a caller without a lineage clones every node it
+// touches and stamps the copies unownable. That is plain path copying.
+export const PERSISTENT_EPOCH = Number.NaN
+
+const cloneNode = (node: PieceTreeNode, epoch: number): PieceTreeNode => ({
   piece: node.piece,
   left: node.left,
   right: node.right,
   priority: node.priority,
+  epoch,
   subtreeLength: node.subtreeLength,
   subtreeVisibleLength: node.subtreeVisibleLength,
   subtreePieces: node.subtreePieces,
@@ -38,6 +43,9 @@ const cloneNode = (node: PieceTreeNode): PieceTreeNode => ({
   subtreeMinOrder: node.subtreeMinOrder,
   subtreeMaxOrder: node.subtreeMaxOrder,
 })
+
+const own = (node: PieceTreeNode, epoch: number): PieceTreeNode =>
+  node.epoch === epoch ? node : cloneNode(node, epoch)
 
 const computeSubtreeLength = (
   piece: Piece,
@@ -79,11 +87,13 @@ export const createNode = (
   left: PieceTreeNode | null = null,
   right: PieceTreeNode | null = null,
   priority = priorityForPiece(piece),
+  epoch = PERSISTENT_EPOCH,
 ): PieceTreeNode => ({
   piece,
   left,
   right,
   priority,
+  epoch,
   subtreeLength: computeSubtreeLength(piece, left, right),
   subtreeVisibleLength: computeSubtreeVisibleLength(piece, left, right),
   subtreePieces: computeSubtreePieces(left, right),
@@ -106,18 +116,19 @@ const updateNode = (node: PieceTreeNode | null): PieceTreeNode | null => {
 export const merge = (
   left: PieceTreeNode | null,
   right: PieceTreeNode | null,
+  epoch = PERSISTENT_EPOCH,
 ): PieceTreeNode | null => {
   if (!left) return right
   if (!right) return left
 
   if (left.priority < right.priority) {
-    const newLeft = cloneNode(left)
-    newLeft.right = merge(newLeft.right, right)
+    const newLeft = own(left, epoch)
+    newLeft.right = merge(newLeft.right, right, epoch)
     return updateNode(newLeft)
   }
 
-  const newRight = cloneNode(right)
-  newRight.left = merge(left, newRight.left)
+  const newRight = own(right, epoch)
+  newRight.left = merge(left, newRight.left, epoch)
   return updateNode(newRight)
 }
 
@@ -126,6 +137,7 @@ export const splitByVisibleOffset = (
   offset: number,
   buffers: PieceTableBuffers,
   context: SplitContext,
+  epoch = PERSISTENT_EPOCH,
   upperOrder: number | null = null,
 ): { left: PieceTreeNode | null; right: PieceTreeNode | null } => {
   if (!node) return { left: null, right: null }
@@ -134,52 +146,54 @@ export const splitByVisibleOffset = (
   const nodeLen = getPieceVisibleLength(node.piece)
 
   if (offset < leftLen) {
-    const newNode = cloneNode(node)
+    const newNode = own(node, epoch)
     const { left, right } = splitByVisibleOffset(
       newNode.left,
       offset,
       buffers,
       context,
+      epoch,
       node.piece.order,
     )
     newNode.left = right
     if (!right || right.priority >= newNode.priority) return { left, right: updateNode(newNode) }
     // A fresh split priority can move the remainder above this ancestor.
     newNode.left = null
-    return { left, right: merge(right, updateNode(newNode)) }
+    return { left, right: merge(right, updateNode(newNode), epoch) }
   }
 
   if (offset > leftLen + nodeLen) {
-    const newNode = cloneNode(node)
+    const newNode = own(node, epoch)
     const { left, right } = splitByVisibleOffset(
       newNode.right,
       offset - leftLen - nodeLen,
       buffers,
       context,
+      epoch,
       upperOrder,
     )
     newNode.right = left
     if (!left || left.priority >= newNode.priority) return { left: updateNode(newNode), right }
     newNode.right = null
-    return { left: merge(updateNode(newNode), left), right }
+    return { left: merge(updateNode(newNode), left, epoch), right }
   }
 
   if (nodeLen === 0) {
-    const newNode = cloneNode(node)
+    const newNode = own(node, epoch)
     const rightTree = newNode.right
     newNode.right = null
     return { left: updateNode(newNode), right: rightTree }
   }
 
   if (offset === leftLen) {
-    const newNode = cloneNode(node)
+    const newNode = own(node, epoch)
     const leftTree = newNode.left
     newNode.left = null
     return { left: leftTree, right: updateNode(newNode) }
   }
 
   if (offset === leftLen + nodeLen) {
-    const newNode = cloneNode(node)
+    const newNode = own(node, epoch)
     const rightTree = newNode.right
     newNode.right = null
     return { left: updateNode(newNode), right: rightTree }
@@ -208,10 +222,22 @@ export const splitByVisibleOffset = (
   )
 
   const prioritySeed = buffers.prioritySeed
-  const leftNode = createNode(leftPiece, null, null, priorityForPiece(leftPiece, prioritySeed))
-  const rightNode = createNode(rightPiece, null, null, priorityForPiece(rightPiece, prioritySeed))
-  const leftTree = merge(node.left, leftNode)
-  const rightTree = merge(rightNode, node.right)
+  const leftNode = createNode(
+    leftPiece,
+    null,
+    null,
+    priorityForPiece(leftPiece, prioritySeed),
+    epoch,
+  )
+  const rightNode = createNode(
+    rightPiece,
+    null,
+    null,
+    priorityForPiece(rightPiece, prioritySeed),
+    epoch,
+  )
+  const leftTree = merge(node.left, leftNode, epoch)
+  const rightTree = merge(rightNode, node.right, epoch)
 
   context.changes.push(leftNode.piece, rightNode.piece)
 
@@ -221,11 +247,13 @@ export const splitByVisibleOffset = (
 export const createTreeFromPieces = (
   pieces: readonly Piece[],
   prioritySeed = 0,
+  epoch = PERSISTENT_EPOCH,
 ): PieceTreeNode | null => {
   let tree: PieceTreeNode | null = null
 
   for (const piece of pieces) {
-    tree = merge(tree, createNode(piece, null, null, priorityForPiece(piece, prioritySeed)))
+    const node = createNode(piece, null, null, priorityForPiece(piece, prioritySeed), epoch)
+    tree = merge(tree, node, epoch)
   }
 
   return tree
@@ -320,10 +348,13 @@ export const findVisiblePieceEndingAt = (
   return findVisiblePieceEndingAt(node.right, offset, nodeEnd)
 }
 
+// An owned child comes back as the same object, so identity cannot mean
+// unchanged; only a null child means the piece was not on that side.
 export const replacePieceEndingAt = (
   node: PieceTreeNode | null,
   offset: number,
   newPiece: Piece,
+  epoch = PERSISTENT_EPOCH,
   baseOffset = 0,
 ): PieceTreeNode | null => {
   if (!node) return null
@@ -334,24 +365,24 @@ export const replacePieceEndingAt = (
   const nodeEnd = nodeStart + nodeLen
 
   if (offset <= nodeStart) {
-    const left = replacePieceEndingAt(node.left, offset, newPiece, baseOffset)
-    if (left === node.left) return node
+    const left = replacePieceEndingAt(node.left, offset, newPiece, epoch, baseOffset)
+    if (left === null) return node
 
-    const next = cloneNode(node)
+    const next = own(node, epoch)
     next.left = left
     return updateNode(next)
   }
 
   if (nodeLen > 0 && offset === nodeEnd) {
-    const next = cloneNode(node)
+    const next = own(node, epoch)
     next.piece = newPiece
     return updateNode(next)
   }
 
-  const right = replacePieceEndingAt(node.right, offset, newPiece, nodeEnd)
-  if (right === node.right) return node
+  const right = replacePieceEndingAt(node.right, offset, newPiece, epoch, nodeEnd)
+  if (right === null) return node
 
-  const next = cloneNode(node)
+  const next = own(node, epoch)
   next.right = right
   return updateNode(next)
 }
@@ -405,12 +436,13 @@ export const flattenNodes = (node: PieceTreeNode | null, acc: PieceTreeNode[]): 
 export const markTreeInvisible = (
   node: PieceTreeNode | null,
   changes: Piece[],
+  epoch = PERSISTENT_EPOCH,
 ): PieceTreeNode | null => {
   if (!node) return null
 
-  const next = cloneNode(node)
-  next.left = markTreeInvisible(next.left, changes)
-  next.right = markTreeInvisible(next.right, changes)
+  const next = own(node, epoch)
+  next.left = markTreeInvisible(next.left, changes, epoch)
+  next.right = markTreeInvisible(next.right, changes, epoch)
   next.piece = {
     ...next.piece,
     visible: false,
@@ -464,16 +496,17 @@ export const visibleLengthBetweenOrders = (
 export const normalizePieceOrders = (
   node: PieceTreeNode | null,
   nextOrder: { value: number },
+  epoch = PERSISTENT_EPOCH,
 ): PieceTreeNode | null => {
   if (!node) return null
 
-  const next = cloneNode(node)
-  next.left = normalizePieceOrders(next.left, nextOrder)
+  const next = own(node, epoch)
+  next.left = normalizePieceOrders(next.left, nextOrder, epoch)
   next.piece = {
     ...next.piece,
     order: nextOrder.value,
   }
   nextOrder.value += PIECE_ORDER_STEP
-  next.right = normalizePieceOrders(next.right, nextOrder)
+  next.right = normalizePieceOrders(next.right, nextOrder, epoch)
   return updateNode(next)
 }

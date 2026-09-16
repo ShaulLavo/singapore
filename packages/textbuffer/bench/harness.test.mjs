@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { applyOperation, loadAdapter } from './adapters.mjs'
+import { applyOperation, loadAdapter, retentions } from './adapters.mjs'
 import {
   applyOracle,
   indexLines,
@@ -11,7 +11,7 @@ import {
 } from './fixtures.mjs'
 import { optionsFrom } from './run.mjs'
 import { consume, gitBlobHash, sha256, statistics } from './support.mjs'
-import { validate } from './worker.mjs'
+import { prepareState, runOperations, validate } from './worker.mjs'
 
 const fixtures = makeFixtures('smoke', 42)
 
@@ -182,5 +182,33 @@ describe('reproducibility and reporting', () => {
     expect(normalizeInput('\ufeffa\r\nb\rc\u2028d\u2029')).toBe('a\nb\nc\nd\n')
     expect(safeBoundary('a😀b', 2)).toBe(1)
     expect(safeBoundary('a😀b', 3)).toBe(3)
+  })
+})
+
+// Retention decides what an edit may mutate in place. Every lane must still
+// validate under every mode: a root retained before an in-place edit reads
+// its own text afterwards, and branch-edits retains before every branch.
+describe('retention modes', () => {
+  for (const retention of retentions) {
+    it(`validates every smoke workload with ${retention} retention`, async () => {
+      const factory = await loadAdapter('singapore', {}, retention)
+      expect(factory.retention).toBe(retention)
+      for (const fixture of fixtures) {
+        const context = fixture.mode === 'load' ? null : prepareState(factory, fixture)
+        const result = runOperations(factory, fixture, context)
+        validate(factory, fixture, result)
+      }
+    })
+  }
+
+  it('refuses a second edit of a transient snapshot that was never retained', async () => {
+    const factory = await loadAdapter('singapore', {}, 'history')
+    const buffer = factory.create('abc')
+    const stale = buffer.snapshot
+    buffer.edit({ from: 1, to: 1, text: 'X' })
+    expect(buffer.full()).toBe('aXbc')
+    expect(() => factory.restore(stale).edit({ from: 0, to: 0, text: 'Y' })).toThrow(
+      /already edited in place/,
+    )
   })
 })

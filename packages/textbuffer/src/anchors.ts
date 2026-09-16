@@ -21,6 +21,7 @@ import {
   findVisiblePieceEndingAt,
   findVisiblePieceStartingAt,
   flattenNodes,
+  PERSISTENT_EPOCH,
   visibleLengthBetweenOrders,
   visiblePrefixBeforeOrder,
 } from './tree'
@@ -215,6 +216,7 @@ export const resolveAnchorLinear = (
     piece: pieceNode.piece,
     order: pieceNode.piece.order,
     priority: 0,
+    epoch: PERSISTENT_EPOCH,
     left: null,
     right: null,
   })

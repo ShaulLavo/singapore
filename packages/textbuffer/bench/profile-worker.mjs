@@ -15,8 +15,17 @@ import {
 } from './profile-support.mjs'
 import { sha256, statistics } from './support.mjs'
 
-const [engine, filename, expectedHash, mode, repeatsText, output, rootsFile, warmupsText] =
-  process.argv.slice(2)
+const [
+  engine,
+  filename,
+  expectedHash,
+  mode,
+  repeatsText,
+  output,
+  rootsFile,
+  warmupsText,
+  retention = 'always',
+] = process.argv.slice(2)
 assert(['cpu', 'heap', 'gc', 'counters'].includes(mode), 'Unknown diagnostic mode')
 const bytes = readFileSync(filename)
 assert.equal(sha256(bytes), expectedHash, 'Fixture hash mismatch')
@@ -30,7 +39,7 @@ assert(Number.isSafeInteger(warmups) && warmups >= 0 && warmups <= 20)
 const counters = createCounters()
 globalThis.__textbufferBenchCounters = counters
 const roots = mode === 'counters' ? JSON.parse(readFileSync(rootsFile, 'utf8')) : {}
-const factory = await loadAdapter(engine, roots)
+const factory = await loadAdapter(engine, roots, retention)
 for (let index = 0; index < warmups; index += 1) {
   const result = execute(factory, fixture)
   validate(factory, fixture, result)
@@ -116,6 +125,7 @@ try {
 const report = {
   engine,
   mode,
+  retention: factory.retention ?? null,
   fixtureSha256: expectedHash,
   repeats,
   diagnosticOnly: true,

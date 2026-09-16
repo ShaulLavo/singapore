@@ -22,7 +22,7 @@ export {
   streamPieceTablePieces,
   streamPieceTableTextChunks,
 } from './reads'
-export { createPieceTableSnapshot } from './snapshot'
+export { createPieceTableSnapshot, retainPieceTableSnapshot } from './snapshot'
 export {
   applyDocumentLineEnding,
   DEFAULT_DOCUMENT_LINE_ENDING,

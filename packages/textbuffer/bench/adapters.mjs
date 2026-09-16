@@ -3,15 +3,26 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { upstreamRoot } from './support.mjs'
 
-export async function loadAdapter(name, roots = {}) {
-  if (name === 'singapore') return singaporeAdapter(roots.singapore)
+// When the Singapore adapter retains a snapshot, which decides how much of the
+// tree an edit may mutate in place:
+// - always: before every primitive edit; the library's default and today's cost
+// - transaction: before every edit() and batch() call, so a replacement's insert
+//   and a batch's later edits reuse the nodes the earlier ones created
+// - history: only where a lane retains explicitly; the edit lanes never do
+export const retentions = ['always', 'transaction', 'history']
+
+export async function loadAdapter(name, roots = {}, retention = 'always') {
+  if (!retentions.includes(retention)) throw new Error(`Unknown retention: ${retention}`)
+  if (name === 'singapore') return singaporeAdapter(roots.singapore, retention)
   if (name === 'vscode') return vscodeAdapter(roots.vscode)
   throw new Error(`Unknown engine: ${name}`)
 }
 
-async function singaporeAdapter(root) {
+async function singaporeAdapter(root, retention) {
   const target = (file, specifier) => (root ? pathToFileURL(path.join(root, file)).href : specifier)
   const api = await import(target('index.js', '@singapore-editor/textbuffer'))
+  const transient = retention !== 'always'
+  const retainPerCall = retention === 'transaction'
   const { lineStartOffset } = await import(
     target('positions.js', '@singapore-editor/textbuffer/internal/positions')
   )
@@ -26,11 +37,13 @@ async function singaporeAdapter(root) {
       length: () => snapshot.length,
       lineCount: () => (snapshot.root?.subtreeLineBreaks ?? 0) + 1,
       edit(edit) {
+        if (retainPerCall) api.retainPieceTableSnapshot(snapshot)
         if (edit.to > edit.from)
           snapshot = api.deleteFromPieceTable(snapshot, edit.from, edit.to - edit.from)
         if (edit.text.length) snapshot = api.insertIntoPieceTable(snapshot, edit.from, edit.text)
       },
       batch(edits) {
+        if (retainPerCall) api.retainPieceTableSnapshot(snapshot)
         snapshot = api.applyBatchToPieceTable(snapshot, edits)
       },
       line(row) {
@@ -43,7 +56,7 @@ async function singaporeAdapter(root) {
       point: (offset) => api.offsetToPoint(snapshot, offset),
       offset: (point) => api.pointToOffset(snapshot, point),
       full: () => api.materializePieceTableFullText(snapshot),
-      retain: () => snapshot,
+      retain: () => api.retainPieceTableSnapshot(snapshot),
       anchor: (offset, bias) => api.anchorAt(snapshot, offset, bias),
       resolve: (anchor) => api.resolveAnchor(snapshot, anchor),
       resolveLinear: (anchor) => api.resolveAnchorLinear(snapshot, anchor),
@@ -52,8 +65,9 @@ async function singaporeAdapter(root) {
     }
   }
   return {
-    create: (text) => wrap(api.createPieceTableSnapshot(text)),
+    create: (text) => wrap(api.createPieceTableSnapshot(text, { transient })),
     restore: wrap,
+    retention,
     retainedText: api.materializePieceTableFullText,
   }
 }

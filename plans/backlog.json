@@ -661,9 +661,9 @@
     },
     {
       "id": "E041",
-      "file": "e041-transient-edits.md",
+      "reference": "../docs/performance/e041-transient-edits.md",
       "title": "Measure whether in-place edits between retained snapshots close the small-edit gap",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Research",
       "priority": "P1",
