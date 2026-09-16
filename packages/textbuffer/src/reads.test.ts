@@ -19,9 +19,10 @@ const oracle = (text: string, offset: number): boolean =>
 const expectProbeMatchesText = (snapshot: PieceTableSnapshot): void => {
   const text = materializePieceTableFullText(snapshot)
   for (let offset = 0; offset <= text.length; offset++) {
-    expect(splitsSurrogatePair(snapshot, offset), `offset ${offset} of ${JSON.stringify(text)}`).toBe(
-      oracle(text, offset),
-    )
+    expect(
+      splitsSurrogatePair(snapshot, offset),
+      `offset ${offset} of ${JSON.stringify(text)}`,
+    ).toBe(oracle(text, offset))
   }
 }
 

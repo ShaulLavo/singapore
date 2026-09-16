@@ -141,6 +141,16 @@ export const snapBatchEditRanges = (
   )
 }
 
+// One edit has no sibling to consume a half for it, so the batch's sorting,
+// overlap check and boundary counting have nothing to decide: only the
+// snapping policy runs, shared with the batch path so the two cannot drift.
+const NO_SIBLINGS: BatchBoundaries = { starts: new Map(), ends: new Map() }
+
+const snapEditRange = (snapshot: PieceTableTreeSnapshot, edit: PieceTableEdit): PieceTableEdit => {
+  ensureValidRange(snapshot, edit.from, edit.to)
+  return snapEditToCodePoints(snapshot, edit, NO_SIBLINGS)
+}
+
 const countBoundaries = (
   edits: readonly PieceTableEdit[],
   offsetOf: (edit: PieceTableEdit) => number,
@@ -168,8 +178,8 @@ export const insertIntoPieceTable = (
     throw new RangeError('invalid offset')
   }
 
-  const [snapped] = snapBatchEditRanges(snapshot, [{ from: offset, to: offset, text }])
-  return insertTextAt(snapshot, snapped?.from ?? offset, text)
+  const snapped = snapEditRange(snapshot, { from: offset, to: offset, text })
+  return insertTextAt(snapshot, snapped.from, text)
 }
 
 const insertTextAt = (
@@ -241,8 +251,8 @@ export const deleteFromPieceTable = (
 ): PieceTableTreeSnapshot => {
   if (length <= 0) return snapshot
 
-  const [snapped] = snapBatchEditRanges(snapshot, [{ from: offset, to: offset + length, text: '' }])
-  return deleteRange(snapshot, snapped?.from ?? offset, snapped?.to ?? offset + length)
+  const snapped = snapEditRange(snapshot, { from: offset, to: offset + length, text: '' })
+  return deleteRange(snapshot, snapped.from, snapped.to)
 }
 
 const deleteRange = (
@@ -280,6 +290,7 @@ export const applyBatchToPieceTable = (
   edits: readonly PieceTableEdit[],
 ): PieceTableTreeSnapshot => {
   if (edits.length === 0) return snapshot
+  if (edits.length === 1) return applyEdit(snapshot, snapEditRange(snapshot, edits[0]!))
 
   // Snapped once, against this snapshot. Re-snapping per edit as the tree
   // changes underneath would measure offsets against a document that no longer
@@ -287,10 +298,15 @@ export const applyBatchToPieceTable = (
   const applied = snapBatchEditRanges(snapshot, edits)
 
   let next = snapshot
-  for (const edit of applied.toSorted(compareEditsDescending)) {
-    next = deleteRange(next, edit.from, edit.to)
-    if (edit.text.length > 0) next = insertTextAt(next, edit.from, edit.text)
-  }
-
+  for (const edit of applied.toSorted(compareEditsDescending)) next = applyEdit(next, edit)
   return next
+}
+
+const applyEdit = (
+  snapshot: PieceTableTreeSnapshot,
+  edit: PieceTableEdit,
+): PieceTableTreeSnapshot => {
+  const deleted = deleteRange(snapshot, edit.from, edit.to)
+  if (edit.text.length === 0) return deleted
+  return insertTextAt(deleted, edit.from, edit.text)
 }
