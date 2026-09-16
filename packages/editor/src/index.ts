@@ -98,6 +98,17 @@ export {
   sealDocumentTransactionReceipt,
   subscribeDocumentMutationLeaseState,
 } from './public/document'
+export { createHistoryViewer, layoutHistoryGraph } from './historyViewer'
+export type {
+  HistoryComparison,
+  HistoryComparisonSide,
+  HistoryGraphLayout,
+  HistoryGraphLayoutEdge,
+  HistoryGraphLayoutNode,
+  HistoryViewer,
+  HistoryViewerOptions,
+  HistoryViewerState,
+} from './historyViewer'
 export {
   createEditorCapabilityToken,
   createEditorLanguageFeatureToken,
@@ -201,6 +212,11 @@ export type {
   DocumentSessionApplyEditsOptions,
   DocumentSessionChange,
   DocumentSessionChangeKind,
+  EditorHistoryBarrier,
+  EditorHistoryGraph,
+  EditorHistoryGraphNode,
+  EditorTextBufferOptions,
+  HistoryNodeId,
   DocumentSessionEditHistoryMode,
   DocumentSessionEditSelection,
   DocumentSessionSelectionOptions,

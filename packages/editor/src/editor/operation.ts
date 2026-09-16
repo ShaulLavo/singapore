@@ -38,7 +38,7 @@ export class EditorOperation {
     totalStart: number,
     options: SessionChangeOptions,
   ): void {
-    if (change.kind === 'edit' || change.kind === 'undo' || change.kind === 'redo') {
+    if (change.kind !== 'selection' && change.kind !== 'synchronize' && change.kind !== 'none') {
       this.changeIndexes.set(change.textSnapshot, this.changes.length)
     }
     this.changes.push({ change, totalName, totalStart, options })

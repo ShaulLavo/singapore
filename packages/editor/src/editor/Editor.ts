@@ -1379,6 +1379,12 @@ export class Editor {
     return this.session?.materializeFullText() ?? this.text
   }
 
+  // The buffer behind the open document, when the document is backed by one. Hosts
+  // that want history browsing or checkout talk to the buffer, not the editor.
+  getBufferSession(): EditorBufferSession | null {
+    return editorBufferSession(this.session)
+  }
+
   getTextSnapshot(): TextSnapshot {
     return this.session?.getTextSnapshot() ?? this.textSnapshot
   }
@@ -4418,5 +4424,10 @@ function disposableOnce(dispose: () => void): EditorDisposable {
 }
 
 function isTextSessionChange(change: DocumentSessionChange): boolean {
-  return change.kind === 'edit' || change.kind === 'undo' || change.kind === 'redo'
+  return (
+    change.kind === 'edit' ||
+    change.kind === 'undo' ||
+    change.kind === 'redo' ||
+    change.kind === 'checkout'
+  )
 }

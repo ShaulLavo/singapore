@@ -19,13 +19,20 @@ import {
 } from './documentSelectionEdits'
 import {
   amendEditorHistory,
+  checkoutEditorHistory,
+  clearEditorHistoryRedo,
   commitEditorHistory,
   createEditorHistory,
+  editorHistoryNodes,
+  preferEditorHistoryBranch,
   redoEditorHistory,
+  replaceEditorHistoryState,
   undoEditorHistory,
   type EditorHistory,
+  type HistoryNodeId,
 } from './history'
 import type { TextEdit } from './tokens'
+export type { HistoryNodeId } from './history'
 import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
 import {
@@ -53,6 +60,7 @@ export type DocumentSessionChangeKind =
   | 'selection'
   | 'undo'
   | 'redo'
+  | 'checkout'
   | 'synchronize'
   | 'none'
 
@@ -135,6 +143,43 @@ export type EditorTextBufferChange = {
 
 export type EditorTextBufferChangeListener = (event: EditorTextBufferChange) => void
 
+export type EditorTextBufferOptions = {
+  // Retained history states other than the current one, across the whole graph.
+  readonly retainedHistoryStates?: number
+  readonly now?: () => number
+}
+
+export type EditorHistoryGraphNode = {
+  readonly id: HistoryNodeId
+  readonly parentId: HistoryNodeId | null
+  readonly childIds: readonly HistoryNodeId[]
+  readonly preferredChildId: HistoryNodeId | null
+  readonly sequence: number
+  readonly revision: number
+  readonly committedAt: number
+  readonly sealed: boolean
+  readonly isCurrent: boolean
+  readonly snapshot: PieceTableSnapshot
+  readonly transaction: DocumentTransaction | null
+}
+
+// The nearest workspace-edit barrier beneath the graph's root. Native checkout stops
+// there: the states before it belong to a multi-file group the host owns.
+export type EditorHistoryBarrier = {
+  readonly groupId: string
+  readonly phase: 'provisional' | 'sealed'
+  readonly segmentCount: number
+}
+
+export type EditorHistoryGraph = {
+  readonly revision: number
+  readonly rootId: HistoryNodeId
+  readonly currentId: HistoryNodeId
+  readonly retainedStates: number
+  readonly nodes: readonly EditorHistoryGraphNode[]
+  readonly barrier: EditorHistoryBarrier | null
+}
+
 export type EditorTextBuffer = {
   applyText(
     selections: SelectionSet<PieceTableAnchor>,
@@ -189,6 +234,14 @@ export type EditorTextBuffer = {
   markClean(): void
   breakTypingRun(): void
   subscribe(listener: EditorTextBufferChangeListener): () => void
+  getHistoryGraph(): EditorHistoryGraph
+  checkoutHistoryState(
+    id: HistoryNodeId,
+    sourceView?: EditorViewSession | null,
+  ): DocumentSessionChange
+  preferHistoryBranch(id: HistoryNodeId): boolean
+  /** Forgets every state but the current one. The text does not change; only where undo can go. */
+  clearHistory(sourceView?: EditorViewSession | null): DocumentSessionChange
 }
 
 export type EditorViewSession = {
@@ -254,6 +307,7 @@ export type DocumentTransactionMetadata = {
     | 'programmatic-edit'
     | 'undo'
     | 'redo'
+    | 'checkout'
   readonly undoGroup?: string
   readonly logicalRevisionCount: number
   readonly logicalRevisionScope: DocumentLogicalRevisionScope | null
@@ -512,8 +566,12 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private typingRun: TypingRun | null = null
   private textSnapshot: DocumentTextSnapshot
   private readonly tooLargeForHeapOperation: boolean
+  private readonly retainedHistoryStates: number | undefined
+  private readonly now: () => number
 
-  public constructor(rawText: string) {
+  public constructor(rawText: string, options: EditorTextBufferOptions = {}) {
+    this.retainedHistoryStates = options.retainedHistoryStates
+    this.now = options.now ?? Date.now
     // Ingested first so the retained copy below is the text the piece table
     // actually holds. Folding U+2028/U+2029 to LF does not change the length,
     // so handing the raw string to createDocumentTextSnapshot would sail past
@@ -528,11 +586,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       containsUnusualLineTerminators: ingested.containsUnusualLineTerminators,
     })
     const selections = createInitialSelectionSet(snapshot, createSelectionIdFactory())
-    this.history = createEditorHistory<
-      PieceTableSnapshot,
-      SelectionSet<PieceTableAnchor>,
-      DocumentTransaction
-    >(snapshot, selections)
+    this.history = this.createHistory(snapshot, selections)
     this.cleanSnapshot = snapshot
     this.dirtyCacheSnapshot = snapshot
     this.textSnapshot = createDocumentTextSnapshot(snapshot, text)
@@ -702,7 +756,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const start = nowMs()
     if (this.mutationLease)
       return appendTiming(this.createChange('none', []), 'session.undo', start)
-    const transaction = this.history.undo?.entry.transaction ?? null
+    const transaction = this.history.undo?.transaction ?? null
     const next = undoEditorHistory(this.history)
     this.typingRun = null
     if (next === this.history) {
@@ -735,7 +789,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const start = nowMs()
     if (this.mutationLease)
       return appendTiming(this.createChange('none', []), 'session.redo', start)
-    const transaction = this.history.redo?.entry.transaction ?? null
+    const transaction = this.history.redo?.transaction ?? null
     const next = redoEditorHistory(this.history)
     this.typingRun = null
     if (next === this.history) {
@@ -797,6 +851,121 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public canUndo(): boolean {
     return this.history.undo !== null
+  }
+
+  public getHistoryGraph(): EditorHistoryGraph {
+    const history = this.history
+    const barrier = this.currentBarrier
+    return {
+      revision: history.graphRevision,
+      rootId: history.rootId,
+      currentId: history.currentId,
+      retainedStates: history.retainedStates,
+      nodes: editorHistoryNodes(history).map((node) => ({
+        id: node.id,
+        parentId: node.parentId,
+        childIds: node.childIds,
+        preferredChildId: node.preferredChildId,
+        sequence: node.sequence,
+        revision: node.revision,
+        committedAt: node.committedAt,
+        sealed: node.sealed,
+        isCurrent: node.id === history.currentId,
+        snapshot: node.snapshot,
+        transaction: node.transaction ?? null,
+      })),
+      barrier:
+        barrier && barrier.history.kind === 'external-barrier'
+          ? {
+              groupId: barrier.history.groupId,
+              phase: barrier.phase,
+              segmentCount: barrier.segments.length,
+            }
+          : null,
+    }
+  }
+
+  public checkoutHistoryState(
+    id: HistoryNodeId,
+    sourceView: EditorViewSession | null = null,
+  ): DocumentSessionChange {
+    const start = nowMs()
+    if (this.mutationLease) {
+      return appendTiming(this.createChange('none', []), 'session.checkout', start)
+    }
+    const next = checkoutEditorHistory(this.history, id)
+    this.typingRun = null
+    if (next === this.history) {
+      return appendTiming(this.createChange('none', []), 'session.checkout', start)
+    }
+
+    const from = this.history.current
+    const selectionBefore = this.history.selections
+    this.history = next
+    // One replacement spanning the changed region, so every attached view and the
+    // language client receive a single consistent edit whatever the path was.
+    const edit = diffPieceTableSnapshots(from, next.current)
+    const edits: readonly TextEdit[] = edit ? [edit] : []
+    const transaction: DocumentTransaction = {
+      edits,
+      inverseEdits: invertTextEdits(from, edits),
+      snapshotBefore: from,
+      snapshotAfter: next.current,
+      selectionBefore,
+      selectionAfter: next.selections,
+      metadata: ordinaryTransactionMetadata('history', 'checkout'),
+    }
+    this.textSnapshot = createDocumentTextSnapshot(next.current)
+    const revisionBefore = this.revision
+    this.revision += 1
+    this.editChain.record({
+      edits,
+      logicalRevisionCount: 1,
+      logicalRevisionScope: null,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: edits.length > 0,
+    })
+    const change = appendTiming(
+      this.createChange('checkout', edits, transaction),
+      'session.checkout',
+      start,
+    )
+    sourceView?.acceptBufferSelections(change.selections)
+    this.emitChange(change, sourceView?.viewId)
+    return change
+  }
+
+  public clearHistory(sourceView: EditorViewSession | null = null): DocumentSessionChange {
+    const start = nowMs()
+    if (this.mutationLease || this.history.nodes.size === 1) {
+      return appendTiming(this.createChange('none', []), 'session.clearHistory', start)
+    }
+    this.history = this.createHistory(this.history.current, this.history.selections)
+    this.typingRun = null
+    // No text moved, so no revision either; a checkout change with no edits tells every
+    // view that undo and redo just went away.
+    const change = appendTiming(this.createChange('checkout', []), 'session.clearHistory', start)
+    this.emitChange(change, sourceView?.viewId)
+    return change
+  }
+
+  public preferHistoryBranch(id: HistoryNodeId): boolean {
+    const next = preferEditorHistoryBranch(this.history, id)
+    if (next === this.history) return false
+    this.history = next
+    return true
+  }
+
+  private createHistory(
+    snapshot: PieceTableSnapshot,
+    selections: SelectionSet<PieceTableAnchor>,
+  ): DocumentHistory {
+    return createEditorHistory<
+      PieceTableSnapshot,
+      SelectionSet<PieceTableAnchor>,
+      DocumentTransaction
+    >(snapshot, selections, { committedAt: this.now(), retainedStates: this.retainedHistoryStates })
   }
 
   public canRedo(): boolean {
@@ -1068,7 +1237,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (barrier.installed) {
       barrier.historyBefore = state.historyBeforeReverse
       this.currentBarrier = barrier
-      this.history = createEditorHistory(last.snapshotAfter, last.selectionAfter)
+      this.history = this.createHistory(last.snapshotAfter, last.selectionAfter)
     }
     state.completed = true
     const receipt = createReceipt(barrier)
@@ -1080,7 +1249,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (!barrier || barrier.buffer !== this || barrier.released) return null
     const alreadySealed = barrier.phase === 'sealed'
     barrier.phase = 'sealed'
-    barrier.historyBefore = { ...barrier.historyBefore, redo: null }
+    barrier.historyBefore = clearEditorHistoryRedo(barrier.historyBefore)
     const sealedReceipt = createReceipt(barrier)
     return {
       receipt: sealedReceipt,
@@ -1185,10 +1354,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentBarrierState {
     if (history.kind === 'record') {
       this.history = commitEditorHistory(
-        { ...historyBefore, selections: transaction.selectionBefore },
+        historyBefore,
         transaction.snapshotAfter,
         transaction.selectionAfter,
         transaction,
+        { committedAt: this.now(), selectionsBefore: transaction.selectionBefore },
       )
       return createDetachedBarrier(
         this,
@@ -1203,12 +1373,12 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const existing = existingReceipt ? receiptStates.get(existingReceipt) : null
     if (existing && !existing.released && existing.installed) {
       existing.segments.push(transaction)
-      this.history = {
-        ...this.history,
-        current: transaction.snapshotAfter,
-        selections: transaction.selectionAfter,
-        redo: null,
-      }
+      this.history = replaceEditorHistoryState(
+        this.history,
+        transaction.snapshotAfter,
+        transaction.selectionAfter,
+        { clearRedo: true },
+      )
       return existing
     }
 
@@ -1225,7 +1395,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       segments: [transaction],
     }
     this.currentBarrier = barrier
-    this.history = createEditorHistory(transaction.snapshotAfter, transaction.selectionAfter)
+    this.history = this.createHistory(transaction.snapshotAfter, transaction.selectionAfter)
     return barrier
   }
 
@@ -1267,7 +1437,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history = state.barrier.historyBefore
       return
     }
-    this.history = createEditorHistory(transaction.snapshotBefore, transaction.selectionBefore)
+    this.history = this.createHistory(transaction.snapshotBefore, transaction.selectionBefore)
   }
 
   private restoreHistoryForReverse(
@@ -1281,12 +1451,12 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return
     }
 
-    this.history = {
-      ...this.history,
-      current: transaction.snapshotBefore,
-      selections: transaction.selectionBefore,
-      redo: null,
-    }
+    this.history = replaceEditorHistoryState(
+      this.history,
+      transaction.snapshotBefore,
+      transaction.selectionBefore,
+      { clearRedo: true },
+    )
   }
 
   private createReciprocalBarrier(
@@ -1311,7 +1481,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     reciprocal.historyBefore = historyAtAfter
     reciprocal.older = this.currentBarrier
     this.currentBarrier = reciprocal
-    this.history = createEditorHistory(transaction.snapshotAfter, transaction.selectionAfter)
+    this.history = this.createHistory(transaction.snapshotAfter, transaction.selectionAfter)
     return reciprocal
   }
 
@@ -1346,7 +1516,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (options.history === 'record') {
       this.commitRecordedEdit(snapshot, selections, edits, options, transaction)
     } else {
-      this.history = { ...this.history, current: snapshot, selections }
+      this.history = replaceEditorHistoryState(this.history, snapshot, selections)
     }
 
     this.typingRun = createTypingRun(this.typingRun, edits, options.metadata.intent, transaction)
@@ -1374,7 +1544,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     options: CommitEditOptions,
     transaction: DocumentTransaction,
   ): void {
-    const previous = this.history.undo?.entry.transaction
+    const previous = this.history.undo?.transaction
     const kind = typingRunKind(options.metadata.intent)
 
     if (kind && previous && this.shouldAmendTypingRun(kind, edits, transaction, previous)) {
@@ -1383,16 +1553,15 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         snapshot,
         selections,
         createAmendedTypingTransaction(previous, transaction, kind),
+        { committedAt: this.now() },
       )
       return
     }
 
-    this.history = commitEditorHistory(
-      { ...this.history, selections: options.selectionBefore },
-      snapshot,
-      selections,
-      transaction,
-    )
+    this.history = commitEditorHistory(this.history, snapshot, selections, transaction, {
+      committedAt: this.now(),
+      selectionsBefore: options.selectionBefore,
+    })
   }
 
   private shouldAmendTypingRun(
@@ -1970,8 +2139,11 @@ class StaticDocumentSession implements DocumentSession {
   }
 }
 
-export function createEditorTextBuffer(text: string): EditorTextBuffer {
-  return new PieceTableEditorTextBuffer(text)
+export function createEditorTextBuffer(
+  text: string,
+  options: EditorTextBufferOptions = {},
+): EditorTextBuffer {
+  return new PieceTableEditorTextBuffer(text, options)
 }
 
 export function createEditorViewSession(
@@ -2354,7 +2526,8 @@ function documentChangeLogicalRevision(
   kind: DocumentSessionChangeKind,
   transaction: DocumentTransaction | null,
 ): { readonly count: number; readonly scope: DocumentLogicalRevisionScope | null } {
-  if (kind === 'undo' || kind === 'redo') return { count: 1, scope: null }
+  if (kind === 'checkout' && !transaction) return { count: 0, scope: null }
+  if (kind === 'undo' || kind === 'redo' || kind === 'checkout') return { count: 1, scope: null }
   if (kind !== 'edit' || !transaction) return { count: 0, scope: null }
   return {
     count: transaction.metadata.logicalRevisionCount,

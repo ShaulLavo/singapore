@@ -186,3 +186,103 @@ ul {
   background: #094771;
   color: #fff;
 }
+
+#history {
+  width: 320px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #444;
+  background: #252526;
+  color: #d4d4d4;
+  font-size: 12px;
+  overflow: hidden;
+}
+
+#history[hidden] {
+  display: none;
+}
+
+#history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid #444;
+}
+
+#history-graph {
+  flex: none;
+  max-width: 100%;
+  overflow: visible;
+  margin: 6px 10px 0;
+}
+
+.history-edge {
+  fill: none;
+  stroke: #666;
+  stroke-width: 1.5;
+}
+
+circle.history-node {
+  fill: #777;
+  cursor: pointer;
+}
+
+circle.history-node.is-current {
+  fill: #4fc1ff;
+}
+
+circle.history-node.is-focused {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+circle.history-node.is-selected {
+  stroke: #dcdcaa;
+  stroke-width: 2;
+}
+
+#history-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+  outline: none;
+  font-family: monospace;
+  white-space: pre;
+}
+
+#history-list [role='option'] {
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+#history-list .is-focused {
+  background: #37373d;
+}
+
+#history-list:focus .is-focused {
+  outline: 1px solid #4fc1ff;
+  outline-offset: -1px;
+}
+
+#history-list .is-selected {
+  color: #dcdcaa;
+}
+
+#history-status {
+  padding: 4px 10px;
+  color: #aaa;
+}
+
+#history-compare {
+  flex: 1;
+  min-height: 0;
+  max-height: 40%;
+  margin: 0;
+  padding: 6px 10px;
+  border-top: 1px solid #444;
+  overflow: auto;
+  font-size: 11px;
+}

@@ -529,7 +529,7 @@ type EditorScopeStyleNode = {
  */
 export function createEditorScopeStyles(rules: readonly EditorScopeStyleRule[]): EditorScopeStyles {
   const root: EditorScopeStyleNode = { style: null, children: new Map() }
-  for (const rule of [...rules].sort(compareEditorScopeRules)) {
+  for (const rule of rules.toSorted(compareEditorScopeRules)) {
     insertEditorScopeRule(root, rule)
   }
 

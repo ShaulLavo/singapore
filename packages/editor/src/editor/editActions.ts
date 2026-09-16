@@ -302,7 +302,7 @@ function sortLinesAction(
       rows.push(text.slice(lineStart(map, row), lineEnd(map, row)))
     }
 
-    const sorted = [...rows].sort((left, right) => left.localeCompare(right))
+    const sorted = rows.toSorted((left, right) => left.localeCompare(right))
     if (direction === 'descending') sorted.reverse()
 
     edits.push({

@@ -247,7 +247,7 @@ function partitionExternalTokens(
   tokens: readonly EditorToken[],
   chunks: readonly ClassifiedChunk[],
 ): ReadonlyMap<ClassifiedChunk, readonly TokenEntry[]> {
-  const sortedChunks = [...chunks].sort(
+  const sortedChunks = chunks.toSorted(
     (left, right) => left.chunk.sourceStartOffset - right.chunk.sourceStartOffset,
   )
   const maxEnds: number[] = []

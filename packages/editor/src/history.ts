@@ -1,71 +1,106 @@
+export type HistoryNodeId = number
+
 export type EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction = never> = {
   readonly snapshot: TSnapshot
   readonly selections: TSelectionState
   readonly transaction?: TTransaction
 }
 
-export type EditorHistoryStack<TSnapshot, TSelectionState, TTransaction = never> = {
-  readonly entry: EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction>
-  readonly previous: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>
-  readonly size: number
-} | null
-
-export type EditorHistory<TSnapshot, TSelectionState, TTransaction = never> = {
-  readonly current: TSnapshot
+export type EditorHistoryNode<TSnapshot, TSelectionState, TTransaction = never> = {
+  readonly id: HistoryNodeId
+  readonly parentId: HistoryNodeId | null
+  readonly childIds: readonly HistoryNodeId[]
+  // The child redo follows: the branch most recently left or created.
+  readonly preferredChildId: HistoryNodeId | null
+  readonly sequence: number
+  // Bumped when a typing run amends the node in place, so a summary computed from
+  // an earlier revision can tell it is stale.
+  readonly revision: number
+  readonly visitedAt: number
+  readonly committedAt: number
+  readonly sealed: boolean
+  readonly snapshot: TSnapshot
   readonly selections: TSelectionState
-  readonly undo: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>
-  readonly redo: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>
+  // The selections to restore when undoing out of this node into its parent.
+  readonly selectionsBefore: TSelectionState
+  readonly transaction: TTransaction | undefined
 }
 
-// Every retained entry pins the snapshot it was taken from, and a pinned snapshot
+export type EditorHistory<TSnapshot, TSelectionState, TTransaction = never> = {
+  readonly nodes: ReadonlyMap<
+    HistoryNodeId,
+    EditorHistoryNode<TSnapshot, TSelectionState, TTransaction>
+  >
+  readonly rootId: HistoryNodeId
+  readonly currentId: HistoryNodeId
+  readonly nextId: HistoryNodeId
+  readonly clock: number
+  readonly retainedStates: number
+  readonly graphRevision: number
+  readonly current: TSnapshot
+  readonly selections: TSelectionState
+  readonly undo: EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction> | null
+  readonly redo: EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction> | null
+}
+
+export type EditorHistoryOptions = {
+  // Retained states other than the current one, measured across the whole graph.
+  readonly retainedStates?: number
+  readonly committedAt?: number
+}
+
+export type EditorHistoryCommitOptions<TSelectionState> = {
+  readonly selectionsBefore?: TSelectionState
+  readonly committedAt?: number
+}
+
+// Every retained node pins the snapshot it was taken from, and a pinned snapshot
 // keeps alive every piece the document has ever deleted. Unbounded history therefore
-// makes a long session monotonically slower rather than merely larger: nothing can
-// ever be reclaimed while some entry still points at it.
-const MAX_UNDO_DEPTH = 200
+// makes a long session monotonically slower rather than merely larger.
+export const DEFAULT_RETAINED_HISTORY_STATES = 200
+
+type Node<S, Sel, T> = EditorHistoryNode<S, Sel, T>
+type Nodes<S, Sel, T> = Map<HistoryNodeId, Node<S, Sel, T>>
+
+type HistoryState<S, Sel, T> = {
+  nodes: Nodes<S, Sel, T>
+  rootId: HistoryNodeId
+  currentId: HistoryNodeId
+  nextId: HistoryNodeId
+  clock: number
+  retainedStates: number
+  graphRevision: number
+}
 
 export const createEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
   current: TSnapshot,
   selections: TSelectionState,
-): EditorHistory<TSnapshot, TSelectionState, TTransaction> => ({
-  current,
-  selections,
-  undo: null,
-  redo: null,
-})
-
-const truncateHistoryStack = <TSnapshot, TSelectionState, TTransaction = never>(
-  stack: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>,
-): EditorHistoryStack<TSnapshot, TSelectionState, TTransaction> => {
-  const retained: EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction>[] = []
-  for (let node = stack; node && retained.length < MAX_UNDO_DEPTH; node = node.previous) {
-    retained.push(node.entry)
+  options: EditorHistoryOptions = {},
+): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  const root: Node<TSnapshot, TSelectionState, TTransaction> = {
+    id: 0,
+    parentId: null,
+    childIds: [],
+    preferredChildId: null,
+    sequence: 0,
+    revision: 0,
+    visitedAt: 0,
+    committedAt: options.committedAt ?? 0,
+    sealed: false,
+    snapshot: current,
+    selections,
+    selectionsBefore: selections,
+    transaction: undefined,
   }
-
-  // Links point from newest to oldest, so the surviving prefix has to be rebuilt
-  // rather than re-pointed — reusing any of it would leave the dropped tail
-  // reachable, which is the whole cost the cap exists to shed.
-  let truncated: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction> = null
-  for (let index = retained.length - 1; index >= 0; index -= 1) {
-    truncated = { entry: retained[index]!, previous: truncated, size: retained.length - index }
-  }
-  return truncated
-}
-
-const pushHistoryEntry = <TSnapshot, TSelectionState, TTransaction = never>(
-  stack: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>,
-  entry: EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction>,
-): NonNullable<EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>> => ({
-  entry,
-  previous: stack,
-  size: (stack?.size ?? 0) + 1,
-})
-
-const pushCappedHistoryEntry = <TSnapshot, TSelectionState, TTransaction = never>(
-  stack: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>,
-  entry: EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction>,
-): EditorHistoryStack<TSnapshot, TSelectionState, TTransaction> => {
-  const pushed = pushHistoryEntry(stack, entry)
-  return pushed.size > MAX_UNDO_DEPTH ? truncateHistoryStack(pushed) : pushed
+  return finish({
+    nodes: new Map([[0, root]]),
+    rootId: 0,
+    currentId: 0,
+    nextId: 1,
+    clock: 0,
+    retainedStates: options.retainedStates ?? DEFAULT_RETAINED_HISTORY_STATES,
+    graphRevision: 0,
+  })
 }
 
 export const commitEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
@@ -73,76 +108,292 @@ export const commitEditorHistory = <TSnapshot, TSelectionState, TTransaction = n
   current: TSnapshot,
   selections: TSelectionState,
   transaction?: TTransaction,
-): EditorHistory<TSnapshot, TSelectionState, TTransaction> => ({
-  current,
-  selections,
-  undo: pushCappedHistoryEntry(history.undo, {
-    snapshot: history.current,
-    selections: history.selections,
+  options: EditorHistoryCommitOptions<TSelectionState> = {},
+): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  const state = clone(history)
+  const parent = state.nodes.get(state.currentId)!
+  const id = state.nextId
+  state.nextId += 1
+  state.clock += 1
+  state.nodes.set(parent.id, {
+    ...parent,
+    childIds: [...parent.childIds, id],
+    preferredChildId: id,
+    sealed: true,
+  })
+  state.nodes.set(id, {
+    id,
+    parentId: parent.id,
+    childIds: [],
+    preferredChildId: null,
+    sequence: state.clock,
+    revision: 0,
+    visitedAt: state.clock,
+    committedAt: options.committedAt ?? 0,
+    sealed: false,
+    snapshot: current,
+    selections,
+    selectionsBefore: options.selectionsBefore ?? parent.selections,
     transaction,
-  }),
-  redo: null,
-})
+  })
+  state.currentId = id
+  prune(state)
+  return finish(state)
+}
 
+// Amends the current node in place while it is the unsealed leaf of a typing run.
+// Anything else — a sealed node, a branch point, the root — gets a new node instead,
+// because rewriting it would change what an existing branch point means.
 export const amendEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
   history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
   current: TSnapshot,
   selections: TSelectionState,
   transaction: TTransaction,
+  options: EditorHistoryCommitOptions<TSelectionState> = {},
 ): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
-  const undo = history.undo
-  if (!undo) return { ...history, current, selections, redo: null }
-
-  return {
-    current,
-    selections,
-    undo: {
-      entry: {
-        ...undo.entry,
-        transaction,
-      },
-      previous: undo.previous,
-      size: undo.size,
-    },
-    redo: null,
+  const node = history.nodes.get(history.currentId)!
+  if (node.parentId === null || node.sealed || node.childIds.length > 0) {
+    return commitEditorHistory(history, current, selections, transaction, options)
   }
+
+  const state = clone(history)
+  state.nodes.set(node.id, {
+    ...node,
+    revision: node.revision + 1,
+    committedAt: options.committedAt ?? node.committedAt,
+    snapshot: current,
+    selections,
+    transaction,
+  })
+  return finish(state)
 }
 
 export const undoEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
   history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
 ): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
-  const previous = history.undo
-  if (!previous) return history
+  const node = history.nodes.get(history.currentId)!
+  if (node.parentId === null) return history
 
-  return {
-    current: previous.entry.snapshot,
-    selections: previous.entry.selections,
-    undo: previous.previous,
-    // Deliberately uncapped: the redo stack is fed only by what this function
-    // moves off the undo stack, and any commit empties it, so the pair together
-    // can never hold more than the cap the undo side is already kept under.
-    redo: pushHistoryEntry(history.redo, {
-      snapshot: history.current,
-      selections: history.selections,
-      transaction: previous.entry.transaction,
-    }),
-  }
+  const state = clone(history)
+  const parent = state.nodes.get(node.parentId)!
+  state.clock += 1
+  state.nodes.set(node.id, { ...node, sealed: true })
+  state.nodes.set(parent.id, {
+    ...parent,
+    preferredChildId: node.id,
+    visitedAt: state.clock,
+    selections: node.selectionsBefore,
+  })
+  state.currentId = parent.id
+  return finish(state)
 }
 
 export const redoEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
   history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
 ): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
-  const next = history.redo
-  if (!next) return history
+  const node = history.nodes.get(history.currentId)!
+  if (node.preferredChildId === null) return history
+  return moveTo(history, node.preferredChildId)
+}
 
+// Moves to any retained state. Every ancestor on the way learns the path as its
+// preferred branch, so redo afterwards walks back down the same way.
+export const checkoutEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
+  history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
+  id: HistoryNodeId,
+): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  if (id === history.currentId || !history.nodes.has(id)) return history
+  return moveTo(history, id)
+}
+
+// Chooses which branch redo follows from the current state without moving.
+export const preferEditorHistoryBranch = <TSnapshot, TSelectionState, TTransaction = never>(
+  history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
+  id: HistoryNodeId,
+): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  if (!history.nodes.has(id) || id === history.currentId) return history
+  const state = clone(history)
+  preferPath(state, id)
+  return finish(state)
+}
+
+// Replaces what the current state holds without recording a transition. Used for
+// edits the session tracks outside the graph and for barrier bookkeeping.
+export const replaceEditorHistoryState = <TSnapshot, TSelectionState, TTransaction = never>(
+  history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
+  current: TSnapshot,
+  selections: TSelectionState,
+  options: { readonly clearRedo?: boolean } = {},
+): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  const state = clone(history)
+  const node = state.nodes.get(state.currentId)!
+  state.nodes.set(node.id, {
+    ...node,
+    preferredChildId: options.clearRedo ? null : node.preferredChildId,
+    snapshot: current,
+    selections,
+  })
+  return finish(state)
+}
+
+// Redo from here stops offering a branch. The branch itself stays retained for the
+// graph; only the two-key path forgets it.
+export const clearEditorHistoryRedo = <TSnapshot, TSelectionState, TTransaction = never>(
+  history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
+): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  const node = history.nodes.get(history.currentId)!
+  if (node.preferredChildId === null) return history
+  const state = clone(history)
+  state.nodes.set(node.id, { ...node, preferredChildId: null })
+  return finish(state)
+}
+
+// Creation order is sequence order: a node is only ever re-set under its own key,
+// which keeps its place in the map, so no sort is needed.
+export const editorHistoryNodes = <TSnapshot, TSelectionState, TTransaction = never>(
+  history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
+): readonly EditorHistoryNode<TSnapshot, TSelectionState, TTransaction>[] =>
+  Array.from(history.nodes.values())
+
+export const editorHistoryPath = <TSnapshot, TSelectionState, TTransaction = never>(
+  history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
+  id: HistoryNodeId,
+): readonly HistoryNodeId[] => {
+  const path: HistoryNodeId[] = []
+  for (let node = history.nodes.get(id); node; node = nodeParent(history.nodes, node)) {
+    path.push(node.id)
+  }
+  return path.reverse()
+}
+
+const moveTo = <S, Sel, T>(
+  history: EditorHistory<S, Sel, T>,
+  id: HistoryNodeId,
+): EditorHistory<S, Sel, T> => {
+  const state = clone(history)
+  const leaving = state.nodes.get(state.currentId)!
+  state.nodes.set(leaving.id, { ...leaving, sealed: true })
+  preferPath(state, id)
+  state.clock += 1
+  const target = state.nodes.get(id)!
+  state.nodes.set(id, { ...target, visitedAt: state.clock })
+  state.currentId = id
+  return finish(state)
+}
+
+const preferPath = <S, Sel, T>(state: HistoryState<S, Sel, T>, id: HistoryNodeId): void => {
+  let child = state.nodes.get(id)!
+  for (
+    let parent = nodeParent(state.nodes, child);
+    parent;
+    parent = nodeParent(state.nodes, parent)
+  ) {
+    if (parent.preferredChildId !== child.id) {
+      state.nodes.set(parent.id, { ...parent, preferredChildId: child.id })
+    }
+    child = parent
+  }
+}
+
+// Least-recently-visited inactive leaves go first, then the root advances along the
+// only path left. The current state is never pruned.
+const prune = <S, Sel, T>(state: HistoryState<S, Sel, T>): void => {
+  while (state.nodes.size - 1 > state.retainedStates) {
+    const leaf = staleLeaf(state)
+    if (leaf) {
+      removeLeaf(state, leaf)
+      continue
+    }
+    advanceRoot(state)
+  }
+}
+
+const staleLeaf = <S, Sel, T>(state: HistoryState<S, Sel, T>): Node<S, Sel, T> | null => {
+  let stale: Node<S, Sel, T> | null = null
+  for (const node of state.nodes.values()) {
+    if (node.id === state.currentId || node.childIds.length > 0) continue
+    if (!stale || isStalerThan(node, stale)) stale = node
+  }
+  return stale
+}
+
+const isStalerThan = <S, Sel, T>(node: Node<S, Sel, T>, than: Node<S, Sel, T>): boolean => {
+  if (node.visitedAt !== than.visitedAt) return node.visitedAt < than.visitedAt
+  return node.sequence < than.sequence
+}
+
+const removeLeaf = <S, Sel, T>(state: HistoryState<S, Sel, T>, leaf: Node<S, Sel, T>): void => {
+  state.nodes.delete(leaf.id)
+  if (leaf.parentId === null) return
+  const parent = state.nodes.get(leaf.parentId)!
+  state.nodes.set(parent.id, {
+    ...parent,
+    childIds: parent.childIds.filter((id) => id !== leaf.id),
+    preferredChildId: parent.preferredChildId === leaf.id ? null : parent.preferredChildId,
+  })
+}
+
+const advanceRoot = <S, Sel, T>(state: HistoryState<S, Sel, T>): void => {
+  const root = state.nodes.get(state.rootId)!
+  const nextId = root.childIds[0]
+  if (nextId === undefined) return
+  const next = state.nodes.get(nextId)!
+  state.nodes.delete(root.id)
+  state.nodes.set(nextId, {
+    ...next,
+    parentId: null,
+    selectionsBefore: next.selections,
+    transaction: undefined,
+  })
+  state.rootId = nextId
+}
+
+const nodeParent = <S, Sel, T>(
+  nodes: ReadonlyMap<HistoryNodeId, Node<S, Sel, T>>,
+  node: Node<S, Sel, T>,
+): Node<S, Sel, T> | undefined => (node.parentId === null ? undefined : nodes.get(node.parentId))
+
+// The map is copied per operation. It never holds more than the retention budget,
+// so the copy is cheaper than the persistent-structure bookkeeping it replaces, and
+// it keeps every history value immutable for the barrier code that stashes one.
+const clone = <S, Sel, T>(history: EditorHistory<S, Sel, T>): HistoryState<S, Sel, T> => ({
+  nodes: new Map(history.nodes),
+  rootId: history.rootId,
+  currentId: history.currentId,
+  nextId: history.nextId,
+  clock: history.clock,
+  retainedStates: history.retainedStates,
+  graphRevision: history.graphRevision + 1,
+})
+
+const finish = <S, Sel, T>(state: HistoryState<S, Sel, T>): EditorHistory<S, Sel, T> => {
+  const current = state.nodes.get(state.currentId)!
+  const parent = nodeParent(state.nodes, current)
+  const preferred =
+    current.preferredChildId === null ? undefined : state.nodes.get(current.preferredChildId)
   return {
-    current: next.entry.snapshot,
-    selections: next.entry.selections,
-    undo: pushCappedHistoryEntry(history.undo, {
-      snapshot: history.current,
-      selections: history.selections,
-      transaction: next.entry.transaction,
-    }),
-    redo: next.previous,
+    nodes: state.nodes,
+    rootId: state.rootId,
+    currentId: state.currentId,
+    nextId: state.nextId,
+    clock: state.clock,
+    retainedStates: state.retainedStates,
+    graphRevision: state.graphRevision,
+    current: current.snapshot,
+    selections: current.selections,
+    undo: parent
+      ? {
+          snapshot: parent.snapshot,
+          selections: current.selectionsBefore,
+          transaction: current.transaction,
+        }
+      : null,
+    redo: preferred
+      ? {
+          snapshot: preferred.snapshot,
+          selections: preferred.selections,
+          transaction: preferred.transaction,
+        }
+      : null,
   }
 }

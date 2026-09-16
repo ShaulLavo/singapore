@@ -47,6 +47,17 @@ export {
   sealDocumentTransactionReceipt,
   subscribeDocumentMutationLeaseState,
 } from '../documentSession'
+export { createHistoryViewer, layoutHistoryGraph } from '../historyViewer'
+export type {
+  HistoryComparison,
+  HistoryComparisonSide,
+  HistoryGraphLayout,
+  HistoryGraphLayoutEdge,
+  HistoryGraphLayoutNode,
+  HistoryViewer,
+  HistoryViewerOptions,
+  HistoryViewerState,
+} from '../historyViewer'
 export { createDocumentLogicalRevisionScope } from '../editor/editChain'
 export { documentTextRoundTripStatus } from '@singapore-editor/textbuffer/internal/lineEndings'
 export { createDocumentTextSnapshot, createStringTextSnapshot } from '../documentTextSnapshot'
@@ -89,6 +100,11 @@ export type {
   DocumentSessionApplyEditsOptions,
   DocumentSessionChange,
   DocumentSessionChangeKind,
+  EditorHistoryBarrier,
+  EditorHistoryGraph,
+  EditorHistoryGraphNode,
+  EditorTextBufferOptions,
+  HistoryNodeId,
   DocumentSessionEditHistoryMode,
   DocumentSessionEditSelection,
   DocumentSessionSelectionOptions,

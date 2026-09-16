@@ -28,9 +28,9 @@ const expectOneEntryPerPiece = (snapshot: PieceTableSnapshot): void => {
     .map((piece) => `${piece.buffer}:${piece.start}`)
     .sort()
   const entries = reverseKeys(snapshot.reverseIndexRoot)
-  expect(entries).toEqual([...entries].sort())
+  expect(entries).toEqual(entries.toSorted())
   expect(new Set(entries).size).toBe(entries.length)
-  expect([...entries].sort()).toEqual(pieces)
+  expect(entries.toSorted()).toEqual(pieces)
   expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
 }
 

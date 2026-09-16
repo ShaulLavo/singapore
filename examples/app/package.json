@@ -17,6 +17,7 @@
   "dependencies": {
     "@singapore-editor/core": "workspace:*",
     "@singapore-editor/diff": "workspace:*",
+    "@singapore-editor/textbuffer": "workspace:*",
     "@singapore-editor/find": "workspace:*",
     "@singapore-editor/gutters": "workspace:*",
     "@singapore-editor/minimap": "workspace:*",

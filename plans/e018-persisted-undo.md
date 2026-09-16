@@ -5,7 +5,7 @@
 - Owner: Cross-repo
 - Priority: P2
 - Effort: L
-- Dependencies: [E017](e017-branching-undo.md)
+- Dependencies: [E017](../docs/editing/undo-graph.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
 ## Outcome

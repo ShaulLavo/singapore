@@ -23,6 +23,7 @@ import {
   type TypeScriptLspStatus,
 } from '@singapore-editor/typescript-lsp'
 import { createEditorPane } from './components/editorPane.ts'
+import { createHistoryPanel, type HistoryPanel } from './components/historyPanel.ts'
 import { el } from './components/dom.ts'
 import { createSidebar } from './components/sidebar.ts'
 import { createStatusBar } from './components/statusBar.ts'
@@ -42,6 +43,7 @@ export function mountApp(): void {
   app.append(topBar.element, main, statusBar.element)
 
   let controller: SourceController | null = null
+  let historyPanel: HistoryPanel | null = null
   let typeScriptLspStatus: TypeScriptLspStatus = 'idle'
   let typeScriptDiagnostics: TypeScriptLspDiagnosticSummary | null = null
   const syncTypeScriptStatus = (): void => {
@@ -102,8 +104,11 @@ export function mountApp(): void {
     plugins: editPlugins,
     onChange: (state) => {
       controller?.updateStatus(state)
+      historyPanel?.sync()
     },
   })
+  historyPanel = createHistoryPanel(editor)
+  main.append(historyPanel.element)
   controller = new SourceController(topBar, sidebar, statusBar, editor, typeScriptLsp, liveDiff, {
     showEditor: () => {
       liveDiff.setEnabled(false)
@@ -128,6 +133,15 @@ export function mountApp(): void {
     openPieceTreeInspector(() => getPieceTreeSnapshot(editor.getTextSnapshot()))
   }
   topBar.element.append(inspect)
+
+  const history = el('button', { type: 'button', 'aria-pressed': 'false' })
+  history.textContent = 'History'
+  history.onclick = () => {
+    const open = history.getAttribute('aria-pressed') !== 'true'
+    history.setAttribute('aria-pressed', String(open))
+    historyPanel?.setOpen(open)
+  }
+  topBar.element.append(history)
 
   syncTypeScriptStatus()
   controller.start()
