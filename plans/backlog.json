@@ -474,9 +474,9 @@
     },
     {
       "id": "E038",
-      "file": "e038-append-only-buffer-store.md",
+      "reference": "../docs/performance/e038-append-only-buffer-store.md",
       "title": "Append inserted text without copying the buffer store",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

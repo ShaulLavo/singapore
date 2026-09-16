@@ -123,7 +123,7 @@ split and a churn sequence; `bench/budgets.test.mjs` is the counter gate.
 ## Left for the successors
 
 - The buffer store still copies a page per append and concatenates the tail per keystroke; any
-  first reader of that chunk flattens it. That is [E038](../../plans/e038-append-only-buffer-store.md).
+  first reader of that chunk flattens it. That is [E038](e038-append-only-buffer-store.md).
 - The reverse index still copies a path per write. That is [E039](../../plans/e039-reverse-index-cost.md).
 - A `Map` per store version is still allocated to retain line indexes for ancestor snapshots
   (`:0:Map`, about 0.3 MiB per 1,500 keystrokes). E038 decides where that record lives.

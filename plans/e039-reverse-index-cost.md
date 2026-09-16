@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P2
 - Effort: L
-- Dependencies: [E037](../docs/performance/e037-textbuffer-edit-allocations.md), [E038](e038-append-only-buffer-store.md)
+- Dependencies: [E037](../docs/performance/e037-textbuffer-edit-allocations.md), [E038](../docs/performance/e038-append-only-buffer-store.md)
 - Inspected baseline: `69dfef7425539165ec05a457bd6f0516fb6607fa`, 2026-09-16.
 
 ## Outcome
@@ -31,8 +31,15 @@ candidate designs is recorded with measurements.
 - [`edits.ts`](../packages/textbuffer/src/edits.ts): after E037, a split contributes one replace
   and one add; an insert contributes one add per new piece; a delete contributes one replace per
   tombstoned piece.
-- After E038, pieces from many document positions share one chunk, so the per-chunk keyspace is
-  large and ordered by buffer offset, not by document position.
+- After E038, pieces from many document positions share one chunk string, but each insert keeps
+  its own buffer id, so the reverse keyspace is still one small range per insert; a per-buffer
+  structure (option 1 below) is therefore keyed by insert, not by chunk. The number of buffers
+  grows with the number of inserts, as before.
+- Drift found during E038: a deleted anchor whose tombstone has no same-buffer neighbour resolves
+  to 0 (left bias) or the document end (right bias), because `deletedLeftEdgeOffset` and
+  `deletedRightEdgeOffset` in [`anchors.ts`](../packages/textbuffer/src/anchors.ts) fall back to
+  infinite orders. Every whole-insert deletion hits this. The linear resolver shares the code, so
+  no test catches it. Fix it here, where the neighbour rule is redesigned, with a test per bias.
 - The anchor lane in [`bench/fixtures.mjs`](../packages/textbuffer/bench/fixtures.mjs) resolves
   128 anchors 3,000 times after churn. There is no lane that resolves many anchors after each edit.
 
@@ -57,9 +64,9 @@ The ceiling comes first. The disposable probed build stubs `applyReverseIndexCha
 and the profile run records the timing and allocation delta per lane. That number bounds what any
 design can win on edits; the anchor lane bounds what it may cost on reads.
 
-Option 1 keeps the algorithm and shrinks the path. With E038's chunk filling, a chunk holds up to
-16,384 code units of inserts, typically tens of pieces, so a per-chunk tree is shallow and the
-outer map path is a few nodes. Option 2 changes when work happens, not how much, and helps only
+Option 1 keeps the algorithm and shrinks the path. A buffer holds one insert's pieces, typically
+one to a handful after splits, so a per-buffer tree is shallow and the outer map path is a few
+nodes. Option 2 changes when work happens, not how much, and helps only
 if edits outnumber resolutions between them; decorations resolve every frame, so the cap and the
 one-pass application are what make it viable. Option 3 removes the structure but adds a summary
 to every sequence node and a second descent per resolution; it is the cleanest and the least

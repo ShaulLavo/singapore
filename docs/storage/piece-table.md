@@ -12,22 +12,22 @@ The editor's storage engine is a treap-backed piece table with persistent immuta
 
 - Treap-backed piece table as the storage engine
 - Persistent (immutable-snapshot) data model for undo
-- Opaque buffer identity with append-only chunk storage
-- Buffer chunk storage is exposed as `ReadonlyMap` at the type boundary; no debug-only accessor layer for now
+- Opaque buffer identity over an append-only, lineage-shared chunk log with per-snapshot extents
+- Buffer chunk storage is exposed as a read-only `get`/`keys`/iterator view at the type boundary; no debug-only accessor layer for now
 - UTF-16 code units as the native encoding
 - Line-ending normalization to `\n` on load
 - Phase 2 deletion keeps invisible pieces in the treap rather than physically removing them
 
 ## Capabilities
 
-| Capability | Complexity | Notes |
-|---|---|---|
-| Insert text at offset | O(log n) | Split treap at offset, merge with new node |
-| Delete text range | O(log n) | Current implementation physically removes pieces; Phase 2 changes this to mark pieces invisible |
-| Read text range | O(log n + k) | Tree walk collecting piece slices |
-| Snapshot isolation | O(1) | Structural sharing; old roots remain valid |
-| Document length | O(1) | Currently cached in `subtreeLength`; Phase 2 switches user-facing length to `subtreeVisibleLength` |
-| Piece count | O(1) | Cached in `subtreePieces` aggregate |
+| Capability            | Complexity   | Notes                                                                                              |
+| --------------------- | ------------ | -------------------------------------------------------------------------------------------------- |
+| Insert text at offset | O(log n)     | Split treap at offset, merge with new node                                                         |
+| Delete text range     | O(log n)     | Current implementation physically removes pieces; Phase 2 changes this to mark pieces invisible    |
+| Read text range       | O(log n + k) | Tree walk collecting piece slices                                                                  |
+| Snapshot isolation    | O(1)         | Structural sharing; old roots remain valid                                                         |
+| Document length       | O(1)         | Currently cached in `subtreeLength`; Phase 2 switches user-facing length to `subtreeVisibleLength` |
+| Piece count           | O(1)         | Cached in `subtreePieces` aggregate                                                                |
 
 ## The Piece
 
@@ -42,17 +42,20 @@ All subtree aggregates (`subtreeLength`, `subtreePieces`, and future additions l
 ## Enrichment Roadmap
 
 **Phase 1 — Line breaks:**
+
 - Piece gains `lineBreaks` field (newline count in its buffer slice)
 - Treap node gains `subtreeLineBreaks` aggregate
 - Enables O(log n) offset-to-row/column conversion
 
 **Phase 2 — Anchor resolution:**
+
 - Treap node gains `subtreeVisibleLength` aggregate, maintained in the shared aggregate function
 - Piece gains `visible: boolean`
 - Delete marks pieces invisible instead of removing them
 - `subtreeVisibleLength` sums only visible pieces and becomes the user-facing document length aggregate
 
 **Future — Collaboration:**
+
 - The Phase 2 visibility model is reused rather than redesigned
 - Reverse index keys remain extensible to replica-scoped buffer identity
 
@@ -60,16 +63,17 @@ All subtree aggregates (`subtreeLength`, `subtreePieces`, and future additions l
 
 ### Opaque BufferId
 
-**Status: complete.** `PieceBufferId` is an opaque branded string.
+**Status: complete.** `PieceBufferId` is an opaque branded number.
 
 Phase 2 must continue treating buffer identity as opaque. No string-literal comparisons should be introduced.
 
 ### Chunked Append Buffer
 
-**Status: complete.** Inserted text is stored in immutable chunks, each with its own `PieceBufferId`.
+**Status: complete.** Inserted text is stored in append chunks shared by a lineage's snapshots through an append-only log. An insert fills the newest chunk before opening another; each `PieceBufferId` names one contiguous span of one chunk, so several ids share a chunk string.
 
-Pieces reference chunk identity plus local range. Appending inserted text is O(1) amortized over bounded chunks.
+Pieces reference buffer identity plus a range in that chunk. Appending is O(1) on a linear history; a branch that appends after a sibling copies its visible prefix of the log once. See the [E038 report](../performance/e038-append-only-buffer-store.md).
 
 **Alternatives rejected:**
+
 - Single string: O(n) per insertion. Unacceptable.
 - Rope: Unnecessary — the piece table already provides the tree structure.
