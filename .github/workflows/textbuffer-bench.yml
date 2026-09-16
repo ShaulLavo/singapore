@@ -1,0 +1,59 @@
+name: Textbuffer benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'packages/textbuffer/**'
+      - 'bun.lock'
+      - '.github/workflows/textbuffer-bench.yml'
+  push:
+    branches: ['main']
+    paths:
+      - 'packages/textbuffer/**'
+      - 'bun.lock'
+      - '.github/workflows/textbuffer-bench.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: textbuffer-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - name: Check formatting and lint
+        run: |
+          bun run --cwd packages/textbuffer format:check
+          bun run --cwd packages/textbuffer lint
+      - name: Verify the package and adapter contracts
+        run: |
+          bun run --cwd packages/textbuffer verify
+          bun run --cwd packages/textbuffer bench:check
+      - name: Smoke the complete measurement pipeline
+        run: bun run --cwd packages/textbuffer bench -- --profile smoke
+      - name: Compare buffers without performance pass/fail thresholds
+        run: bun run --cwd packages/textbuffer bench -- --profile standard
+      - name: Publish summary
+        run: cat packages/textbuffer/bench/results/standard.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain raw samples and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: textbuffer-benchmarks-${{ github.run_id }}
+          path: packages/textbuffer/bench/results/
+          if-no-files-found: warn

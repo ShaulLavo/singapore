@@ -44,8 +44,9 @@ Singapore should eventually consume a released version from the new repository, 
 
 ## Comparing against VS Code
 
-Pin both revisions and use one deterministic edit trace, one runtime, and one correctness oracle.
-Report load, edits, line/range reads, position lookup, long-session memory, and retained snapshots
-separately. Align line-ending and UTF-16 edit semantics before timing. Persistence and stable-anchor
-workloads are additional capabilities, not automatically equivalent to a mutable buffer's read snapshot.
-No performance claim or benchmark result is implied by this extraction.
+Run `bun run bench:check`, then `bun run bench -- --profile standard` from this directory.
+The [benchmark guide](bench/README.md) documents the pinned Microsoft control, shared workloads,
+API adapter costs, correctness checks, process isolation, retained-memory measurements and result format.
+Results are written to `bench/results/standard.json` and `bench/results/standard.md`.
+Persistence and stable anchors have separate Singapore-only lanes, not misleading snapshot comparisons.
+This measures the standalone buffers on Node, not complete editor or browser rendering performance.
