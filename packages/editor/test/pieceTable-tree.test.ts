@@ -67,7 +67,12 @@ describe('piece table tree', () => {
 
     expect(flattenPieces(left, []).map((piece) => piece.length)).toEqual([2])
     expect(flattenPieces(right, []).map((piece) => piece.length)).toEqual([4])
-    expect(context.changes).toHaveLength(3)
+    // Both halves are written; the left one lands on the original key and
+    // replaces that entry in place, so nothing is recorded for removal.
+    expect(context.changes.map((piece) => [piece.start, piece.length])).toEqual([
+      [0, 2],
+      [2, 4],
+    ])
   })
 
   it('marks trees invisible and normalizes orders without mutating the source tree', () => {

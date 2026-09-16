@@ -7,11 +7,11 @@ root n1 pieces tombstone buffer=0 start=3 length=3 order=2048 lineBreaks=0 prior
     right n4 pieces tombstone buffer=0 start=2 length=1 order=1280 lineBreaks=0 priority=323378386 left=- right=n5 subtreeLength=2 subtreeVisibleLength=0 subtreePieces=2 subtreeLineBreaks=0 subtreeMinOrder=1280 subtreeMaxOrder=1536
       right n5 pieces tombstone buffer=1 start=0 length=1 order=1536 lineBreaks=0 priority=1478519826 left=- right=- subtreeLength=1 subtreeVisibleLength=0 subtreePieces=1 subtreeLineBreaks=0 subtreeMinOrder=1536 subtreeMaxOrder=1536
   right n3 pieces visible buffer=0 start=6 length=5 order=3072 lineBreaks=1 priority=1454235004 left=- right=- subtreeLength=5 subtreeVisibleLength=5 subtreePieces=1 subtreeLineBreaks=1 subtreeMinOrder=3072 subtreeMaxOrder=3072
-root n6 reverse visible buffer=0 start=6 length=5 order=3072 lineBreaks=1 priority=287551355 left=n7 right=n8 buffer=0 start=6 order=3072
-  left n7 reverse tombstone buffer=0 start=3 length=3 order=2048 lineBreaks=0 priority=419681668 left=n9 right=- buffer=0 start=3 order=2048
-    left n9 reverse visible buffer=0 start=0 length=2 order=1024 lineBreaks=0 priority=555428545 left=- right=n10 buffer=0 start=0 order=1024
-      right n10 reverse tombstone buffer=0 start=2 length=1 order=1280 lineBreaks=0 priority=1833407445 left=- right=- buffer=0 start=2 order=1280
-  right n8 reverse tombstone buffer=1 start=0 length=1 order=1536 lineBreaks=0 priority=1958814015 left=- right=- buffer=1 start=0 order=1536"
+root n6 reverse tombstone buffer=0 start=3 length=3 order=2048 lineBreaks=0 priority=-558902133 left=n7 right=n8 buffer=0 start=3 order=2048
+  left n7 reverse visible buffer=0 start=0 length=2 order=1024 lineBreaks=0 priority=1821041704 left=- right=n9 buffer=0 start=0 order=1024
+    right n9 reverse tombstone buffer=0 start=2 length=1 order=1280 lineBreaks=0 priority=1833407445 left=- right=- buffer=0 start=2 order=1280
+  right n8 reverse visible buffer=0 start=6 length=5 order=3072 lineBreaks=1 priority=287551355 left=- right=n10 buffer=0 start=6 order=3072
+    right n10 reverse tombstone buffer=1 start=0 length=1 order=1536 lineBreaks=0 priority=1958814015 left=- right=- buffer=1 start=0 order=1536"
 `;
 
 exports[`piece tree inspection > prints stable empty, split, deleted and normalized snapshots with bounded opt-in text > initial 1`] = `
@@ -40,7 +40,7 @@ root n1 pieces visible buffer=0 start=0 length=3 order=1024 lineBreaks=0 priorit
   right n2 pieces visible buffer=0 start=3 length=8 order=2048 lineBreaks=1 priority=737425095 left=n3 right=- subtreeLength=9 subtreeVisibleLength=9 subtreePieces=2 subtreeLineBreaks=1 subtreeMinOrder=1536 subtreeMaxOrder=2048
     left n3 pieces visible buffer=1 start=0 length=1 order=1536 lineBreaks=0 priority=1478519826 left=- right=- subtreeLength=1 subtreeVisibleLength=1 subtreePieces=1 subtreeLineBreaks=0 subtreeMinOrder=1536 subtreeMaxOrder=1536
 root n4 reverse visible buffer=0 start=3 length=8 order=2048 lineBreaks=1 priority=-558902133 left=n5 right=n6 buffer=0 start=3 order=2048
-  left n5 reverse visible buffer=0 start=0 length=3 order=1024 lineBreaks=0 priority=1829202321 left=- right=- buffer=0 start=0 order=1024
+  left n5 reverse visible buffer=0 start=0 length=3 order=1024 lineBreaks=0 priority=1821041704 left=- right=- buffer=0 start=0 order=1024
   right n6 reverse visible buffer=1 start=0 length=1 order=1536 lineBreaks=0 priority=1958814015 left=- right=- buffer=1 start=0 order=1536"
 `;
 
