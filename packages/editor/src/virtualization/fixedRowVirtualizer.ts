@@ -1,3 +1,4 @@
+import { installNativeWheelScrollOwner } from './wheelScrollTarget'
 import {
   createRowHeightIndex,
   rowHeightIndexRowAfterOffset,
@@ -67,6 +68,7 @@ type AttachedScrollElement = {
   readonly element: HTMLElement
   readonly onScroll: () => void
   readonly resizeObserver: ResizeObserver | null
+  readonly wheelScrollOwner: ReturnType<typeof installNativeWheelScrollOwner>
   scrollListenerAttached: boolean
 }
 
@@ -223,7 +225,26 @@ export class FixedRowVirtualizer {
 
     const onScroll = (): void => this.scheduleScrollSync()
     const resizeObserver = createResizeObserver((entries) => this.syncFromResizeEntries(entries))
-    this.attached = { element, onScroll, resizeObserver, scrollListenerAttached: false }
+    const wheelScrollOwner = installNativeWheelScrollOwner(element, {
+      readScrollTop: () => this.logicalScrollProperties?.readNativeScrollTop() ?? element.scrollTop,
+      readScrollHeight: () =>
+        this.logicalScrollProperties?.readNativeScrollHeight() ?? element.scrollHeight,
+      lineHeight: () => this.options.rowHeight,
+      isEnabled: () =>
+        this.viewportMeasured &&
+        this.options.enabled &&
+        !this.provisionalScrollGeometry &&
+        !this.isHidden() &&
+        !this.nativeScrollNeedsRestore,
+      canScrollVertically: () => !this.isStaticMode(),
+    })
+    this.attached = {
+      element,
+      onScroll,
+      resizeObserver,
+      wheelScrollOwner,
+      scrollListenerAttached: false,
+    }
     this.syncAttachedScrollMode()
     resizeObserver?.observe(element)
     if (options.readInitialScrollPosition !== false && !this.isStaticMode()) {
@@ -235,6 +256,7 @@ export class FixedRowVirtualizer {
     const attached = this.attached
     if (!attached) return
 
+    attached.wheelScrollOwner.dispose()
     this.disableAttachedScrollElement(attached)
     attached.resizeObserver?.disconnect()
     this.clearPendingResizeSync()
@@ -1357,6 +1379,7 @@ function nowMs(): DOMHighResTimeStamp {
 type LogicalScrollProperties = {
   restore(): void
   readNativeScrollTop(): number
+  readNativeScrollHeight(): number
   writeNativeScrollTop(value: number, force?: boolean): void
 }
 
@@ -1373,6 +1396,7 @@ function installLogicalScrollProperties(
   const originalScrollTop = Object.getOwnPropertyDescriptor(element, 'scrollTop')
   const originalScrollHeight = Object.getOwnPropertyDescriptor(element, 'scrollHeight')
   const nativeScrollTop = createNativeScrollTopAccess(element)
+  const nativeScrollHeight = findPropertyDescriptor(element, 'scrollHeight')
   const scrollTopGet = (): number => handlers.getScrollTop()
   const scrollTopSet = (value: number): void => handlers.setScrollTop(value)
   const scrollHeightGet = (): number => handlers.getScrollHeight()
@@ -1389,6 +1413,8 @@ function installLogicalScrollProperties(
 
   return {
     readNativeScrollTop: nativeScrollTop.read,
+    readNativeScrollHeight: () =>
+      (nativeScrollHeight?.get?.call(element) ?? nativeScrollHeight?.value ?? 0) as number,
     writeNativeScrollTop: nativeScrollTop.write,
     restore: () => {
       restoreInstalledProperty(element, 'scrollTop', originalScrollTop, scrollTopGet, scrollTopSet)
@@ -1451,7 +1477,7 @@ function writeNativeScrollTop(
 
 function findPropertyDescriptor(
   element: HTMLElement,
-  property: 'scrollTop',
+  property: 'scrollTop' | 'scrollHeight',
 ): PropertyDescriptor | undefined {
   let current: unknown = element
   while (current) {
