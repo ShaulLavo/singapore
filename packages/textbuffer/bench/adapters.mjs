@@ -1,17 +1,19 @@
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { upstreamRoot } from './support.mjs'
 
-export async function loadAdapter(name) {
-  if (name === 'singapore') return singaporeAdapter()
-  if (name === 'vscode') return vscodeAdapter()
+export async function loadAdapter(name, roots = {}) {
+  if (name === 'singapore') return singaporeAdapter(roots.singapore)
+  if (name === 'vscode') return vscodeAdapter(roots.vscode)
   throw new Error(`Unknown engine: ${name}`)
 }
 
-async function singaporeAdapter() {
-  const api = await import('@singapore-editor/textbuffer')
-  const { lineStartOffset } = await import('@singapore-editor/textbuffer/internal/positions')
-  const { validatePieceTreeInvariants } = await import('@singapore-editor/textbuffer/debug')
+async function singaporeAdapter(root) {
+  const target = (file, specifier) => root ? pathToFileURL(path.join(root, file)).href : specifier
+  const api = await import(target('index.js', '@singapore-editor/textbuffer'))
+  const { lineStartOffset } = await import(target('positions.js', '@singapore-editor/textbuffer/internal/positions'))
+  const { validatePieceTreeInvariants } = await import(target('debug.js', '@singapore-editor/textbuffer/debug'))
   function wrap(snapshot) {
     return {
       get snapshot() {
@@ -52,10 +54,10 @@ async function singaporeAdapter() {
   }
 }
 
-function vscodeAdapter() {
+function vscodeAdapter(root) {
   const require = createRequire(import.meta.url)
   const { PieceTreeTextBufferBuilder } = require(
-    path.join(upstreamRoot, 'dist/pieceTreeBuilder.js'),
+    path.join(root ?? path.join(upstreamRoot, 'dist'), 'pieceTreeBuilder.js'),
   )
   return {
     create(text) {
@@ -78,6 +80,7 @@ function vscodeAdapter() {
         if (change.text.length) tree.insert(change.from, change.text, true)
       }
       return {
+        get tree() { return tree },
         length: () => tree.getLength(),
         lineCount: () => tree.getLineCount(),
         edit,

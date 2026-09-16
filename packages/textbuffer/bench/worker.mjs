@@ -14,7 +14,7 @@ function collect() {
   return process.memoryUsage()
 }
 
-function prepareState(factory, fixture) {
+export function prepareState(factory, fixture) {
   const buffer = factory.create(fixture.initial)
   const anchors =
     fixture.mode === 'anchors'
@@ -31,11 +31,25 @@ export function execute(factory, fixture) {
   const context = fixture.mode === 'load' ? null : prepareState(factory, fixture)
   // Setup is not edit/read latency. Discard its temporary garbage before timing.
   if (context) collect()
+  const started = performance.now()
+  const workload = runOperations(factory, fixture, context)
+  const elapsedMs = performance.now() - started
+  // Memory is captured before full-text checks or invariant inspection allocate anything.
+  const after = collect()
+  const retainedBytes = Object.fromEntries(
+    ['heapUsed', 'external', 'arrayBuffers', 'rss'].map((name) => [
+      name,
+      after[name] - before[name],
+    ]),
+  )
+  return { ...workload, elapsedMs, retainedBytes }
+}
+
+export function runOperations(factory, fixture, context) {
   let buffer = context?.buffer
   const retained = []
   const retainAt = new Set((fixture.retained ?? []).map((item) => item.before))
   let checksum = 2166136261
-  const started = performance.now()
   if (fixture.mode === 'load') buffer = factory.create(fixture.initial)
   else
     for (let index = 0; index < fixture.operations.length; index += 1) {
@@ -49,16 +63,7 @@ export function execute(factory, fixture) {
         if (value !== null) checksum = consume(value, checksum)
       }
     }
-  const elapsedMs = performance.now() - started
-  // Memory is captured before full-text checks or invariant inspection allocate anything.
-  const after = collect()
-  const retainedBytes = Object.fromEntries(
-    ['heapUsed', 'external', 'arrayBuffers', 'rss'].map((name) => [
-      name,
-      after[name] - before[name],
-    ]),
-  )
-  return { buffer, retained, anchors: context?.anchors ?? [], elapsedMs, checksum, retainedBytes }
+  return { buffer, retained, anchors: context?.anchors ?? [], checksum }
 }
 
 export function validate(factory, fixture, result) {

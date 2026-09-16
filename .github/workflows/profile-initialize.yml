@@ -1,0 +1,52 @@
+name: Verify profiling instrumentation
+
+on:
+  push:
+    branches: ['bench/textbuffer-vscode']
+    paths: ['.github/workflows/profile-initialize.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - name: Format without writing to GitHub
+        run: |
+          bun run format
+          bun run format:check
+      - name: Validate diagnostics and package contracts
+        run: |
+          bun run --cwd packages/textbuffer verify
+          bun run --cwd packages/textbuffer bench:check
+          bun run --cwd packages/textbuffer bench:profile:check
+          bun run --cwd packages/textbuffer lint
+          bun run health
+      - name: Measure clean timings and separate attribution
+        run: |
+          bun run --cwd packages/textbuffer bench -- --profile standard
+          bun run --cwd packages/textbuffer bench:profile -- --profile standard --repeats 12
+      - name: Save formatting patch and evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/profile-evidence"
+          git diff --binary > "$RUNNER_TEMP/profile-evidence/format.patch"
+          tar -czf "$RUNNER_TEMP/profile-evidence/source.tar.gz" --exclude=node_modules --exclude=dist --exclude=.cache --exclude=results --exclude=.turbo packages/textbuffer
+          cp -R packages/textbuffer/bench/results "$RUNNER_TEMP/profile-evidence/" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: profiling-initial-evidence
+          path: ${{ runner.temp }}/profile-evidence

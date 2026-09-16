@@ -42,7 +42,9 @@
     "bench:check": "bun run build && bun run bench:prepare && bun run bench:test",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "bench:profile": "node bench/profile.mjs",
+    "bench:profile:check": "bun run build && bun run bench:prepare && node --expose-gc --test bench/profile.spec.mjs"
   },
   "devDependencies": {
     "oxfmt": "0.54.0",
