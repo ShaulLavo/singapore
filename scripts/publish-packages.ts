@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PACKAGE_DIRS = [
+  'packages/textbuffer',
   'packages/editor',
   'packages/panes',
   'packages/lsp',

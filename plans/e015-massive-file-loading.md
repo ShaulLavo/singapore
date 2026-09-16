@@ -19,7 +19,7 @@ read-only proof before promising general editing, saving, or language features f
 - [Editor document creation](../packages/editor/src/editor/editorDocument.ts) accepts a complete
   string for both session and static documents. Static mode is not a paged source abstraction.
 - [Document sessions](../packages/editor/src/documentSession.ts) and
-  [piece-table snapshots](../packages/editor/src/pieceTable/snapshot.ts) assume known document text.
+  [piece-table snapshots](../packages/textbuffer/src/snapshot.ts) assume known document text.
 - [Platform reads](../../platform/apps/server/src/fs/read.ts) enforce a byte limit, read the file,
   decode UTF-8, and compute a content version from the resulting text.
 - [Host text-snapshot helpers](../../platform/apps/web/src/features/editor/utils/text-snapshot.ts)

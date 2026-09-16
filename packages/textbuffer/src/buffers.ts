@@ -8,7 +8,7 @@ import type {
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
 import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEndings'
-import { recordEditorPerformanceDiagnostic } from '../editor/performanceDiagnostics'
+import { recordTextBufferDiagnostic } from './diagnostics'
 
 export const BUFFER_CHUNK_SIZE = 16 * 1024
 const BUFFER_ID_PREFIX = 'buffer:'
@@ -210,7 +210,7 @@ const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void 
 
   index.scannedLength = text.length
   index.text = text
-  recordEditorPerformanceDiagnostic('textSnapshot.sourceIndex', () => ({
+  recordTextBufferDiagnostic('sourceIndex', () => ({
     source: 'piece-buffer',
     sourceBytesRead: scannedCodeUnits * 2,
     scannedCodeUnits,
@@ -404,7 +404,7 @@ export const createInitialBuffers = (
   const chunks = PieceBufferChunkStore.from([original])
   return {
     original: originalBuffer,
-    textIndexes: new Map(),
+    identity: {},
     lineIndexes: new Map(),
     chunks,
     nextBufferSequence: 1,

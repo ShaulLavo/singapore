@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { validatePieceTreeInvariants } from '../src/pieceTable/inspection'
-import { createPieceTreeInspectionSession } from '../src/pieceTable/inspectionSession'
-import { formatPieceTree } from '../src/pieceTable/inspectionFormat'
-import { createPieceTableSnapshot, createSnapshot } from '../src/pieceTable/snapshot'
-import { materializePieceTableFullText } from '../src/pieceTable/reads'
-import { deleteFromPieceTable, insertIntoPieceTable } from '../src/pieceTable/edits'
-import { createNode, merge, normalizePieceOrders } from '../src/pieceTable/tree'
-import { buildReverseIndex } from '../src/pieceTable/reverseIndex'
-import type { PieceTableSnapshot, PieceTreeNode } from '../src/pieceTable/pieceTableTypes'
+import {
+  createPieceTreeInspectionSession,
+  formatPieceTree,
+  validatePieceTreeInvariants,
+} from '@singapore-editor/textbuffer/debug'
+import {
+  createPieceTableSnapshot,
+  deleteFromPieceTable,
+  insertIntoPieceTable,
+  materializePieceTableFullText,
+  type PieceTableSnapshot,
+} from '@singapore-editor/textbuffer'
+import { createSnapshot } from '@singapore-editor/textbuffer/internal/snapshot'
+import { createNode, merge, normalizePieceOrders } from '@singapore-editor/textbuffer/internal/tree'
+import { buildReverseIndex } from '@singapore-editor/textbuffer/internal/reverseIndex'
+import type { PieceTreeNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
 function control(): PieceTableSnapshot {
   const base = createPieceTableSnapshot('a\nb\n')

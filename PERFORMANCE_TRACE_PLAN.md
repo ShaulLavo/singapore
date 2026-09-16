@@ -323,9 +323,9 @@ Why this matters:
 
 Files:
 
-- `packages/editor/src/pieceTable/tree.ts`
+- `packages/textbuffer/src/tree.ts`
 - `packages/editor/src/documentTextSnapshot.ts`
-- `packages/editor/src/pieceTable/reads.ts`
+- `packages/textbuffer/src/reads.ts`
 
 Trace CPU samples:
 
@@ -598,8 +598,8 @@ Primary files:
 - `packages/editor/src/editor/tokenProjection.ts`
 - `packages/editor/src/documentSession.ts`
 - `packages/editor/src/documentTextSnapshot.ts`
-- `packages/editor/src/pieceTable/tree.ts`
-- `packages/editor/src/pieceTable/reads.ts`
+- `packages/textbuffer/src/tree.ts`
+- `packages/textbuffer/src/reads.ts`
 - `packages/editor/src/virtualization/lineStartIndex.ts`
 
 Tasks:

@@ -2,7 +2,7 @@ import type { DisplayRow, InjectedTextRow, InlineRow } from '../displayTransform
 import type { TextSnapshot } from '../documentTextSnapshot'
 import type { FoldMap } from '../foldMap'
 import type { InlineMap } from '../inlineMap'
-import type { PieceTableEdit } from '../pieceTable/pieceTableTypes'
+import type { PieceTableEdit } from '@singapore-editor/textbuffer'
 
 export type DisplayProjectionConfig = {
   readonly foldMap: FoldMap | null

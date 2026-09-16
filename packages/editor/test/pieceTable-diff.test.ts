@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { diffPieceTableSnapshots } from '../src/pieceTable/diff.ts'
 import {
   applyBatchToPieceTable,
+  createPieceTableSnapshot,
   deleteFromPieceTable,
+  diffPieceTableSnapshots,
   insertIntoPieceTable,
-} from '../src/pieceTable/edits.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
-import type { PieceTableTreeSnapshot } from '../src/pieceTable/pieceTableTypes.ts'
-import { materializePieceTableFullText } from '../src/pieceTable/reads.ts'
+  materializePieceTableFullText,
+} from '@singapore-editor/textbuffer'
+import type { PieceTableTreeSnapshot } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
 // Reference implementation mirroring tree-sitter's createTextDiffEdit; the
 // snapshot diff must produce the identical edit shape.

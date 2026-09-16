@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDocumentTextSnapshot } from '../src/documentTextSnapshot'
-import { createPieceTableSnapshot, insertIntoPieceTable } from '../src/pieceTable'
+import { createPieceTableSnapshot, insertIntoPieceTable } from '@singapore-editor/textbuffer'
 import type { FixedRowVirtualizerSnapshot } from '../src/virtualization/fixedRowVirtualizer'
 import { VirtualizedTextView } from '../src/virtualization/virtualizedTextView'
 import {

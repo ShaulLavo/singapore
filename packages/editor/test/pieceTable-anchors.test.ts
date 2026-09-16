@@ -1,29 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  applyBatchToPieceTable,
-  deleteFromPieceTable,
-  insertIntoPieceTable,
-} from '../src/pieceTable/edits.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
-import { materializePieceTableFullText } from '../src/pieceTable/reads.ts'
-import {
   Anchor,
   anchorAfter,
   anchorAt,
   anchorBefore,
+  applyBatchToPieceTable,
   compareAnchors,
+  createPieceTableSnapshot,
+  deleteFromPieceTable,
+  insertIntoPieceTable,
+  materializePieceTableFullText,
+  type PieceTableAnchor,
+  type PieceTableSnapshot,
   resolveAnchor,
   resolveAnchorLinear,
-} from '../src/pieceTable/anchors.ts'
+} from '@singapore-editor/textbuffer'
+
 import {
   commitEditorHistory,
   createEditorHistory,
   redoEditorHistory,
   undoEditorHistory,
 } from '../src/history.ts'
-
-import type { PieceTableAnchor, PieceTableSnapshot } from '../src/pieceTable'
 
 const expectIndexedMatchesLinear = (
   snapshot: PieceTableSnapshot,

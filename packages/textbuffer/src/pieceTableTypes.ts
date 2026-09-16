@@ -1,5 +1,4 @@
 import type { DocumentLineEnding } from './lineEndings'
-import type { TextSourceIndex } from '../textMeasurements'
 
 declare const pieceBufferIdBrand: unique symbol
 
@@ -42,7 +41,9 @@ export type Piece = {
 }
 
 export type PieceTableBuffers = {
-  readonly textIndexes: Map<PieceBufferId, TextSourceIndex>
+  // Shared across this document lineage, including divergent persistent versions.
+  // Hosts can key WeakMap sidecars by this identity without putting UI caches in storage.
+  readonly identity: object
   readonly original: PieceBufferId
   readonly chunks: PieceBufferChunks
   readonly nextBufferSequence: number

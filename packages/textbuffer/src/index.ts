@@ -54,3 +54,7 @@ export {
   streamPieceTableTextChunks,
   UTF8_BYTE_ORDER_MARK,
 } from './pieceTable'
+
+export type { CreatePieceTableSnapshotOptions } from './snapshot'
+export type { PieceTableBufferOptions } from './buffers'
+export { snapBatchEditRanges } from './edits'

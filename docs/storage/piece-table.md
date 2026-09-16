@@ -4,9 +4,9 @@
 
 The editor's storage engine is a treap-backed piece table with persistent immutable snapshots via structural sharing. Each mutation returns a new snapshot; previous snapshots remain valid and unmodified.
 
-**Implementation:** `packages/editor/src/pieceTable/`
-**Types:** `packages/editor/src/pieceTable/pieceTableTypes.ts`
-**Operations:** `packages/editor/src/pieceTable/pieceTable.ts`
+**Implementation:** `packages/textbuffer/src/`
+**Types:** `packages/textbuffer/src/pieceTableTypes.ts`
+**Operations:** `packages/textbuffer/src/pieceTable.ts`
 
 ## Locked Decisions
 

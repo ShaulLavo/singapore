@@ -6,10 +6,14 @@ import {
   type EditorDecoration,
   type EditorDecorationRange,
 } from '../src/editor/decorationStore'
-import { anchorAt, resolveAnchor } from '../src/pieceTable/anchors'
-import { applyBatchToPieceTable } from '../src/pieceTable/edits'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
-import type { AnchorBias } from '../src/pieceTable/pieceTableTypes'
+import {
+  anchorAt,
+  type AnchorBias,
+  applyBatchToPieceTable,
+  createPieceTableSnapshot,
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
+
 import type { TextEdit } from '../src/tokens'
 
 type Diagnostic = {

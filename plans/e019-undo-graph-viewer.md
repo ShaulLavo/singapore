@@ -19,7 +19,7 @@ Ship reusable history presentation APIs and an Editor demo. Platform owns later 
 
 - [history.ts](../packages/editor/src/history.ts) has bounded linear history today.
   E017 must land before the viewer can enumerate retained branches or check out a node.
-- [diffPieceTableSnapshots](../packages/editor/src/pieceTable/diff.ts) computes one replacement spanning the changed region.
+- [diffPieceTableSnapshots](../packages/textbuffer/src/diff.ts) computes one replacement spanning the changed region.
   It walks snapshots without materializing both full documents, but is not a multi-hunk line diff.
 - [packages/diff/src/model.ts](../packages/diff/src/model.ts) already implements `createTextDiff` using `structuredPatch`.
   It accepts full text strings, produces line hunks, and annotates inline changes.

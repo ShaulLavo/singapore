@@ -1,5 +1,5 @@
 import { getPieceTreeSnapshot, type TextSnapshot } from '../documentTextSnapshot'
-import { createPieceTableWalker } from '../pieceTable/walker'
+import { createPieceTableWalker } from '@singapore-editor/textbuffer'
 import {
   EditorRegionMarkerClassifier,
   type EditorFoldingRules,

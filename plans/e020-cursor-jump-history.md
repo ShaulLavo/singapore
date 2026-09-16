@@ -25,7 +25,7 @@ Keep the shipped selection Undo/Redo behavior available independently of this lo
 - [cursorHistory.test.ts](../packages/editor/test/cursorHistory.test.ts) verifies pure moves, scroll restoration,
   forward-tail truncation, multi-cursor affinity, default bindings, and clearing after edits.
   The wishlist's claim that pure navigation has no history is stale.
-- [anchors.ts](../packages/editor/src/pieceTable/anchors.ts) supports biased anchors and returns `live` or `deleted`.
+- [anchors.ts](../packages/textbuffer/src/anchors.ts) supports biased anchors and returns `live` or `deleted`.
   Deleted anchors resolve to a boundary. That numeric result alone does not mean the old destination still exists.
 - [navigationTargets.ts](../packages/editor/src/editor/navigationTargets.ts) distinguishes movement commands.
   It does not provide a persistent cause-based waypoint trail.

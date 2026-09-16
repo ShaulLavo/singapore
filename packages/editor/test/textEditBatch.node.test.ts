@@ -11,9 +11,13 @@ import {
   projectTokensThroughEdits,
   tokenProjectionLiveRangeStatus,
 } from '../src/editor/tokenProjection'
-import { applyBatchToPieceTable, snapBatchEditRanges } from '../src/pieceTable/edits'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
-import { materializePieceTableFullText } from '../src/pieceTable/reads'
+import {
+  applyBatchToPieceTable,
+  createPieceTableSnapshot,
+  materializePieceTableFullText,
+  snapBatchEditRanges,
+} from '@singapore-editor/textbuffer'
+
 import type { FoldRange } from '../src/syntax/session'
 import { createTextEditBatch, mapTextEditBatchOffset } from '../src/textEditBatch'
 import type { TextEdit } from '../src/tokens'

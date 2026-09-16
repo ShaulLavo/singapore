@@ -1,6 +1,6 @@
 import type { InlineReplacementSpec } from '../inlineMap'
-import { normalizeLineEndings } from '../pieceTable/lineEndings'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { normalizeLineEndings, type PieceTableSnapshot } from '@singapore-editor/textbuffer'
+
 import { nextWordOffset } from '../textRanges'
 import type { TextEdit } from '../tokens'
 import type { EditorCommandId } from './commands'

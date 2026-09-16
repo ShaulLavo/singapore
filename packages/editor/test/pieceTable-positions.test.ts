@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import type { PieceTableSnapshot, PieceTreeNode, Point } from '../src/pieceTable/pieceTableTypes.ts'
-import { deleteFromPieceTable, insertIntoPieceTable } from '../src/pieceTable/edits.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
-import { offsetToPoint, pointToOffset } from '../src/pieceTable/positions.ts'
-import { materializePieceTableFullText } from '../src/pieceTable/reads.ts'
+import {
+  createPieceTableSnapshot,
+  deleteFromPieceTable,
+  insertIntoPieceTable,
+  materializePieceTableFullText,
+  offsetToPoint,
+  type PieceTableSnapshot,
+  type Point,
+  pointToOffset,
+} from '@singapore-editor/textbuffer'
+import type { PieceTreeNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
 describe('piece table positions', () => {
   it('converts offsets to points at line boundaries', () => {

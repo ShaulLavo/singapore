@@ -57,7 +57,6 @@
       [
         "packages/editor/src/displayTransforms.ts",
         "packages/editor/src/graphemes.ts",
-        "packages/editor/src/pieceTable/pieceTableTypes.ts",
         "packages/editor/src/textCharacters.ts",
         "packages/editor/src/textContent.ts",
         "packages/editor/src/textMeasurements.ts"

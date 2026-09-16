@@ -1,17 +1,24 @@
-import type { PieceTableSnapshot } from './pieceTable/pieceTableTypes'
-import { forEachTextInRange, getSubtreeLineBreaks } from './pieceTable/tree'
-import { lineStartOffset, offsetToPoint } from './pieceTable/positions'
+import { getDocumentTextSourceIndex } from './documentTextSourceCache'
+import {
+  forEachPieceTableTextChunk,
+  materializePieceTableFullText,
+  offsetToPoint,
+  type PieceTableSnapshot,
+  readPieceTableTextRange,
+} from '@singapore-editor/textbuffer'
+import {
+  forEachTextInRange,
+  getSubtreeLineBreaks,
+} from '@singapore-editor/textbuffer/internal/tree'
+import { lineStartOffset } from '@singapore-editor/textbuffer/internal/positions'
+
 import {
   measureString,
   TextMeasurements,
   TextSourceIndex,
   type MeasuredTextRange,
 } from './textMeasurements'
-import {
-  forEachPieceTableTextChunk,
-  materializePieceTableFullText,
-  readPieceTableTextRange,
-} from './pieceTable/reads'
+
 import {
   measureEditorPerformance,
   recordEditorPerformanceDiagnostic,
@@ -75,12 +82,7 @@ function measureDocumentRange(
 ): TextMeasurements {
   const ranges: MeasuredTextRange[] = []
   forEachTextInRange(snapshot.root, snapshot.buffers, start, end, (text, from, to, buffer) => {
-    let source = snapshot.buffers.textIndexes.get(buffer)
-    // Undo can reuse an ID for different text; retained ranges keep their immutable old index.
-    if (source?.text !== text) {
-      source = new TextSourceIndex(text)
-      snapshot.buffers.textIndexes.set(buffer, source)
-    }
+    const source = getDocumentTextSourceIndex(snapshot.buffers, buffer, text)
     ranges.push({ source, start: from, end: to })
   })
   return new TextMeasurements(ranges)

@@ -9,7 +9,7 @@ import {
   verticalMoveGoal,
   type NavigationTarget,
 } from '../src/editor/navigationTargets'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
+import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 import { SelectionGoal, type ResolvedSelection, type SelectionAffinity } from '../src/selections'
 import { lineRangeAtOffset, wordSeparatorsForLanguage } from '../src/textRanges'
 

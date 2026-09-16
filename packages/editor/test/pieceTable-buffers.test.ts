@@ -12,12 +12,16 @@ import {
   extendTailChunk,
   findBufferLineBreakOffset,
   getBufferText,
-} from '../src/pieceTable/buffers.ts'
-import { deleteFromPieceTable, insertIntoPieceTable } from '../src/pieceTable/edits.ts'
-import { offsetToPoint, pointToOffset } from '../src/pieceTable/positions.ts'
-import { materializePieceTableFullText } from '../src/pieceTable/reads.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/snapshot.ts'
-import type { PieceTableSnapshot } from '../src/pieceTable/pieceTableTypes.ts'
+} from '@singapore-editor/textbuffer/internal/buffers'
+import {
+  createPieceTableSnapshot,
+  deleteFromPieceTable,
+  insertIntoPieceTable,
+  materializePieceTableFullText,
+  offsetToPoint,
+  type PieceTableSnapshot,
+  pointToOffset,
+} from '@singapore-editor/textbuffer'
 
 describe('piece table buffers', () => {
   it('counts line breaks inside an optional range', () => {

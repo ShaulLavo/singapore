@@ -12,7 +12,7 @@ import type {
   EditorHighlighterSession,
   EditorPlugin,
 } from '../src/plugins'
-import { createPieceTableSnapshot } from '../src/pieceTable/snapshot'
+import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxProvider,

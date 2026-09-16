@@ -1,9 +1,12 @@
 import { documentSessionChangeTextSnapshot, type DocumentSessionChange } from '../documentSession'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from '../documentTextSnapshot'
-import { applyBatchToPieceTable } from '../pieceTable/edits'
+import {
+  applyBatchToPieceTable,
+  type PieceTableSnapshot,
+  pieceTableSnapshotsHaveSameText,
+} from '@singapore-editor/textbuffer'
 import type { TextEdit } from '../tokens'
-import { pieceTableSnapshotsHaveSameText } from '../pieceTable/reads'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+
 import {
   splicePackedEditorTokens,
   unpackEditorTokens,

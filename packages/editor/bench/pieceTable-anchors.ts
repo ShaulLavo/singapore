@@ -6,13 +6,12 @@ import {
   debugPieceTable,
   deleteFromPieceTable,
   insertIntoPieceTable,
-  resolveAnchor,
   type PieceTableSnapshot,
   type RealAnchor,
-} from '../src/pieceTable'
-import { buildReverseIndex } from '../src/pieceTable/reverseIndex.ts'
-
-import type { PieceTableReverseIndexNode } from '../src/pieceTable/pieceTableTypes.ts'
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
+import { buildReverseIndex } from '@singapore-editor/textbuffer/internal/reverseIndex'
+import type { PieceTableReverseIndexNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
 type MemorySample = {
   heapUsedMb: number

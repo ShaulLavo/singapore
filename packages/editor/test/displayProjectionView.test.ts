@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 import { createDocumentTextSnapshot } from '../src/documentTextSnapshot'
 import { createFoldMap } from '../src/foldMap'
 import { createInlineMap } from '../src/inlineMap'
-import { applyBatchToPieceTable, createPieceTableSnapshot } from '../src/pieceTable'
+import { applyBatchToPieceTable, createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 import { VirtualizedTextView } from '../src/virtualization/virtualizedTextView'
 
 test.each([

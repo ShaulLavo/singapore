@@ -23,7 +23,7 @@ Unsupported environments keep a fully functional ordinary transport.
 - [Worker protocol](../packages/tree-sitter/src/treeSitter/types.ts) carries document versions
   and request generations. It does not expose a shared piece-tree arena handshake.
 - [Worker client](../packages/tree-sitter/src/treeSitter/workerClient.ts) owns worker lifecycle.
-  [The current walker](../packages/editor/src/pieceTable/walker.ts) traverses object nodes.
+  [The current walker](../packages/textbuffer/src/walker.ts) traverses object nodes.
 - [Platform plugins](../../platform/apps/web/src/features/editor/utils/plugins.ts) compose
   syntax and optional minimap consumers. Platform has a separate
   [LSP proxy](../../platform/apps/server/src/lsp/proxy-session.ts).

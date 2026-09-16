@@ -1,5 +1,5 @@
 import type { EditorTextBuffer } from '../documentSession'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type {
   EditorHighlighterProvider,
   EditorHighlighterSession,

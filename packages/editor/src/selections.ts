@@ -1,10 +1,11 @@
-import type {
-  Anchor as PieceTableAnchor,
-  AnchorBias,
-  AnchorLiveness,
-  PieceTableSnapshot,
-} from './pieceTable/pieceTableTypes'
-import { anchorAt, resolveAnchor } from './pieceTable/anchors'
+import {
+  anchorAt,
+  type AnchorBias,
+  type AnchorLiveness,
+  type PieceTableAnchor,
+  type PieceTableSnapshot,
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
 
 export type SelectionGoal =
   | { readonly kind: 'none' }

@@ -30,8 +30,9 @@ import {
 
 const backspaceEditReads = vi.hoisted(() => ({ coordinates: 0, enabled: false }))
 
-vi.mock('../src/pieceTable/edits', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/pieceTable/edits')>()
+vi.mock('@singapore-editor/textbuffer/internal/edits', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@singapore-editor/textbuffer/internal/edits')>()
   return {
     ...actual,
     applyBatchToPieceTable: (

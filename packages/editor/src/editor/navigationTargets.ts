@@ -1,6 +1,6 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
+import { offsetToPoint, type PieceTableSnapshot, pointToOffset } from '@singapore-editor/textbuffer'
+
 import { SelectionGoal, type ResolvedSelection, type SelectionAffinity } from '../selections'
 import {
   nextCodePointOffset,

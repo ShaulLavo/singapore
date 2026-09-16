@@ -2225,91 +2225,91 @@
         {
           "kind": "type",
           "name": "PieceBufferId",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceInspectionNode",
-          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceInspectionOptions",
-          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceNodeChange",
-          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceTableSnapshot",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceTreeComparison",
-          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceTreeInspection",
-          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceTreeIssue",
-          "source": "packages/editor/src/pieceTable/inspection.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceTreeIssueKind",
-          "source": "packages/editor/src/pieceTable/inspection.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "type",
           "name": "PieceTreeValidation",
-          "source": "packages/editor/src/pieceTable/inspection.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "unknown",
           "name": "createPieceTreeInspectionSession",
-          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "unknown",
           "name": "debugPieceTable",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "unknown",
           "name": "formatPieceInspectionNode",
-          "source": "packages/editor/src/pieceTable/inspectionFormat.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "unknown",
           "name": "formatPieceTree",
-          "source": "packages/editor/src/pieceTable/inspectionFormat.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "unknown",
           "name": "formatPieceTreeInspection",
-          "source": "packages/editor/src/pieceTable/inspectionFormat.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         },
         {
@@ -2321,7 +2321,7 @@
         {
           "kind": "unknown",
           "name": "validatePieceTreeInvariants",
-          "source": "packages/editor/src/pieceTable/inspection.ts",
+          "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
         }
       ],
@@ -2339,13 +2339,13 @@
         {
           "kind": "type",
           "name": "AnchorBias",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "AnchorLiveness",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2459,13 +2459,13 @@
         {
           "kind": "type",
           "name": "DocumentTextRoundTripIssue",
-          "source": "packages/editor/src/pieceTable/lineEndings.ts",
+          "source": "@singapore-editor/textbuffer/internal/lineEndings",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "DocumentTextRoundTripStatus",
-          "source": "packages/editor/src/pieceTable/lineEndings.ts",
+          "source": "@singapore-editor/textbuffer/internal/lineEndings",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2579,43 +2579,43 @@
         {
           "kind": "type",
           "name": "PieceTableAnchor",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "PieceTableDocumentTextOptions",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "PieceTableEdit",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "PieceTableSnapshot",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "PieceTableWalker",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "PieceTableWalkerChunk",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
           "name": "Point",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2657,7 +2657,7 @@
         {
           "kind": "type",
           "name": "ResolvedAnchor",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2723,31 +2723,31 @@
         {
           "kind": "unknown",
           "name": "Anchor",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "anchorAfter",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "anchorAt",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "anchorBefore",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "applyBatchToPieceTable",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2849,13 +2849,13 @@
         {
           "kind": "unknown",
           "name": "createPieceTableSnapshot",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "createPieceTableWalker",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2873,25 +2873,25 @@
         {
           "kind": "unknown",
           "name": "deleteFromPieceTable",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "diffPieceTableSnapshots",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "documentTextRoundTripStatus",
-          "source": "packages/editor/src/pieceTable/lineEndings.ts",
+          "source": "@singapore-editor/textbuffer/internal/lineEndings",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "forEachPieceTableTextChunk",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2903,13 +2903,13 @@
         {
           "kind": "unknown",
           "name": "getPieceTableLength",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "insertIntoPieceTable",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2939,7 +2939,7 @@
         {
           "kind": "unknown",
           "name": "materializePieceTableFullText",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2963,31 +2963,31 @@
         {
           "kind": "unknown",
           "name": "offsetToPoint",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "pieceTableContainsUnusualLineTerminators",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "pieceTableDocumentText",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "pieceTableSnapshotsHaveSameText",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "pointToOffset",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -3023,7 +3023,7 @@
         {
           "kind": "unknown",
           "name": "readPieceTableTextRange",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -3041,7 +3041,7 @@
         {
           "kind": "unknown",
           "name": "resolveAnchor",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -3071,13 +3071,13 @@
         {
           "kind": "unknown",
           "name": "streamPieceTablePieces",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "unknown",
           "name": "streamPieceTableTextChunks",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -4949,7 +4949,7 @@
         {
           "kind": "type",
           "name": "PieceTableAnchor",
-          "source": "packages/editor/src/pieceTable/index.ts",
+          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/internal.ts"
         },
         {

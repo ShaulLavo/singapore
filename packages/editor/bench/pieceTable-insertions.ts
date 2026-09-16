@@ -4,7 +4,7 @@ import {
   createPieceTableSnapshot,
   insertIntoPieceTable,
   materializePieceTableFullText,
-} from '../src/pieceTable'
+} from '@singapore-editor/textbuffer'
 
 type Sample = {
   label: string

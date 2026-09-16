@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   applyBatchToPieceTable,
+  createPieceTableSnapshot,
   deleteFromPieceTable,
   insertIntoPieceTable,
+  materializePieceTableFullText,
   snapBatchEditRanges,
-} from '../src/pieceTable/edits.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
-import { materializePieceTableFullText } from '../src/pieceTable/reads.ts'
+} from '@singapore-editor/textbuffer'
 
 describe('piece table edits', () => {
   it('inserts and deletes text while preserving the original snapshot', () => {

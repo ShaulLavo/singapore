@@ -1,6 +1,11 @@
-import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { isHighSurrogate, readPieceTableTextRange, splitsSurrogatePair } from '../pieceTable/reads'
+import {
+  offsetToPoint,
+  type PieceTableSnapshot,
+  pointToOffset,
+  readPieceTableTextRange,
+} from '@singapore-editor/textbuffer'
+import { isHighSurrogate, splitsSurrogatePair } from '@singapore-editor/textbuffer/internal/reads'
+
 import { clamp } from '../style-utils'
 
 /** What the hidden input held, and where its selection sat, when the editor last looked. */

@@ -17,13 +17,13 @@ to every paragraph ever inserted after obsolete history and external readers rel
 
 ## Current code
 
-- [Deletion](../packages/editor/src/pieceTable/tree.ts) uses `markTreeInvisible`, retaining
+- [Deletion](../packages/textbuffer/src/tree.ts) uses `markTreeInvisible`, retaining
   deleted pieces in new roots. `normalizePieceOrders` already rebuilds tree metadata.
 - [History](../packages/editor/src/history.ts) now caps undo depth at 200 entries.
   The wishlist's unbounded-history claim is stale. A cap alone does not remove current-root tombstones.
-- [Buffers](../packages/editor/src/pieceTable/buffers.ts) use a persistent paged chunk store.
+- [Buffers](../packages/textbuffer/src/buffers.ts) use a persistent paged chunk store.
   A surviving snapshot can retain chunk strings even after its visible pieces stop using them.
-- [Anchors](../packages/editor/src/pieceTable/anchors.ts) resolve deleted positions using
+- [Anchors](../packages/textbuffer/src/anchors.ts) resolve deleted positions using
   invisible pieces and reverse-index neighbors. Dropping those records can change positions.
 - [DocumentSession](../packages/editor/src/documentSession.ts) also retains clean snapshots,
   history, transaction receipts, and staged transaction state beyond the active snapshot.

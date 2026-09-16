@@ -1,8 +1,13 @@
-import { createPieceTableSnapshot } from '../src/pieceTable/snapshot'
-import { insertIntoPieceTable, deleteFromPieceTable } from '../src/pieceTable/edits'
-import { validatePieceTreeInvariants } from '../src/pieceTable/inspection'
-import { createPieceTreeInspectionSession } from '../src/pieceTable/inspectionSession'
-import { formatPieceTree } from '../src/pieceTable/inspectionFormat'
+import {
+  createPieceTableSnapshot,
+  deleteFromPieceTable,
+  insertIntoPieceTable,
+} from '@singapore-editor/textbuffer'
+import {
+  createPieceTreeInspectionSession,
+  formatPieceTree,
+  validatePieceTreeInvariants,
+} from '@singapore-editor/textbuffer/debug'
 
 function measure<T>(operation: string, run: () => T) {
   Bun.gc(true)

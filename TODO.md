@@ -24,7 +24,7 @@ A debugging/inspection tool for the piece table, ideally visual (render the trea
 priorities, piece order keys, visible/invisible pieces, cached subtree sums, the reverse index).
 The fredbuf author credits `print_tree`/`print_piece`-style utilities as the reason the project
 got finished at all; we currently have no tree printer and no invariant checker in
-`packages/editor/src/pieceTable/`.
+`packages/textbuffer/src/`.
 
 Scope ideas, smallest first:
 
@@ -40,7 +40,7 @@ Scope ideas, smallest first:
 Two related fronts:
 
 - **Tombstone accumulation.** Deletes mark pieces `visible: false` and keep them in the treap
-  forever (`markTreeInvisible` in `packages/editor/src/pieceTable/tree.ts`). Tree height and
+  forever (`markTreeInvisible` in `packages/textbuffer/src/tree.ts`). Tree height and
   split/merge cost grow with all-time edit count, not document size — the classic piece-table
   "long edit session" degradation, in log form. Need a churn benchmark first (interleaved
   insert/delete, measure piece count and op latency), then a compaction pass that drops invisible
@@ -178,8 +178,8 @@ buffer's `commit_head()/head()/snap_to()` primitives, and undo/redo just swap wh
 current.
 
 We already have every prerequisite: a persistent path-copying treap
-(`packages/editor/src/pieceTable/tree.ts`), append-only buffers
-(`packages/editor/src/pieceTable/buffers.ts`), O(1) snapshots, and
+(`packages/textbuffer/src/tree.ts`), append-only buffers
+(`packages/textbuffer/src/buffers.ts`), O(1) snapshots, and
 `packages/editor/src/history.ts` storing `{ snapshot, selections, transaction }` per entry in
 persistent stacks, with typing-run coalescing (`amendEditorHistory` + `shouldAmendTypingRun` in
 `documentSession.ts`). The single flaw: `commitEditorHistory` (`history.ts`, the `redo: null`)
@@ -211,7 +211,7 @@ with visible branches — Fred's marquee feature (Ctrl+Shift+Z):
 - Walking nodes shows the diff for each step; selecting any **two** nodes — including across
   branches — shows the diff between them. All diffs are computed on demand by walking the two
   snapshots and are never stored: any two states are just two roots over shared buffers.
-- Parent↔child pairs: `diffPieceTableSnapshots` (`packages/editor/src/pieceTable/diff.ts`)
+- Parent↔child pairs: `diffPieceTableSnapshots` (`packages/textbuffer/src/diff.ts`)
   already computes the minimal single edit without materializing either document — exactly
   right for per-step display.
 - Arbitrary pairs need a real line-level diff (Myers or histogram over line hashes, ~100 lines
@@ -312,7 +312,7 @@ walk back/forward through; cheap to build, used constantly.
 - Record a waypoint on "jumps" only (cause-based: mouse click, goto-line, find jump, goto-def —
   or a distance heuristic like >10 lines), dedupe adjacent waypoints, ring buffer (~128) per
   document view.
-- Store anchors, not offsets (`packages/editor/src/pieceTable/anchors.ts`), so waypoints
+- Store anchors, not offsets (`packages/textbuffer/src/anchors.ts`), so waypoints
   survive edits; resolve at jump time and drop dead ones.
 - Browser back/forward semantics per pane: walking back and then jumping somewhere new
   truncates the forward tail.

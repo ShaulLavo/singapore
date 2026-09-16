@@ -1,4 +1,4 @@
-import type { Point } from '../../src/pieceTable/pieceTableTypes'
+import type { Point } from '@singapore-editor/textbuffer'
 import {
   INDEXED_TEXT_MIN_LENGTH,
   measureString,

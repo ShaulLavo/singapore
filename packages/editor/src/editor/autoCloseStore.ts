@@ -1,6 +1,10 @@
-import { anchorAfter, resolveAnchor } from '../pieceTable/anchors'
-import type { Anchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { readPieceTableTextRange } from '../pieceTable/reads'
+import {
+  anchorAfter,
+  type PieceTableAnchor as Anchor,
+  type PieceTableSnapshot,
+  readPieceTableTextRange,
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
 
 type TrackedPair = {
   readonly closerAnchor: Anchor

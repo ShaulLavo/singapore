@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { createInitialBuffers, createOriginalPiece } from '../src/pieceTable/buffers.ts'
-import { PIECE_ORDER_STEP } from '../src/pieceTable/orders.ts'
-import type { SplitContext } from '../src/pieceTable/internalTypes.ts'
+import {
+  createInitialBuffers,
+  createOriginalPiece,
+} from '@singapore-editor/textbuffer/internal/buffers'
+import { PIECE_ORDER_STEP } from '@singapore-editor/textbuffer/internal/orders'
+import type { SplitContext } from '@singapore-editor/textbuffer/internal/internalTypes'
 import {
   collectTextInRange,
   createNode,
@@ -15,7 +18,7 @@ import {
   splitByVisibleOffset,
   visibleLengthBetweenOrders,
   visiblePrefixBeforeOrder,
-} from '../src/pieceTable/tree.ts'
+} from '@singapore-editor/textbuffer/internal/tree'
 
 describe('piece table tree', () => {
   it('assigns deterministic node priorities from piece identity and seed', () => {

@@ -4,8 +4,15 @@ import type {
   DocumentSessionSelectionRange,
 } from '../documentSession'
 import { previousDeleteBoundary } from '../graphemes'
-import { normalizeLineEndings } from '../pieceTable/lineEndings'
-import { readPieceTableTextRange } from '../pieceTable/reads'
+import {
+  normalizeLineEndings,
+  offsetToPoint,
+  type PieceTableAnchor,
+  type PieceTableSnapshot,
+  pointToOffset,
+  readPieceTableTextRange,
+} from '@singapore-editor/textbuffer'
+
 import {
   SelectionGoal,
   lastAddedSelectionIndex,
@@ -138,8 +145,7 @@ import {
 } from './snippetSession'
 import { GhostTextSession, type EditorInlineSuggestCommandId } from './ghostText'
 import type { InlineReplacementSpec } from '../inlineMap'
-import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
+
 import { lineBreakIndent } from './indentation'
 import type { EditorAnnouncer } from './announce'
 

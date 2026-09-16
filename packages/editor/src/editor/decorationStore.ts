@@ -1,4 +1,4 @@
-import type { AnchorBias } from '../pieceTable/pieceTableTypes'
+import type { AnchorBias } from '@singapore-editor/textbuffer'
 import type { EditorMinimapDecoration } from '../plugins'
 import type { TextEdit } from '../tokens'
 import type { VirtualizedTextRowDecoration } from '../virtualization/virtualizedTextViewTypes'
