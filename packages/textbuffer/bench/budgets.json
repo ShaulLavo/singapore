@@ -8,14 +8,12 @@
         "buffers.extendBufferLineIndex.loopIterations": 408,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 3917,
         "buffers.pushLineBreakOffset.typedArrayCopiedBytes": 1828,
-        "priority.mixString.calls": 15,
         "priority.priorityForPiece.calls": 3,
         "reverseIndex.createReverseIndexNode.calls": 2,
         "tree.createNode.calls": 2
       },
       "load-long-line": {
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 13056,
-        "priority.mixString.calls": 15,
         "priority.priorityForPiece.calls": 3,
         "reverseIndex.createReverseIndexNode.calls": 2,
         "tree.createNode.calls": 2
@@ -28,15 +26,14 @@
         "buffers.PieceBufferChunkStore.extendTail.copiedArraySlots": 144,
         "edits.snapBatchEditRanges.calls": 49,
         "edits.tryCoalesceInsert.calls": 49,
-        "priority.mixString.calls": 43,
         "priority.priorityForPiece.calls": 7,
         "reads.readPieceTableTextRange.calls": 98,
         "reads.splitsSurrogatePair.calls": 98,
         "reverseIndex.cloneReverseIndexNode.calls": 54,
         "reverseIndex.createReverseIndexNode.calls": 4,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 48,
-        "tree.cloneNode.calls": 98,
-        "tree.collectTextInRange.calls": 290,
+        "tree.cloneNode.calls": 147,
+        "tree.collectTextInRange.calls": 386,
         "tree.createNode.calls": 4
       },
       "random-insertions": {
@@ -45,14 +42,13 @@
         "buffers.sharesIndexedPrefix.calls": 48,
         "edits.snapBatchEditRanges.calls": 49,
         "edits.tryCoalesceInsert.calls": 49,
-        "priority.mixString.calls": 2057,
         "priority.priorityForPiece.calls": 294,
         "reads.readPieceTableTextRange.calls": 98,
         "reads.splitsSurrogatePair.calls": 98,
-        "reverseIndex.cloneReverseIndexNode.calls": 1542,
+        "reverseIndex.cloneReverseIndexNode.calls": 1493,
         "reverseIndex.createReverseIndexNode.calls": 147,
-        "tree.cloneNode.calls": 840,
-        "tree.collectTextInRange.calls": 623,
+        "tree.cloneNode.calls": 694,
+        "tree.collectTextInRange.calls": 508,
         "tree.createNode.calls": 147
       },
       "random-replacements": {
@@ -62,15 +58,14 @@
         "buffers.sharesIndexedPrefix.calls": 48,
         "edits.snapBatchEditRanges.calls": 97,
         "edits.tryCoalesceInsert.calls": 49,
-        "priority.mixString.calls": 3371,
         "priority.priorityForPiece.calls": 482,
         "reads.readPieceTableTextRange.calls": 191,
         "reads.splitsSurrogatePair.calls": 194,
-        "reverseIndex.cloneReverseIndexNode.calls": 3308,
+        "reverseIndex.cloneReverseIndexNode.calls": 3204,
         "reverseIndex.createReverseIndexNode.calls": 241,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 48,
-        "tree.cloneNode.calls": 1648,
-        "tree.collectTextInRange.calls": 1539,
+        "tree.cloneNode.calls": 1670,
+        "tree.collectTextInRange.calls": 1583,
         "tree.createNode.calls": 241
       },
       "eight-cursor-batches": {
@@ -80,14 +75,13 @@
         "buffers.sharesIndexedPrefix.calls": 48,
         "edits.snapBatchEditRanges.calls": 7,
         "edits.tryCoalesceInsert.calls": 49,
-        "priority.mixString.calls": 2057,
         "priority.priorityForPiece.calls": 294,
         "reads.readPieceTableTextRange.calls": 98,
         "reads.splitsSurrogatePair.calls": 98,
-        "reverseIndex.cloneReverseIndexNode.calls": 1420,
+        "reverseIndex.cloneReverseIndexNode.calls": 1478,
         "reverseIndex.createReverseIndexNode.calls": 147,
-        "tree.cloneNode.calls": 669,
-        "tree.collectTextInRange.calls": 474,
+        "tree.cloneNode.calls": 655,
+        "tree.collectTextInRange.calls": 466,
         "tree.createNode.calls": 147
       },
       "mixed-edit-churn": {
@@ -97,15 +91,14 @@
         "buffers.sharesIndexedPrefix.calls": 29,
         "edits.snapBatchEditRanges.calls": 77,
         "edits.tryCoalesceInsert.calls": 31,
-        "priority.mixString.calls": 2999,
         "priority.priorityForPiece.calls": 429,
         "reads.readPieceTableTextRange.calls": 151,
         "reads.splitsSurrogatePair.calls": 153,
-        "reverseIndex.cloneReverseIndexNode.calls": 3073,
+        "reverseIndex.cloneReverseIndexNode.calls": 2861,
         "reverseIndex.createReverseIndexNode.calls": 215,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 54,
-        "tree.cloneNode.calls": 1234,
-        "tree.collectTextInRange.calls": 1088,
+        "tree.cloneNode.calls": 1398,
+        "tree.collectTextInRange.calls": 1158,
         "tree.createNode.calls": 215
       },
       "large-paste-delete": {
@@ -115,15 +108,14 @@
         "buffers.sharesIndexedPrefix.calls": 3,
         "edits.snapBatchEditRanges.calls": 7,
         "edits.tryCoalesceInsert.calls": 4,
-        "priority.mixString.calls": 129,
         "priority.priorityForPiece.calls": 19,
         "reads.readPieceTableTextRange.calls": 13,
         "reads.splitsSurrogatePair.calls": 13,
-        "reverseIndex.cloneReverseIndexNode.calls": 37,
+        "reverseIndex.cloneReverseIndexNode.calls": 38,
         "reverseIndex.createReverseIndexNode.calls": 10,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 4,
-        "tree.cloneNode.calls": 34,
-        "tree.collectTextInRange.calls": 38,
+        "tree.cloneNode.calls": 33,
+        "tree.collectTextInRange.calls": 33,
         "tree.createNode.calls": 10
       },
       "lines-sequential-after-churn": {
@@ -135,7 +127,7 @@
         "buffers.sharesIndexedPrefix.calls": 2,
         "positions.lineStartOffset.calls": 131,
         "reads.readPieceTableTextRange.calls": 66,
-        "tree.collectTextInRange.calls": 673
+        "tree.collectTextInRange.calls": 637
       },
       "lines-random-after-churn": {
         "buffers.bufferLineIndex.retainedHits": 125,
@@ -146,11 +138,11 @@
         "buffers.sharesIndexedPrefix.calls": 2,
         "positions.lineStartOffset.calls": 130,
         "reads.readPieceTableTextRange.calls": 66,
-        "tree.collectTextInRange.calls": 673
+        "tree.collectTextInRange.calls": 671
       },
       "ranges-after-churn": {
         "reads.readPieceTableTextRange.calls": 66,
-        "tree.collectTextInRange.calls": 1612
+        "tree.collectTextInRange.calls": 1586
       },
       "offset-to-position": {
         "buffers.bufferLineIndex.retainedHits": 124,
@@ -159,7 +151,7 @@
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 523,
         "buffers.pushLineBreakOffset.typedArrayCopiedBytes": 0,
         "buffers.sharesIndexedPrefix.calls": 2,
-        "positions.lineStartOffset.calls": 10
+        "positions.lineStartOffset.calls": 11
       },
       "position-to-offset": {
         "buffers.bufferLineIndex.retainedHits": 126,
@@ -181,15 +173,14 @@
         "buffers.sharesIndexedPrefix.calls": 29,
         "edits.snapBatchEditRanges.calls": 77,
         "edits.tryCoalesceInsert.calls": 31,
-        "priority.mixString.calls": 2999,
         "priority.priorityForPiece.calls": 429,
         "reads.readPieceTableTextRange.calls": 151,
         "reads.splitsSurrogatePair.calls": 153,
-        "reverseIndex.cloneReverseIndexNode.calls": 3073,
+        "reverseIndex.cloneReverseIndexNode.calls": 2861,
         "reverseIndex.createReverseIndexNode.calls": 215,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 54,
-        "tree.cloneNode.calls": 1234,
-        "tree.collectTextInRange.calls": 1088,
+        "tree.cloneNode.calls": 1398,
+        "tree.collectTextInRange.calls": 1158,
         "tree.createNode.calls": 215
       },
       "anchor-resolution-after-churn": {}
@@ -200,14 +191,12 @@
         "buffers.extendBufferLineIndex.loopIterations": 40800,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 534513,
         "buffers.pushLineBreakOffset.typedArrayCopiedBytes": 267126,
-        "priority.mixString.calls": 15,
         "priority.priorityForPiece.calls": 3,
         "reverseIndex.createReverseIndexNode.calls": 2,
         "tree.createNode.calls": 2
       },
       "load-long-line": {
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 1305600,
-        "priority.mixString.calls": 15,
         "priority.priorityForPiece.calls": 3,
         "reverseIndex.createReverseIndexNode.calls": 2,
         "tree.createNode.calls": 2
@@ -220,11 +209,10 @@
         "buffers.PieceBufferChunkStore.extendTail.copiedArraySlots": 4587,
         "edits.snapBatchEditRanges.calls": 1530,
         "edits.tryCoalesceInsert.calls": 1530,
-        "priority.mixString.calls": 43,
         "priority.priorityForPiece.calls": 7,
         "reads.readPieceTableTextRange.calls": 3060,
         "reads.splitsSurrogatePair.calls": 3060,
-        "reverseIndex.cloneReverseIndexNode.calls": 1535,
+        "reverseIndex.cloneReverseIndexNode.calls": 3062,
         "reverseIndex.createReverseIndexNode.calls": 4,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 1529,
         "tree.cloneNode.calls": 4589,
@@ -238,14 +226,13 @@
         "buffers.sharesIndexedPrefix.calls": 1524,
         "edits.snapBatchEditRanges.calls": 1530,
         "edits.tryCoalesceInsert.calls": 1530,
-        "priority.mixString.calls": 64118,
         "priority.priorityForPiece.calls": 9160,
         "reads.readPieceTableTextRange.calls": 3060,
         "reads.splitsSurrogatePair.calls": 3060,
-        "reverseIndex.cloneReverseIndexNode.calls": 83766,
+        "reverseIndex.cloneReverseIndexNode.calls": 82140,
         "reverseIndex.createReverseIndexNode.calls": 4580,
-        "tree.cloneNode.calls": 51862,
-        "tree.collectTextInRange.calls": 39268,
+        "tree.cloneNode.calls": 48417,
+        "tree.collectTextInRange.calls": 37010,
         "tree.createNode.calls": 4580
       },
       "random-replacements": {
@@ -256,15 +243,14 @@
         "buffers.sharesIndexedPrefix.calls": 1526,
         "edits.snapBatchEditRanges.calls": 3013,
         "edits.tryCoalesceInsert.calls": 1530,
-        "priority.mixString.calls": 105273,
         "priority.priorityForPiece.calls": 15039,
         "reads.readPieceTableTextRange.calls": 6025,
         "reads.splitsSurrogatePair.calls": 6025,
-        "reverseIndex.cloneReverseIndexNode.calls": 184046,
+        "reverseIndex.cloneReverseIndexNode.calls": 177998,
         "reverseIndex.createReverseIndexNode.calls": 7520,
-        "reverseIndex.insertReverseIndexNode.replacementRecords": 1588,
-        "tree.cloneNode.calls": 108026,
-        "tree.collectTextInRange.calls": 90562,
+        "reverseIndex.insertReverseIndexNode.replacementRecords": 1587,
+        "tree.cloneNode.calls": 119495,
+        "tree.collectTextInRange.calls": 98926,
         "tree.createNode.calls": 7520
       },
       "eight-cursor-batches": {
@@ -275,14 +261,13 @@
         "buffers.sharesIndexedPrefix.calls": 1511,
         "edits.snapBatchEditRanges.calls": 191,
         "edits.tryCoalesceInsert.calls": 1526,
-        "priority.mixString.calls": 69209,
         "priority.priorityForPiece.calls": 9887,
         "reads.readPieceTableTextRange.calls": 3052,
         "reads.splitsSurrogatePair.calls": 3052,
-        "reverseIndex.cloneReverseIndexNode.calls": 104503,
+        "reverseIndex.cloneReverseIndexNode.calls": 98931,
         "reverseIndex.createReverseIndexNode.calls": 5326,
-        "tree.cloneNode.calls": 51077,
-        "tree.collectTextInRange.calls": 37879,
+        "tree.cloneNode.calls": 49263,
+        "tree.collectTextInRange.calls": 37243,
         "tree.createNode.calls": 4562,
         "tree.normalizePieceOrders.calls": 1529
       },
@@ -294,15 +279,14 @@
         "buffers.sharesIndexedPrefix.calls": 1026,
         "edits.snapBatchEditRanges.calls": 2490,
         "edits.tryCoalesceInsert.calls": 1026,
-        "priority.mixString.calls": 97433,
         "priority.priorityForPiece.calls": 13919,
         "reads.readPieceTableTextRange.calls": 4980,
         "reads.splitsSurrogatePair.calls": 4980,
-        "reverseIndex.cloneReverseIndexNode.calls": 180845,
+        "reverseIndex.cloneReverseIndexNode.calls": 168103,
         "reverseIndex.createReverseIndexNode.calls": 6960,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 1540,
-        "tree.cloneNode.calls": 92327,
-        "tree.collectTextInRange.calls": 71939,
+        "tree.cloneNode.calls": 91754,
+        "tree.collectTextInRange.calls": 71692,
         "tree.createNode.calls": 6960
       },
       "large-paste-delete": {
@@ -312,15 +296,14 @@
         "buffers.sharesIndexedPrefix.calls": 16,
         "edits.snapBatchEditRanges.calls": 33,
         "edits.tryCoalesceInsert.calls": 17,
-        "priority.mixString.calls": 4342,
         "priority.priorityForPiece.calls": 621,
         "reads.readPieceTableTextRange.calls": 66,
         "reads.splitsSurrogatePair.calls": 66,
-        "reverseIndex.cloneReverseIndexNode.calls": 4073,
+        "reverseIndex.cloneReverseIndexNode.calls": 4293,
         "reverseIndex.createReverseIndexNode.calls": 311,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 278,
-        "tree.cloneNode.calls": 1697,
-        "tree.collectTextInRange.calls": 561,
+        "tree.cloneNode.calls": 1619,
+        "tree.collectTextInRange.calls": 552,
         "tree.createNode.calls": 311
       },
       "lines-sequential-after-churn": {
@@ -331,7 +314,7 @@
         "buffers.pushLineBreakOffset.typedArrayCopiedBytes": 0,
         "positions.lineStartOffset.calls": 6120,
         "reads.readPieceTableTextRange.calls": 3060,
-        "tree.collectTextInRange.calls": 42677
+        "tree.collectTextInRange.calls": 43216
       },
       "lines-random-after-churn": {
         "buffers.bufferLineIndex.retainedHits": 6058,
@@ -341,11 +324,11 @@
         "buffers.pushLineBreakOffset.typedArrayCopiedBytes": 0,
         "positions.lineStartOffset.calls": 6120,
         "reads.readPieceTableTextRange.calls": 3060,
-        "tree.collectTextInRange.calls": 48388
+        "tree.collectTextInRange.calls": 47016
       },
       "ranges-after-churn": {
         "reads.readPieceTableTextRange.calls": 3060,
-        "tree.collectTextInRange.calls": 63000
+        "tree.collectTextInRange.calls": 61675
       },
       "offset-to-position": {
         "buffers.bufferLineIndex.retainedHits": 6078,
@@ -353,7 +336,7 @@
         "buffers.extendBufferLineIndex.loopIterations": 15,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 3656,
         "buffers.pushLineBreakOffset.typedArrayCopiedBytes": 0,
-        "positions.lineStartOffset.calls": 172
+        "positions.lineStartOffset.calls": 180
       },
       "position-to-offset": {
         "buffers.bufferLineIndex.retainedHits": 6089,
@@ -375,15 +358,14 @@
         "buffers.sharesIndexedPrefix.calls": 1026,
         "edits.snapBatchEditRanges.calls": 2490,
         "edits.tryCoalesceInsert.calls": 1026,
-        "priority.mixString.calls": 97433,
         "priority.priorityForPiece.calls": 13919,
         "reads.readPieceTableTextRange.calls": 4980,
         "reads.splitsSurrogatePair.calls": 4980,
-        "reverseIndex.cloneReverseIndexNode.calls": 180845,
+        "reverseIndex.cloneReverseIndexNode.calls": 168103,
         "reverseIndex.createReverseIndexNode.calls": 6960,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 1540,
-        "tree.cloneNode.calls": 92327,
-        "tree.collectTextInRange.calls": 71939,
+        "tree.cloneNode.calls": 91754,
+        "tree.collectTextInRange.calls": 71692,
         "tree.createNode.calls": 6960
       },
       "anchor-resolution-after-churn": {}
