@@ -50,8 +50,8 @@ A `Piece` refers to a slice of a source buffer through `buffer`, `start`, and `l
 
 There are three distinct coordinate systems:
 
-| Coordinate      | Meaning                                                                                                                                  |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Coordinate      | Meaning                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | Document offset | Position in the current **visible**, LF-normalized text, measured in UTF-16 code units.                                                  |
 | Buffer offset   | Position in a particular source buffer. Anchors use this instead of a shifting document offset.                                          |
 | Piece order     | Numeric label locating a piece in the tree's full sequence, including tombstones. It is not a character offset or a permanent anchor ID. |
@@ -62,25 +62,25 @@ The distinction lets the engine move through visible text while retaining the id
 
 The main tree combines implicit-position navigation with explicit order labels. Offset operations descend using visible subtree lengths; anchor resolution uses piece order to recover a visible prefix. Each node maintains these summaries:
 
-| Summary                              | What it counts                                                          |
-| ------------------------------------ | ----------------------------------------------------------------------- |
-| `subtreeLength`                      | Source-slice lengths, including tombstones.                             |
-| `subtreeVisibleLength`               | Only lengths of visible pieces. This determines document offsets.       |
-| `subtreePieces`                      | All stored pieces, including tombstones.                                |
-| `subtreeLineBreaks`                  | Only line breaks in visible pieces.                                     |
+| Summary                            | What it counts                                                        |
+| ---------------------------------- | --------------------------------------------------------------------- |
+| `subtreeLength`                    | Source-slice lengths, including tombstones.                            |
+| `subtreeVisibleLength`             | Only lengths of visible pieces. This determines document offsets.      |
+| `subtreePieces`                    | All stored pieces, including tombstones.                               |
+| `subtreeLineBreaks`                | Only line breaks in visible pieces.                                    |
 | `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order interval, used to skip or summarize whole subtrees. |
 
 `splitByVisibleOffset()` and `merge()` provide the sequence-editing machinery. They copy affected nodes and recompute summaries on the way back up. The tree has no parent pointers or red-black color bookkeeping.
 
-Order labels normally leave room between neighbors. New pieces receive labels within that gap; when the gap becomes too small, the engine relabels the sequence and rebuilds the reverse index for the new snapshot. Anchors do not store these labels, so relabeling does not require rewriting anchor objects.
+Order labels normally leave room between neighbors: for example, an insertion between `1024` and `2048` can receive `1536`. New pieces receive labels within that gap; when the gap becomes too small, the engine relabels the sequence and rebuilds the reverse index for the new snapshot. Anchors do not store these labels, so relabeling does not require rewriting anchor objects.
 
-Priorities are **deterministic and seedable**, rather than sampled with `Math.random()`. New-node priorities come from a hash of the seed, piece metadata, and index kind. Copied nodes retain their priorities. A split can give its new pieces different priorities, so the split path repairs the heap relationship through merging when necessary. This makes tree shapes reproducible for a given input, edit sequence, and seed, without promising a worst-case balanced height.
+Priorities are **deterministic and seedable**, rather than sampled with `Math.random()`. New-node priorities come from a hash of the seed, piece metadata, and index kind. Copied nodes retain their priorities. A split can give its new pieces different priorities, so the split path repairs the heap relationship through merging when necessary. This makes tree shapes reproducible for a given input, edit sequence, and seed, without promising a worst-case balanced height. The snapshot creation option `prioritySeed` selects the seed; its default is `0`.
 
 Implementation: [`tree.ts`](src/tree.ts), [`orders.ts`](src/orders.ts), and [`priority.ts`](src/priority.ts).
 
 ### A persistent reverse-index treap
 
-The second tree is keyed by **`(buffer, start)`**, not document position. Its entries retain the corresponding piece and its current order label.
+The second tree is keyed by **`(buffer, start)`**, not document position. Its entries retain the corresponding piece and its current order label. Unlike the sequence tree's split/merge path, this index uses keyed insertion with copy-on-write rotations and keyed deletion with merging.
 
 An anchor lookup finds the source slice covering the anchor's buffer offset, with left/right bias deciding boundary ownership. The main tree then turns the entry's order into a visible document offset. Splits, insertions, coalescing, and deletions update both indexes in the same returned snapshot.
 
@@ -90,7 +90,7 @@ This is what makes durable positions practical without storing parent pointers o
 
 The original document is retained as **one source string**. Inserted text is divided into append chunks of at most **16,384 UTF-16 code units**; chunk boundaries avoid splitting surrogate pairs. The chunk store groups string references into pages of **1,024 entries**.
 
-Appending or extending a tail copies the outer page-reference array and the affected tail page, while sharing untouched pages. It does not clone a flat map containing every buffer entry. Extending a chunk creates a new string in the new store version, so older snapshots still see their older chunk text.
+Appending or extending a tail copies the outer page-reference array and the affected tail page, while sharing untouched pages. It does not clone a flat map containing every buffer entry, but the outer array copy still scales with the number of pages. Extending a chunk creates a new string in the new store version, so older snapshots still see their older chunk text.
 
 Sequential typing has a dedicated coalescing path. An insertion can extend the existing piece when that piece ends at the insertion point, refers to the newest non-original chunk, reaches the chunk's end, and still fits within the chunk limit. Both trees receive the updated piece. Eligible typing runs therefore do not create one piece per keystroke.
 
@@ -219,7 +219,7 @@ Hosts reporting edits to undo, change listeners, or incremental consumers can us
 
 ## Reading and snapshot diffs
 
-Range reads materialize only the requested visible interval. Chunk and piece visitors expose visible ranges without first flattening the document. A stateful walker retains a traversal stack, skips wholly invisible subtrees, and supports seeking, chunk traversal, and code-unit reads. Its `codePoint()` can join a surrogate pair across a piece boundary; advancing still uses UTF-16 code units.
+Range reads materialize only the requested visible interval. Chunk and piece visitors expose visible ranges without first flattening the document. A stateful walker retains a traversal stack, skips wholly invisible subtrees, and supports seeking, chunk traversal, and code-unit reads. Its `codePoint()` can join a surrogate pair across a piece boundary; advancing still uses UTF-16 code units. Crossing piece boundaries still involves traversal and can encounter interleaved tombstones, even though wholly invisible subtrees can be skipped.
 
 `diffPieceTableSnapshots(previous, next)` returns **one contiguous replacement**, or `null` for equal text. It finds a common prefix and a non-overlapping common suffix, scanning the suffix in 4,096-code-unit windows. Only the replacement payload is materialized as the returned edit's text; neither full document must be flattened first.
 
@@ -229,7 +229,7 @@ This is a text comparison with snapshot/root-identity shortcuts, **not** a multi
 
 The unit that matters for tree work is **stored pieces, including tombstones**, not just current text length. Navigation follows the actual tree height; seeded hash priorities do not provide a hard worst-case height bound.
 
-Retaining a snapshot is constant-time, but keeping many versions is not constant-memory. Editing also pays for inserted text, affected pieces, reverse-index updates, and buffer-store copies. Deleting a large piece range visits those pieces to mark them invisible. Exhausting an order gap triggers whole-tree relabeling and reverse-index reconstruction. Dropping an undo entry does not itself compact tombstones out of the current snapshot.
+Retaining a snapshot is constant-time, but keeping many versions is not constant-memory. Editing also pays for inserted text, affected pieces, reverse-index updates, and buffer-store copies. Deleting a large piece range visits those pieces to mark them invisible. Exhausting an order gap triggers whole-tree relabeling and reverse-index reconstruction. Dropping an undo entry does not itself compact tombstones out of the current snapshot. A cold newline index also pays for scanning its source text before indexed lookups can reuse the result. Even a short visible document can retain a large history in its pieces and source chunks.
 
 The main invariants are that piece slices stay within their source buffers, piece order is strictly increasing, both trees satisfy their priority heap relationship, cached summaries match their subtrees, and the reverse index describes the same pieces and orders as its snapshot's main tree. Old versions must continue to read their original text.
 
