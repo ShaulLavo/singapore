@@ -23,7 +23,7 @@ export {
   resolveAnchor,
   streamPieceTablePieces,
   streamPieceTableTextChunks,
-} from '../pieceTable'
+} from '@singapore-editor/textbuffer'
 export {
   createDocumentSession,
   acquireDocumentMutationLease,
@@ -48,7 +48,7 @@ export {
   subscribeDocumentMutationLeaseState,
 } from '../documentSession'
 export { createDocumentLogicalRevisionScope } from '../editor/editChain'
-export { documentTextRoundTripStatus } from '../pieceTable/lineEndings'
+export { documentTextRoundTripStatus } from '@singapore-editor/textbuffer/internal/lineEndings'
 export { createDocumentTextSnapshot, createStringTextSnapshot } from '../documentTextSnapshot'
 export {
   characterClassAt,
@@ -79,7 +79,7 @@ export type {
   PieceTableWalkerChunk,
   Point,
   ResolvedAnchor,
-} from '../pieceTable'
+} from '@singapore-editor/textbuffer'
 export type {
   AcquireDocumentMutationLeaseResult,
   BeginReverseDocumentTransactionSequenceResult,
@@ -132,7 +132,7 @@ export type {
 export type {
   DocumentTextRoundTripIssue,
   DocumentTextRoundTripStatus,
-} from '../pieceTable/lineEndings'
+} from '@singapore-editor/textbuffer/internal/lineEndings'
 export type { DocumentTextSnapshot, TextSnapshot } from '../documentTextSnapshot'
 export type { SelectionAffinity } from '../selections'
 export type { EditorDocument, TextEdit } from '../tokens'

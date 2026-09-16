@@ -1,7 +1,8 @@
 # Textbuffer extraction
 
 The storage implementation lives in `packages/textbuffer`, which can build and test outside this workspace.
-The former `packages/editor/src/pieceTable` modules are compatibility re-exports, not a second implementation.
+Editor source, tests, and benchmarks import `@singapore-editor/textbuffer` directly.
+The old editor-local piece-table directory and all compatibility re-exports have been removed.
 The editor depends on `@singapore-editor/textbuffer` via `workspace:*` during this review stage.
 
 Display measurement indexes now live in an editor-owned WeakMap keyed by the persistent document lineage.

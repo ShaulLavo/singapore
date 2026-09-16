@@ -1,5 +1,5 @@
 import type { TextContent } from './textContent'
-import type { Point } from './pieceTable/pieceTableTypes'
+import type { Point } from '@singapore-editor/textbuffer'
 import { type MeasuredText } from './textMeasurements'
 
 declare const tabPointBrand: unique symbol

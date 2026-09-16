@@ -1,7 +1,7 @@
 import type { DocumentSession, DocumentSessionChange } from '../documentSession'
 import type { DocumentEditChain, DocumentSyncPoint } from './editChain'
 import { defineLazyFullTextProperty, type DocumentTextSnapshot } from '../documentTextSnapshot'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type {
   EditorHighlightResult,
   EditorHighlighterSession,

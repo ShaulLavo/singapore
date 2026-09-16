@@ -27,7 +27,7 @@ The user sees a current match count and visible highlights as results become ava
   deferred re-search, and a maximum deferral during sustained typing.
 - Listing and painting currently cap matches at 19,999. Navigation scans beyond the cap,
   and Replace All deliberately requests a separate, much larger limit.
-- [The walker](../packages/editor/src/pieceTable/walker.ts) and
+- [The walker](../packages/textbuffer/src/walker.ts) and
   [edit chain](../packages/editor/src/editor/editChain.ts) are shipped prerequisites.
   The wishlist's flat-string-only search description is stale.
 

@@ -60,7 +60,7 @@
 Treap-backed piece table with persistent immutable snapshots.
 
 See: [Storage: Piece Table](docs/storage/piece-table.md) for full design.
-Implementation: `packages/editor/src/pieceTable/`
+Implementation: `packages/textbuffer/src/`
 
 ---
 

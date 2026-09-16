@@ -1,7 +1,13 @@
 import { createFoldMap } from '../foldMap'
-import { anchorAfter, anchorBefore, resolveAnchor } from '../pieceTable/anchors'
-import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { offsetToPoint } from '../pieceTable/positions'
+import {
+  anchorAfter,
+  anchorBefore,
+  offsetToPoint,
+  type PieceTableAnchor,
+  type PieceTableSnapshot,
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
+
 import type { FoldRange } from '../syntax/session'
 import type {
   VirtualizedFoldMarker,

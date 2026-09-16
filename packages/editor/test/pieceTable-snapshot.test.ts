@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { createInitialBuffers, createOriginalPiece } from '../src/pieceTable/buffers.ts'
-import { PIECE_ORDER_STEP } from '../src/pieceTable/orders.ts'
-import { buildReverseIndex } from '../src/pieceTable/reverseIndex.ts'
 import {
-  createPieceTableSnapshot,
+  createInitialBuffers,
+  createOriginalPiece,
+} from '@singapore-editor/textbuffer/internal/buffers'
+import { PIECE_ORDER_STEP } from '@singapore-editor/textbuffer/internal/orders'
+import { buildReverseIndex } from '@singapore-editor/textbuffer/internal/reverseIndex'
+import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
+import {
   createSnapshot,
   createSnapshotWithIndex,
-} from '../src/pieceTable/snapshot.ts'
-import { createNode, flattenNodes } from '../src/pieceTable/tree.ts'
+} from '@singapore-editor/textbuffer/internal/snapshot'
+import { createNode, flattenNodes } from '@singapore-editor/textbuffer/internal/tree'
 
 describe('piece table snapshots', () => {
   it('creates empty and non-empty initial snapshots', () => {

@@ -47,7 +47,7 @@ import {
   setEditorTokenIndex,
 } from '../src/editor/tokenIndex'
 import { createStringTextSnapshot, type TextSnapshot } from '../src/documentTextSnapshot'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
+import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type { FoldRange } from '../src/syntax'
 import type { EditorToken } from '../src/tokens'
 

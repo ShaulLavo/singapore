@@ -35,7 +35,11 @@ import {
   type EditorTextBuffer,
   type TextEdit,
 } from '../src/public/document'
-import { pieceTableDocumentText, UTF8_BYTE_ORDER_MARK } from '../src/pieceTable'
+import {
+  type PieceTableAnchor,
+  pieceTableDocumentText,
+  UTF8_BYTE_ORDER_MARK,
+} from '@singapore-editor/textbuffer'
 import { exceedsHeapOperationBudget, MAX_HEAP_OPERATION_LENGTH } from '../src/documentSession'
 import { EditorEventSource, type EditorEventSubscription } from '../src/editor/emitter'
 import {
@@ -44,7 +48,7 @@ import {
   resolveSelection,
   type SelectionSet,
 } from '../src/selections'
-import type { Anchor as PieceTableAnchor } from '../src/pieceTable/pieceTableTypes'
+
 import { createVisibleEditor } from './factories/visibleEditor'
 
 // The lines a view would paint: line starts from the piece table, line ends as

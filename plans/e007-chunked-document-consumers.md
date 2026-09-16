@@ -19,7 +19,7 @@ The actual target is measured live memory and input latency, not a count of meth
 
 - [Text snapshots](../packages/editor/src/documentTextSnapshot.ts) already support `readRange`
   and `forEachTextChunk`. They retain explicitly supplied text, but do not cache new materializations.
-- [The piece walker](../packages/editor/src/pieceTable/walker.ts) is implemented and tested.
+- [The piece walker](../packages/textbuffer/src/walker.ts) is implemented and tested.
   It is not work in progress as the wishlist claims.
 - [Find](../packages/find/src/search.ts) already reads line ranges through `FindTextSource`.
   Multiline literals and regex patterns not proven line-safe still request larger ranges.

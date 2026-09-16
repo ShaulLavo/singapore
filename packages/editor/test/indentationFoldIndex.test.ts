@@ -4,8 +4,12 @@ import {
   createStringTextSnapshot,
   type TextSnapshot,
 } from '../src/documentTextSnapshot'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
-import { insertIntoPieceTable, deleteFromPieceTable } from '../src/pieceTable/edits'
+import {
+  createPieceTableSnapshot,
+  deleteFromPieceTable,
+  insertIntoPieceTable,
+} from '@singapore-editor/textbuffer'
+
 import {
   createDocumentSession,
   createEditorTextBuffer,

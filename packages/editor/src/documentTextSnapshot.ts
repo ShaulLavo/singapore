@@ -1,18 +1,24 @@
 import { getDocumentTextSourceIndex } from './documentTextSourceCache'
-import type { PieceTableSnapshot } from './pieceTable/pieceTableTypes'
-import { forEachTextInRange, getSubtreeLineBreaks } from './pieceTable/tree'
-import { lineStartOffset, offsetToPoint } from './pieceTable/positions'
+import {
+  forEachPieceTableTextChunk,
+  materializePieceTableFullText,
+  offsetToPoint,
+  type PieceTableSnapshot,
+  readPieceTableTextRange,
+} from '@singapore-editor/textbuffer'
+import {
+  forEachTextInRange,
+  getSubtreeLineBreaks,
+} from '@singapore-editor/textbuffer/internal/tree'
+import { lineStartOffset } from '@singapore-editor/textbuffer/internal/positions'
+
 import {
   measureString,
   TextMeasurements,
   TextSourceIndex,
   type MeasuredTextRange,
 } from './textMeasurements'
-import {
-  forEachPieceTableTextChunk,
-  materializePieceTableFullText,
-  readPieceTableTextRange,
-} from './pieceTable/reads'
+
 import {
   measureEditorPerformance,
   recordEditorPerformanceDiagnostic,

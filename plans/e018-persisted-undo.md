@@ -21,7 +21,7 @@ Recovered unsaved text remains an in-memory dirty document until the host's ordi
   inverse edits, snapshot references, anchored selections, and metadata. These are not a portable JSON schema.
 - [public/document.ts](../packages/editor/src/public/document.ts) exports buffer and prepared-transaction APIs.
   It does not expose a persisted history format or a disk-history lifecycle.
-- [piece table types](../packages/editor/src/pieceTable/pieceTableTypes.ts) keep line endings and BOM metadata.
+- [piece table types](../packages/textbuffer/src/pieceTableTypes.ts) keep line endings and BOM metadata.
   Document text is normalized on ingestion, so raw file bytes and internal text need distinct integrity checks.
 - Platform's [workspace document service](../../platform/apps/web/src/features/editor/state/workspace-document-service.ts)
   owns retained buffers and views. Its [runtime](../../platform/apps/web/src/features/editor/state/runtime.ts)

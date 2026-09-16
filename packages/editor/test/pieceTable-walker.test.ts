@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { BUFFER_CHUNK_SIZE } from '../src/pieceTable/buffers.ts'
-import { deleteFromPieceTable, insertIntoPieceTable } from '../src/pieceTable/edits.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
-import { materializePieceTableFullText } from '../src/pieceTable/reads.ts'
-import type { PieceTableTreeSnapshot } from '../src/pieceTable/pieceTableTypes.ts'
-import { createPieceTableWalker } from '../src/pieceTable/walker.ts'
+import { BUFFER_CHUNK_SIZE } from '@singapore-editor/textbuffer/internal/buffers'
+import {
+  createPieceTableSnapshot,
+  createPieceTableWalker,
+  deleteFromPieceTable,
+  insertIntoPieceTable,
+  materializePieceTableFullText,
+} from '@singapore-editor/textbuffer'
+import type { PieceTableTreeSnapshot } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
 const createFragmentedSnapshot = (): { snapshot: PieceTableTreeSnapshot; text: string } => {
   let snapshot = createPieceTableSnapshot('the quick brown fox jumps over the lazy dog')

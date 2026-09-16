@@ -5,8 +5,8 @@ import {
   assignPieceOrders,
   PIECE_ORDER_MIN_GAP,
   PIECE_ORDER_STEP,
-} from '../src/pieceTable/orders.ts'
-import type { Piece } from '../src/pieceTable/pieceTableTypes.ts'
+} from '@singapore-editor/textbuffer/internal/orders'
+import type { Piece } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
 describe('piece table order allocation', () => {
   it('allocates stable order steps when either side is open', () => {

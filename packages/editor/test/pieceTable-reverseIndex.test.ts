@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { insertIntoPieceTable } from '../src/pieceTable/edits.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
+import { createPieceTableSnapshot, insertIntoPieceTable } from '@singapore-editor/textbuffer'
 import {
   buildReverseIndex,
   compareReverseKeys,
@@ -9,8 +8,8 @@ import {
   lookupReverseIndex,
   reversePredecessor,
   reverseSuccessor,
-} from '../src/pieceTable/reverseIndex.ts'
-import { flattenNodes } from '../src/pieceTable/tree.ts'
+} from '@singapore-editor/textbuffer/internal/reverseIndex'
+import { flattenNodes } from '@singapore-editor/textbuffer/internal/tree'
 
 describe('piece table reverse index', () => {
   it('orders reverse keys by buffer then start offset', () => {

@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import { createDocumentTextSnapshot } from '../src/documentTextSnapshot.ts'
 import { IndentationFoldIndex } from '../src/editor/indentationFoldIndex.ts'
 import { createError } from '../src/logging/evlog.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
+import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 
 const depth = benchmarkDepth(process.argv)
 const outputPath = optionValue(process.argv, '--output')

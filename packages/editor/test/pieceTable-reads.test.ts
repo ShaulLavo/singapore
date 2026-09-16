@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest'
 
-import { insertIntoPieceTable } from '../src/pieceTable/edits.ts'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable.ts'
 import {
-  ensureValidRange,
+  createPieceTableSnapshot,
   forEachPieceTableTextChunk,
   getPieceTableLength,
-  getPieceTableOriginalText,
+  insertIntoPieceTable,
   materializePieceTableFullText,
   readPieceTableTextRange,
   streamPieceTablePieces,
-} from '../src/pieceTable/reads.ts'
+} from '@singapore-editor/textbuffer'
+import {
+  ensureValidRange,
+  getPieceTableOriginalText,
+} from '@singapore-editor/textbuffer/internal/reads'
 
 describe('piece table reads', () => {
   it('reads snapshot length, original text, full text, and ranges', () => {

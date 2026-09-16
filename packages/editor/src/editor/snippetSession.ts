@@ -1,5 +1,11 @@
-import { anchorAfter, anchorBefore, resolveAnchor } from '../pieceTable/anchors'
-import type { Anchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import {
+  anchorAfter,
+  anchorBefore,
+  type PieceTableAnchor as Anchor,
+  type PieceTableSnapshot,
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
+
 import type { TextEdit } from '../tokens'
 
 export type SnippetStopRange = {

@@ -134,9 +134,15 @@ import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
 import type { InjectedTextRow } from '../displayTransforms'
-import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { anchorAt, resolveAnchor } from '../pieceTable/anchors'
-import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
+import {
+  anchorAt,
+  offsetToPoint,
+  type PieceTableAnchor,
+  type PieceTableSnapshot,
+  pointToOffset,
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
+
 import type { TextOffsetRange } from '../textRanges'
 import {
   EDITOR_PASTE_HANDLER,

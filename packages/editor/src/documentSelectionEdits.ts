@@ -1,13 +1,15 @@
 import { normalizeTabSize, visualColumnLength } from './displayTransforms'
 import { previousDeleteBoundary } from './graphemes'
-import { applyBatchToPieceTable } from './pieceTable/edits'
-import { offsetToPoint, pointToOffset } from './pieceTable/positions'
-import { readPieceTableTextRange } from './pieceTable/reads'
-import type {
-  Anchor as PieceTableAnchor,
-  PieceTableEdit,
-  PieceTableSnapshot,
-} from './pieceTable/pieceTableTypes'
+import {
+  applyBatchToPieceTable,
+  offsetToPoint,
+  type PieceTableAnchor,
+  type PieceTableEdit,
+  type PieceTableSnapshot,
+  pointToOffset,
+  readPieceTableTextRange,
+} from '@singapore-editor/textbuffer'
+
 import {
   createAnchorSelection,
   createSelectionSet,

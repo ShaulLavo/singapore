@@ -2,16 +2,16 @@ import { performance } from 'node:perf_hooks'
 
 import {
   createPieceTableSnapshot,
+  createPieceTableWalker,
   deleteFromPieceTable,
+  diffPieceTableSnapshots,
   insertIntoPieceTable,
   materializePieceTableFullText,
+  type PieceTableSnapshot,
   pieceTableSnapshotsHaveSameText,
   readPieceTableTextRange,
   streamPieceTableTextChunks,
-} from '../src/pieceTable'
-import type { PieceTableSnapshot } from '../src/pieceTable'
-import { createPieceTableWalker } from '../src/pieceTable/walker'
-import { diffPieceTableSnapshots } from '../src/pieceTable/diff'
+} from '@singapore-editor/textbuffer'
 
 type Sample = {
   label: string

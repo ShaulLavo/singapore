@@ -22,8 +22,8 @@ Finish with a measured adoption or rejection decision before the editor depends 
   string and shared UTF-16 payloads, with ordinary per-worker `Map` caches.
 - [Sent-chunk tracking](../packages/tree-sitter/src/treeSitter/sourceChunkRetention.ts) uses
   per-document maps of chunk ID to length. It is not content-addressed deduplication.
-- [Text buffers](../packages/editor/src/pieceTable/buffers.ts) and
-  [piece types](../packages/editor/src/pieceTable/pieceTableTypes.ts) are JavaScript data structures.
+- [Text buffers](../packages/textbuffer/src/buffers.ts) and
+  [piece types](../packages/textbuffer/src/pieceTableTypes.ts) are JavaScript data structures.
   No SAB allocator or concurrent map is implemented there.
 - E009 supplies the transport cost and actual channel-capability evidence that justifies this experiment.
 

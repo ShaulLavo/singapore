@@ -28,12 +28,19 @@ import {
 import type { TextEdit } from './tokens'
 import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
-import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from './pieceTable/pieceTableTypes'
-import { applyBatchToPieceTable, snapBatchEditRanges } from './pieceTable/edits'
-import { diffPieceTableSnapshots } from './pieceTable/diff'
-import { readPieceTableTextRange, pieceTableSnapshotsHaveSameText } from './pieceTable/reads'
-import { createPieceTableSnapshot } from './pieceTable/snapshot'
-import { normalizeDocumentText, normalizeLineEndings } from './pieceTable/lineEndings'
+import {
+  applyBatchToPieceTable,
+  createPieceTableSnapshot,
+  diffPieceTableSnapshots,
+  normalizeDocumentText,
+  normalizeLineEndings,
+  type PieceTableAnchor,
+  type PieceTableSnapshot,
+  pieceTableSnapshotsHaveSameText,
+  readPieceTableTextRange,
+  snapBatchEditRanges,
+} from '@singapore-editor/textbuffer'
+
 import {
   DocumentEditChain,
   type DocumentChangesSinceSyncPoint,

@@ -50,7 +50,7 @@ anchor can resolve to the same offset while the selection affinity changes, and 
 not merge affinity-distinct carets merely because their anchors resolve together. See
 [Selections & Undo](../editing/selections-and-undo.md#caret-affinity).
 
-**Reference:** Treap walk and buffer structure in `packages/editor/src/pieceTable/pieceTable.ts`. Piece type in `packages/editor/src/pieceTable/pieceTableTypes.ts`.
+**Reference:** Treap walk and buffer structure in `packages/textbuffer/src/pieceTable.ts`. Piece type in `packages/textbuffer/src/pieceTableTypes.ts`.
 
 ---
 
@@ -104,7 +104,7 @@ Persistent via structural sharing (path copying). Each edit produces a new root.
 
 ### 2. Enriched persistent treap (prefix sums)
 
-Treap enriched with `subtreeVisibleLength` aggregates, maintained in the same aggregate function as `subtreeLength` (see `packages/editor/src/pieceTable/pieceTable.ts`). For visible pieces it contributes `piece.length`; for invisible pieces it contributes `0`.
+Treap enriched with `subtreeVisibleLength` aggregates, maintained in the same aggregate function as `subtreeLength` (see `packages/textbuffer/src/pieceTable.ts`). For visible pieces it contributes `piece.length`; for invisible pieces it contributes `0`.
 
 Serves as both ordered piece container and prefix-sum structure. No Fenwick tree needed.
 

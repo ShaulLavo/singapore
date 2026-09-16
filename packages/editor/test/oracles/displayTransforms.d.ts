@@ -1,4 +1,4 @@
-import type { Point } from '../../src/pieceTable/pieceTableTypes'
+import type { Point } from '@singapore-editor/textbuffer'
 import { type MeasuredText, type TextMeasurements } from '../../src/textMeasurements'
 declare const tabPointBrand: unique symbol
 declare const wrapPointBrand: unique symbol

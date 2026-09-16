@@ -30,8 +30,8 @@ line endings, and edits retain the existing surrogate-boundary repair behavior. 
 changes ownership, not tree balancing, tombstones, reverse indexes, or anchor semantics.
 
 `/debug` exposes opt-in inspection. `/diagnostics` exposes a lazy, realm-wide diagnostic sink,
-disabled by default. `/internal/*` is a transitional, unstable integration surface for Singapore;
-new consumers should use the main entry point. Hosts may key WeakMap sidecars by
+disabled by default. `/internal/*` exposes implementation modules for tightly coupled integration and tests;
+these are not a stable public API. Ordinary consumers use the main entry point directly. Hosts may key WeakMap sidecars by
 `snapshot.buffers.identity`, which identifies a document lineage, not an individual version.
 Buffer IDs may be reused by divergent versions; a sidecar must also validate the exact text.
 

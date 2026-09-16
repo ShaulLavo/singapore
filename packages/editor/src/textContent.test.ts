@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDocumentTextSnapshot, measureTextSnapshotRange } from './documentTextSnapshot'
-import { createPieceTableSnapshot, insertIntoPieceTable } from './pieceTable/pieceTable'
+import { createPieceTableSnapshot, insertIntoPieceTable } from '@singapore-editor/textbuffer'
 import { RangeText, sliceTextContent } from './textContent'
 import { TextMeasurements } from './textMeasurements'
 

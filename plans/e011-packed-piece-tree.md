@@ -18,14 +18,14 @@ A negative result leaves the production representation alone.
 
 ## Current code
 
-- [Piece tree types](../packages/editor/src/pieceTable/pieceTableTypes.ts) store object links,
+- [Piece tree types](../packages/textbuffer/src/pieceTableTypes.ts) store object links,
   floating-point order values, deterministic priorities, piece records, and cached aggregates.
-- [Tree operations](../packages/editor/src/pieceTable/tree.ts) clone paths before changes.
-  [Order allocation](../packages/editor/src/pieceTable/orders.ts) uses fractional numeric gaps.
-- [The reverse index](../packages/editor/src/pieceTable/reverseIndex.ts) is another persistent tree.
+- [Tree operations](../packages/textbuffer/src/tree.ts) clone paths before changes.
+  [Order allocation](../packages/textbuffer/src/orders.ts) uses fractional numeric gaps.
+- [The reverse index](../packages/textbuffer/src/reverseIndex.ts) is another persistent tree.
   Packing only the forward tree leaves substantial metadata and anchor work unchanged.
-- [Buffers](../packages/editor/src/pieceTable/buffers.ts) keep LF offset indexes beside text.
-  [The walker](../packages/editor/src/pieceTable/walker.ts) currently traverses object nodes.
+- [Buffers](../packages/textbuffer/src/buffers.ts) keep LF offset indexes beside text.
+  [The walker](../packages/textbuffer/src/walker.ts) currently traverses object nodes.
 - [Public document exports](../packages/editor/src/public/document.ts) and
   [debug exports](../packages/editor/src/debug.ts) need inspection for representation exposure.
   Do not promise an internal swap before checking all consumers.

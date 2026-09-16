@@ -52,7 +52,7 @@ Extend treap aggregates to track newline counts. O(log n) conversion.
 
 **Piece-level:** Each Piece gains `lineBreaks` field (computed at creation by scanning buffer slice).
 
-**Treap-level:** Each node gains `subtreeLineBreaks`, maintained in the same aggregate pattern as `subtreeLength` (see `packages/editor/src/pieceTable/pieceTable.ts`).
+**Treap-level:** Each node gains `subtreeLineBreaks`, maintained in the same aggregate pattern as `subtreeLength` (see `packages/textbuffer/src/pieceTable.ts`).
 
 ### offsetToPoint
 

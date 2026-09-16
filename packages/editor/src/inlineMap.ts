@@ -1,4 +1,13 @@
-import { anchorAfter, anchorBefore, resolveAnchor } from './pieceTable/anchors'
+import {
+  anchorAfter,
+  anchorBefore,
+  offsetToPoint,
+  type PieceTableAnchor,
+  type PieceTableEdit,
+  type PieceTableSnapshot,
+  type Point,
+  resolveAnchor,
+} from '@singapore-editor/textbuffer'
 import {
   createInlineRow,
   type InlineCursorStops,
@@ -11,13 +20,7 @@ import {
   sourceColumnToInlineColumn,
   type TransformBias,
 } from './displayTransforms'
-import type {
-  Anchor as PieceTableAnchor,
-  PieceTableEdit,
-  PieceTableSnapshot,
-  Point,
-} from './pieceTable/pieceTableTypes'
-import { offsetToPoint } from './pieceTable/positions'
+
 import type { TextOffsetRange } from './textRanges'
 
 declare const inlinePointBrand: unique symbol

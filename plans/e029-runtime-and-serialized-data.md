@@ -20,7 +20,7 @@ source descriptor may also depend on chunks the receiving worker already holds.
 
 ## Current code
 
-[Piece-table types](../packages/editor/src/pieceTable/pieceTableTypes.ts) describe a persistent
+[Piece-table types](../packages/textbuffer/src/pieceTableTypes.ts) describe a persistent
 tree, reverse index, chunk store, anchors, and lazy buffer line indexes. These structures carry
 ownership and identity rules beyond a flat record of visible document text.
 
@@ -36,7 +36,7 @@ and shared UTF-16 buffers. Descriptors can omit previously sent chunks through `
 that is distinct from parser trees and worker-local input caches.
 
 [LSP position conversion](../packages/lsp/src/positions.ts) turns snapshot edits into protocol
-content changes. [Line-ending handling](../packages/editor/src/pieceTable/lineEndings.ts)
+content changes. [Line-ending handling](../packages/textbuffer/src/lineEndings.ts)
 records normalized text and round-trip facts that hosts need when saving.
 
 The TODO's hot and cold vocabulary is useful shorthand. Its claim that every worker payload

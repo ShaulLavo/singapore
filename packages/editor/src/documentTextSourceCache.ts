@@ -1,4 +1,5 @@
-import type { PieceBufferId, PieceTableBuffers } from './pieceTable/pieceTableTypes'
+import type { PieceBufferId } from '@singapore-editor/textbuffer'
+import type { PieceTableBuffers } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 import { TextSourceIndex } from './textMeasurements'
 
 // One cache per document lineage, not per version. Editing and undo keep reuse intact.

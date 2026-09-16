@@ -7,7 +7,7 @@ import {
   navigationTargetForCommand,
 } from '../src/editor/navigationTargets'
 import { createDocumentTextSnapshot } from '../src/documentTextSnapshot'
-import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
+import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 import { materializePieceTableFullText } from '../src/public/document'
 import {
   createAnchorSelection,
@@ -17,8 +17,9 @@ import {
 
 const readCounter = vi.hoisted(() => ({ characters: 0 }))
 
-vi.mock('../src/pieceTable/reads', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/pieceTable/reads')>()
+vi.mock('@singapore-editor/textbuffer/internal/reads', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@singapore-editor/textbuffer/internal/reads')>()
   return {
     ...actual,
     readPieceTableTextRange: (...args: Parameters<typeof actual.readPieceTableTextRange>) => {

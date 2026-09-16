@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import type { DisplayRow } from '../displayTransforms'
 import { createDocumentTextSnapshot } from '../documentTextSnapshot'
 import { createFoldMap } from '../foldMap'
-import { createPieceTableSnapshot } from '../pieceTable'
+import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 import { createVirtualizedTextViewModel } from './virtualizedTextViewModel'
 
 describe('virtualized text view model', () => {

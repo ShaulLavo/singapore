@@ -1,13 +1,17 @@
-import { anchorAfter, anchorBefore, resolveAnchor } from './pieceTable/anchors'
+import {
+  anchorAfter,
+  anchorBefore,
+  offsetToPoint,
+  type PieceTableAnchor,
+  type PieceTableEdit,
+  type PieceTableSnapshot,
+  type Point,
+  pointToOffset,
+  resolveAnchor,
+  type ResolvedAnchor,
+} from '@singapore-editor/textbuffer'
 import type { InvalidatedRange } from './displayTransforms'
-import type {
-  Anchor as PieceTableAnchor,
-  PieceTableEdit,
-  PieceTableSnapshot,
-  Point,
-  ResolvedAnchor,
-} from './pieceTable/pieceTableTypes'
-import { offsetToPoint, pointToOffset } from './pieceTable/positions'
+
 import type { FoldRange } from './syntax/session'
 
 declare const foldPointBrand: unique symbol

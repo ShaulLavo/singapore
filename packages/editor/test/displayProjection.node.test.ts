@@ -3,8 +3,12 @@ import { createDisplayRowsFromLines } from './oracles/displayTransforms'
 import { createDocumentTextSnapshot } from '../src/documentTextSnapshot'
 import { createFoldMap } from '../src/foldMap'
 import { createInlineMap } from '../src/inlineMap'
-import { applyBatchToPieceTable, createPieceTableSnapshot } from '../src/pieceTable'
-import type { PieceTableEdit } from '../src/pieceTable/pieceTableTypes'
+import {
+  applyBatchToPieceTable,
+  createPieceTableSnapshot,
+  type PieceTableEdit,
+} from '@singapore-editor/textbuffer'
+
 import {
   DisplayProjection,
   type DisplayProjectionInput,

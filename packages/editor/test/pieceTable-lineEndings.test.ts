@@ -13,7 +13,7 @@ import {
   pieceTableLineEnding,
   pointToOffset,
   UTF8_BYTE_ORDER_MARK,
-} from '../src/pieceTable'
+} from '@singapore-editor/textbuffer'
 import { createDocumentSession } from '../src/documentSession'
 
 describe('detectDocumentLineEnding', () => {

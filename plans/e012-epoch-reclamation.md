@@ -20,7 +20,7 @@ The result is a tested reclamation protocol and a measured production-adoption d
 
 - [History](../packages/editor/src/history.ts) retains persistent roots through JavaScript references.
   [DocumentSession](../packages/editor/src/documentSession.ts) has additional transaction and clean-state owners.
-- [Piece buffers](../packages/editor/src/pieceTable/buffers.ts) rely on JavaScript lifetime management.
+- [Piece buffers](../packages/textbuffer/src/buffers.ts) rely on JavaScript lifetime management.
   There is no arena-slot reuse protocol in the current piece table.
 - [Tree-sitter source retention](../packages/tree-sitter/src/treeSitter/sourceChunkRetention.ts)
   uses document epochs to invalidate sent-chunk bookkeeping. Those epochs do not protect memory reclamation.

@@ -1,6 +1,6 @@
 import type { DocumentSessionChange } from '../documentSession'
 import type { DocumentTextSnapshot } from '../documentTextSnapshot'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type { EditorToken, TextEdit } from '../tokens'
 
 export type EditorSyntaxLanguageId = string

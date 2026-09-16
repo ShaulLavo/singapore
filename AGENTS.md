@@ -40,7 +40,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 
 | Package | Purpose | Key files |
 |---|---|---|
-| `packages/editor` | Core editor: piece table, CSS Highlight API renderer, and Shiki highlighter | `src/pieceTable/pieceTable.ts`, `src/pieceTable/pieceTableTypes.ts`, `src/editor.ts`, `src/tokens.ts`, `src/shiki/*` |
+| `packages/editor` | Core editor: document sessions, CSS Highlight API renderer, and Shiki highlighter | `src/editor.ts`, `src/documentSession.ts`, `src/tokens.ts`, `src/shiki/*` |
+| `packages/textbuffer` | Persistent text storage, snapshots, anchors, and line mapping | `src/index.ts`, `src/pieceTableTypes.ts`, `src/tree.ts` |
 | `packages/tree-sitter` | Optional Tree-sitter runtime, worker client, language registry, and structural selection helpers | `src/session.ts`, `src/treeSitter/workerClient.ts`, `src/treeSitter/treeSitter.worker.ts` |
 | `packages/tree-sitter-languages` | First-party lazy Tree-sitter language plugins | `src/index.ts`, `src/queries/*` |
 | `examples/app` | Demo app with file browser | `src/app.ts`, `src/main.ts` |
@@ -65,10 +66,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 
 | Type | Location |
 |---|---|
-| `Piece` | `packages/editor/src/pieceTable/pieceTableTypes.ts` |
-| `PieceBufferId` | `packages/editor/src/pieceTable/pieceTableTypes.ts` |
-| `PieceTreeNode` | `packages/editor/src/pieceTable/pieceTableTypes.ts` |
-| `PieceTableSnapshot` | `packages/editor/src/pieceTable/pieceTableTypes.ts` |
+| `Piece` | `packages/textbuffer/src/pieceTableTypes.ts` |
+| `PieceBufferId` | `packages/textbuffer/src/pieceTableTypes.ts` |
+| `PieceTreeNode` | `packages/textbuffer/src/pieceTableTypes.ts` |
+| `PieceTableSnapshot` | `packages/textbuffer/src/pieceTableTypes.ts` |
 | `EditorToken`, `EditorTokenStyle`, `TextEdit` | `packages/editor/src/tokens.ts` |
 | `TreeSitterLanguageContribution`, `TreeSitterBackend` | `packages/tree-sitter/src/index.ts` |
 | `TokenPatch`, `IncrementalTokenizer` | `packages/editor/src/shiki/tokenizer.ts` |
