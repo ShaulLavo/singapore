@@ -219,7 +219,8 @@ const createSharedUtf16Buffer = (text: string): SharedArrayBuffer => {
   return buffer
 }
 
-const sourceChunkId = (bufferId: string, chunkStart: number): string => `${bufferId}:${chunkStart}`
+const sourceChunkId = (bufferId: PieceBufferId, chunkStart: number): string =>
+  `${bufferId}:${chunkStart}`
 
 const getSnapshotBufferText = (snapshot: PieceTableSnapshot, bufferId: PieceBufferId): string => {
   const text = snapshot.buffers.chunks.get(bufferId)

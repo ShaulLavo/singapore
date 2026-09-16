@@ -266,7 +266,7 @@ describe('tree-sitter worker client language registration cache', () => {
     await flushMicrotasks()
     const failedRequest = parseRequests(worker)[1]!
     expect(failedRequest.payload.source.chunks).toHaveLength(0)
-    worker.rejectRequest(failedRequest, 'Tree-sitter source chunk "buffer:2:0" is missing')
+    worker.rejectRequest(failedRequest, 'Tree-sitter source chunk "2:0" is missing')
     await expect(failedParse).rejects.toThrow('Tree-sitter source chunk')
     expect(client.inspect().cache.sourceChunks).toMatchObject({
       documents: 1,

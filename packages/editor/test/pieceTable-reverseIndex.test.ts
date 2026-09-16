@@ -13,9 +13,9 @@ import { flattenNodes } from '@singapore-editor/textbuffer/internal/tree'
 
 describe('piece table reverse index', () => {
   it('orders reverse keys by buffer then start offset', () => {
-    expect(compareReverseKeys('buffer:1' as never, 0, 'buffer:2' as never, 0)).toBeLessThan(0)
-    expect(compareReverseKeys('buffer:2' as never, 0, 'buffer:1' as never, 0)).toBeGreaterThan(0)
-    expect(compareReverseKeys('buffer:1' as never, 3, 'buffer:1' as never, 8)).toBeLessThan(0)
+    expect(compareReverseKeys(1 as never, 0, 2 as never, 0)).toBeLessThan(0)
+    expect(compareReverseKeys(2 as never, 0, 1 as never, 0)).toBeGreaterThan(0)
+    expect(compareReverseKeys(1 as never, 3, 1 as never, 8)).toBeLessThan(0)
   })
 
   it('builds an index that can find containing pieces and neighbors', () => {

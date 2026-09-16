@@ -10,7 +10,7 @@ import {
 describe('structural counter budgets', () => {
   it('flags counts over budget, stale budgets and unbudgeted counters', () => {
     const violations = compareBudgets(
-      { typing: { 'tree.cloneNode.calls': 10, 'buffers.bufferSequence.calls': 5 }, gone: {} },
+      { typing: { 'tree.cloneNode.calls': 10, 'reads.splitsSurrogatePair.calls': 5 }, gone: {} },
       { typing: { 'tree.cloneNode.calls': 11, 'reads.splitsSurrogatePair.calls': 2 } },
     )
     expect(violations.map((violation) => violation.kind).sort()).toEqual([

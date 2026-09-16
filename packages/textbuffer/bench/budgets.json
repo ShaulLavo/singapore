@@ -4,7 +4,6 @@
   "profiles": {
     "smoke": {
       "load-short-lines": {
-        "buffers.bufferSequence.calls": 2,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 15504,
         "buffers.extendBufferLineIndex.loopIterations": 408,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 3917,
@@ -15,7 +14,6 @@
         "tree.createNode.calls": 2
       },
       "load-long-line": {
-        "buffers.bufferSequence.calls": 2,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 13056,
         "priority.mixString.calls": 15,
         "priority.priorityForPiece.calls": 3,
@@ -24,7 +22,6 @@
       },
       "sequential-typing": {
         "buffers.bufferLineIndex.retainedHits": 3,
-        "buffers.bufferSequence.calls": 340,
         "buffers.countLineBreaks.loopIterations": 7,
         "buffers.extendTailChunk.calls": 48,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 3,
@@ -44,7 +41,6 @@
       },
       "random-insertions": {
         "buffers.bufferLineIndex.retainedHits": 50,
-        "buffers.bufferSequence.calls": 196,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 1249,
         "buffers.sharesIndexedPrefix.calls": 48,
         "edits.snapBatchEditRanges.calls": 49,
@@ -53,7 +49,7 @@
         "priority.priorityForPiece.calls": 294,
         "reads.readPieceTableTextRange.calls": 98,
         "reads.splitsSurrogatePair.calls": 98,
-        "reverseIndex.cloneReverseIndexNode.calls": 1904,
+        "reverseIndex.cloneReverseIndexNode.calls": 1542,
         "reverseIndex.createReverseIndexNode.calls": 147,
         "tree.cloneNode.calls": 840,
         "tree.collectTextInRange.calls": 623,
@@ -61,7 +57,6 @@
       },
       "random-replacements": {
         "buffers.bufferLineIndex.retainedHits": 144,
-        "buffers.bufferSequence.calls": 525,
         "buffers.countLineBreaks.loopIterations": 7,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 1249,
         "buffers.sharesIndexedPrefix.calls": 48,
@@ -71,7 +66,7 @@
         "priority.priorityForPiece.calls": 482,
         "reads.readPieceTableTextRange.calls": 191,
         "reads.splitsSurrogatePair.calls": 194,
-        "reverseIndex.cloneReverseIndexNode.calls": 3506,
+        "reverseIndex.cloneReverseIndexNode.calls": 3308,
         "reverseIndex.createReverseIndexNode.calls": 241,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 48,
         "tree.cloneNode.calls": 1648,
@@ -80,7 +75,6 @@
       },
       "eight-cursor-batches": {
         "buffers.bufferLineIndex.retainedHits": 50,
-        "buffers.bufferSequence.calls": 196,
         "buffers.countLineBreaks.loopIterations": 7,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 1249,
         "buffers.sharesIndexedPrefix.calls": 48,
@@ -90,7 +84,7 @@
         "priority.priorityForPiece.calls": 294,
         "reads.readPieceTableTextRange.calls": 98,
         "reads.splitsSurrogatePair.calls": 98,
-        "reverseIndex.cloneReverseIndexNode.calls": 1611,
+        "reverseIndex.cloneReverseIndexNode.calls": 1420,
         "reverseIndex.createReverseIndexNode.calls": 147,
         "tree.cloneNode.calls": 669,
         "tree.collectTextInRange.calls": 474,
@@ -98,7 +92,6 @@
       },
       "mixed-edit-churn": {
         "buffers.bufferLineIndex.retainedHits": 156,
-        "buffers.bufferSequence.calls": 421,
         "buffers.countLineBreaks.loopIterations": 6,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 505,
         "buffers.sharesIndexedPrefix.calls": 29,
@@ -108,7 +101,7 @@
         "priority.priorityForPiece.calls": 429,
         "reads.readPieceTableTextRange.calls": 151,
         "reads.splitsSurrogatePair.calls": 153,
-        "reverseIndex.cloneReverseIndexNode.calls": 3211,
+        "reverseIndex.cloneReverseIndexNode.calls": 3073,
         "reverseIndex.createReverseIndexNode.calls": 215,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 54,
         "tree.cloneNode.calls": 1234,
@@ -117,7 +110,6 @@
       },
       "large-paste-delete": {
         "buffers.bufferLineIndex.retainedHits": 5,
-        "buffers.bufferSequence.calls": 25,
         "buffers.countLineBreaks.loopIterations": 1396,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 10,
         "buffers.sharesIndexedPrefix.calls": 3,
@@ -136,7 +128,6 @@
       },
       "lines-sequential-after-churn": {
         "buffers.bufferLineIndex.retainedHits": 125,
-        "buffers.bufferSequence.calls": 238,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 5,
         "buffers.extendBufferLineIndex.loopIterations": 5,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 1045,
@@ -148,7 +139,6 @@
       },
       "lines-random-after-churn": {
         "buffers.bufferLineIndex.retainedHits": 125,
-        "buffers.bufferSequence.calls": 233,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 5,
         "buffers.extendBufferLineIndex.loopIterations": 5,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 1045,
@@ -159,13 +149,11 @@
         "tree.collectTextInRange.calls": 673
       },
       "ranges-after-churn": {
-        "buffers.bufferSequence.calls": 393,
         "reads.readPieceTableTextRange.calls": 66,
         "tree.collectTextInRange.calls": 1612
       },
       "offset-to-position": {
         "buffers.bufferLineIndex.retainedHits": 124,
-        "buffers.bufferSequence.calls": 127,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 3,
         "buffers.extendBufferLineIndex.loopIterations": 3,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 523,
@@ -175,7 +163,6 @@
       },
       "position-to-offset": {
         "buffers.bufferLineIndex.retainedHits": 126,
-        "buffers.bufferSequence.calls": 130,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 4,
         "buffers.extendBufferLineIndex.loopIterations": 4,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 784,
@@ -184,13 +171,11 @@
         "positions.lineStartOffset.calls": 66
       },
       "full-read-after-churn": {
-        "buffers.bufferSequence.calls": 147,
         "reads.readPieceTableTextRange.calls": 3,
         "tree.collectTextInRange.calls": 492
       },
       "persistent-history": {
         "buffers.bufferLineIndex.retainedHits": 156,
-        "buffers.bufferSequence.calls": 421,
         "buffers.countLineBreaks.loopIterations": 6,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 505,
         "buffers.sharesIndexedPrefix.calls": 29,
@@ -200,7 +185,7 @@
         "priority.priorityForPiece.calls": 429,
         "reads.readPieceTableTextRange.calls": 151,
         "reads.splitsSurrogatePair.calls": 153,
-        "reverseIndex.cloneReverseIndexNode.calls": 3211,
+        "reverseIndex.cloneReverseIndexNode.calls": 3073,
         "reverseIndex.createReverseIndexNode.calls": 215,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 54,
         "tree.cloneNode.calls": 1234,
@@ -211,7 +196,6 @@
     },
     "standard": {
       "load-short-lines": {
-        "buffers.bufferSequence.calls": 2,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 1550400,
         "buffers.extendBufferLineIndex.loopIterations": 40800,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 534513,
@@ -222,7 +206,6 @@
         "tree.createNode.calls": 2
       },
       "load-long-line": {
-        "buffers.bufferSequence.calls": 2,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 1305600,
         "priority.mixString.calls": 15,
         "priority.priorityForPiece.calls": 3,
@@ -231,7 +214,6 @@
       },
       "sequential-typing": {
         "buffers.bufferLineIndex.retainedHits": 3,
-        "buffers.bufferSequence.calls": 10707,
         "buffers.countLineBreaks.loopIterations": 191,
         "buffers.extendTailChunk.calls": 1529,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 3,
@@ -251,7 +233,6 @@
       },
       "random-insertions": {
         "buffers.bufferLineIndex.retainedHits": 1526,
-        "buffers.bufferSequence.calls": 6128,
         "buffers.countLineBreaks.loopIterations": 383,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 653109,
         "buffers.sharesIndexedPrefix.calls": 1524,
@@ -261,7 +242,7 @@
         "priority.priorityForPiece.calls": 9160,
         "reads.readPieceTableTextRange.calls": 3060,
         "reads.splitsSurrogatePair.calls": 3060,
-        "reverseIndex.cloneReverseIndexNode.calls": 93485,
+        "reverseIndex.cloneReverseIndexNode.calls": 83766,
         "reverseIndex.createReverseIndexNode.calls": 4580,
         "tree.cloneNode.calls": 51862,
         "tree.collectTextInRange.calls": 39268,
@@ -269,7 +250,6 @@
       },
       "random-replacements": {
         "buffers.bufferLineIndex.retainedHits": 4456,
-        "buffers.bufferSequence.calls": 16492,
         "buffers.countLineBreaks.loopIterations": 191,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 41,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 653109,
@@ -280,7 +260,7 @@
         "priority.priorityForPiece.calls": 15039,
         "reads.readPieceTableTextRange.calls": 6025,
         "reads.splitsSurrogatePair.calls": 6025,
-        "reverseIndex.cloneReverseIndexNode.calls": 191339,
+        "reverseIndex.cloneReverseIndexNode.calls": 184046,
         "reverseIndex.createReverseIndexNode.calls": 7520,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 1588,
         "tree.cloneNode.calls": 108026,
@@ -289,7 +269,6 @@
       },
       "eight-cursor-batches": {
         "buffers.bufferLineIndex.retainedHits": 1519,
-        "buffers.bufferSequence.calls": 6113,
         "buffers.countLineBreaks.loopIterations": 191,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 29,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 651164,
@@ -300,7 +279,7 @@
         "priority.priorityForPiece.calls": 9887,
         "reads.readPieceTableTextRange.calls": 3052,
         "reads.splitsSurrogatePair.calls": 3052,
-        "reverseIndex.cloneReverseIndexNode.calls": 114656,
+        "reverseIndex.cloneReverseIndexNode.calls": 104503,
         "reverseIndex.createReverseIndexNode.calls": 5326,
         "tree.cloneNode.calls": 51077,
         "tree.collectTextInRange.calls": 37879,
@@ -309,7 +288,6 @@
       },
       "mixed-edit-churn": {
         "buffers.bufferLineIndex.retainedHits": 4906,
-        "buffers.bufferSequence.calls": 13856,
         "buffers.countLineBreaks.loopIterations": 137,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 17,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 516651,
@@ -320,7 +298,7 @@
         "priority.priorityForPiece.calls": 13919,
         "reads.readPieceTableTextRange.calls": 4980,
         "reads.splitsSurrogatePair.calls": 4980,
-        "reverseIndex.cloneReverseIndexNode.calls": 183457,
+        "reverseIndex.cloneReverseIndexNode.calls": 180845,
         "reverseIndex.createReverseIndexNode.calls": 6960,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 1540,
         "tree.cloneNode.calls": 92327,
@@ -329,7 +307,6 @@
       },
       "large-paste-delete": {
         "buffers.bufferLineIndex.retainedHits": 18,
-        "buffers.bufferSequence.calls": 131,
         "buffers.countLineBreaks.loopIterations": 475369,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 2114,
         "buffers.sharesIndexedPrefix.calls": 16,
@@ -339,7 +316,7 @@
         "priority.priorityForPiece.calls": 621,
         "reads.readPieceTableTextRange.calls": 66,
         "reads.splitsSurrogatePair.calls": 66,
-        "reverseIndex.cloneReverseIndexNode.calls": 6348,
+        "reverseIndex.cloneReverseIndexNode.calls": 4073,
         "reverseIndex.createReverseIndexNode.calls": 311,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 278,
         "tree.cloneNode.calls": 1697,
@@ -348,7 +325,6 @@
       },
       "lines-sequential-after-churn": {
         "buffers.bufferLineIndex.retainedHits": 6078,
-        "buffers.bufferSequence.calls": 9758,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 42,
         "buffers.extendBufferLineIndex.loopIterations": 42,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 10706,
@@ -359,7 +335,6 @@
       },
       "lines-random-after-churn": {
         "buffers.bufferLineIndex.retainedHits": 6058,
-        "buffers.bufferSequence.calls": 9842,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 62,
         "buffers.extendBufferLineIndex.loopIterations": 62,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 15668,
@@ -369,13 +344,11 @@
         "tree.collectTextInRange.calls": 48388
       },
       "ranges-after-churn": {
-        "buffers.bufferSequence.calls": 8321,
         "reads.readPieceTableTextRange.calls": 3060,
         "tree.collectTextInRange.calls": 63000
       },
       "offset-to-position": {
         "buffers.bufferLineIndex.retainedHits": 6078,
-        "buffers.bufferSequence.calls": 6102,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 64,
         "buffers.extendBufferLineIndex.loopIterations": 15,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 3656,
@@ -384,7 +357,6 @@
       },
       "position-to-offset": {
         "buffers.bufferLineIndex.retainedHits": 6089,
-        "buffers.bufferSequence.calls": 6119,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 31,
         "buffers.extendBufferLineIndex.loopIterations": 31,
         "buffers.pushLineBreakOffset.typedArrayCapacityBytes": 7834,
@@ -392,13 +364,11 @@
         "positions.lineStartOffset.calls": 3060
       },
       "full-read-after-churn": {
-        "buffers.bufferSequence.calls": 29805,
         "reads.readPieceTableTextRange.calls": 13,
         "tree.collectTextInRange.calls": 95827
       },
       "persistent-history": {
         "buffers.bufferLineIndex.retainedHits": 4906,
-        "buffers.bufferSequence.calls": 13856,
         "buffers.countLineBreaks.loopIterations": 137,
         "buffers.extendBufferLineIndex.indexInputCodeUnits": 17,
         "buffers.PieceBufferChunkStore.append.copiedArraySlots": 516651,
@@ -409,7 +379,7 @@
         "priority.priorityForPiece.calls": 13919,
         "reads.readPieceTableTextRange.calls": 4980,
         "reads.splitsSurrogatePair.calls": 4980,
-        "reverseIndex.cloneReverseIndexNode.calls": 183457,
+        "reverseIndex.cloneReverseIndexNode.calls": 180845,
         "reverseIndex.createReverseIndexNode.calls": 6960,
         "reverseIndex.insertReverseIndexNode.replacementRecords": 1540,
         "tree.cloneNode.calls": 92327,

@@ -11,7 +11,6 @@ import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEnd
 import { recordTextBufferDiagnostic } from './diagnostics'
 
 export const BUFFER_CHUNK_SIZE = 16 * 1024
-const BUFFER_ID_PREFIX = 'buffer:'
 const BUFFER_STORE_PAGE_SIZE = 1024
 const LINE_INDEX_MIN_CAPACITY = 64
 const CARRIAGE_RETURN = 0x0d
@@ -35,11 +34,8 @@ class PieceBufferChunkStore implements PieceBufferChunks {
   }
 
   public get(buffer: PieceBufferId): string | undefined {
-    const sequence = bufferSequence(buffer)
-    if (sequence === null) return undefined
-
-    const page = this.pages[Math.floor(sequence / BUFFER_STORE_PAGE_SIZE)]
-    return page?.[sequence % BUFFER_STORE_PAGE_SIZE]
+    const page = this.pages[Math.floor(buffer / BUFFER_STORE_PAGE_SIZE)]
+    return page?.[buffer % BUFFER_STORE_PAGE_SIZE]
   }
 
   public has(buffer: PieceBufferId): boolean {
@@ -129,21 +125,10 @@ export type AppendChunksToBuffersResult = {
   readonly pieces: readonly Piece[]
 }
 
-const createBufferId = (sequence: number): PieceBufferId =>
-  `${BUFFER_ID_PREFIX}${sequence}` as PieceBufferId
+const createBufferId = (sequence: number): PieceBufferId => sequence as PieceBufferId
 
-const bufferSequence = (buffer: PieceBufferId): number | null => {
-  if (!buffer.startsWith(BUFFER_ID_PREFIX)) return null
-
-  const sequence = Number(buffer.slice(BUFFER_ID_PREFIX.length))
-  if (!Number.isSafeInteger(sequence) || sequence < 0) return null
-  return sequence
-}
-
-export const isNewestChunk = (buffers: PieceTableBuffers, buffer: PieceBufferId): boolean => {
-  const sequence = bufferSequence(buffer)
-  return sequence !== null && sequence === buffers.nextBufferSequence - 1
-}
+export const isNewestChunk = (buffers: PieceTableBuffers, buffer: PieceBufferId): boolean =>
+  buffer === buffers.nextBufferSequence - 1
 
 export const countLineBreaks = (text: string, start = 0, end = text.length): number => {
   let count = 0

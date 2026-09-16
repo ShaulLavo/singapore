@@ -44,7 +44,7 @@ describe('piece table order allocation', () => {
 
 function piece(): Piece {
   return {
-    buffer: 'buffer:test' as Piece['buffer'],
+    buffer: 7 as Piece['buffer'],
     start: 0,
     length: 1,
     order: 0,

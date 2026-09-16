@@ -13,7 +13,7 @@ export function formatPieceInspectionNode(node: PieceInspectionNode): string {
   const values = Object.entries(node.values)
     .map(([key, value]) => `${key}=${value}`)
     .join(' ')
-  return `${node.edge} ${node.id} ${node.tree} ${p.visible ? 'visible' : 'tombstone'} buffer=${JSON.stringify(p.buffer)} start=${p.start} length=${p.length} order=${p.order} lineBreaks=${p.lineBreaks} priority=${node.priority} left=${node.left ?? '-'} right=${node.right ?? '-'} ${values}${text}`
+  return `${node.edge} ${node.id} ${node.tree} ${p.visible ? 'visible' : 'tombstone'} buffer=${p.buffer} start=${p.start} length=${p.length} order=${p.order} lineBreaks=${p.lineBreaks} priority=${node.priority} left=${node.left ?? '-'} right=${node.right ?? '-'} ${values}${text}`
 }
 
 export function formatPieceTreeInspection(

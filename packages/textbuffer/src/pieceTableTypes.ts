@@ -2,7 +2,9 @@ import type { DocumentLineEnding } from './lineEndings'
 
 declare const pieceBufferIdBrand: unique symbol
 
-export type PieceBufferId = string & {
+// The chunk's sequence number in its store. A number, not a string, so the hot
+// paths that key on it never parse or hash text.
+export type PieceBufferId = number & {
   readonly [pieceBufferIdBrand]: true
 }
 

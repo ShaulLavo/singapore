@@ -14,8 +14,7 @@ export const compareReverseKeys = (
   rightBuffer: PieceBufferId,
   rightStart: number,
 ): number => {
-  if (leftBuffer < rightBuffer) return -1
-  if (leftBuffer > rightBuffer) return 1
+  if (leftBuffer !== rightBuffer) return leftBuffer - rightBuffer
   return leftStart - rightStart
 }
 

@@ -296,7 +296,7 @@ export function validatePieceTreeInvariants(
   }
   for (const [buffer, index] of snapshot.buffers.lineIndexes ?? []) {
     counts.lineIndexes++
-    checkLineIndex(index, buffer, report)
+    checkLineIndex(index, `buffer ${buffer}`, report)
   }
   return Object.freeze({ issues: Object.freeze(issues), counts: Object.freeze(counts) })
 }
