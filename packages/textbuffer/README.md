@@ -35,17 +35,4 @@ these are not a stable public API. Ordinary consumers use the main entry point d
 `snapshot.buffers.identity`, which identifies a document lineage, not an individual version.
 Buffer IDs may be reused by divergent versions; a sidecar must also validate the exact text.
 
-## Moving into a repository
 
-This directory is self-contained: copy it without `node_modules` or `dist`, run `bun install`,
-and commit the resulting standalone lockfile. No repository has been created or package published
-by this source extraction. No license grant is introduced; settle licensing before publication.
-Singapore should eventually consume a released version from the new repository, not a copied implementation.
-
-## Comparing against VS Code
-
-Pin both revisions and use one deterministic edit trace, one runtime, and one correctness oracle.
-Report load, edits, line/range reads, position lookup, long-session memory, and retained snapshots
-separately. Align line-ending and UTF-16 edit semantics before timing. Persistence and stable-anchor
-workloads are additional capabilities, not automatically equivalent to a mutable buffer's read snapshot.
-No performance claim or benchmark result is implied by this extraction.
