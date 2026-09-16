@@ -1,6 +1,6 @@
 # Singapore Textbuffer
 
-Text storage for Singapore's browser editor. It uses two persistent treaps and copy-on-write buffers.
+Text storage for Singapore's browser editor. It uses two persistent treaps and an append-only buffer log.
 
 One tree keeps pieces in document order. The other finds them by their source-buffer coordinates. Each edit returns a new snapshot and shares unchanged data with older snapshots. Deleted pieces stay in the tree so anchors can still find them.
 
@@ -37,8 +37,8 @@ flowchart TD
   S --> B["Buffer version"]
   R -. "piece + order" .-> T
   T -. "buffer + start + length" .-> B
-  B --> C["Paged chunk store<br/>original text + append chunks"]
-  B --> L["Cached newline indexes<br/>Uint32Array offsets"]
+  B --> C["Append-only chunk log<br/>original text + filled append chunks"]
+  B --> L["Cached newline indexes<br/>one Uint32Array per chunk"]
   B --> M["Document metadata<br/>line ending, BOM, lineage, priority seed"]
 ```
 
@@ -92,13 +92,15 @@ Edits update both trees together. A linear resolver serves as a test reference a
 
 See [`reverseIndex.ts`](src/reverseIndex.ts) and [`anchors.ts`](src/anchors.ts).
 
-### Copy-on-write buffers
+### The append-only buffer log
 
-The original document stays in one string. Inserted text goes into chunks of up to **16,384 UTF-16 code units**. Chunk boundaries keep surrogate pairs together. The store groups string references into pages of **1,024 entries**.
+The original document stays in one string, chunk 0. Inserted text goes into append chunks of up to **16,384 UTF-16 code units**. An insert fills the newest chunk while it has room and opens a new chunk only when it is full, so chunk count grows with inserted text, not with edit count. Chunk boundaries keep surrogate pairs and CRLF together.
 
-Appending copies the outer page array and the affected tail page. The other pages are shared. Extending a tail chunk creates a new string, so older snapshots keep seeing their original text. Copying the outer array costs more as the page count grows.
+Every buffer id names one contiguous span of one chunk. A fill is one buffer, each chunk opened after it is another, so `(buffer, start)` stays the insertion identity that the reverse index and anchors are keyed by: the pieces of one insert are neighbours in that key space and the pieces of the previous insert, which may sit right before them in the same chunk string, are not.
 
-Sequential typing can extend an existing piece. The piece must end at the insertion point, reach the end of the newest append chunk, and fit within the chunk limit after the edit. This lets a typing run share one piece across several keystrokes.
+All snapshots of a lineage share one log: the array of chunk strings and the map from buffer id to chunk. Each snapshot records the extent it may see — chunk count, tail length and buffer count. Appending compares the log against the extent. Equal means this snapshot is the newest and the append happens in place; longer means another branch, or an undone one re-minting the same ids, already appended, so the snapshot copies its visible prefix into a fresh log and continues there. One copy per branch point, none on a linear history.
+
+Sequential typing can extend an existing piece. The piece must end at the insertion point, be the newest buffer, reach the end of its chunk, and fit within the chunk limit after the edit. This lets a typing run share one piece across several keystrokes.
 
 See [`buffers.ts`](src/buffers.ts) and `tryCoalesceInsert()` in [`edits.ts`](src/edits.ts).
 
@@ -122,7 +124,7 @@ flowchart TD
 
 This example shows shared and copied nodes. The resulting shape depends on the edit and priorities.
 
-**Insert:** try extending the newest append piece. Otherwise split at the offset, append chunks, assign orders, merge the pieces, and update the reverse index.
+**Insert:** try extending the newest append piece. Otherwise split at the offset, fill or open chunks, assign orders, merge the pieces, and update the reverse index.
 
 **Delete:** split out the range, mark its pieces invisible, merge them back, and update their index entries.
 
@@ -237,11 +239,11 @@ See [`reads.ts`](src/reads.ts), [`walker.ts`](src/walker.ts), and [`diff.ts`](sr
 
 ## Costs and checks
 
-Tree work depends on the number of stored pieces, including tombstones, and the tree height. Keeping a snapshot reference is constant-time. Keeping versions retains their nodes, buffers, and caches.
+Tree work depends on the number of stored pieces, including tombstones, and the tree height. Keeping a snapshot reference is constant-time. Keeping versions retains their nodes and caches; the buffer log is shared, and a version keeps only the extent it can see.
 
 Deletion visits the affected pieces. Order-gap exhaustion relabels the tree and rebuilds the reverse index. A cold line index scans its source string. Tombstones and their text remain in the current snapshot even after older undo entries are dropped.
 
-The inspector checks buffer bounds, order labels, heap priorities, subtree totals, newline indexes, and agreement between the two trees:
+The inspector checks buffer bounds, the store extent, order labels, heap priorities, subtree totals, newline indexes, and agreement between the two trees:
 
 ```ts
 import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'

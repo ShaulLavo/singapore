@@ -6,6 +6,7 @@ import type {
   PieceTreeNode,
 } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
+import { bufferStoreExtent } from './buffers'
 
 export type PieceTreeIssueKind =
   | 'cycle'
@@ -174,6 +175,23 @@ function checkLineIndex(index: PieceBufferLineIndex, id: string, report: Report)
   report('line-index', id, 'count', count, index.count)
 }
 
+// The store is shared with newer snapshots; the extent is what this snapshot
+// may see of it, and it must agree with the id sequence the snapshot mints from.
+function checkStoreExtent(snapshot: PieceTableSnapshot, report: Report): void {
+  const extent = bufferStoreExtent(snapshot.buffers)
+  if (!extent) return
+  const buffers = snapshot.buffers
+  report(
+    'buffer-bounds',
+    'buffers',
+    'nextBufferSequence',
+    extent.bufferCount,
+    buffers.nextBufferSequence,
+  )
+  report('buffer-bounds', 'buffers', 'chunks.size', extent.chunkCount, buffers.chunks.size)
+  report('buffer-bounds', 'buffers', 'chunkWithinLimit', true, extent.overflowingChunk === null)
+}
+
 function reverseCompare(a: PieceTableReverseIndexNode, b: PieceTableReverseIndexNode): number {
   if (a.buffer < b.buffer) return -1
   if (a.buffer > b.buffer) return 1
@@ -294,9 +312,10 @@ export function validatePieceTreeInvariants(
     if (node.piece.length > 0 && !entries.has(key))
       report('reverse-index', label(node), 'reverseEntry', key, 'missing')
   }
-  for (const [buffer, index] of snapshot.buffers.lineIndexes ?? []) {
+  for (const [chunk, index] of snapshot.buffers.lineIndexes) {
     counts.lineIndexes++
-    checkLineIndex(index, `buffer ${buffer}`, report)
+    checkLineIndex(index, `chunk ${chunk}`, report)
   }
+  checkStoreExtent(snapshot, report)
   return Object.freeze({ issues: Object.freeze(issues), counts: Object.freeze(counts) })
 }

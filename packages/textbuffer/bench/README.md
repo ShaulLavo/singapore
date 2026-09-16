@@ -82,8 +82,10 @@ Original input is delivered as one string chunk to both constructors; streaming 
 
 ## Persistence, anchors and memory
 
-`persistent-history` and `anchor-resolution-after-churn` are Singapore-only lanes, never assigned a
-VS Code speed ratio. Microsoft's read snapshots are not persistent editable versions. The history lane
+`persistent-history`, `branch-edits` and `anchor-resolution-after-churn` are Singapore-only lanes, never
+assigned a VS Code speed ratio. The branch lane applies one insert on each of 64 branches from the
+same churned root; every branch after the first forks the shared buffer log, which is the copy the
+`fork.copiedArraySlots` counter budgets. Microsoft's read snapshots are not persistent editable versions. The history lane
 retains up to 64 roots while executing the churn trace, verifies every retained text hash, and checks
 restoring/editing an old branch after timing. Retaining a root is included; restoration is a correctness
 check, not a measured branch-edit benchmark. The anchor lane retains original anchors, applies churn,

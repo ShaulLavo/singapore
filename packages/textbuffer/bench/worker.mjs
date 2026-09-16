@@ -23,7 +23,15 @@ export function prepareState(factory, fixture) {
         )
       : []
   for (const operation of fixture.setup) applyOperation(buffer, operation)
-  return { buffer, anchors }
+  const root = fixture.mode === 'branches' ? buffer.retain() : null
+  return { buffer, anchors, root }
+}
+
+function editBranch(factory, root, edit, checksum) {
+  const branch = factory.restore(root)
+  applyOperation(branch, edit)
+  const inserted = branch.range(edit.from, edit.from + edit.text.length)
+  return consume(inserted, consume(branch.length(), checksum))
 }
 
 export function execute(factory, fixture) {
@@ -58,6 +66,8 @@ export function runOperations(factory, fixture, context) {
       if (fixture.mode === 'anchors') {
         const resolved = buffer.resolve(context.anchors[operation.index])
         checksum = consume(resolved.offset, consume(resolved.liveness === 'live' ? 1 : 0, checksum))
+      } else if (fixture.mode === 'branches') {
+        checksum = editBranch(factory, context.root, operation.edit, checksum)
       } else {
         const value = applyOperation(buffer, operation)
         if (value !== null) checksum = consume(value, checksum)
@@ -72,6 +82,8 @@ export function validate(factory, fixture, result) {
   assert.equal(result.buffer.length(), fixture.expected.length, 'UTF-16 length')
   assert.equal(result.buffer.lineCount(), starts.length, 'line count')
   assert.deepEqual(result.buffer.issues(), [], 'tree invariants')
+  if (fixture.mode === 'branches')
+    assert.equal(result.checksum, fixture.expectedDigest, 'branch checksum')
   if (fixture.mode === 'query') {
     assert.equal(result.checksum, fixture.expectedDigest, 'query checksum')
     for (const operation of fixture.operations) {

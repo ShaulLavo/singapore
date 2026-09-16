@@ -11,54 +11,68 @@ import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEnd
 import { recordTextBufferDiagnostic } from './diagnostics'
 
 export const BUFFER_CHUNK_SIZE = 16 * 1024
-const BUFFER_STORE_PAGE_SIZE = 1024
 const LINE_INDEX_MIN_CAPACITY = 64
 const CARRIAGE_RETURN = 0x0d
 const HIGH_SURROGATE_FIRST = 0xd800
 const HIGH_SURROGATE_LAST = 0xdbff
-const retainedLineIndexes = new WeakMap<
-  PieceBufferChunks,
-  Map<PieceBufferId, PieceBufferLineIndex>
->()
 
-class PieceBufferChunkStore implements PieceBufferChunks {
-  public readonly [Symbol.toStringTag] = 'PieceBufferChunkStore'
+// One log per lineage. Only the snapshot whose extent matches the log exactly
+// may append to it in place; every other snapshot reads through its own extent
+// and forks the log before it writes. Chunk 0 is the original text and is
+// never extended; inserted text fills the newest chunk before opening another.
+type PieceBufferLog = {
+  readonly chunks: string[]
+  // Buffer id → chunk sequence. Several buffers share a chunk once inserts fill it.
+  readonly chunkOfBuffer: number[]
+  readonly lineIndexes: Map<number, PieceBufferLineIndex>
+}
+
+export type PieceBufferStoreExtent = {
+  readonly chunkCount: number
+  readonly bufferCount: number
+  readonly tailLength: number
+  readonly overflowingChunk: number | null
+}
+
+class PieceBufferChunkView implements PieceBufferChunks {
+  public readonly [Symbol.toStringTag] = 'PieceBufferChunkView'
 
   public constructor(
-    private readonly pages: readonly (readonly string[])[],
+    private readonly log: PieceBufferLog,
     public readonly size: number,
+    public readonly tailLength: number,
+    public readonly bufferCount: number,
   ) {}
 
-  public static from(chunks: readonly string[]): PieceBufferChunkStore {
-    return new PieceBufferChunkStore([chunks], chunks.length)
+  public static from(original: string): PieceBufferChunkView {
+    const log = { chunks: [original], chunkOfBuffer: [0], lineIndexes: new Map() }
+    return new PieceBufferChunkView(log, 1, original.length, 1)
+  }
+
+  public get lineIndexes(): Map<number, PieceBufferLineIndex> {
+    return this.log.lineIndexes
+  }
+
+  public chunkOf(buffer: PieceBufferId): number | undefined {
+    return buffer < this.bufferCount ? this.log.chunkOfBuffer[buffer] : undefined
+  }
+
+  public chunkText(chunk: number): string {
+    const text = this.log.chunks[chunk]!
+    if (chunk !== this.size - 1 || text.length === this.tailLength) return text
+    // A newer snapshot grew the tail after this one; the extent is the truth.
+    return text.slice(0, this.tailLength)
   }
 
   public get(buffer: PieceBufferId): string | undefined {
-    const page = this.pages[Math.floor(buffer / BUFFER_STORE_PAGE_SIZE)]
-    return page?.[buffer % BUFFER_STORE_PAGE_SIZE]
-  }
-
-  public has(buffer: PieceBufferId): boolean {
-    return this.get(buffer) !== undefined
-  }
-
-  public forEach(
-    callback: (value: string, key: PieceBufferId, map: PieceBufferChunks) => void,
-    thisArg?: unknown,
-  ): void {
-    for (const [key, value] of this.entries()) {
-      callback.call(thisArg, value, key, this)
-    }
+    const chunk = this.chunkOf(buffer)
+    return chunk === undefined ? undefined : this.chunkText(chunk)
   }
 
   public *entries(): IterableIterator<[PieceBufferId, string]> {
-    let sequence = 0
-
-    for (const page of this.pages) {
-      for (const text of page) {
-        yield [createBufferId(sequence), text]
-        sequence += 1
-      }
+    for (let sequence = 0; sequence < this.bufferCount; sequence += 1) {
+      const buffer = createBufferId(sequence)
+      yield [buffer, this.get(buffer)!]
     }
   }
 
@@ -66,46 +80,92 @@ class PieceBufferChunkStore implements PieceBufferChunks {
     for (const [key] of this.entries()) yield key
   }
 
-  public *values(): IterableIterator<string> {
-    for (const [, value] of this.entries()) yield value
-  }
-
   public [Symbol.iterator](): IterableIterator<[PieceBufferId, string]> {
     return this.entries()
   }
 
-  public append(chunks: readonly string[]): PieceBufferChunkStore {
-    if (chunks.length === 0) return this
-
-    const nextPages = [...this.pages]
-    let tail = nextPages.pop()?.slice() ?? []
-
-    for (const chunk of chunks) {
-      if (tail.length === BUFFER_STORE_PAGE_SIZE) {
-        nextPages.push(tail)
-        tail = []
-      }
-
-      tail.push(chunk)
+  public extent(): PieceBufferStoreExtent {
+    let overflowingChunk: number | null = null
+    for (let chunk = 1; chunk < this.size; chunk += 1) {
+      if (this.chunkText(chunk).length <= BUFFER_CHUNK_SIZE) continue
+      overflowingChunk = chunk
+      break
     }
-
-    if (tail.length > 0) nextPages.push(tail)
-    return new PieceBufferChunkStore(nextPages, this.size + chunks.length)
+    return {
+      chunkCount: this.size,
+      bufferCount: this.bufferCount,
+      tailLength: this.tailLength,
+      overflowingChunk,
+    }
   }
 
-  public extendTail(text: string): PieceBufferChunkStore {
-    if (text.length === 0) return this
-    if (this.size === 0) throw new Error('piece buffer tail not found')
+  // True only for the view that last wrote the log: a longer log means another
+  // branch, or an undone one re-minting the same ids, appended after this view.
+  public isCurrent(): boolean {
+    const { chunks, chunkOfBuffer } = this.log
+    return (
+      chunks.length === this.size &&
+      chunkOfBuffer.length === this.bufferCount &&
+      chunks[this.size - 1]!.length === this.tailLength
+    )
+  }
 
-    const nextPages = [...this.pages]
-    const pageIndex = nextPages.length - 1
-    const tail = nextPages[pageIndex]?.slice()
-    if (!tail || tail.length === 0) throw new Error('piece buffer tail not found')
+  public fork(): PieceBufferChunkView {
+    const chunks = this.log.chunks.slice(0, this.size)
+    chunks[this.size - 1] = this.chunkText(this.size - 1)
+    const lineIndexes = new Map<number, PieceBufferLineIndex>()
+    for (const [chunk, index] of this.log.lineIndexes) {
+      if (chunk >= this.size) continue
+      lineIndexes.set(chunk, shareOrCopyLineIndex(index, chunks[chunk]!))
+    }
+    const log = {
+      chunks,
+      chunkOfBuffer: this.log.chunkOfBuffer.slice(0, this.bufferCount),
+      lineIndexes,
+    }
+    return new PieceBufferChunkView(log, this.size, this.tailLength, this.bufferCount)
+  }
 
-    const chunkIndex = tail.length - 1
-    tail[chunkIndex] = `${tail[chunkIndex] ?? ''}${text}`
-    nextPages[pageIndex] = tail
-    return new PieceBufferChunkStore(nextPages, this.size)
+  public extendTail(text: string): PieceBufferChunkView {
+    this.log.chunks[this.size - 1] += text
+    return new PieceBufferChunkView(
+      this.log,
+      this.size,
+      this.tailLength + text.length,
+      this.bufferCount,
+    )
+  }
+
+  public fill(text: string): PieceBufferChunkView {
+    this.log.chunks[this.size - 1] += text
+    this.log.chunkOfBuffer.push(this.size - 1)
+    return new PieceBufferChunkView(
+      this.log,
+      this.size,
+      this.tailLength + text.length,
+      this.bufferCount + 1,
+    )
+  }
+
+  public open(text: string): PieceBufferChunkView {
+    this.log.chunks.push(text)
+    this.log.chunkOfBuffer.push(this.size)
+    return new PieceBufferChunkView(this.log, this.size + 1, text.length, this.bufferCount + 1)
+  }
+}
+
+// An index is shared across a fork only when nothing can grow it again: the
+// chunk string is final in both logs and the index has scanned all of it.
+// Anything else is copied, trimmed to what the forking view can see.
+const shareOrCopyLineIndex = (index: PieceBufferLineIndex, text: string): PieceBufferLineIndex => {
+  if (index.text === text && index.scannedLength === text.length) return index
+
+  const count = firstLineBreakAtOrAfter(index, text.length)
+  return {
+    offsets: index.offsets.slice(0, count),
+    count,
+    scannedLength: Math.min(index.scannedLength, text.length),
+    text: text.slice(0, Math.min(index.scannedLength, text.length)),
   }
 }
 
@@ -127,7 +187,37 @@ export type AppendChunksToBuffersResult = {
 
 const createBufferId = (sequence: number): PieceBufferId => sequence as PieceBufferId
 
-export const isNewestChunk = (buffers: PieceTableBuffers, buffer: PieceBufferId): boolean =>
+const storeOf = (chunks: PieceBufferChunks): PieceBufferChunkView => {
+  if (chunks instanceof PieceBufferChunkView) return chunks
+  throw new Error('piece buffer store expected')
+}
+
+const writableStore = (chunks: PieceBufferChunks): PieceBufferChunkView => {
+  const store = storeOf(chunks)
+  return store.isCurrent() ? store : store.fork()
+}
+
+const withStore = (
+  buffers: PieceTableBuffers,
+  chunks: PieceBufferChunkView,
+  nextBufferSequence: number,
+): PieceTableBuffers => ({
+  ...buffers,
+  chunks,
+  lineIndexes: chunks.lineIndexes,
+  nextBufferSequence,
+})
+
+export const bufferStoreExtent = (buffers: PieceTableBuffers): PieceBufferStoreExtent | null =>
+  buffers.chunks instanceof PieceBufferChunkView ? buffers.chunks.extent() : null
+
+export const chunkOfBuffer = (buffers: PieceTableBuffers, buffer: PieceBufferId): number => {
+  const chunk = storeOf(buffers.chunks).chunkOf(buffer)
+  if (chunk !== undefined) return chunk
+  throw new Error('piece buffer not found')
+}
+
+export const isNewestBuffer = (buffers: PieceTableBuffers, buffer: PieceBufferId): boolean =>
   buffer === buffers.nextBufferSequence - 1
 
 export const countLineBreaks = (text: string, start = 0, end = text.length): number => {
@@ -142,49 +232,24 @@ export const countLineBreaks = (text: string, start = 0, end = text.length): num
   return count
 }
 
-// Immutable chunk stores retain their branch's index. A grown index also
-// serves shorter ancestors; each lookup stays within that snapshot's text.
+// One index per chunk string, shared by every snapshot on the log. A chunk only
+// ever grows at its end, so an index scanned for a shorter version stays a
+// valid prefix and a longer one serves shorter extents through clamping.
 const bufferLineIndex = (
   buffers: PieceTableBuffers,
   buffer: PieceBufferId,
   text: string,
 ): PieceBufferLineIndex => {
-  const retained = retainedLineIndexes.get(buffers.chunks)?.get(buffer)
-  if (retained) return retained
-  const holder = buffers as PieceTableBuffers & {
-    lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
-  }
-  holder.lineIndexes ??= new Map()
-
-  const cached = holder.lineIndexes.get(buffer)
-  let index = cached && sharesIndexedPrefix(cached, text) ? cached : undefined
+  const chunk = chunkOfBuffer(buffers, buffer)
+  const indexes = buffers.lineIndexes
+  let index = indexes.get(chunk)
   if (!index) {
     index = { offsets: new Uint32Array(0), count: 0, scannedLength: 0, text }
-    holder.lineIndexes.set(buffer, index)
+    indexes.set(chunk, index)
   }
   if (index.scannedLength < text.length) extendBufferLineIndex(index, text)
-  retainBufferLineIndex(buffers.chunks, buffer, index)
 
   return index
-}
-
-function retainBufferLineIndex(
-  chunks: PieceBufferChunks,
-  buffer: PieceBufferId,
-  index: PieceBufferLineIndex,
-): void {
-  let retained = retainedLineIndexes.get(chunks)
-  if (!retained) {
-    retained = new Map()
-    retainedLineIndexes.set(chunks, retained)
-  }
-  retained.set(buffer, index)
-}
-
-// Only the first lookup for a chunk version compares text; retained lookups are O(1).
-const sharesIndexedPrefix = (index: PieceBufferLineIndex, text: string): boolean => {
-  if (index.text === text) return true
-  return text.startsWith(index.text) || index.text.startsWith(text)
 }
 
 const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void => {
@@ -294,11 +359,11 @@ export const bufferForPiece = (buffers: PieceTableBuffers, piece: Piece): string
 // The walker rejoins code points across piece boundaries, but everything that
 // reads a chunk directly (getBufferText and every slice taken from it) would
 // see a lone surrogate or a stray CR if a split landed inside a pair. Hold the
-// trailing unit back so it starts the next chunk instead. One unit is always
-// enough: both sequences are two units, and BUFFER_CHUNK_SIZE is far larger, so
-// the chunk can never collapse to empty and the loop always advances.
-const chunkEndFor = (text: string, start: number): number => {
-  const end = start + BUFFER_CHUNK_SIZE
+// trailing unit back so it starts the next chunk instead. Holding one unit back
+// from a full chunk always leaves room to advance; holding it back from a
+// one-unit fill leaves nothing, and the caller opens a new chunk instead.
+const chunkEndFor = (text: string, start: number, capacity: number): number => {
+  const end = start + capacity
   if (end >= text.length) return text.length
 
   const last = text.charCodeAt(end - 1)
@@ -307,76 +372,83 @@ const chunkEndFor = (text: string, start: number): number => {
   return splitsPair ? end - 1 : end
 }
 
+const createAppendedPiece = (sequence: number, start: number, text: string): Piece => ({
+  buffer: createBufferId(sequence),
+  start,
+  length: text.length,
+  order: 0,
+  lineBreaks: countLineBreaks(text),
+  visible: true,
+})
+
+// Each buffer id names one contiguous span of one chunk, so `(buffer, start)`
+// stays the insertion identity the reverse index and anchors are keyed by.
+// A fill that lands in the newest chunk and the chunks opened after it are
+// therefore separate buffers even when they come from one insert.
 export const appendChunksToBuffers = (
   buffers: PieceTableBuffers,
   text: string,
 ): AppendChunksToBuffersResult => {
-  const chunkTexts: string[] = []
-  const pieces: Piece[] = []
+  let store = writableStore(buffers.chunks)
   let nextBufferSequence = buffers.nextBufferSequence
-  let textOffset = 0
+  const pieces: Piece[] = []
+  let offset = 0
 
-  while (textOffset < text.length) {
-    const chunkText = text.slice(textOffset, chunkEndFor(text, textOffset))
-    const buffer = createBufferId(nextBufferSequence)
+  // Chunk 0 is the original text and never grows.
+  const room = store.size > 1 ? BUFFER_CHUNK_SIZE - store.tailLength : 0
+  const fillEnd = room > 0 ? chunkEndFor(text, 0, room) : 0
+  if (fillEnd > 0) {
+    const fill = text.slice(0, fillEnd)
+    const previousLength = store.tailLength
+    pieces.push(createAppendedPiece(nextBufferSequence, previousLength, fill))
+    store = store.fill(fill)
+    growTailLineIndex(store, previousLength, fill)
     nextBufferSequence += 1
-    chunkTexts.push(chunkText)
-    pieces.push({
-      buffer,
-      start: 0,
-      length: chunkText.length,
-      order: 0,
-      lineBreaks: countLineBreaks(chunkText),
-      visible: true,
-    })
-    textOffset += chunkText.length
+    offset = fillEnd
   }
 
-  return {
-    buffers: {
-      ...buffers,
-      chunks: appendChunkTexts(buffers.chunks, chunkTexts),
-      nextBufferSequence,
-    },
-    pieces,
+  while (offset < text.length) {
+    const chunkText = text.slice(offset, chunkEndFor(text, offset, BUFFER_CHUNK_SIZE))
+    pieces.push(createAppendedPiece(nextBufferSequence, 0, chunkText))
+    store = store.open(chunkText)
+    nextBufferSequence += 1
+    offset += chunkText.length
   }
+
+  return { buffers: withStore(buffers, store, nextBufferSequence), pieces }
 }
 
 export const extendTailChunk = (buffers: PieceTableBuffers, text: string): PieceTableBuffers => {
   if (text.length === 0) return buffers
+  if (buffers.chunks.size < 2) throw new Error('piece buffer tail not found')
 
-  const tailBuffer = createBufferId(buffers.nextBufferSequence - 1)
-  const previous = buffers.chunks.get(tailBuffer)
-  if (previous === undefined) throw new Error('piece buffer tail not found')
-
-  const chunks = extendTailChunkText(buffers.chunks, tailBuffer, text)
-  growTailLineIndex(buffers, tailBuffer, previous, text, chunks.get(tailBuffer)!)
-  return { ...buffers, chunks }
+  const store = writableStore(buffers.chunks)
+  const previousLength = store.tailLength
+  const grown = store.extendTail(text)
+  growTailLineIndex(grown, previousLength, text)
+  return withStore(buffers, grown, buffers.nextBufferSequence)
 }
 
-// The tail's index, when one exists, grows from the appended text alone. The
-// grown chunk is a fresh concatenation: scanning it would flatten it, and
-// comparing it on the next lookup would read it whole, once per keystroke.
-// Identity with the previous text is what proves the index is this chunk's
-// and not a re-minted id's from another undo branch.
+// The tail's index, when one exists and is up to date, grows from the appended
+// text alone. The grown chunk is a fresh concatenation: scanning it would
+// flatten it, and that would happen once per keystroke.
 const growTailLineIndex = (
-  buffers: PieceTableBuffers,
-  tailBuffer: PieceBufferId,
-  previous: string,
+  store: PieceBufferChunkView,
+  previousLength: number,
   text: string,
-  grown: string,
 ): void => {
-  const index = buffers.lineIndexes?.get(tailBuffer)
-  if (!index || index.text !== previous) return
+  const chunk = store.size - 1
+  const index = store.lineIndexes.get(chunk)
+  if (!index || index.scannedLength !== previousLength) return
 
   let at = text.indexOf('\n')
   while (at !== -1) {
-    pushLineBreakOffset(index, previous.length + at)
+    pushLineBreakOffset(index, previousLength + at)
     at = text.indexOf('\n', at + 1)
   }
 
-  index.scannedLength = grown.length
-  index.text = grown
+  index.scannedLength = previousLength + text.length
+  index.text = store.chunkText(chunk)
   recordTextBufferDiagnostic('sourceIndex', () => ({
     source: 'piece-buffer',
     sourceBytesRead: text.length * 2,
@@ -385,45 +457,16 @@ const growTailLineIndex = (
   }))
 }
 
-const appendChunkTexts = (
-  chunks: PieceBufferChunks,
-  chunkTexts: readonly string[],
-): PieceBufferChunks => {
-  if (chunks instanceof PieceBufferChunkStore) return chunks.append(chunkTexts)
-
-  const next = new Map(chunks)
-  let sequence = chunks.size
-  for (const chunkText of chunkTexts) {
-    next.set(createBufferId(sequence), chunkText)
-    sequence += 1
-  }
-  return next
-}
-
-const extendTailChunkText = (
-  chunks: PieceBufferChunks,
-  tailBuffer: PieceBufferId,
-  text: string,
-): PieceBufferChunks => {
-  if (chunks instanceof PieceBufferChunkStore) return chunks.extendTail(text)
-
-  const next = new Map(chunks)
-  const previous = next.get(tailBuffer)
-  if (previous === undefined) throw new Error('piece buffer tail not found')
-  next.set(tailBuffer, previous + text)
-  return next
-}
-
 export const createInitialBuffers = (
   original: string,
   options: PieceTableBufferOptions = {},
 ): PieceTableBuffers => {
   const originalBuffer = createBufferId(0)
-  const chunks = PieceBufferChunkStore.from([original])
+  const chunks = PieceBufferChunkView.from(original)
   return {
     original: originalBuffer,
     identity: {},
-    lineIndexes: new Map(),
+    lineIndexes: chunks.lineIndexes,
     chunks,
     nextBufferSequence: 1,
     prioritySeed: options.prioritySeed ?? DEFAULT_PIECE_TABLE_PRIORITY_SEED,

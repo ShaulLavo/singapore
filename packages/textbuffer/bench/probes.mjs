@@ -10,14 +10,7 @@ const extraAmounts = {
   'buffers.extendBufferLineIndex': ['indexInputCodeUnits', 'text.length - index.scannedLength'],
   'buffers.countLineBreaks': ['inputCodeUnits', 'end - start'],
   'buffers.growTailLineIndex': ['indexInputCodeUnits', 'text.length'],
-  'buffers.PieceBufferChunkStore.append': [
-    'copiedArraySlots',
-    'chunks.length ? this.pages.length + (this.pages.at(-1)?.length ?? 0) : 0',
-  ],
-  'buffers.PieceBufferChunkStore.extendTail': [
-    'copiedArraySlots',
-    'text.length ? this.pages.length + (this.pages.at(-1)?.length ?? 0) : 0',
-  ],
+  'buffers.PieceBufferChunkView.fork': ['copiedArraySlots', 'this.size + this.bufferCount'],
   'pieceTreeBase.createLineStarts': ['indexInputCodeUnits', 'str.length'],
   'pieceTreeBase.createLineStartsFast': ['indexInputCodeUnits', 'str.length'],
 }
@@ -114,23 +107,6 @@ export function instrument(text, filename) {
     )
       add(node.getStart(source), counter(owner + '.replacementRecords'))
     if (
-      owner === 'buffers.sharesIndexedPrefix' &&
-      ts.isReturnStatement(node) &&
-      node.expression &&
-      node.expression.getText(source).includes('startsWith')
-    )
-      add(
-        node.getStart(source),
-        counter(owner + '.prefixCompares') +
-          counter(owner + '.prefixCompareCodeUnits', 'Math.min(index.text.length, text.length)'),
-      )
-    if (
-      owner === 'buffers.bufferLineIndex' &&
-      ts.isIfStatement(node) &&
-      node.expression.getText(source) === 'retained'
-    )
-      prepend(node.thenStatement, counter(owner + '.retainedHits'))
-    if (
       owner === 'pieceTreeBase.PieceTreeBase.getLineContent' &&
       ts.isIfStatement(node) &&
       node.expression.getText(source).includes('_lastVisitedLine.lineNumber')
@@ -155,13 +131,9 @@ const requiredCounters = {
     'buffers.extendBufferLineIndex.calls',
     'buffers.extendBufferLineIndex.indexInputCodeUnits',
     'buffers.countLineBreaks.inputCodeUnits',
-    'buffers.PieceBufferChunkStore.append.copiedArraySlots',
-    'buffers.PieceBufferChunkStore.extendTail.copiedArraySlots',
+    'buffers.PieceBufferChunkView.fork.copiedArraySlots',
     'buffers.pushLineBreakOffset.typedArrayCapacityBytes',
     'buffers.pushLineBreakOffset.typedArrayCopiedBytes',
-    'buffers.bufferLineIndex.retainedHits',
-    'buffers.sharesIndexedPrefix.prefixCompares',
-    'buffers.sharesIndexedPrefix.prefixCompareCodeUnits',
   ],
   vscode: [
     'pieceTreeBase.createLineStarts.indexInputCodeUnits',

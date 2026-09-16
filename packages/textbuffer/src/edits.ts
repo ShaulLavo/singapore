@@ -6,7 +6,7 @@ import {
   countLineBreaks,
   extendTailChunk,
   getBufferText,
-  isNewestChunk,
+  isNewestBuffer,
 } from './buffers'
 import { assignPieceOrders } from './orders'
 import { applyReverseIndexChanges } from './reverseIndex'
@@ -224,7 +224,7 @@ const tryCoalesceInsert = (
   const piece = location.piece
   const chunkText = getBufferText(snapshot.buffers, piece.buffer)
   if (piece.buffer === snapshot.buffers.original) return null
-  if (!isNewestChunk(snapshot.buffers, piece.buffer)) return null
+  if (!isNewestBuffer(snapshot.buffers, piece.buffer)) return null
   if (piece.start + piece.length !== chunkText.length) return null
   if (chunkText.length + text.length > BUFFER_CHUNK_SIZE) return null
 

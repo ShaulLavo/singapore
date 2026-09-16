@@ -2,8 +2,10 @@ import type { DocumentLineEnding } from './lineEndings'
 
 declare const pieceBufferIdBrand: unique symbol
 
-// The chunk's sequence number in its store. A number, not a string, so the hot
-// paths that key on it never parse or hash text.
+// The sequence number of one contiguous span of inserted text (or the original
+// text, id 0). Several ids can share a chunk string once inserts fill it, but
+// an id never spans two chunks, so `(buffer, start)` stays an insertion
+// identity. A number, not a string, so the hot paths never parse or hash text.
 export type PieceBufferId = number & {
   readonly [pieceBufferIdBrand]: true
 }
@@ -59,9 +61,10 @@ export type PieceTableBuffers = {
   // acted on: the fold is not reversible, and only the host can decide whether
   // a warning is owed. See pieceTable/lineEndings.ts.
   readonly containsUnusualLineTerminators: boolean
-  // Original-piece counting builds its index; append indexes remain lazy.
-  // Entries retain exact text so undo branches can safely reuse a buffer id.
-  readonly lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
+  // One index per chunk string, keyed by chunk sequence and shared by every
+  // snapshot on the same log. Original-piece counting builds chunk 0's index;
+  // append indexes remain lazy.
+  readonly lineIndexes: Map<number, PieceBufferLineIndex>
 }
 
 export type PieceBufferLineIndex = {
@@ -70,12 +73,13 @@ export type PieceBufferLineIndex = {
   offsets: Uint32Array
   count: number
   scannedLength: number
-  // The exact chunk string these offsets were scanned from. A buffer id is a
-  // sequence number and undo rolls that sequence back, so the id alone does not
-  // identify text; this is what tells a re-minted id from a grown one.
+  // The chunk string as scanned, `scannedLength` long. The inspector checks the
+  // offsets against it; the store itself trusts the log's append-only contract.
   text: string
 }
 
+// Read view of a snapshot's chunk store: `size` counts chunk strings, `get`
+// resolves a buffer id to the chunk text it lives in.
 export type PieceBufferChunks = {
   readonly size: number
   get(buffer: PieceBufferId): string | undefined

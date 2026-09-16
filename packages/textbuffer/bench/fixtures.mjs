@@ -176,6 +176,32 @@ function queryFixture(name, source, count, random, kind) {
   }
 }
 
+// One edit on each of many branches from the same root. The store forks once
+// per branch that is not the first to append after the root; the first one
+// continues the root's log in place.
+function branchFixture(name, source, count, random) {
+  const text = source.expected
+  const tokens = ['x', '\n', 'hello ', '😀']
+  const operations = []
+  let expectedDigest = 2166136261
+  for (let index = 0; index < count; index += 1) {
+    const from = safeBoundary(text, random(text.length + 1))
+    const edit = { kind: 'edit', from, to: from, text: tokens[random(tokens.length)] }
+    operations.push({ kind: 'branch', edit })
+    expectedDigest = consume(edit.text, consume(text.length + edit.text.length, expectedDigest))
+  }
+  return {
+    name,
+    mode: 'branches',
+    category: 'singapore-only',
+    initial: source.initial,
+    setup: source.operations,
+    operations,
+    expected: text,
+    expectedDigest,
+  }
+}
+
 export function makeFixtures(profileName, seed = 20260916) {
   const config = profiles[profileName]
   if (!config) throw new Error(`Unknown profile: ${profileName}`)
@@ -238,6 +264,7 @@ export function makeFixtures(profileName, seed = 20260916) {
       category: 'singapore-only',
     }),
   )
+  result.push(branchFixture('branch-edits', churn, config.versions, random))
   const anchorOffsets = Array.from({ length: Math.min(128, config.queries) }, () =>
     safeBoundary(initial, random(initial.length + 1)),
   )
