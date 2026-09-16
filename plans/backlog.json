@@ -510,6 +510,19 @@
       "dependsOn": ["E037"],
       "topics": ["Input latency as an enforced budget"],
       "baseline": "69dfef7425539165ec05a457bd6f0516fb6607fa"
+    },
+    {
+      "id": "E041",
+      "file": "e041-transient-edits.md",
+      "title": "Measure whether in-place edits between retained snapshots close the small-edit gap",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Research",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": ["E037", "E038"],
+      "topics": ["Input latency as an enforced budget"],
+      "baseline": "b6a265a786b08c61318a3e02b666f17cb7ef50fc"
     }
   ]
 }
