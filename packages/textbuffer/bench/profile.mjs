@@ -8,6 +8,7 @@ import ts from 'typescript'
 import { makeFixtures, profiles } from './fixtures.mjs'
 import { prepare } from './prepare.mjs'
 import { prepareProbes } from './probes.mjs'
+import { isStructuralCounter } from './profile-support.mjs'
 import { benchRoot, packageRoot, fileHashes, sha256 } from './support.mjs'
 
 export function profileOptions(args) {
@@ -116,10 +117,8 @@ export function profileMarkdown(report) {
           '| Work counter (first replay) | Count | Per logical operation |',
           '| --- | ---: | ---: |',
         )
-        const include =
-          /cloneNode.calls|createNode.calls|cloneReverseIndexNode.calls|createReverseIndexNode.calls|replacementRecords|copiedArraySlots|indexInputCodeUnits|typedArrayCapacityBytes|typedArrayCopiedBytes|normalizePieceOrders.calls|tryCoalesceInsert.calls|extendTailChunk.calls|splitsSurrogatePair.calls|readPieceTableTextRange.calls|bufferSequence.calls|lineStartOffset.calls|retainedHits|getPositionAt.calls|getOffsetAt.calls|getLineContent.calls|cachedLineHits|TreeNode.constructor.calls|leftRotate.calls|rightRotate.calls|createLineStarts.*loopIterations|countLineBreaks.loopIterations|extendBufferLineIndex.loopIterations/
         for (const [name, value] of Object.entries(epoch.counters).filter(([name]) =>
-          include.test(name),
+          isStructuralCounter(name),
         ))
           lines.push(`| ${name} | ${value} | ${(value / row.operations).toFixed(2)} |`)
         if (epoch.warmQueryCounters)

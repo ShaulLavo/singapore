@@ -114,6 +114,20 @@ bun run bench:profile -- --profile standard
 bun run bench:profile -- --profile standard --only random-insertions --repeats 24
 ```
 
+## Counter budgets
+
+[budgets.json](budgets.json) holds a ceiling per workload for every structural counter, for the
+smoke and standard profiles at one fixed seed. `bench:check` replays each workload in the
+instrumented build and fails when a count exceeds its ceiling, when a budget names a counter that
+no longer exists, or when a structural counter has no budget. Counts are exact events, so the gate
+is deterministic where a timing threshold is not. Lower the ceilings in the same commit as the
+change that earns them; regenerate them only after a deliberate change in the measured work.
+
+```sh
+node bench/budgets.mjs
+node bench/budgets.mjs --write --margin 0.02
+```
+
 ## Tree shape
 
 The [tree height replay](HEIGHT.md) samples height, depth and piece counts of both engines' trees across
