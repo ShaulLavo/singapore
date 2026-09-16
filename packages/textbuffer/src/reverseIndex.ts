@@ -4,7 +4,6 @@ import type {
   PieceTableReverseIndexNode,
   PieceTableTreeSnapshot,
 } from './pieceTableTypes'
-import type { ReverseIndexChange } from './internalTypes'
 import { flattenNodes } from './tree'
 import { priorityForPiece } from './priority'
 
@@ -82,61 +81,19 @@ const insertReverseIndexNode = (
   }
 }
 
-const mergeReverseIndexNodes = (
-  left: PieceTableReverseIndexNode | null,
-  right: PieceTableReverseIndexNode | null,
-): PieceTableReverseIndexNode | null => {
-  if (!left) return right
-  if (!right) return left
-
-  if (left.priority < right.priority) {
-    const next = cloneReverseIndexNode(left)
-    next.right = mergeReverseIndexNodes(next.right, right)
-    return next
-  }
-
-  const next = cloneReverseIndexNode(right)
-  next.left = mergeReverseIndexNodes(left, next.left)
-  return next
-}
-
-const deleteReverseIndexNode = (
-  root: PieceTableReverseIndexNode | null,
-  piece: Piece,
-): PieceTableReverseIndexNode | null => {
-  if (!root) return null
-
-  const comparison = compareReverseKeys(piece.buffer, piece.start, root.buffer, root.start)
-
-  if (comparison < 0) {
-    const next = cloneReverseIndexNode(root)
-    next.left = deleteReverseIndexNode(next.left, piece)
-    return next
-  }
-
-  if (comparison > 0) {
-    const next = cloneReverseIndexNode(root)
-    next.right = deleteReverseIndexNode(next.right, piece)
-    return next
-  }
-
-  return mergeReverseIndexNodes(root.left, root.right)
-}
-
+// Every entry is keyed by (buffer, start), and no edit ever moves a piece off
+// its key: a split's left half, a tombstone and a coalesced tail all keep it.
+// Writing is therefore insert-or-replace, and the index never deletes.
 export const applyReverseIndexChanges = (
   root: PieceTableReverseIndexNode | null,
-  changes: readonly ReverseIndexChange[],
+  pieces: readonly Piece[],
   prioritySeed = 0,
 ): PieceTableReverseIndexNode | null => {
   let next = root
 
-  for (const change of changes) {
-    if (change.remove && change.remove.length > 0) {
-      next = deleteReverseIndexNode(next, change.remove)
-    }
-    if (change.add && change.add.length > 0) {
-      next = insertReverseIndexNode(next, change.add, prioritySeed)
-    }
+  for (const piece of pieces) {
+    if (piece.length === 0) continue
+    next = insertReverseIndexNode(next, piece, prioritySeed)
   }
 
   return next

@@ -198,10 +198,10 @@ const insertTextAt = (
   const ordered = assignPieceOrders(appended.pieces, leftOrder, rightOrder)
   const insertionTree = createTreeFromPieces(ordered.pieces, appended.buffers.prioritySeed)
   const merged = merge(merge(left, insertionTree), right)
-  const insertionChanges = ordered.pieces.map((piece) => ({ add: piece }))
+  for (const piece of ordered.pieces) context.changes.push(piece)
   const reverseIndexRoot = applyReverseIndexChanges(
     snapshot.reverseIndexRoot,
-    context.changes.concat(insertionChanges),
+    context.changes,
     appended.buffers.prioritySeed,
   )
 
@@ -237,7 +237,7 @@ const tryCoalesceInsert = (
   const root = replacePieceEndingAt(snapshot.root, offset, pieceWithTail)
   const reverseIndexRoot = applyReverseIndexChanges(
     snapshot.reverseIndexRoot,
-    [{ add: pieceWithTail }],
+    [pieceWithTail],
     buffers.prioritySeed,
   )
 

@@ -1,5 +1,5 @@
 import type { Piece, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
-import type { ReverseIndexChange, SplitContext } from './internalTypes'
+import type { SplitContext } from './internalTypes'
 import { bufferForPiece, createPiece } from './buffers'
 import { allocateOrdersBetween, PIECE_ORDER_MIN_GAP, PIECE_ORDER_STEP } from './orders'
 import { priorityForPiece } from './priority'
@@ -213,9 +213,7 @@ export const splitByVisibleOffset = (
   const leftTree = merge(node.left, leftNode)
   const rightTree = merge(rightNode, node.right)
 
-  context.changes.push({ remove: node.piece })
-  context.changes.push({ add: leftNode.piece })
-  context.changes.push({ add: rightNode.piece })
+  context.changes.push(leftNode.piece, rightNode.piece)
 
   return { left: leftTree, right: rightTree }
 }
@@ -406,7 +404,7 @@ export const flattenNodes = (node: PieceTreeNode | null, acc: PieceTreeNode[]): 
 
 export const markTreeInvisible = (
   node: PieceTreeNode | null,
-  changes: ReverseIndexChange[],
+  changes: Piece[],
 ): PieceTreeNode | null => {
   if (!node) return null
 
@@ -417,7 +415,7 @@ export const markTreeInvisible = (
     ...next.piece,
     visible: false,
   }
-  changes.push({ add: next.piece })
+  changes.push(next.piece)
 
   return updateNode(next)
 }
