@@ -7,6 +7,7 @@ import {
   getSubtreeVisibleLength,
 } from './tree'
 import { createPieceTableWalker } from './walker'
+import { isHighSurrogate, isLowSurrogate } from './surrogates'
 
 export const getPieceTableLength = (snapshot: PieceTableTreeSnapshot): number => snapshot.length
 
@@ -32,9 +33,7 @@ export const readPieceTableTextRange = (
   return chunks.join('')
 }
 
-export const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
-
-export const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff
+export { isHighSurrogate, isLowSurrogate } from './surrogates'
 
 // Iterative descent to the visible piece holding `offset`, reading the unit
 // straight out of that piece's chunk: the edit path asks this twice per edit,

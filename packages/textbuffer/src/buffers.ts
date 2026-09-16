@@ -25,6 +25,10 @@ type PieceBufferLog = {
   // Buffer id → chunk sequence. Several buffers share a chunk once inserts fill it.
   readonly chunkOfBuffer: number[]
   readonly lineIndexes: Map<number, PieceBufferLineIndex>
+  // The tail chunk's last code unit. The tail is a fresh concatenation after
+  // every keystroke and charCodeAt would flatten it; the insert probe reads
+  // this unit on every keystroke, so it is remembered from the appended text.
+  tailLastUnit: number
 }
 
 export type PieceBufferStoreExtent = {
@@ -45,7 +49,12 @@ class PieceBufferChunkView implements PieceBufferChunks {
   ) {}
 
   public static from(original: string): PieceBufferChunkView {
-    const log = { chunks: [original], chunkOfBuffer: [0], lineIndexes: new Map() }
+    const log = {
+      chunks: [original],
+      chunkOfBuffer: [0],
+      lineIndexes: new Map(),
+      tailLastUnit: original.charCodeAt(original.length - 1),
+    }
     return new PieceBufferChunkView(log, 1, original.length, 1)
   }
 
@@ -67,6 +76,22 @@ class PieceBufferChunkView implements PieceBufferChunks {
   public get(buffer: PieceBufferId): string | undefined {
     const chunk = this.chunkOf(buffer)
     return chunk === undefined ? undefined : this.chunkText(chunk)
+  }
+
+  // A code unit of a buffer's chunk without flattening the tail: the unit
+  // this view's tail ends on is served from the log's record of it.
+  public unitAt(buffer: PieceBufferId, index: number): number {
+    const chunk = this.chunkOf(buffer)
+    if (chunk === undefined) return -1
+    const text = this.log.chunks[chunk]!
+    if (
+      chunk === this.size - 1 &&
+      index === this.tailLength - 1 &&
+      text.length === this.tailLength
+    ) {
+      return this.log.tailLastUnit
+    }
+    return text.charCodeAt(index)
   }
 
   public *entries(): IterableIterator<[PieceBufferId, string]> {
@@ -122,12 +147,14 @@ class PieceBufferChunkView implements PieceBufferChunks {
       chunks,
       chunkOfBuffer: this.log.chunkOfBuffer.slice(0, this.bufferCount),
       lineIndexes,
+      tailLastUnit: chunks[this.size - 1]!.charCodeAt(this.tailLength - 1),
     }
     return new PieceBufferChunkView(log, this.size, this.tailLength, this.bufferCount)
   }
 
   public extendTail(text: string): PieceBufferChunkView {
     this.log.chunks[this.size - 1] += text
+    this.log.tailLastUnit = text.charCodeAt(text.length - 1)
     return new PieceBufferChunkView(
       this.log,
       this.size,
@@ -139,6 +166,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   public fill(text: string): PieceBufferChunkView {
     this.log.chunks[this.size - 1] += text
     this.log.chunkOfBuffer.push(this.size - 1)
+    this.log.tailLastUnit = text.charCodeAt(text.length - 1)
     return new PieceBufferChunkView(
       this.log,
       this.size,
@@ -150,6 +178,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   public open(text: string): PieceBufferChunkView {
     this.log.chunks.push(text)
     this.log.chunkOfBuffer.push(this.size)
+    this.log.tailLastUnit = text.charCodeAt(text.length - 1)
     return new PieceBufferChunkView(this.log, this.size + 1, text.length, this.bufferCount + 1)
   }
 }
@@ -331,6 +360,12 @@ export const findBufferLineBreakOffset = (
   const offset = index.offsets[at]!
   return offset < text.length ? offset : null
 }
+
+export const bufferUnitAt = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  index: number,
+): number => storeOf(buffers.chunks).unitAt(buffer, index)
 
 export const getBufferText = (buffers: PieceTableBuffers, buffer: PieceBufferId): string => {
   const text = buffers.chunks.get(buffer)

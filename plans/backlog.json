@@ -693,6 +693,23 @@
         "Input latency as an enforced budget"
       ],
       "baseline": "26e805c28e993ebec1947ed88df823b429e6b969"
+    },
+    {
+      "id": "E043",
+      "reference": "../docs/performance/e043-one-descent-insert.md",
+      "title": "Answer the snap and coalesce questions inside the insert split so an insert descends once",
+      "status": "Completed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": [
+        "E042"
+      ],
+      "topics": [
+        "Input latency as an enforced budget"
+      ],
+      "baseline": "b7fea3c4e2330a2dbef3174ecfa965572eb5cc36"
     }
   ]
 }

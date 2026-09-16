@@ -1,6 +1,15 @@
 import type { Piece, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
-import type { SplitContext } from './internalTypes'
-import { bufferForPiece, countBufferLineBreaks } from './buffers'
+import type { InsertProbe, SplitContext } from './internalTypes'
+import {
+  BUFFER_CHUNK_SIZE,
+  bufferForPiece,
+  bufferUnitAt,
+  countBufferLineBreaks,
+  countLineBreaks,
+  getBufferText,
+  isNewestBuffer,
+} from './buffers'
+import { isHighSurrogate, isLowSurrogate } from './surrogates'
 import { allocateOrderBetween, PIECE_ORDER_MIN_GAP, PIECE_ORDER_STEP } from './orders'
 import { priorityForPiece } from './priority'
 
@@ -132,6 +141,154 @@ export const merge = (
   return updateNode(newRight)
 }
 
+type SplitResult = { left: PieceTreeNode | null; right: PieceTreeNode | null }
+
+const NO_SPLIT: SplitResult = { left: null, right: null }
+
+// The piece extended by the probe's text, or null when it cannot take it:
+// only the newest buffer's piece, ending at its chunk's end, with room left.
+const coalescedPiece = (
+  buffers: PieceTableBuffers,
+  piece: Piece,
+  probe: InsertProbe,
+): Piece | null => {
+  if (piece.buffer === buffers.original) return null
+  if (!isNewestBuffer(buffers, piece.buffer)) return null
+  const chunkText = getBufferText(buffers, piece.buffer)
+  if (piece.start + piece.length !== chunkText.length) return null
+  if (chunkText.length + probe.text.length > BUFFER_CHUNK_SIZE) return null
+  return {
+    ...piece,
+    length: piece.length + probe.text.length,
+    lineBreaks: piece.lineBreaks + countLineBreaks(probe.text),
+  }
+}
+
+// The collapsed-edit rule of snapEditToCodePoints: inserting between the
+// halves of a pair moves before it unless the text starts with a low half
+// and ends with a high one, so that both cuts are mended.
+const insertSplitsPair = (before: number, after: number, probe: InsertProbe): boolean => {
+  if (!isLowSurrogate(after) || !isHighSurrogate(before)) return false
+  const text = probe.text
+  return !isLowSurrogate(text.charCodeAt(0)) || !isHighSurrogate(text.charCodeAt(text.length - 1))
+}
+
+const firstUnitOf = (piece: Piece, buffers: PieceTableBuffers): number =>
+  bufferUnitAt(buffers, piece.buffer, piece.start)
+
+const lastUnitOf = (piece: Piece, buffers: PieceTableBuffers): number =>
+  bufferUnitAt(buffers, piece.buffer, piece.start + piece.length - 1)
+
+const firstVisibleUnit = (node: PieceTreeNode | null, buffers: PieceTableBuffers): number => {
+  const location = findVisiblePieceStartingAt(node, 0)
+  return location ? firstUnitOf(location.piece, buffers) : -1
+}
+
+// The first visible unit after a landing: in its right subtree, else in the
+// nearest ancestor the descent turned left at, or that ancestor's right side.
+const successorUnit = (
+  right: PieceTreeNode | null,
+  buffers: PieceTableBuffers,
+  probe: InsertProbe,
+): number => {
+  const below = firstVisibleUnit(right, buffers)
+  if (below >= 0) return below
+  for (let index = probe.leftTurns.length - 1; index >= 0; index -= 1) {
+    const ancestor = probe.leftTurns[index]!
+    if (getPieceVisibleLength(ancestor.piece) > 0) return firstUnitOf(ancestor.piece, buffers)
+    const beside = firstVisibleUnit(ancestor.right, buffers)
+    if (beside >= 0) return beside
+  }
+  return -1
+}
+
+// A coalesce found below this node: the subtree came back as the new left.
+const rebuildAfterCoalesce = (
+  node: PieceTreeNode,
+  side: 'left' | 'right',
+  subtree: PieceTreeNode | null,
+  epoch: number,
+): SplitResult => {
+  const next = own(node, epoch)
+  next[side] = subtree
+  return { left: updateNode(next), right: null }
+}
+
+// Landing with the offset at this node's start (or on a tombstone): the piece
+// ending here, if any, is the rightmost visible one in the left subtree.
+const probeAtStart = (
+  node: PieceTreeNode,
+  offset: number,
+  buffers: PieceTableBuffers,
+  epoch: number,
+  probe: InsertProbe,
+): SplitResult | null => {
+  const ending = findVisiblePieceEndingAt(node.left, offset)
+  if (probe.snap && ending) {
+    // The unit after first: the one before may be the tail's last unit.
+    const after =
+      getPieceVisibleLength(node.piece) > 0
+        ? firstUnitOf(node.piece, buffers)
+        : successorUnit(node.right, buffers, probe)
+    if (
+      isLowSurrogate(after) &&
+      insertSplitsPair(lastUnitOf(ending.piece, buffers), after, probe)
+    ) {
+      probe.outcome = 'retry'
+      return NO_SPLIT
+    }
+  }
+
+  const tail = ending ? coalescedPiece(buffers, ending.piece, probe) : null
+  if (!tail) return null
+
+  probe.outcome = 'coalesce'
+  probe.coalesced = tail
+  const left = replacePieceEndingAt(node.left, offset, tail, epoch)
+  return rebuildAfterCoalesce(node, 'left', left, epoch)
+}
+
+// Landing with the offset at this node's end: this piece is the one ending here.
+const probeAtEnd = (
+  node: PieceTreeNode,
+  buffers: PieceTableBuffers,
+  epoch: number,
+  probe: InsertProbe,
+): SplitResult | null => {
+  if (probe.snap) {
+    const after = successorUnit(node.right, buffers, probe)
+    if (isLowSurrogate(after) && insertSplitsPair(lastUnitOf(node.piece, buffers), after, probe)) {
+      probe.outcome = 'retry'
+      return NO_SPLIT
+    }
+  }
+
+  const tail = coalescedPiece(buffers, node.piece, probe)
+  if (!tail) return null
+
+  probe.outcome = 'coalesce'
+  probe.coalesced = tail
+  const next = own(node, epoch)
+  next.piece = tail
+  return { left: updateNode(next), right: null }
+}
+
+// Landing strictly inside this piece: both units are in its chunk, and a
+// pair split moves the offset one unit left within the same piece.
+const probeInside = (
+  node: PieceTreeNode,
+  localOffset: number,
+  buffers: PieceTableBuffers,
+  probe: InsertProbe,
+): number => {
+  if (!probe.snap) return localOffset
+  const at = node.piece.start + localOffset
+  const after = bufferUnitAt(buffers, node.piece.buffer, at)
+  if (!isLowSurrogate(after)) return localOffset
+  const before = bufferUnitAt(buffers, node.piece.buffer, at - 1)
+  return insertSplitsPair(before, after, probe) ? localOffset - 1 : localOffset
+}
+
 export const splitByVisibleOffset = (
   node: PieceTreeNode | null,
   offset: number,
@@ -139,22 +296,29 @@ export const splitByVisibleOffset = (
   context: SplitContext,
   epoch = PERSISTENT_EPOCH,
   upperOrder: number | null = null,
-): { left: PieceTreeNode | null; right: PieceTreeNode | null } => {
+): SplitResult => {
   if (!node) return { left: null, right: null }
 
   const leftLen = getSubtreeVisibleLength(node.left)
   const nodeLen = getPieceVisibleLength(node.piece)
 
+  // Ancestors are owned after the recursion, so a probe that ends in a
+  // coalesce or a retry below leaves the path above it untouched.
   if (offset < leftLen) {
-    const newNode = own(node, epoch)
+    context.probe?.leftTurns.push(node)
     const { left, right } = splitByVisibleOffset(
-      newNode.left,
+      node.left,
       offset,
       buffers,
       context,
       epoch,
       node.piece.order,
     )
+    const outcome = context.probe?.outcome
+    if (outcome === 'retry') return NO_SPLIT
+    if (outcome === 'coalesce') return rebuildAfterCoalesce(node, 'left', left, epoch)
+
+    const newNode = own(node, epoch)
     newNode.left = right
     if (!right || right.priority >= newNode.priority) return { left, right: updateNode(newNode) }
     // A fresh split priority can move the remainder above this ancestor.
@@ -163,19 +327,36 @@ export const splitByVisibleOffset = (
   }
 
   if (offset > leftLen + nodeLen) {
-    const newNode = own(node, epoch)
     const { left, right } = splitByVisibleOffset(
-      newNode.right,
+      node.right,
       offset - leftLen - nodeLen,
       buffers,
       context,
       epoch,
       upperOrder,
     )
+    const outcome = context.probe?.outcome
+    if (outcome === 'retry') return NO_SPLIT
+    if (outcome === 'coalesce') return rebuildAfterCoalesce(node, 'right', left, epoch)
+
+    const newNode = own(node, epoch)
     newNode.right = left
     if (!left || left.priority >= newNode.priority) return { left: updateNode(newNode), right }
     newNode.right = null
     return { left: merge(updateNode(newNode), left, epoch), right }
+  }
+
+  const probe = context.probe
+  if (probe && (nodeLen === 0 || offset === leftLen)) {
+    const probed = probeAtStart(node, offset, buffers, epoch, probe)
+    if (probed) return probed
+  }
+  if (probe && nodeLen > 0 && offset === leftLen + nodeLen) {
+    const probed = probeAtEnd(node, buffers, epoch, probe)
+    if (probed) return probed
+  }
+  if (probe && nodeLen > 0 && offset > leftLen && offset < leftLen + nodeLen) {
+    offset = leftLen + probeInside(node, offset - leftLen, buffers, probe)
   }
 
   if (nodeLen === 0) {
