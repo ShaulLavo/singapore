@@ -1,3 +1,4 @@
+import { getDocumentTextSourceIndex } from './documentTextSourceCache'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bufferColumnToVisualColumn, visualColumnToBufferColumn } from './displayTransforms'
 import { createDocumentTextSnapshot, measureTextSnapshotRange } from './documentTextSnapshot'
@@ -65,15 +66,21 @@ describe('indexed text measurements', () => {
     const session = createEditorBufferSession(buffer)
     const first = measureTextSnapshotRange(buffer.getTextSnapshot(), 0, original.length)
     expect(first.columnAt(original.length, 4, 'utf16')).toBe(original.length)
-    const source = buffer
-      .getSnapshot()
-      .buffers.textIndexes.get(buffer.getSnapshot().buffers.original)
+    const source = getDocumentTextSourceIndex(
+      buffer.getSnapshot().buffers,
+      buffer.getSnapshot().buffers.original,
+      original,
+    )
     session.applyEdits([{ from: 0, to: 0, text: '😀\t' }])
     const changed = measureTextSnapshotRange(buffer.getTextSnapshot(), 0, original.length + 3)
     expect(measureTextSnapshotRange(buffer.getTextSnapshot(), 0, original.length + 3)).toBe(changed)
     expect(changed.columnAt(original.length + 3, 4, 'estimated')).toBe(original.length + 4)
     expect(
-      buffer.getSnapshot().buffers.textIndexes.get(buffer.getSnapshot().buffers.original),
+      getDocumentTextSourceIndex(
+        buffer.getSnapshot().buffers,
+        buffer.getSnapshot().buffers.original,
+        original,
+      ),
     ).toBe(source)
     session.undo()
     session.applyEdits([{ from: 0, to: 0, text: 'ab\t' }])

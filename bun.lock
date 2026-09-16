@@ -89,6 +89,7 @@
       "version": "0.1.2",
       "dependencies": {
         "@shikijs/engine-oniguruma": "4.4.3",
+        "@singapore-editor/textbuffer": "workspace:*",
         "@tanstack/hotkeys": "0.8.0",
         "diff": "^9.0.0",
         "evlog": "^2.29.0",
@@ -312,6 +313,16 @@
       "peerDependencies": {
         "@singapore-editor/core": "workspace:*",
         "solid-js": ">=1.8 <2",
+      },
+    },
+    "packages/textbuffer": {
+      "name": "@singapore-editor/textbuffer",
+      "version": "0.1.0",
+      "devDependencies": {
+        "oxfmt": "0.54.0",
+        "oxlint": "1.69.0",
+        "typescript": "~6.0.3",
+        "vitest": "^4.1.11",
       },
     },
     "packages/tree-sitter": {
@@ -641,6 +652,8 @@
     "@singapore-editor/solid": ["@singapore-editor/solid@workspace:packages/solid"],
 
     "@singapore-editor/stress": ["@singapore-editor/stress@workspace:examples/stress"],
+
+    "@singapore-editor/textbuffer": ["@singapore-editor/textbuffer@workspace:packages/textbuffer"],
 
     "@singapore-editor/tree-sitter": ["@singapore-editor/tree-sitter@workspace:packages/tree-sitter"],
 

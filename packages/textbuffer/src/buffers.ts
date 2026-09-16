@@ -1,0 +1,430 @@
+import type {
+  Piece,
+  PieceBufferChunks,
+  PieceBufferId,
+  PieceBufferLineIndex,
+  PieceTableBuffers,
+} from './pieceTableTypes'
+import { PIECE_ORDER_STEP } from './orders'
+import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
+import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEndings'
+import { recordTextBufferDiagnostic } from './diagnostics'
+
+export const BUFFER_CHUNK_SIZE = 16 * 1024
+const BUFFER_ID_PREFIX = 'buffer:'
+const BUFFER_STORE_PAGE_SIZE = 1024
+const LINE_INDEX_MIN_CAPACITY = 64
+const CARRIAGE_RETURN = 0x0d
+const HIGH_SURROGATE_FIRST = 0xd800
+const HIGH_SURROGATE_LAST = 0xdbff
+const retainedLineIndexes = new WeakMap<
+  PieceBufferChunks,
+  Map<PieceBufferId, PieceBufferLineIndex>
+>()
+
+class PieceBufferChunkStore implements PieceBufferChunks {
+  public readonly [Symbol.toStringTag] = 'PieceBufferChunkStore'
+
+  public constructor(
+    private readonly pages: readonly (readonly string[])[],
+    public readonly size: number,
+  ) {}
+
+  public static from(chunks: readonly string[]): PieceBufferChunkStore {
+    return new PieceBufferChunkStore([chunks], chunks.length)
+  }
+
+  public get(buffer: PieceBufferId): string | undefined {
+    const sequence = bufferSequence(buffer)
+    if (sequence === null) return undefined
+
+    const page = this.pages[Math.floor(sequence / BUFFER_STORE_PAGE_SIZE)]
+    return page?.[sequence % BUFFER_STORE_PAGE_SIZE]
+  }
+
+  public has(buffer: PieceBufferId): boolean {
+    return this.get(buffer) !== undefined
+  }
+
+  public forEach(
+    callback: (value: string, key: PieceBufferId, map: PieceBufferChunks) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.entries()) {
+      callback.call(thisArg, value, key, this)
+    }
+  }
+
+  public *entries(): IterableIterator<[PieceBufferId, string]> {
+    let sequence = 0
+
+    for (const page of this.pages) {
+      for (const text of page) {
+        yield [createBufferId(sequence), text]
+        sequence += 1
+      }
+    }
+  }
+
+  public *keys(): IterableIterator<PieceBufferId> {
+    for (const [key] of this.entries()) yield key
+  }
+
+  public *values(): IterableIterator<string> {
+    for (const [, value] of this.entries()) yield value
+  }
+
+  public [Symbol.iterator](): IterableIterator<[PieceBufferId, string]> {
+    return this.entries()
+  }
+
+  public append(chunks: readonly string[]): PieceBufferChunkStore {
+    if (chunks.length === 0) return this
+
+    const nextPages = [...this.pages]
+    let tail = nextPages.pop()?.slice() ?? []
+
+    for (const chunk of chunks) {
+      if (tail.length === BUFFER_STORE_PAGE_SIZE) {
+        nextPages.push(tail)
+        tail = []
+      }
+
+      tail.push(chunk)
+    }
+
+    if (tail.length > 0) nextPages.push(tail)
+    return new PieceBufferChunkStore(nextPages, this.size + chunks.length)
+  }
+
+  public extendTail(text: string): PieceBufferChunkStore {
+    if (text.length === 0) return this
+    if (this.size === 0) throw new Error('piece buffer tail not found')
+
+    const nextPages = [...this.pages]
+    const pageIndex = nextPages.length - 1
+    const tail = nextPages[pageIndex]?.slice()
+    if (!tail || tail.length === 0) throw new Error('piece buffer tail not found')
+
+    const chunkIndex = tail.length - 1
+    tail[chunkIndex] = `${tail[chunkIndex] ?? ''}${text}`
+    nextPages[pageIndex] = tail
+    return new PieceBufferChunkStore(nextPages, this.size)
+  }
+}
+
+export type PieceTableBufferOptions = {
+  readonly prioritySeed?: number
+  // Recorded, not applied: `original` is expected to already be LF-normalized
+  // by the caller (see createPieceTableSnapshot).
+  readonly lineEnding?: DocumentLineEnding
+  readonly byteOrderMark?: string
+  // For callers that ingested the text themselves: the folded text no longer
+  // carries the evidence, so their own finding is the only source left.
+  readonly containsUnusualLineTerminators?: boolean
+}
+
+export type AppendChunksToBuffersResult = {
+  readonly buffers: PieceTableBuffers
+  readonly pieces: readonly Piece[]
+}
+
+const createBufferId = (sequence: number): PieceBufferId =>
+  `${BUFFER_ID_PREFIX}${sequence}` as PieceBufferId
+
+const bufferSequence = (buffer: PieceBufferId): number | null => {
+  if (!buffer.startsWith(BUFFER_ID_PREFIX)) return null
+
+  const sequence = Number(buffer.slice(BUFFER_ID_PREFIX.length))
+  if (!Number.isSafeInteger(sequence) || sequence < 0) return null
+  return sequence
+}
+
+export const isNewestChunk = (buffers: PieceTableBuffers, buffer: PieceBufferId): boolean => {
+  const sequence = bufferSequence(buffer)
+  return sequence !== null && sequence === buffers.nextBufferSequence - 1
+}
+
+export const countLineBreaks = (text: string, start = 0, end = text.length): number => {
+  let count = 0
+  let index = text.indexOf('\n', start)
+
+  while (index !== -1 && index < end) {
+    count++
+    index = text.indexOf('\n', index + 1)
+  }
+
+  return count
+}
+
+// Immutable chunk stores retain their branch's index. A grown index also
+// serves shorter ancestors; each lookup stays within that snapshot's text.
+const bufferLineIndex = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  text: string,
+): PieceBufferLineIndex => {
+  const retained = retainedLineIndexes.get(buffers.chunks)?.get(buffer)
+  if (retained) return retained
+  const holder = buffers as PieceTableBuffers & {
+    lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
+  }
+  holder.lineIndexes ??= new Map()
+
+  const cached = holder.lineIndexes.get(buffer)
+  let index = cached && sharesIndexedPrefix(cached, text) ? cached : undefined
+  if (!index) {
+    index = { offsets: new Uint32Array(0), count: 0, scannedLength: 0, text }
+    holder.lineIndexes.set(buffer, index)
+  }
+  if (index.scannedLength < text.length) extendBufferLineIndex(index, text)
+  retainBufferLineIndex(buffers.chunks, buffer, index)
+
+  return index
+}
+
+function retainBufferLineIndex(
+  chunks: PieceBufferChunks,
+  buffer: PieceBufferId,
+  index: PieceBufferLineIndex,
+): void {
+  let retained = retainedLineIndexes.get(chunks)
+  if (!retained) {
+    retained = new Map()
+    retainedLineIndexes.set(chunks, retained)
+  }
+  retained.set(buffer, index)
+}
+
+// Only the first lookup for a chunk version compares text; retained lookups are O(1).
+const sharesIndexedPrefix = (index: PieceBufferLineIndex, text: string): boolean =>
+  index.text === text || text.startsWith(index.text) || index.text.startsWith(text)
+
+const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void => {
+  const scannedCodeUnits = text.length - index.scannedLength
+  let at = text.indexOf('\n', index.scannedLength)
+  while (at !== -1) {
+    pushLineBreakOffset(index, at)
+    at = text.indexOf('\n', at + 1)
+  }
+
+  index.scannedLength = text.length
+  index.text = text
+  recordTextBufferDiagnostic('sourceIndex', () => ({
+    source: 'piece-buffer',
+    sourceBytesRead: scannedCodeUnits * 2,
+    scannedCodeUnits,
+    retainedIndexBytes: index.offsets.byteLength,
+  }))
+}
+
+// Four bytes per offset: a 5M-line document costs 20MB of index here, and the
+// binary search above stays cache-local. Growth doubles so filling the index one
+// break at a time stays linear overall. Offsets cannot overflow 32 bits — V8 caps
+// strings near 2^29 code units — so the width needs no widening path.
+const pushLineBreakOffset = (index: PieceBufferLineIndex, offset: number): void => {
+  if (index.count === index.offsets.length) {
+    const grown = new Uint32Array(Math.max(index.offsets.length * 2, LINE_INDEX_MIN_CAPACITY))
+    grown.set(index.offsets)
+    index.offsets = grown
+  }
+
+  index.offsets[index.count] = offset
+  index.count += 1
+}
+
+const firstLineBreakAtOrAfter = (index: PieceBufferLineIndex, target: number): number => {
+  const offsets = index.offsets
+  let low = 0
+  let high = index.count
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (offsets[middle]! < target) low = middle + 1
+    else high = middle
+  }
+
+  return low
+}
+
+export const countBufferLineBreaks = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  start: number,
+  end: number,
+): number => {
+  if (end <= start) return 0
+
+  const text = getBufferText(buffers, buffer)
+  const index = bufferLineIndex(buffers, buffer, text)
+  return (
+    firstLineBreakAtOrAfter(index, Math.min(end, text.length)) -
+    firstLineBreakAtOrAfter(index, Math.min(start, text.length))
+  )
+}
+
+// Absolute buffer offset of the ordinal-th (1-based) '\n' at or after start.
+export const findBufferLineBreakOffset = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  start: number,
+  ordinal: number,
+): number | null => {
+  const text = getBufferText(buffers, buffer)
+  const index = bufferLineIndex(buffers, buffer, text)
+  const at = firstLineBreakAtOrAfter(index, start) + ordinal - 1
+  if (at >= index.count) return null
+  const offset = index.offsets[at]!
+  return offset < text.length ? offset : null
+}
+
+export const getBufferText = (buffers: PieceTableBuffers, buffer: PieceBufferId): string => {
+  const text = buffers.chunks.get(buffer)
+  if (text !== undefined) return text
+  throw new Error('piece buffer not found')
+}
+
+export const createPiece = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  start: number,
+  length: number,
+  order: number,
+  visible = true,
+): Piece => {
+  return {
+    buffer,
+    start,
+    length,
+    order,
+    lineBreaks: countBufferLineBreaks(buffers, buffer, start, start + length),
+    visible,
+  }
+}
+
+export const bufferForPiece = (buffers: PieceTableBuffers, piece: Piece): string =>
+  getBufferText(buffers, piece.buffer)
+
+// The walker rejoins code points across piece boundaries, but everything that
+// reads a chunk directly (getBufferText and every slice taken from it) would
+// see a lone surrogate or a stray CR if a split landed inside a pair. Hold the
+// trailing unit back so it starts the next chunk instead. One unit is always
+// enough: both sequences are two units, and BUFFER_CHUNK_SIZE is far larger, so
+// the chunk can never collapse to empty and the loop always advances.
+const chunkEndFor = (text: string, start: number): number => {
+  const end = start + BUFFER_CHUNK_SIZE
+  if (end >= text.length) return text.length
+
+  const last = text.charCodeAt(end - 1)
+  const splitsPair =
+    last === CARRIAGE_RETURN || (last >= HIGH_SURROGATE_FIRST && last <= HIGH_SURROGATE_LAST)
+  return splitsPair ? end - 1 : end
+}
+
+export const appendChunksToBuffers = (
+  buffers: PieceTableBuffers,
+  text: string,
+): AppendChunksToBuffersResult => {
+  const chunkTexts: string[] = []
+  const pieces: Piece[] = []
+  let nextBufferSequence = buffers.nextBufferSequence
+  let textOffset = 0
+
+  while (textOffset < text.length) {
+    const chunkText = text.slice(textOffset, chunkEndFor(text, textOffset))
+    const buffer = createBufferId(nextBufferSequence)
+    nextBufferSequence += 1
+    chunkTexts.push(chunkText)
+    pieces.push({
+      buffer,
+      start: 0,
+      length: chunkText.length,
+      order: 0,
+      lineBreaks: countLineBreaks(chunkText),
+      visible: true,
+    })
+    textOffset += chunkText.length
+  }
+
+  return {
+    buffers: {
+      ...buffers,
+      chunks: appendChunkTexts(buffers.chunks, chunkTexts),
+      nextBufferSequence,
+    },
+    pieces,
+  }
+}
+
+export const extendTailChunk = (buffers: PieceTableBuffers, text: string): PieceTableBuffers => {
+  if (text.length === 0) return buffers
+
+  const tailBuffer = createBufferId(buffers.nextBufferSequence - 1)
+  if (buffers.chunks.get(tailBuffer) === undefined) throw new Error('piece buffer tail not found')
+
+  return {
+    ...buffers,
+    chunks: extendTailChunkText(buffers.chunks, tailBuffer, text),
+  }
+}
+
+const appendChunkTexts = (
+  chunks: PieceBufferChunks,
+  chunkTexts: readonly string[],
+): PieceBufferChunks => {
+  if (chunks instanceof PieceBufferChunkStore) return chunks.append(chunkTexts)
+
+  const next = new Map(chunks)
+  let sequence = chunks.size
+  for (const chunkText of chunkTexts) {
+    next.set(createBufferId(sequence), chunkText)
+    sequence += 1
+  }
+  return next
+}
+
+const extendTailChunkText = (
+  chunks: PieceBufferChunks,
+  tailBuffer: PieceBufferId,
+  text: string,
+): PieceBufferChunks => {
+  if (chunks instanceof PieceBufferChunkStore) return chunks.extendTail(text)
+
+  const next = new Map(chunks)
+  const previous = next.get(tailBuffer)
+  if (previous === undefined) throw new Error('piece buffer tail not found')
+  next.set(tailBuffer, previous + text)
+  return next
+}
+
+export const createInitialBuffers = (
+  original: string,
+  options: PieceTableBufferOptions = {},
+): PieceTableBuffers => {
+  const originalBuffer = createBufferId(0)
+  const chunks = PieceBufferChunkStore.from([original])
+  return {
+    original: originalBuffer,
+    identity: {},
+    lineIndexes: new Map(),
+    chunks,
+    nextBufferSequence: 1,
+    prioritySeed: options.prioritySeed ?? DEFAULT_PIECE_TABLE_PRIORITY_SEED,
+    lineEnding: options.lineEnding ?? DEFAULT_DOCUMENT_LINE_ENDING,
+    byteOrderMark: options.byteOrderMark ?? '',
+    containsUnusualLineTerminators: options.containsUnusualLineTerminators ?? false,
+  }
+}
+
+export const createOriginalPiece = (buffers: PieceTableBuffers): Piece | null => {
+  const original = getBufferText(buffers, buffers.original)
+  if (original.length === 0) return null
+
+  return {
+    buffer: buffers.original,
+    start: 0,
+    length: original.length,
+    order: PIECE_ORDER_STEP,
+    lineBreaks: bufferLineIndex(buffers, buffers.original, original).count,
+    visible: true,
+  }
+}

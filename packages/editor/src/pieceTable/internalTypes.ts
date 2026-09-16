@@ -1,11 +1,2 @@
-import type { Piece } from './pieceTableTypes'
-
-export type ReverseIndexChange = {
-  remove?: Piece
-  add?: Piece
-}
-
-export type SplitContext = {
-  changes: ReverseIndexChange[]
-  normalizeOrders: boolean
-}
+// Transitional import path; the implementation lives in the textbuffer package.
+export * from '@singapore-editor/textbuffer/internal/internalTypes'

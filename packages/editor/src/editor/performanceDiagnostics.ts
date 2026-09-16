@@ -1,3 +1,5 @@
+import { setTextBufferDiagnosticSink } from '@singapore-editor/textbuffer/diagnostics'
+
 export type EditorPerformanceOperation = {
   readonly id: number
   readonly input: string
@@ -252,3 +254,8 @@ function editorPerformanceDiagnosticGlobal(): EditorPerformanceDiagnosticGlobal 
 function nowMs(): number {
   return globalThis.performance?.now() ?? Date.now()
 }
+
+// Adapt storage diagnostics here; the storage package never imports editor modules.
+setTextBufferDiagnosticSink((name, detail) => {
+  recordEditorPerformanceDiagnostic('textSnapshot.' + name, detail)
+})

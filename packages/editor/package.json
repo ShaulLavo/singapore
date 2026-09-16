@@ -107,6 +107,7 @@
   },
   "dependencies": {
     "@shikijs/engine-oniguruma": "4.4.3",
+    "@singapore-editor/textbuffer": "workspace:*",
     "@tanstack/hotkeys": "0.8.0",
     "diff": "^9.0.0",
     "evlog": "^2.29.0",
