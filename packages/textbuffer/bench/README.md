@@ -55,9 +55,10 @@ The source revision is deliberately pinned; this is not a moving claim about VS 
 
 ## Workloads and adapter costs
 
-Shared workloads cover load (short lines and a long line), sequential typing, random insertions,
-random replacements, eight-cursor batches, mixed edit churn, large paste/delete cycles, sequential
-and random line reads after churn, offset-range reads, full reads, and both position conversions.
+Shared workloads cover load (short lines and a long line), sequential typing, the same typing with
+a caret-to-position lookup after every keystroke, random insertions, random replacements,
+eight-cursor batches, mixed edit churn, large paste/delete cycles, sequential and random line reads
+after churn, offset-range reads, full reads, and both position conversions.
 Standard fixtures contain 10,000 Unicode-rich lines, 1,500 edits and 3,000 read queries. Load fixtures
 are larger. Paste/delete repeats 16 roughly 256-Ki-code-unit pastes. Exact sizes are recorded per case.
 These are synthetic traces, not captured user sessions; change seeds and repeat on target machines.

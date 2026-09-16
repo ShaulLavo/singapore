@@ -58,6 +58,12 @@ for (const name of ['singapore', 'vscode'])
         const buffer = factory.create(fixture.initial)
         let expected = fixture.initial
         for (const operation of fixture.operations) {
+          if (operation.kind === 'offset') {
+            expect(applyOperation(buffer, operation)).toEqual(
+              oracleQuery(expected, indexLines(expected), operation),
+            )
+            continue
+          }
           const edits = operation.kind === 'batch' ? operation.edits : [operation]
           for (const edit of edits) {
             expect(edit.from).toBeGreaterThanOrEqual(0)

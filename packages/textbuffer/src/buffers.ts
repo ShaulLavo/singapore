@@ -182,8 +182,10 @@ function retainBufferLineIndex(
 }
 
 // Only the first lookup for a chunk version compares text; retained lookups are O(1).
-const sharesIndexedPrefix = (index: PieceBufferLineIndex, text: string): boolean =>
-  index.text === text || text.startsWith(index.text) || index.text.startsWith(text)
+const sharesIndexedPrefix = (index: PieceBufferLineIndex, text: string): boolean => {
+  if (index.text === text) return true
+  return text.startsWith(index.text) || index.text.startsWith(text)
+}
 
 const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void => {
   const scannedCodeUnits = text.length - index.scannedLength
@@ -344,12 +346,43 @@ export const extendTailChunk = (buffers: PieceTableBuffers, text: string): Piece
   if (text.length === 0) return buffers
 
   const tailBuffer = createBufferId(buffers.nextBufferSequence - 1)
-  if (buffers.chunks.get(tailBuffer) === undefined) throw new Error('piece buffer tail not found')
+  const previous = buffers.chunks.get(tailBuffer)
+  if (previous === undefined) throw new Error('piece buffer tail not found')
 
-  return {
-    ...buffers,
-    chunks: extendTailChunkText(buffers.chunks, tailBuffer, text),
+  const chunks = extendTailChunkText(buffers.chunks, tailBuffer, text)
+  growTailLineIndex(buffers, tailBuffer, previous, text, chunks.get(tailBuffer)!)
+  return { ...buffers, chunks }
+}
+
+// The tail's index, when one exists, grows from the appended text alone. The
+// grown chunk is a fresh concatenation: scanning it would flatten it, and
+// comparing it on the next lookup would read it whole, once per keystroke.
+// Identity with the previous text is what proves the index is this chunk's
+// and not a re-minted id's from another undo branch.
+const growTailLineIndex = (
+  buffers: PieceTableBuffers,
+  tailBuffer: PieceBufferId,
+  previous: string,
+  text: string,
+  grown: string,
+): void => {
+  const index = buffers.lineIndexes?.get(tailBuffer)
+  if (!index || index.text !== previous) return
+
+  let at = text.indexOf('\n')
+  while (at !== -1) {
+    pushLineBreakOffset(index, previous.length + at)
+    at = text.indexOf('\n', at + 1)
   }
+
+  index.scannedLength = grown.length
+  index.text = grown
+  recordTextBufferDiagnostic('sourceIndex', () => ({
+    source: 'piece-buffer',
+    sourceBytesRead: text.length * 2,
+    scannedCodeUnits: text.length,
+    retainedIndexBytes: index.offsets.byteLength,
+  }))
 }
 
 const appendChunkTexts = (

@@ -129,6 +129,20 @@ function editFixture(name, initial, count, random, style, versions) {
   }
 }
 
+// An editor converts the caret to a line and column after every keystroke, so
+// the tail chunk's line index is consulted while it is still a fresh
+// concatenation. Typing alone never reads that chunk.
+function typingWithLookupsFixture(name, source) {
+  const operations = []
+  let cursor = 0
+  for (const operation of source.operations) {
+    operations.push(operation)
+    cursor = operation.from + operation.text.length
+    operations.push({ kind: 'offset', offset: cursor })
+  }
+  return { ...source, name, operations }
+}
+
 function queryFixture(name, source, count, random, kind) {
   const text = source.expected
   const starts = indexLines(text)
@@ -171,6 +185,7 @@ export function makeFixtures(profileName, seed = 20260916) {
   const edits = (name, style, count = config.edits) =>
     editFixture(name, initial, count, random, style, config.versions)
   const churn = edits('mixed-edit-churn', 'churn')
+  const typing = edits('sequential-typing', 'typing')
   const longText = 'abcdef😀'.repeat(config.rows * 16)
   const load = (name, text) => ({
     name,
@@ -184,7 +199,8 @@ export function makeFixtures(profileName, seed = 20260916) {
   const result = [
     load('load-short-lines', initial.repeat(4)),
     load('load-long-line', longText),
-    edits('sequential-typing', 'typing'),
+    typing,
+    typingWithLookupsFixture('typing-with-lookups', typing),
     edits('random-insertions', 'insert'),
     edits('random-replacements', 'replace'),
     edits('eight-cursor-batches', 'batch', Math.max(1, Math.floor(config.edits / 8))),

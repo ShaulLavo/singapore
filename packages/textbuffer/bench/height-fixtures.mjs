@@ -12,7 +12,12 @@ export const stressNames = [
 
 export function makeHeightFixtures(profile, traceSeed, stressEdits) {
   assert(Number.isSafeInteger(stressEdits) && stressEdits > 0, 'Invalid stress edit count')
-  const shared = makeFixtures(profile, traceSeed).filter((fixture) => fixture.mode === 'edit')
+  // Height replays edits only; a lookup between keystrokes changes no tree.
+  const shared = makeFixtures(profile, traceSeed).filter(
+    (fixture) =>
+      fixture.mode === 'edit' &&
+      fixture.operations.every((operation) => operation.kind !== 'offset'),
+  )
   return shared.concat(stressNames.map((name) => stressFixture(name, traceSeed, stressEdits)))
 }
 

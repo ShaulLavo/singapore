@@ -9,6 +9,7 @@ import { fileHashes, packageRoot, upstreamRoot } from './support.mjs'
 const extraAmounts = {
   'buffers.extendBufferLineIndex': ['indexInputCodeUnits', 'text.length - index.scannedLength'],
   'buffers.countLineBreaks': ['inputCodeUnits', 'end - start'],
+  'buffers.growTailLineIndex': ['indexInputCodeUnits', 'text.length'],
   'buffers.PieceBufferChunkStore.append': [
     'copiedArraySlots',
     'chunks.length ? this.pages.length + (this.pages.at(-1)?.length ?? 0) : 0',
@@ -113,6 +114,17 @@ export function instrument(text, filename) {
     )
       add(node.getStart(source), counter(owner + '.replacementRecords'))
     if (
+      owner === 'buffers.sharesIndexedPrefix' &&
+      ts.isReturnStatement(node) &&
+      node.expression &&
+      node.expression.getText(source).includes('startsWith')
+    )
+      add(
+        node.getStart(source),
+        counter(owner + '.prefixCompares') +
+          counter(owner + '.prefixCompareCodeUnits', 'Math.min(index.text.length, text.length)'),
+      )
+    if (
       owner === 'buffers.bufferLineIndex' &&
       ts.isIfStatement(node) &&
       node.expression.getText(source) === 'retained'
@@ -148,6 +160,8 @@ const requiredCounters = {
     'buffers.pushLineBreakOffset.typedArrayCapacityBytes',
     'buffers.pushLineBreakOffset.typedArrayCopiedBytes',
     'buffers.bufferLineIndex.retainedHits',
+    'buffers.sharesIndexedPrefix.prefixCompares',
+    'buffers.sharesIndexedPrefix.prefixCompareCodeUnits',
   ],
   vscode: [
     'pieceTreeBase.createLineStarts.indexInputCodeUnits',
