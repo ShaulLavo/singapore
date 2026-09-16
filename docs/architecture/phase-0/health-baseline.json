@@ -78,6 +78,7 @@
         "packages/editor/src/editor/types.ts",
         "packages/editor/src/plugins.ts",
         "packages/editor/src/virtualization/browserMetrics.ts",
+        "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
         "packages/editor/src/virtualization/foldMarkerSource.ts",
         "packages/editor/src/virtualization/geckoHighlightRepaint.ts",
         "packages/editor/src/virtualization/rowDecorationProjection.ts",
@@ -94,7 +95,8 @@
         "packages/editor/src/virtualization/virtualizedTextViewLayout.ts",
         "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
         "packages/editor/src/virtualization/virtualizedTextViewSelectionLayer.ts",
-        "packages/editor/src/virtualization/virtualizedTextViewTypes.ts"
+        "packages/editor/src/virtualization/virtualizedTextViewTypes.ts",
+        "packages/editor/src/virtualization/wheelScrollTarget.ts"
       ],
       [
         "packages/editor/src/virtualization/displayProjectionBuild.ts",

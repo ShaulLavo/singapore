@@ -4792,6 +4792,12 @@
         },
         {
           "kind": "unknown",
+          "name": "registerWheelScrollTarget",
+          "source": "packages/editor/src/virtualization/wheelScrollTarget.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "reindentEditsForRanges",
           "source": "packages/editor/src/editor/reindent.ts",
           "via": "packages/editor/src/public/extensions.ts"

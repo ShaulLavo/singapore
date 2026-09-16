@@ -134,3 +134,4 @@ export type {
   EditorVisibleSnapshot,
   EditorVisibleSnapshotJSON,
 } from '../plugins'
+export { registerWheelScrollTarget } from '../virtualization/wheelScrollTarget'

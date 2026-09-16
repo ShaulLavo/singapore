@@ -12,7 +12,10 @@ import type {
   EditorViewSnapshot,
   EditorViewportSnapshot,
 } from '@singapore-editor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@singapore-editor/core/extensions'
+import {
+  EDITOR_MINIMAP_FEATURE,
+  registerWheelScrollTarget,
+} from '@singapore-editor/core/extensions'
 import { mergeDenseDecorations } from './decorationMerge'
 import { computeRenderLayout } from './layout'
 import { resolveMinimapOptions } from './options'
@@ -70,6 +73,7 @@ class MinimapContribution implements EditorViewContribution {
   private readonly host: MinimapHost
   private readonly client: MinimapWorkerClient
   private readonly decorationSubscription: EditorDisposable
+  private readonly wheelScrollRegistration: EditorDisposable
   private latestSnapshot: EditorViewSnapshot
   private latestViewport: EditorViewportSnapshot
   private activeSliderDrag: SliderDrag | null = null
@@ -101,6 +105,7 @@ class MinimapContribution implements EditorViewContribution {
       reservedLane: () => this.appliedReservedWidth,
     })
     this.decorationSubscription = decorations.subscribe(this.handleDecorationsChanged)
+    this.wheelScrollRegistration = registerWheelScrollTarget(context, this.host.root)
     this.installPointerHandlers()
     this.client.update(this.latestSnapshot, 'document')
   }
@@ -133,6 +138,7 @@ class MinimapContribution implements EditorViewContribution {
 
     this.disposed = true
     this.stopSliderDrag()
+    this.wheelScrollRegistration.dispose()
     this.decorationSubscription.dispose()
     this.client.dispose()
     this.context.reserveOverlayWidth(this.options.side, 0)
