@@ -1,73 +1,77 @@
 import assert from 'node:assert/strict'
 
-export function treeShape(root) {
-  if (!root?.piece) return { nodes: 0, visible: 0, invisible: 0, maxDepth: 0, meanDepth: 0, p95Depth: 0 }
-
-  let nodes = 0
-  let visible = 0
-  let invisible = 0
-  let maxDepth = 0
-  let depthTotal = 0
+// Depth counts real nodes: empty = 0, root = 1. Upstream NIL has a null piece.
+export function measureTree(root) {
+  const stack = root ? [[root, 1]] : []
+  const seen = new Set()
   const depths = []
-  const stack = [[root, 1]]
-
-  while (stack.length > 0) {
+  let nodes = 0
+  let tombstones = 0
+  let totalDepth = 0
+  let visibleDepth = 0
+  let visibleLength = 0
+  let height = 0
+  while (stack.length) {
     const [node, depth] = stack.pop()
     if (!node?.piece) continue
+    assert(!seen.has(node), 'Cycle or repeated child in tree')
+    seen.add(node)
     nodes += 1
-    if (node.piece.visible === false) invisible += 1
-    else visible += 1
-    maxDepth = Math.max(maxDepth, depth)
-    depthTotal += depth
-    depths.push(depth)
-    if (node.left?.piece) stack.push([node.left, depth + 1])
-    if (node.right?.piece) stack.push([node.right, depth + 1])
+    totalDepth += depth
+    depths[depth] = (depths[depth] ?? 0) + 1
+    height = Math.max(height, depth)
+    if (node.piece.visible === false) tombstones += 1
+    else {
+      visibleDepth += depth
+      visibleLength += node.piece.length
+    }
+    if (node.left) stack.push([node.left, depth + 1])
+    if (node.right) stack.push([node.right, depth + 1])
   }
-
-  depths.sort((a, b) => a - b)
+  const visiblePieces = nodes - tombstones
+  let cumulative = 0
+  let p95Depth = 0
+  for (let depth = 1; depth < depths.length; depth += 1) {
+    cumulative += depths[depth] ?? 0
+    if (cumulative >= Math.ceil(nodes * 0.95)) {
+      p95Depth = depth
+      break
+    }
+  }
   return {
     nodes,
-    visible,
-    invisible,
-    maxDepth,
-    meanDepth: depthTotal / nodes,
-    p95Depth: depths[Math.ceil(depths.length * 0.95) - 1],
+    visiblePieces,
+    tombstones,
+    visibleLength,
+    height,
+    meanDepth: nodes ? totalDepth / nodes : 0,
+    p95Depth,
+    visiblePieceMeanDepth: visiblePieces ? visibleDepth / visiblePieces : 0,
+    heightOverLog2: nodes ? height / Math.log2(nodes + 1) : null,
   }
 }
 
-export function logarithmicReference(nodes) {
-  return Math.log2(nodes + 1)
+export function checkpointAt(operation, count, every) {
+  return operation === 0 || operation === count || operation % every === 0 ||
+    (operation > 0 && Number.isInteger(Math.log2(operation)))
 }
 
-export function normalizedHeight(shape) {
-  const reference = logarithmicReference(shape.nodes)
-  return reference === 0 ? 0 : shape.maxDepth / reference
-}
-
-export function checkpointIndexes(operationCount, requested = 64) {
-  assert(Number.isSafeInteger(operationCount) && operationCount >= 0)
-  assert(Number.isSafeInteger(requested) && requested > 0)
-  if (operationCount === 0) return [0]
-  const indexes = new Set([0, operationCount])
-  for (let index = 1; index < requested; index += 1)
-    indexes.add(Math.round((operationCount * index) / requested))
-  return [...indexes].sort((a, b) => a - b)
-}
-
-export function shapePoint(engine, workload, seed, operation, shape, extra = {}) {
-  return {
-    engine,
-    workload,
-    seed,
-    operation,
-    pieces: shape.nodes,
-    visiblePieces: shape.visible,
-    tombstones: shape.invisible,
-    maxDepth: shape.maxDepth,
-    meanDepth: shape.meanDepth,
-    p95Depth: shape.p95Depth,
-    log2Pieces: logarithmicReference(shape.nodes),
-    normalizedHeight: normalizedHeight(shape),
-    ...extra,
-  }
+export function stressFixtures(count) {
+  assert(Number.isSafeInteger(count) && count > 0, 'Positive edit count required')
+  return ['prepend', 'fixed-offset-inserts', 'alternating-ends', 'hotspot-replacements'].map(
+    (name) => {
+      const initial = 'abc'
+      let expected = initial
+      const operations = []
+      for (let index = 0; index < count; index += 1) {
+        const from = name === 'prepend' ? 0 : name === 'alternating-ends'
+          ? index % 2 ? expected.length : 0 : 1
+        const to = name === 'hotspot-replacements' ? from + 1 : from
+        const text = index % 2 ? 'x' : 'y'
+        operations.push({ kind: 'edit', from, to, text })
+        expected = expected.slice(0, from) + text + expected.slice(to)
+      }
+      return { name, initial, expected, operations, setup: [], mode: 'edit' }
+    },
+  )
 }
