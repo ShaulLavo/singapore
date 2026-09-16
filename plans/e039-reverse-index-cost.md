@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P2
 - Effort: L
-- Dependencies: [E037](e037-textbuffer-edit-allocations.md), [E038](e038-append-only-buffer-store.md)
+- Dependencies: [E037](../docs/performance/e037-textbuffer-edit-allocations.md), [E038](e038-append-only-buffer-store.md)
 - Inspected baseline: `69dfef7425539165ec05a457bd6f0516fb6607fa`, 2026-09-16.
 
 ## Outcome
