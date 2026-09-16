@@ -38,9 +38,12 @@ export function instrument(text, filename) {
   const edits = []
   const manifest = []
   const module = path.basename(filename, '.js')
+  const counters = new Set()
   const add = (at, value) => edits.push({ at, value })
-  const counter = (name, amount = '1') =>
-    `;globalThis.__textbufferBenchCounters.add(${JSON.stringify(name)}, ${amount});`
+  function counter(name, amount = '1') {
+    counters.add(name)
+    return `;globalThis.__textbufferBenchCounters.add(${JSON.stringify(name)}, ${amount});`
+  }
   function prepend(body, value) {
     if (ts.isBlock(body)) add(body.getStart(source) + 1, value)
     else {
@@ -129,7 +132,30 @@ export function instrument(text, filename) {
     text = text.slice(0, edit.at) + edit.value + text.slice(edit.at)
   const parsed = ts.createSourceFile(filename, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
   assert.equal(parsed.parseDiagnostics.length, 0, `Probe generated invalid JS: ${filename}`)
-  return { text, manifest }
+  return { text, manifest, counters: Array.from(counters).sort() }
+}
+
+const requiredCounters = {
+  singapore: [
+    'tree.cloneNode.calls',
+    'reverseIndex.cloneReverseIndexNode.calls',
+    'reverseIndex.insertReverseIndexNode.replacementRecords',
+    'buffers.extendBufferLineIndex.calls',
+    'buffers.extendBufferLineIndex.indexInputCodeUnits',
+    'buffers.countLineBreaks.inputCodeUnits',
+    'buffers.PieceBufferChunkStore.append.copiedArraySlots',
+    'buffers.PieceBufferChunkStore.extendTail.copiedArraySlots',
+    'buffers.pushLineBreakOffset.typedArrayCapacityBytes',
+    'buffers.pushLineBreakOffset.typedArrayCopiedBytes',
+    'buffers.bufferLineIndex.retainedHits',
+  ],
+  vscode: [
+    'pieceTreeBase.createLineStarts.indexInputCodeUnits',
+    'pieceTreeBase.createLineStartsFast.indexInputCodeUnits',
+    'pieceTreeBase.createUintArray.typedArrayCapacityBytes',
+    'pieceTreeBase.PieceTreeBase.getLineContent.cachedLineHits',
+    'rbTreeBase.TreeNode.constructor.calls',
+  ],
 }
 
 export function prepareProbes(destination) {
@@ -162,27 +188,20 @@ export function prepareProbes(destination) {
       JSON.stringify({ type: engine === 'singapore' ? 'module' : 'commonjs' }),
     )
     const manifest = []
+    const counters = new Set()
     for (const module of selected[engine]) {
       const filename = path.join(roots[engine], module + '.js')
       const instrumented = instrument(readFileSync(filename, 'utf8'), filename)
       writeFileSync(filename, instrumented.text)
       manifest.push(...instrumented.manifest)
+      for (const name of instrumented.counters) counters.add(name)
     }
-    const required =
-      engine === 'singapore'
-        ? ['tree.cloneNode', 'reverseIndex.cloneReverseIndexNode', 'buffers.extendBufferLineIndex']
-        : [
-            'pieceTreeBase.createLineStarts',
-            'pieceTreeBase.createLineStartsFast',
-            'rbTreeBase.TreeNode.constructor',
-          ]
-    for (const key of required)
-      assert(
-        manifest.some((item) => item.key === key),
-        `Missing probe ${key}`,
-      )
+    // Text-matched probes stop matching silently when the source changes; every one is required.
+    for (const name of requiredCounters[engine])
+      assert(counters.has(name), `Missing probe ${name}: update probes.mjs for the current source`)
     manifests[engine] = {
       probes: manifest,
+      counters: Array.from(counters).sort(),
       input: fileHashes(original),
       output: fileHashes(roots[engine]),
     }
