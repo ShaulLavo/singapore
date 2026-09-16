@@ -6,12 +6,15 @@ red-black tree. This runs separately from the timing and profiling workers.
 From `packages/textbuffer`, after installing workspace dependencies:
 
 ```sh
-bun run build
-node --test bench/height.test.mjs
-node bench/height.mjs --profile standard
+bun run bench:check
+bun run bench:height -- --profile standard
 python3 -m pip install matplotlib==3.10.8
 python3 bench/plot-height.py bench/results/height-standard/height.json
 ```
+
+`bench:check` builds the package, prepares the pinned control and runs the Vitest suite, which
+includes the measurement tests in `height.test.mjs`. `tree-shape.mjs` holds the read-only
+measurement; `height.mjs` is the replay driver.
 
 Open `bench/results/height-standard/index.html` for the plots. The directory also contains raw JSON,
 CSV, a Markdown summary, the generated edit traces, and source/build hashes.
@@ -24,13 +27,14 @@ Every priority seed replays the same edits. VS Code runs once per trace.
 The six shared edit workloads come from `fixtures.mjs`: typing, random insertions, random replacements,
 eight-cursor batches, mixed churn, and large paste/delete. Five additional traces exercise prepending,
 a fixed middle position, alternating ends, repeated insert/delete at one position, and a shrinking
-document. Those stress traces use 5,000 edits each.
+document. Those stress traces use 5,000 edits each. CI runs the smoke profile on pull requests and the
+standard sweep on `main` and manual dispatch; both upload the plots and raw JSON as artifacts.
 
 ```sh
-node bench/height.mjs --profile smoke
-node bench/height.mjs --stress-edits 50000 --every 500 --priority-seeds 0,1,2,3,7,42
-node bench/height.mjs --workloads fixed-middle,hotspot-churn --trace-seeds 7
-node bench/height.mjs --engines singapore --out bench/results/height-singapore
+bun run bench:height -- --profile smoke
+bun run bench:height -- --stress-edits 50000 --every 500 --priority-seeds 0,1,2,3,7,42
+bun run bench:height -- --workloads fixed-middle,hotspot-churn --trace-seeds 7
+bun run bench:height -- --engines singapore --out bench/results/height-singapore
 ```
 
 The control uses the existing pinned-source preparation and adapter. The Singapore-only command uses

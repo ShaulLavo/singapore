@@ -41,7 +41,11 @@ export function runHeightTrace(buffer, fixture, every, onSample) {
 
 function git(args) {
   try {
-    return execFileSync('git', args, { cwd: packageRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return execFileSync('git', args, {
+      cwd: packageRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
   } catch {
     return null
   }
@@ -72,22 +76,37 @@ async function main() {
   if (values.help) {
     console.log('node bench/height.mjs [--profile smoke|standard] [--stress-edits 5000]')
     console.log('  [--trace-seeds 20260916,7] [--priority-seeds 0,1,7,42] [--every 250]')
-    console.log('  [--engines singapore,vscode] [--workloads prepend,hotspot-churn] [--out directory]')
+    console.log(
+      '  [--engines singapore,vscode] [--workloads prepend,hotspot-churn] [--out directory]',
+    )
     return
   }
   assert(['smoke', 'standard'].includes(values.profile), 'Unknown profile')
   const traceSeeds = unsignedList(values['trace-seeds'])
   const prioritySeeds = unsignedList(values['priority-seeds'])
   const every = positive(values.every, 1000000)
-  const stressEdits = positive(values['stress-edits'] ?? (values.profile === 'smoke' ? '64' : '5000'), 1000000)
+  const stressEdits = positive(
+    values['stress-edits'] ?? (values.profile === 'smoke' ? '64' : '5000'),
+    1000000,
+  )
   const engines = values.engines.split(',')
   assert(engines.length && new Set(engines).size === engines.length, 'Invalid engines')
-  assert(engines.every((engine) => ['singapore', 'vscode'].includes(engine)), 'Unknown engine')
+  assert(
+    engines.every((engine) => ['singapore', 'vscode'].includes(engine)),
+    'Unknown engine',
+  )
   const selected = values.workloads?.split(',')
   const fixtures = traceSeeds.flatMap((seed) => {
     const all = makeHeightFixtures(values.profile, seed, stressEdits)
-    if (selected) for (const name of selected) assert(all.some((item) => item.name === name), `Unknown workload: ${name}`)
-    return all.filter((fixture) => !selected || selected.includes(fixture.name)).map((fixture) => ({ seed, fixture }))
+    if (selected)
+      for (const name of selected)
+        assert(
+          all.some((item) => item.name === name),
+          `Unknown workload: ${name}`,
+        )
+    return all
+      .filter((fixture) => !selected || selected.includes(fixture.name))
+      .map((fixture) => ({ seed, fixture }))
   })
   // Validate options before downloading the pinned control or creating output.
   let upstream = null
@@ -95,7 +114,9 @@ async function main() {
     const { prepare } = await import('./prepare.mjs')
     upstream = await prepare()
   }
-  const directory = path.resolve(values.out ?? path.join(benchRoot, 'results', `height-${values.profile}`))
+  const directory = path.resolve(
+    values.out ?? path.join(benchRoot, 'results', `height-${values.profile}`),
+  )
   mkdirSync(directory, { recursive: true })
   const adapters = {}
   for (const engine of engines) adapters[engine] = await loadAdapter(engine)
@@ -107,15 +128,30 @@ async function main() {
     createdAt: new Date().toISOString(),
     sourceCommit: git(['rev-parse', 'HEAD']),
     workingTree: git(['status', '--porcelain']),
-    runtime: { node: process.version, v8: process.versions.v8, platform: process.platform, arch: process.arch },
-    config: { profile: values.profile, traceSeeds, prioritySeeds, every, stressEdits, engines, workloads: selected ?? null },
+    runtime: {
+      node: process.version,
+      v8: process.versions.v8,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    config: {
+      profile: values.profile,
+      traceSeeds,
+      prioritySeeds,
+      every,
+      stressEdits,
+      engines,
+      workloads: selected ?? null,
+    },
     definitions: {
       height: 'Number of non-NIL levels; empty=0, root-only=1.',
       depth: 'Root depth=0. Mean/p95 are over stored pieces; tombstones are included.',
       heightOverLog2: 'height / log2(pieces + 1), null for an empty tree.',
       minimumHeight: 'ceil(log2(pieces + 1)); counting lower bound for a binary tree.',
-      sampling: 'Initial, final, powers of two, and every configured interval. Peaks between samples may be missed.',
-      prioritySweep: 'Each Singapore priority seed replays the same trace. VS Code runs once per trace.',
+      sampling:
+        'Initial, final, powers of two, and every configured interval. Peaks between samples may be missed.',
+      prioritySweep:
+        'Each Singapore priority seed replays the same trace. VS Code runs once per trace.',
       timing: 'Separate structural replay; no latency or allocation measurements.',
     },
     provenance: {
@@ -124,30 +160,47 @@ async function main() {
       harnessSha256: fileHashes(benchRoot, (name) => /\.(mjs|json|py)$/.test(name)),
       upstream,
     },
-    fixtures: fixtures.map(({ seed, fixture }) => ({ traceSeed: seed, name: fixture.name, operations: fixture.operations.length, sha256: fixtureHash(fixture) })),
+    fixtures: fixtures.map(({ seed, fixture }) => ({
+      traceSeed: seed,
+      name: fixture.name,
+      operations: fixture.operations.length,
+      sha256: fixtureHash(fixture),
+    })),
     rows: [],
     failures: [],
     completedRuns: [],
   }
   writeFileSync(path.join(directory, 'fixtures.json'), JSON.stringify(fixtures) + '\n')
-  const save = () => writeFileSync(path.join(directory, 'height.json'), JSON.stringify(result, null, 2) + '\n')
+  const save = () =>
+    writeFileSync(path.join(directory, 'height.json'), JSON.stringify(result, null, 2) + '\n')
   for (const { seed, fixture } of fixtures) {
     for (const engine of engines) {
       for (const prioritySeed of engine === 'singapore' ? prioritySeeds : [null]) {
         const run = { workload: fixture.name, traceSeed: seed, engine, prioritySeed }
         let lastCheckpoint = null
         try {
-          const buffer = engine === 'singapore'
-            ? adapters[engine].restore(api.createPieceTableSnapshot(fixture.initial, { prioritySeed }))
-            : adapters[engine].create(fixture.initial)
+          const buffer =
+            engine === 'singapore'
+              ? adapters[engine].restore(
+                  api.createPieceTableSnapshot(fixture.initial, { prioritySeed }),
+                )
+              : adapters[engine].create(fixture.initial)
           runHeightTrace(buffer, fixture, every, (sample) => {
             lastCheckpoint = sample.operation
             for (const [tree, metrics] of Object.entries(sample.trees)) {
-              result.rows.push({ ...run, operation: sample.operation, tree, textSha256: sample.textSha256, ...metrics })
+              result.rows.push({
+                ...run,
+                operation: sample.operation,
+                tree,
+                textSha256: sample.textSha256,
+                ...metrics,
+              })
             }
           })
           result.completedRuns.push(run)
-          console.log(`${engine} / ${fixture.name} / trace ${seed} / priority ${prioritySeed ?? 'fixed'}: passed`)
+          console.log(
+            `${engine} / ${fixture.name} / trace ${seed} / priority ${prioritySeed ?? 'fixed'}: passed`,
+          )
         } catch (error) {
           result.failures.push({ ...run, lastCheckpoint, message: String(error.stack ?? error) })
           console.error(`${engine} / ${fixture.name}: ${error.message}`)
@@ -159,12 +212,17 @@ async function main() {
   if (upstream) {
     // Catch accidental mutation of the control build while the diagnostic ran.
     assert.deepEqual(fileHashes(path.join(upstreamRoot, 'dist')), upstream.outputSha256)
-    assert.deepEqual(JSON.parse(readFileSync(path.join(upstreamRoot, 'build.json'), 'utf8')), upstream)
+    assert.deepEqual(
+      JSON.parse(readFileSync(path.join(upstreamRoot, 'build.json'), 'utf8')),
+      upstream,
+    )
   }
   result.complete = true
   result.completedAt = new Date().toISOString()
   save()
-  console.log(`${result.rows.length} tree samples; ${result.failures.length} failures; ${directory}`)
+  console.log(
+    `${result.rows.length} tree samples; ${result.failures.length} failures; ${directory}`,
+  )
   if (result.failures.length) process.exitCode = 1
 }
 

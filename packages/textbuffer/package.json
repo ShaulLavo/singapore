@@ -38,6 +38,7 @@
     "verify": "bun run typecheck && bun run build && bun run test && bun run test:package",
     "bench": "node bench/run.mjs",
     "bench:prepare": "node bench/prepare.mjs",
+    "bench:height": "node bench/height.mjs",
     "bench:test": "vitest run --config bench/vitest.config.mjs",
     "bench:check": "bun run build && bun run bench:prepare && bun run bench:test",
     "lint": "oxlint .",

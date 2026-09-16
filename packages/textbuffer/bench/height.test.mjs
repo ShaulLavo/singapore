@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { test } from 'vitest'
 import { loadAdapter } from './adapters.mjs'
 import { applyOracle, safeBoundary } from './fixtures.mjs'
 import { fixtureHash, makeHeightFixtures, samplePoints } from './height-fixtures.mjs'
@@ -64,7 +64,10 @@ test('measurement itself handles a 100,000-level chain iteratively', () => {
 })
 
 test('checkpoints include start, finish, powers of two, and fixed intervals', () => {
-  assert.deepEqual(Array.from(samplePoints(10, 3)).sort((a, b) => a - b), [0, 1, 2, 3, 4, 6, 8, 9, 10])
+  assert.deepEqual(
+    Array.from(samplePoints(10, 3)).sort((a, b) => a - b),
+    [0, 1, 2, 3, 4, 6, 8, 9, 10],
+  )
   assert.throws(() => samplePoints(10, 0))
 })
 

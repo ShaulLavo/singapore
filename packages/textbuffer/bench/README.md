@@ -114,6 +114,15 @@ bun run bench:profile -- --profile standard
 bun run bench:profile -- --profile standard --only random-insertions --repeats 24
 ```
 
+## Tree shape
+
+The [tree height replay](HEIGHT.md) samples height, depth and piece counts of both engines' trees across
+edit traces and Singapore priority seeds. It is a separate structural replay with no timing.
+
+```sh
+bun run bench:height -- --profile standard
+```
+
 ## Next measurements
 
 Captured editor traces, browser-engine runs, longer sessions, native-coordinate range controls and
