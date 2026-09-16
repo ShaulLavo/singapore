@@ -676,6 +676,23 @@
         "Input latency as an enforced budget"
       ],
       "baseline": "b6a265a786b08c61318a3e02b666f17cb7ef50fc"
+    },
+    {
+      "id": "E042",
+      "reference": "../docs/performance/e042-fixed-edit-overhead.md",
+      "title": "Cut the fixed per-edit overhead the zero-copy profile named",
+      "status": "Completed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "S",
+      "dependsOn": [
+        "E041"
+      ],
+      "topics": [
+        "Input latency as an enforced budget"
+      ],
+      "baseline": "26e805c28e993ebec1947ed88df823b429e6b969"
     }
   ]
 }

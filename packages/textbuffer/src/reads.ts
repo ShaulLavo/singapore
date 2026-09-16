@@ -69,10 +69,34 @@ const codeUnitAt = (snapshot: PieceTableTreeSnapshot, offset: number): number =>
 // the offset is read first: while typing, the unit before it is the last one
 // of the tail chunk, and touching that flattens the string extendTail just
 // concatenated, so it is read only when the unit after is a low half.
+// One descent: the unit before the offset is in the same piece unless the
+// offset is the piece's first unit, and only then is a second descent needed.
 export const splitsSurrogatePair = (snapshot: PieceTableTreeSnapshot, offset: number): boolean => {
   if (offset <= 0 || offset >= snapshot.length) return false
-  if (!isLowSurrogate(codeUnitAt(snapshot, offset))) return false
-  return isHighSurrogate(codeUnitAt(snapshot, offset - 1))
+
+  let node = snapshot.root
+  let base = 0
+  while (node) {
+    const pieceStart = base + getSubtreeVisibleLength(node.left)
+    if (offset < pieceStart) {
+      node = node.left
+      continue
+    }
+
+    const pieceEnd = pieceStart + getPieceVisibleLength(node.piece)
+    if (offset < pieceEnd) {
+      const text = getBufferText(snapshot.buffers, node.piece.buffer)
+      const at = node.piece.start + offset - pieceStart
+      if (!isLowSurrogate(text.charCodeAt(at))) return false
+      if (offset > pieceStart) return isHighSurrogate(text.charCodeAt(at - 1))
+      return isHighSurrogate(codeUnitAt(snapshot, offset - 1))
+    }
+
+    base = pieceEnd
+    node = node.right
+  }
+
+  return false
 }
 
 export const materializePieceTableFullText = (snapshot: PieceTableTreeSnapshot): string =>

@@ -1,7 +1,7 @@
 import type { Piece, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
 import type { SplitContext } from './internalTypes'
-import { bufferForPiece, createPiece } from './buffers'
-import { allocateOrdersBetween, PIECE_ORDER_MIN_GAP, PIECE_ORDER_STEP } from './orders'
+import { bufferForPiece, countBufferLineBreaks } from './buffers'
+import { allocateOrderBetween, PIECE_ORDER_MIN_GAP, PIECE_ORDER_STEP } from './orders'
 import { priorityForPiece } from './priority'
 
 const getSubtreeLength = (node: PieceTreeNode | null): number => (node ? node.subtreeLength : 0)
@@ -201,25 +201,33 @@ export const splitByVisibleOffset = (
 
   const localOffset = offset - leftLen
   const rightUpperOrder = node.right ? getSubtreeMinOrder(node.right) : upperOrder
-  const rightOrders = allocateOrdersBetween(node.piece.order, rightUpperOrder, 1)
-  const rightOrder = rightOrders?.[0] ?? node.piece.order + PIECE_ORDER_MIN_GAP
-  context.normalizeOrders ||= !rightOrders
-  const leftPiece = createPiece(
+  const allocated = allocateOrderBetween(node.piece.order, rightUpperOrder)
+  const rightOrder = allocated ?? node.piece.order + PIECE_ORDER_MIN_GAP
+  context.normalizeOrders ||= allocated === null
+  // The piece already knows its total; one count for the left half gives both.
+  const piece = node.piece
+  const leftLineBreaks = countBufferLineBreaks(
     buffers,
-    node.piece.buffer,
-    node.piece.start,
-    localOffset,
-    node.piece.order,
-    node.piece.visible,
+    piece.buffer,
+    piece.start,
+    piece.start + localOffset,
   )
-  const rightPiece = createPiece(
-    buffers,
-    node.piece.buffer,
-    node.piece.start + localOffset,
-    nodeLen - localOffset,
-    rightOrder,
-    node.piece.visible,
-  )
+  const leftPiece: Piece = {
+    buffer: piece.buffer,
+    start: piece.start,
+    length: localOffset,
+    order: piece.order,
+    lineBreaks: leftLineBreaks,
+    visible: piece.visible,
+  }
+  const rightPiece: Piece = {
+    buffer: piece.buffer,
+    start: piece.start + localOffset,
+    length: nodeLen - localOffset,
+    order: rightOrder,
+    lineBreaks: piece.lineBreaks - leftLineBreaks,
+    visible: piece.visible,
+  }
 
   const prioritySeed = buffers.prioritySeed
   const leftNode = createNode(
