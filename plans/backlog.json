@@ -14,7 +14,9 @@
       "priority": "P1",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["Standing stress fixtures + interactive benchmarks"]
+      "topics": [
+        "Standing stress fixtures + interactive benchmarks"
+      ]
     },
     {
       "id": "E002",
@@ -25,8 +27,12 @@
       "kind": "Implementation",
       "priority": "P1",
       "effort": "M",
-      "dependsOn": ["E001"],
-      "topics": ["Input latency as an enforced budget"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Input latency as an enforced budget"
+      ]
     },
     {
       "id": "E003",
@@ -37,8 +43,12 @@
       "kind": "Implementation",
       "priority": "P1",
       "effort": "M",
-      "dependsOn": ["E001"],
-      "topics": ["Defer startup work off the first-paint path"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Defer startup work off the first-paint path"
+      ]
     },
     {
       "id": "E004",
@@ -49,8 +59,12 @@
       "kind": "Implementation",
       "priority": "P2",
       "effort": "S",
-      "dependsOn": ["E001"],
-      "topics": ["Look into: render nothing at zero-height viewports"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Look into: render nothing at zero-height viewports"
+      ]
     },
     {
       "id": "E005",
@@ -62,7 +76,9 @@
       "priority": "P2",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["Visual piece-tree debug tool"]
+      "topics": [
+        "Visual piece-tree debug tool"
+      ]
     },
     {
       "id": "E006",
@@ -73,8 +89,13 @@
       "kind": "Implementation",
       "priority": "P1",
       "effort": "L",
-      "dependsOn": ["E001", "E005"],
-      "topics": ["Reduce editor memory footprint"]
+      "dependsOn": [
+        "E001",
+        "E005"
+      ],
+      "topics": [
+        "Reduce editor memory footprint"
+      ]
     },
     {
       "id": "E007",
@@ -85,8 +106,12 @@
       "kind": "Implementation",
       "priority": "P1",
       "effort": "L",
-      "dependsOn": ["E001"],
-      "topics": ["Reduce editor memory footprint"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Reduce editor memory footprint"
+      ]
     },
     {
       "id": "E008",
@@ -97,8 +122,12 @@
       "kind": "Implementation",
       "priority": "P1",
       "effort": "L",
-      "dependsOn": ["E001"],
-      "topics": ["Faster in-buffer find (single-threaded)"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Faster in-buffer find (single-threaded)"
+      ]
     },
     {
       "id": "E009",
@@ -109,8 +138,12 @@
       "kind": "Research",
       "priority": "P2",
       "effort": "M",
-      "dependsOn": ["E001"],
-      "topics": ["Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
+      ]
     },
     {
       "id": "E010",
@@ -121,8 +154,12 @@
       "kind": "Research",
       "priority": "P3",
       "effort": "L",
-      "dependsOn": ["E009"],
-      "topics": ["Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"]
+      "dependsOn": [
+        "E009"
+      ],
+      "topics": [
+        "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
+      ]
     },
     {
       "id": "E011",
@@ -133,8 +170,13 @@
       "kind": "Research",
       "priority": "P3",
       "effort": "L",
-      "dependsOn": ["E005", "E009"],
-      "topics": ["Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"]
+      "dependsOn": [
+        "E005",
+        "E009"
+      ],
+      "topics": [
+        "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
+      ]
     },
     {
       "id": "E012",
@@ -145,8 +187,14 @@
       "kind": "Research",
       "priority": "P3",
       "effort": "L",
-      "dependsOn": ["E006", "E010", "E011"],
-      "topics": ["Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"]
+      "dependsOn": [
+        "E006",
+        "E010",
+        "E011"
+      ],
+      "topics": [
+        "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
+      ]
     },
     {
       "id": "E013",
@@ -157,8 +205,14 @@
       "kind": "Research",
       "priority": "P3",
       "effort": "XL",
-      "dependsOn": ["E010", "E011", "E012"],
-      "topics": ["Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"]
+      "dependsOn": [
+        "E010",
+        "E011",
+        "E012"
+      ],
+      "topics": [
+        "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
+      ]
     },
     {
       "id": "E014",
@@ -169,8 +223,13 @@
       "kind": "Implementation",
       "priority": "P2",
       "effort": "L",
-      "dependsOn": ["E001", "E008"],
-      "topics": ["Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"]
+      "dependsOn": [
+        "E001",
+        "E008"
+      ],
+      "topics": [
+        "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
+      ]
     },
     {
       "id": "E015",
@@ -181,8 +240,13 @@
       "kind": "Research",
       "priority": "P3",
       "effort": "XL",
-      "dependsOn": ["E001", "E007"],
-      "topics": ["Look into: windowed/streamed loading for massive files"]
+      "dependsOn": [
+        "E001",
+        "E007"
+      ],
+      "topics": [
+        "Look into: windowed/streamed loading for massive files"
+      ]
     },
     {
       "id": "E016",
@@ -193,8 +257,12 @@
       "kind": "Research",
       "priority": "P2",
       "effort": "L",
-      "dependsOn": ["E001"],
-      "topics": ["Look into: windowed/streamed loading for massive files"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Look into: windowed/streamed loading for massive files"
+      ]
     },
     {
       "id": "E017",
@@ -206,7 +274,9 @@
       "priority": "P2",
       "effort": "L",
       "dependsOn": [],
-      "topics": ["Undo history as a graph (never lose an edit state)"]
+      "topics": [
+        "Undo history as a graph (never lose an edit state)"
+      ]
     },
     {
       "id": "E018",
@@ -217,8 +287,12 @@
       "kind": "Implementation",
       "priority": "P2",
       "effort": "L",
-      "dependsOn": ["E017"],
-      "topics": ["Undo history as a graph (never lose an edit state)"]
+      "dependsOn": [
+        "E017"
+      ],
+      "topics": [
+        "Undo history as a graph (never lose an edit state)"
+      ]
     },
     {
       "id": "E019",
@@ -229,8 +303,12 @@
       "kind": "Implementation",
       "priority": "P2",
       "effort": "L",
-      "dependsOn": ["E017"],
-      "topics": ["Undo graph widget (Fred-style time-travel UI)"]
+      "dependsOn": [
+        "E017"
+      ],
+      "topics": [
+        "Undo graph widget (Fred-style time-travel UI)"
+      ]
     },
     {
       "id": "E020",
@@ -242,7 +320,9 @@
       "priority": "P2",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["Cursor position navigation history (alt+left / alt+right)"]
+      "topics": [
+        "Cursor position navigation history (alt+left / alt+right)"
+      ]
     },
     {
       "id": "E021",
@@ -254,7 +334,9 @@
       "priority": "P2",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["Copy selection as styled HTML"]
+      "topics": [
+        "Copy selection as styled HTML"
+      ]
     },
     {
       "id": "E022",
@@ -265,8 +347,12 @@
       "kind": "Research",
       "priority": "P2",
       "effort": "M",
-      "dependsOn": ["E001"],
-      "topics": ["Compact blank lines (display-time)"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Compact blank lines (display-time)"
+      ]
     },
     {
       "id": "E023",
@@ -277,8 +363,12 @@
       "kind": "Implementation",
       "priority": "P2",
       "effort": "M",
-      "dependsOn": ["E001"],
-      "topics": ["Dev instrumentation panel (ship the debug tooling)"]
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Dev instrumentation panel (ship the debug tooling)"
+      ]
     },
     {
       "id": "E024",
@@ -290,7 +380,9 @@
       "priority": "P2",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["Tree-sitter syntax tree inspector (with a Zed comparison step)"]
+      "topics": [
+        "Tree-sitter syntax tree inspector (with a Zed comparison step)"
+      ]
     },
     {
       "id": "E025",
@@ -301,8 +393,14 @@
       "kind": "Research",
       "priority": "P2",
       "effort": "L",
-      "dependsOn": ["E026", "E027", "E028"],
-      "topics": ["Plugin system: study Fred's runtime-compiled plugin model"]
+      "dependsOn": [
+        "E026",
+        "E027",
+        "E028"
+      ],
+      "topics": [
+        "Plugin system: study Fred's runtime-compiled plugin model"
+      ]
     },
     {
       "id": "E026",
@@ -314,7 +412,9 @@
       "priority": "P2",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["Command metadata: single source of truth"]
+      "topics": [
+        "Command metadata: single source of truth"
+      ]
     },
     {
       "id": "E027",
@@ -326,7 +426,9 @@
       "priority": "P2",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["Editor hook taxonomy: inventory and completeness check"]
+      "topics": [
+        "Editor hook taxonomy: inventory and completeness check"
+      ]
     },
     {
       "id": "E028",
@@ -337,8 +439,13 @@
       "kind": "Research",
       "priority": "P2",
       "effort": "M",
-      "dependsOn": ["E026", "E027"],
-      "topics": ["Stress-test the input/command substrate with a modal (vim) layer"]
+      "dependsOn": [
+        "E026",
+        "E027"
+      ],
+      "topics": [
+        "Stress-test the input/command substrate with a modal (vim) layer"
+      ]
     },
     {
       "id": "E029",
@@ -350,7 +457,9 @@
       "priority": "P2",
       "effort": "S",
       "dependsOn": [],
-      "topics": ["Hot/cold data structure vocabulary"]
+      "topics": [
+        "Hot/cold data structure vocabulary"
+      ]
     },
     {
       "id": "E030",
@@ -362,7 +471,9 @@
       "priority": "P2",
       "effort": "M",
       "dependsOn": [],
-      "topics": ["File explorer: flattened view"]
+      "topics": [
+        "File explorer: flattened view"
+      ]
     },
     {
       "id": "E031",
@@ -374,7 +485,9 @@
       "priority": "P1",
       "effort": "L",
       "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
-      "dependsOn": ["E001"],
+      "dependsOn": [
+        "E001"
+      ],
       "topics": [
         "Reduce editor memory footprint",
         "Input latency as an enforced budget",
@@ -392,7 +505,10 @@
       "effort": "L",
       "baseline": "64926519bfdd39f4afcfae225019a932d3e27785",
       "dependsOn": [],
-      "topics": ["Reduce editor memory footprint", "Input latency as an enforced budget"]
+      "topics": [
+        "Reduce editor memory footprint",
+        "Input latency as an enforced budget"
+      ]
     },
     {
       "id": "E033",
@@ -404,7 +520,12 @@
       "priority": "P1",
       "effort": "L",
       "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
-      "dependsOn": ["E007", "E031", "E032", "E034"],
+      "dependsOn": [
+        "E007",
+        "E031",
+        "E032",
+        "E034"
+      ],
       "topics": [
         "Reduce editor memory footprint",
         "Editor hook taxonomy: inventory and completeness check"
@@ -420,7 +541,10 @@
       "priority": "P1",
       "effort": "L",
       "baseline": "33e632a6ff8ee35a670c4f4636c0f6f84d36295a",
-      "dependsOn": ["E003", "E032"],
+      "dependsOn": [
+        "E003",
+        "E032"
+      ],
       "topics": [
         "Reduce editor memory footprint",
         "Input latency as an enforced budget",
@@ -437,7 +561,9 @@
       "priority": "P1",
       "effort": "L",
       "baseline": "954e95c4ef88cf1fee36e26b16f534cbfc39186d",
-      "dependsOn": ["E002"],
+      "dependsOn": [
+        "E002"
+      ],
       "topics": [
         "Packed tokens end to end (drop the per-edit unpack)",
         "Input latency as an enforced budget"
@@ -453,11 +579,83 @@
       "priority": "P1",
       "effort": "M",
       "baseline": "5f68ce6ae086bea10d9708ed56580e173d4dfee2",
-      "dependsOn": ["E001", "E002"],
+      "dependsOn": [
+        "E001",
+        "E002"
+      ],
       "topics": [
         "Input latency as an enforced budget",
         "Standing stress fixtures + interactive benchmarks"
       ]
+    },
+    {
+      "id": "E037",
+      "file": "e037-textbuffer-edit-allocations.md",
+      "title": "Remove avoidable per-edit allocations from the textbuffer",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": [],
+      "topics": [
+        "Input latency as an enforced budget",
+        "Reduce editor memory footprint"
+      ],
+      "baseline": "69dfef7425539165ec05a457bd6f0516fb6607fa"
+    },
+    {
+      "id": "E038",
+      "file": "e038-append-only-buffer-store.md",
+      "title": "Append inserted text without copying the buffer store",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "L",
+      "dependsOn": [
+        "E037"
+      ],
+      "topics": [
+        "Input latency as an enforced budget",
+        "Reduce editor memory footprint"
+      ],
+      "baseline": "69dfef7425539165ec05a457bd6f0516fb6607fa"
+    },
+    {
+      "id": "E039",
+      "file": "e039-reverse-index-cost.md",
+      "title": "Make reverse-index maintenance cheaper than the edit it follows",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P2",
+      "effort": "L",
+      "dependsOn": [
+        "E037",
+        "E038"
+      ],
+      "topics": [
+        "Input latency as an enforced budget"
+      ],
+      "baseline": "69dfef7425539165ec05a457bd6f0516fb6607fa"
+    },
+    {
+      "id": "E040",
+      "file": "e040-balanced-persistent-tree.md",
+      "title": "Replace treap balancing with a join-based balanced tree",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "L",
+      "dependsOn": [
+        "E037"
+      ],
+      "topics": [
+        "Input latency as an enforced budget"
+      ],
+      "baseline": "69dfef7425539165ec05a457bd6f0516fb6607fa"
     }
   ]
 }

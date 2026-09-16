@@ -4,7 +4,7 @@ Text storage for Singapore's browser editor. It uses two persistent treaps and c
 
 One tree keeps pieces in document order. The other finds them by their source-buffer coordinates. Each edit returns a new snapshot and shares unchanged data with older snapshots. Deleted pieces stay in the tree so anchors can still find them.
 
-[Storage](#storage) · [Tree choice](#why-a-treap) · [Edits](#edits-and-snapshots) · [Anchors](#anchors-and-tombstones) · [Text](#text-and-positions) · [Influences](#influences) · [Development](#development)
+[Storage](#storage) · [Tree choice](#why-a-treap) · [Edits](#edits-and-snapshots) · [Anchors](#anchors-and-tombstones) · [Text](#text-and-positions) · [Influences](#influences) · [Development](#development) · [Benchmarks](#benchmarks)
 
 ## Usage
 
@@ -46,11 +46,11 @@ flowchart TD
 
 A `Piece` describes a slice of a string: `buffer`, `start`, and `length`. It also stores its `order`, `lineBreaks`, and `visible` flag. Splitting a piece creates two records that refer to the same source string.
 
-| Coordinate | Meaning |
-| --- | --- |
+| Coordinate      | Meaning                                                     |
+| --------------- | ----------------------------------------------------------- |
 | Document offset | Position in the current visible text, in UTF-16 code units. |
-| Buffer offset | Position in a source string. Anchors store this. |
-| Piece order | A numeric label that orders pieces, including deleted ones. |
+| Buffer offset   | Position in a source string. Anchors store this.            |
+| Piece order     | A numeric label that orders pieces, including deleted ones. |
 
 See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
 
@@ -58,13 +58,13 @@ See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
 
 Each node holds one piece and summaries of its subtree:
 
-| Field | Meaning |
-| --- | --- |
-| `subtreeLength` | Total slice length, including deleted pieces. |
-| `subtreeVisibleLength` | Length of the visible text. |
-| `subtreePieces` | Number of stored pieces. |
-| `subtreeLineBreaks` | Number of visible line breaks. |
-| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range. |
+| Field                                | Meaning                                       |
+| ------------------------------------ | --------------------------------------------- |
+| `subtreeLength`                      | Total slice length, including deleted pieces. |
+| `subtreeVisibleLength`               | Length of the visible text.                   |
+| `subtreePieces`                      | Number of stored pieces.                      |
+| `subtreeLineBreaks`                  | Number of visible line breaks.                |
+| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range.                    |
 
 Offset lookups use visible lengths to choose a branch. Line lookups use line-break counts. Order ranges let anchor resolution skip or sum whole subtrees.
 
@@ -277,3 +277,9 @@ bun run verify
 ```
 
 `verify` runs typechecking, the build, the Node-based Vitest suite, and a built-package smoke test. Run tests through `bun run test`. See [`package.json`](package.json) for the scripts.
+
+## Benchmarks
+
+Run `bun run bench:check`, then `bun run bench -- --profile standard` from this directory. The [benchmark guide](bench/README.md) documents the pinned Microsoft control, the shared workloads, adapter costs, correctness checks, process isolation, retained-memory measurements and the result format. Results land in `bench/results/`.
+
+`bun run bench:profile` attributes cost with separate CPU, allocation, GC and structural-counter passes; see [`bench/PROFILING.md`](bench/PROFILING.md) and the [initial attribution](bench/ATTRIBUTION.md). `bun run bench:height` replays edit traces and samples both trees' shape; see [`bench/HEIGHT.md`](bench/HEIGHT.md). Persistence and anchors have Singapore-only lanes. This measures the standalone buffers on Node, not editor or browser rendering.
