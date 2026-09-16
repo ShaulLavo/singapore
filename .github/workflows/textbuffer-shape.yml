@@ -1,0 +1,67 @@
+name: Textbuffer tree shape
+
+on:
+  pull_request:
+    paths:
+      - 'packages/textbuffer/**'
+      - 'bun.lock'
+      - '.github/workflows/textbuffer-shape.yml'
+  push:
+    branches: ['main']
+    paths:
+      - 'packages/textbuffer/**'
+      - 'bun.lock'
+      - '.github/workflows/textbuffer-shape.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: textbuffer-shape-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: bun install --frozen-lockfile
+      - name: Build the package and pinned control
+        working-directory: packages/textbuffer
+        run: |
+          bun run build
+          node bench/prepare.mjs
+      - name: Test tree measurements
+        run: node --test packages/textbuffer/bench/tree-shape.test.mjs
+      - name: Measure edit traces across priority seeds
+        working-directory: packages/textbuffer
+        run: node bench/tree-shape.mjs --profile standard
+      - name: Plot tree shape
+        if: always()
+        working-directory: packages/textbuffer
+        run: |
+          if [ -f bench/results/tree-shape/tree-shape.json ]; then
+            python -m pip install matplotlib==3.10.8
+            python bench/plot-tree-shape.py bench/results/tree-shape/tree-shape.json
+            cat bench/results/tree-shape/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain measurements and plots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: textbuffer-tree-shape-${{ github.run_id }}
+          path: packages/textbuffer/bench/results/tree-shape/
+          if-no-files-found: warn
