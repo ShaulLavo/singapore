@@ -1,4 +1,4 @@
-name: Verify profiling instrumentation
+name: Finish profiling instrumentation
 
 on:
   push:
@@ -6,16 +6,15 @@ on:
     paths: ['.github/workflows/profile-initialize.yml']
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  verify:
+  finish:
+    if: github.ref == 'refs/heads/bench/textbuffer-vscode'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -23,30 +22,21 @@ jobs:
         with:
           bun-version: '1.3.14'
       - run: bun install --frozen-lockfile
-      - name: Format without writing to GitHub
+      - name: Format and verify
         run: |
           bun run format
           bun run format:check
-      - name: Validate diagnostics and package contracts
-        run: |
           bun run --cwd packages/textbuffer verify
           bun run --cwd packages/textbuffer bench:check
           bun run --cwd packages/textbuffer bench:profile:check
           bun run --cwd packages/textbuffer lint
           bun run health
-      - name: Measure clean timings and separate attribution
+      - name: Commit formatting and remove this completed helper
         run: |
-          bun run --cwd packages/textbuffer bench -- --profile standard
-          bun run --cwd packages/textbuffer bench:profile -- --profile standard --repeats 12
-      - name: Save formatting patch and evidence
-        if: always()
-        run: |
-          mkdir -p "$RUNNER_TEMP/profile-evidence"
-          git diff --binary > "$RUNNER_TEMP/profile-evidence/format.patch"
-          tar -czf "$RUNNER_TEMP/profile-evidence/source.tar.gz" --exclude=node_modules --exclude=dist --exclude=.cache --exclude=results --exclude=.turbo packages/textbuffer
-          cp -R packages/textbuffer/bench/results "$RUNNER_TEMP/profile-evidence/" || true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: profiling-initial-evidence
-          path: ${{ runner.temp }}/profile-evidence
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -u
+          git rm .github/workflows/profile-initialize.yml
+          git diff --cached --check
+          git commit -m 'style: format profiler and remove completed initialization workflow'
+          git push origin HEAD:refs/heads/bench/textbuffer-vscode
