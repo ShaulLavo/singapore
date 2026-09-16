@@ -1,8 +1,26 @@
 import { consume, sha256 } from './support.mjs'
 
 export const profiles = {
-  smoke: { rows: 100, edits: 48, queries: 64, paste: 4096, pastes: 3, versions: 8, samples: 1, warmups: 0 },
-  standard: { rows: 10000, edits: 1500, queries: 3000, paste: 262144, pastes: 16, versions: 64, samples: 9, warmups: 2 },
+  smoke: {
+    rows: 100,
+    edits: 48,
+    queries: 64,
+    paste: 4096,
+    pastes: 3,
+    versions: 8,
+    samples: 1,
+    warmups: 0,
+  },
+  standard: {
+    rows: 10000,
+    edits: 1500,
+    queries: 3000,
+    paste: 262144,
+    pastes: 16,
+    versions: 64,
+    samples: 9,
+    warmups: 2,
+  },
 }
 
 export function randomSource(seed) {
@@ -17,7 +35,9 @@ export function randomSource(seed) {
 export function safeBoundary(text, offset) {
   const before = text.charCodeAt(offset - 1)
   const after = text.charCodeAt(offset)
-  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff ? offset - 1 : offset
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff
+    ? offset - 1
+    : offset
 }
 
 export function normalizeInput(text) {
@@ -76,10 +96,20 @@ function editFixture(name, initial, count, random, style, versions) {
     if (style === 'batch') {
       const offsets = new Set()
       while (offsets.size < 8) offsets.add(safeBoundary(text, random(text.length + 1)))
-      operation = { kind: 'batch', edits: Array.from(offsets, (from) => ({ from, to: from, text: tokens[random(tokens.length)] })) }
+      operation = {
+        kind: 'batch',
+        edits: Array.from(offsets, (from) => ({
+          from,
+          to: from,
+          text: tokens[random(tokens.length)],
+        })),
+      }
     } else {
       const from = style === 'typing' ? cursor : safeBoundary(text, random(text.length + 1))
-      const to = style === 'typing' || style === 'insert' ? from : safeBoundary(text, Math.min(text.length, from + random(25)))
+      const to =
+        style === 'typing' || style === 'insert'
+          ? from
+          : safeBoundary(text, Math.min(text.length, from + random(25)))
       const inserted = style === 'churn' && random(3) === 0 ? '' : tokens[random(tokens.length)]
       operation = { kind: 'edit', from, to, text: inserted }
       cursor = from + inserted.length
@@ -87,7 +117,16 @@ function editFixture(name, initial, count, random, style, versions) {
     text = applyOracle(text, operation)
     operations.push(operation)
   }
-  return { name, mode: 'edit', category: 'shared', initial, setup: [], operations, expected: text, retained }
+  return {
+    name,
+    mode: 'edit',
+    category: 'shared',
+    initial,
+    setup: [],
+    operations,
+    expected: text,
+    retained,
+  }
 }
 
 function queryFixture(name, source, count, random, kind) {
@@ -99,7 +138,10 @@ function queryFixture(name, source, count, random, kind) {
     const offset = random(text.length + 1)
     let operation
     if (kind === 'line' || kind === 'sequential-line') {
-      operation = { kind: 'line', row: kind === 'line' ? random(starts.length) : index % starts.length }
+      operation = {
+        kind: 'line',
+        row: kind === 'line' ? random(starts.length) : index % starts.length,
+      }
     } else if (kind === 'range') {
       operation = { kind, from: offset, to: Math.min(text.length, offset + 128 + random(256)) }
     } else if (kind === 'offset') operation = { kind, offset }
@@ -108,7 +150,16 @@ function queryFixture(name, source, count, random, kind) {
     expectedDigest = consume(oracleQuery(text, starts, operation), expectedDigest)
     operations.push(operation)
   }
-  return { name, mode: 'query', category: 'shared', initial: source.initial, setup: source.operations, operations, expected: text, expectedDigest }
+  return {
+    name,
+    mode: 'query',
+    category: 'shared',
+    initial: source.initial,
+    setup: source.operations,
+    operations,
+    expected: text,
+    expectedDigest,
+  }
 }
 
 export function makeFixtures(profileName, seed = 20260916) {
@@ -117,10 +168,19 @@ export function makeFixtures(profileName, seed = 20260916) {
   const random = randomSource(seed)
   const line = 'const value = "שלום 😀 e\u0301 中"; // text\n'
   const initial = line.repeat(config.rows)
-  const edits = (name, style, count = config.edits) => editFixture(name, initial, count, random, style, config.versions)
+  const edits = (name, style, count = config.edits) =>
+    editFixture(name, initial, count, random, style, config.versions)
   const churn = edits('mixed-edit-churn', 'churn')
   const longText = 'abcdef😀'.repeat(config.rows * 16)
-  const load = (name, text) => ({ name, mode: 'load', category: 'shared', initial: text, setup: [], operations: [], expected: text })
+  const load = (name, text) => ({
+    name,
+    mode: 'load',
+    category: 'shared',
+    initial: text,
+    setup: [],
+    operations: [],
+    expected: text,
+  })
   const result = [
     load('load-short-lines', initial.repeat(4)),
     load('load-long-line', longText),
@@ -137,7 +197,15 @@ export function makeFixtures(profileName, seed = 20260916) {
     pasteOperations.push({ kind: 'edit', from, to: from, text: paste })
     pasteOperations.push({ kind: 'edit', from, to: from + paste.length, text: '' })
   }
-  result.push({ name: 'large-paste-delete', mode: 'edit', category: 'shared', initial, setup: [], operations: pasteOperations, expected: initial })
+  result.push({
+    name: 'large-paste-delete',
+    mode: 'edit',
+    category: 'shared',
+    initial,
+    setup: [],
+    operations: pasteOperations,
+    expected: initial,
+  })
   for (const [name, kind, count] of [
     ['lines-sequential-after-churn', 'sequential-line', config.queries],
     ['lines-random-after-churn', 'line', config.queries],
@@ -145,13 +213,30 @@ export function makeFixtures(profileName, seed = 20260916) {
     ['offset-to-position', 'offset', config.queries],
     ['position-to-offset', 'point', config.queries],
     ['full-read-after-churn', 'full', profileName === 'smoke' ? 2 : 12],
-  ]) result.push(queryFixture(name, churn, count, random, kind))
-  result.push(Object.assign({}, churn, { name: 'persistent-history', mode: 'history', category: 'singapore-only' }))
-  const anchorOffsets = Array.from({ length: Math.min(128, config.queries) }, () => safeBoundary(initial, random(initial.length + 1)))
+  ])
+    result.push(queryFixture(name, churn, count, random, kind))
+  result.push(
+    Object.assign({}, churn, {
+      name: 'persistent-history',
+      mode: 'history',
+      category: 'singapore-only',
+    }),
+  )
+  const anchorOffsets = Array.from({ length: Math.min(128, config.queries) }, () =>
+    safeBoundary(initial, random(initial.length + 1)),
+  )
   result.push({
-    name: 'anchor-resolution-after-churn', mode: 'anchors', category: 'singapore-only',
-    initial, setup: churn.operations, expected: churn.expected, anchorOffsets,
-    operations: Array.from({ length: config.queries }, (_, index) => ({ kind: 'anchor', index: index % anchorOffsets.length })),
+    name: 'anchor-resolution-after-churn',
+    mode: 'anchors',
+    category: 'singapore-only',
+    initial,
+    setup: churn.operations,
+    expected: churn.expected,
+    anchorOffsets,
+    operations: Array.from({ length: config.queries }, (_, index) => ({
+      kind: 'anchor',
+      index: index % anchorOffsets.length,
+    })),
   })
   return result
 }

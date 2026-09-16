@@ -16,9 +16,12 @@ function collect() {
 
 function prepareState(factory, fixture) {
   const buffer = factory.create(fixture.initial)
-  const anchors = fixture.mode === 'anchors'
-    ? fixture.anchorOffsets.map((offset, index) => buffer.anchor(offset, index % 2 ? 'right' : 'left'))
-    : []
+  const anchors =
+    fixture.mode === 'anchors'
+      ? fixture.anchorOffsets.map((offset, index) =>
+          buffer.anchor(offset, index % 2 ? 'right' : 'left'),
+        )
+      : []
   for (const operation of fixture.setup) applyOperation(buffer, operation)
   return { buffer, anchors }
 }
@@ -34,21 +37,27 @@ export function execute(factory, fixture) {
   let checksum = 2166136261
   const started = performance.now()
   if (fixture.mode === 'load') buffer = factory.create(fixture.initial)
-  else for (let index = 0; index < fixture.operations.length; index += 1) {
-    if (fixture.mode === 'history' && retainAt.has(index)) retained.push(buffer.retain())
-    const operation = fixture.operations[index]
-    if (fixture.mode === 'anchors') {
-      const resolved = buffer.resolve(context.anchors[operation.index])
-      checksum = consume(resolved.offset, consume(resolved.liveness === 'live' ? 1 : 0, checksum))
-    } else {
-      const value = applyOperation(buffer, operation)
-      if (value !== null) checksum = consume(value, checksum)
+  else
+    for (let index = 0; index < fixture.operations.length; index += 1) {
+      if (fixture.mode === 'history' && retainAt.has(index)) retained.push(buffer.retain())
+      const operation = fixture.operations[index]
+      if (fixture.mode === 'anchors') {
+        const resolved = buffer.resolve(context.anchors[operation.index])
+        checksum = consume(resolved.offset, consume(resolved.liveness === 'live' ? 1 : 0, checksum))
+      } else {
+        const value = applyOperation(buffer, operation)
+        if (value !== null) checksum = consume(value, checksum)
+      }
     }
-  }
   const elapsedMs = performance.now() - started
   // Memory is captured before full-text checks or invariant inspection allocate anything.
   const after = collect()
-  const retainedBytes = Object.fromEntries(['heapUsed', 'external', 'arrayBuffers', 'rss'].map((name) => [name, after[name] - before[name]]))
+  const retainedBytes = Object.fromEntries(
+    ['heapUsed', 'external', 'arrayBuffers', 'rss'].map((name) => [
+      name,
+      after[name] - before[name],
+    ]),
+  )
   return { buffer, retained, anchors: context?.anchors ?? [], elapsedMs, checksum, retainedBytes }
 }
 
@@ -61,18 +70,32 @@ export function validate(factory, fixture, result) {
   if (fixture.mode === 'query') {
     assert.equal(result.checksum, fixture.expectedDigest, 'query checksum')
     for (const operation of fixture.operations) {
-      assert.deepEqual(applyOperation(result.buffer, operation), oracleQuery(fixture.expected, starts, operation), `${fixture.name}: exact query`)
+      assert.deepEqual(
+        applyOperation(result.buffer, operation),
+        oracleQuery(fixture.expected, starts, operation),
+        `${fixture.name}: exact query`,
+      )
     }
   }
   if (fixture.mode === 'history') {
     assert.equal(result.retained.length, fixture.retained.length, 'retained snapshot count')
-    result.retained.forEach((snapshot, index) => assert.equal(sha256(factory.retainedText(snapshot)), fixture.retained[index].sha256, `retained version ${index}`))
+    result.retained.forEach((snapshot, index) =>
+      assert.equal(
+        sha256(factory.retainedText(snapshot)),
+        fixture.retained[index].sha256,
+        `retained version ${index}`,
+      ),
+    )
     const root = result.retained[0]
     const text = factory.retainedText(root)
     const branch = factory.restore(root)
     branch.edit({ from: 0, to: 0, text: 'branch:' })
     assert.equal(branch.full(), 'branch:' + text)
-    assert.equal(factory.retainedText(root), text, 'restoring a branch must not mutate its ancestor')
+    assert.equal(
+      factory.retainedText(root),
+      text,
+      'restoring a branch must not mutate its ancestor',
+    )
   }
   if (fixture.mode === 'anchors') {
     // This is the library's independent linear traversal, not a second editor's semantics.
@@ -92,7 +115,8 @@ async function main() {
   const bytes = readFileSync(filename)
   assert.equal(sha256(bytes), expectedHash, 'fixture identity')
   const fixture = JSON.parse(bytes.toString('utf8'))
-  if (fixture.category === 'singapore-only') assert.equal(engine, 'singapore', 'unsupported semantics')
+  if (fixture.category === 'singapore-only')
+    assert.equal(engine, 'singapore', 'unsupported semantics')
   const factory = await loadAdapter(engine)
   const warmups = Number(warmupsText)
   assert(Number.isSafeInteger(warmups) && warmups >= 0 && warmups <= 20)
@@ -102,12 +126,19 @@ async function main() {
   }
   const result = execute(factory, fixture)
   validate(factory, fixture, result)
-  process.stdout.write(JSON.stringify({
-    engine, fixtureSha256: expectedHash, elapsedMs: result.elapsedMs,
-    checksum: result.checksum, retainedBytes: result.retainedBytes,
-    structure: result.buffer.stats(), retainedVersions: result.retained.length,
-    correctness: 'passed',
-  }) + '\n')
+  process.stdout.write(
+    JSON.stringify({
+      engine,
+      fixtureSha256: expectedHash,
+      elapsedMs: result.elapsedMs,
+      checksum: result.checksum,
+      retainedBytes: result.retainedBytes,
+      structure: result.buffer.stats(),
+      retainedVersions: result.retained.length,
+      correctness: 'passed',
+    }) + '\n',
+  )
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main()
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href)
+  await main()

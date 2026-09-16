@@ -16,7 +16,11 @@ export async function prepare() {
       if (!response.ok) throw new Error(`Cannot fetch pinned source: ${response.status} ${url}`)
       bytes = Buffer.from(await response.arrayBuffer())
     }
-    assert.equal(gitBlobHash(bytes), expected, `Pinned source mismatch: ${filename}; remove bench/.cache to retry`)
+    assert.equal(
+      gitBlobHash(bytes),
+      expected,
+      `Pinned source mismatch: ${filename}; remove bench/.cache to retry`,
+    )
     mkdirSync(path.dirname(destination), { recursive: true })
     writeFileSync(destination, bytes)
   }
@@ -27,7 +31,9 @@ export async function prepare() {
   const outDir = path.join(upstreamRoot, 'dist')
   rmSync(outDir, { recursive: true, force: true })
   const program = ts.createProgram(
-    Object.keys(pin.files).filter((name) => name.endsWith('.ts')).map((name) => path.join(upstreamRoot, name)),
+    Object.keys(pin.files)
+      .filter((name) => name.endsWith('.ts'))
+      .map((name) => path.join(upstreamRoot, name)),
     {
       target: ts.ScriptTarget.ES2023,
       module: ts.ModuleKind.Node16,
@@ -42,11 +48,14 @@ export async function prepare() {
     },
   )
   const diagnostics = ts.getPreEmitDiagnostics(program)
-  if (diagnostics.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(diagnostics, {
-    getCurrentDirectory: () => upstreamRoot,
-    getCanonicalFileName: (name) => name,
-    getNewLine: () => '\n',
-  }))
+  if (diagnostics.length)
+    throw new Error(
+      ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+        getCurrentDirectory: () => upstreamRoot,
+        getCanonicalFileName: (name) => name,
+        getNewLine: () => '\n',
+      }),
+    )
   const result = program.emit()
   assert(!result.emitSkipped, 'Upstream build failed')
   const metadata = {

@@ -64,14 +64,14 @@ These are synthetic traces, not captured user sessions; change seeds and repeat 
 
 The adapters express the same user-observable operations, not necessarily identical primitive calls:
 
-| Operation | Singapore | vscode-textbuffer |
-| --- | --- | --- |
-| Load | `createPieceTableSnapshot` | Builder + factory, LF mode |
-| Replacement | delete, then insert into persistent snapshots | delete, then mutable insert |
-| Batch | `applyBatchToPieceTable` | Descending-offset loop of delete/insert; no equivalent native batch API here |
-| Line read | Indexed start/end lookup + range read | `getLineContent` |
-| Offset-range/full read | Native offset-based range/materialization | Two `getPositionAt` calls + `getValueInRange` |
-| Coordinates | Zero-based Point API | One-based API translated to zero-based |
+| Operation              | Singapore                                     | vscode-textbuffer                                                            |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- |
+| Load                   | `createPieceTableSnapshot`                    | Builder + factory, LF mode                                                   |
+| Replacement            | delete, then insert into persistent snapshots | delete, then mutable insert                                                  |
+| Batch                  | `applyBatchToPieceTable`                      | Descending-offset loop of delete/insert; no equivalent native batch API here |
+| Line read              | Indexed start/end lookup + range read         | `getLineContent`                                                             |
+| Offset-range/full read | Native offset-based range/materialization     | Two `getPositionAt` calls + `getValueInRange`                                |
+| Coordinates            | Zero-based Point API                          | One-based API translated to zero-based                                       |
 
 Those adapter costs are included and intentional. In particular, the offset-range result cannot be
 attributed exclusively to tree traversal because the VS Code API needs position conversion. Likewise,

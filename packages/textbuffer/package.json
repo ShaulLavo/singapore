@@ -2,14 +2,33 @@
   "name": "@singapore-editor/textbuffer",
   "version": "0.1.0",
   "description": "Persistent treap-backed text buffer with snapshots, stable anchors, and line mapping",
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" },
-    "./debug": { "types": "./dist/debug.d.ts", "import": "./dist/debug.js", "default": "./dist/debug.js" },
-    "./diagnostics": { "types": "./dist/diagnostics.d.ts", "import": "./dist/diagnostics.js", "default": "./dist/diagnostics.js" },
-    "./internal/*": { "types": "./dist/*.d.ts", "import": "./dist/*.js", "default": "./dist/*.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./debug": {
+      "types": "./dist/debug.d.ts",
+      "import": "./dist/debug.js",
+      "default": "./dist/debug.js"
+    },
+    "./diagnostics": {
+      "types": "./dist/diagnostics.d.ts",
+      "import": "./dist/diagnostics.js",
+      "default": "./dist/diagnostics.js"
+    },
+    "./internal/*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js",
+      "default": "./dist/*.js"
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",

@@ -9,16 +9,22 @@ export const pin = JSON.parse(readFileSync(path.join(benchRoot, 'upstream.json')
 export const upstreamRoot = path.join(benchRoot, '.cache', pin.commit)
 
 export const sha256 = (value) => createHash('sha256').update(value).digest('hex')
-export const gitBlobHash = (bytes) => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
+export const gitBlobHash = (bytes) =>
+  createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')
 
 export function fileHashes(root, accept = () => true) {
   const hashes = {}
   function visit(directory) {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
       if (entry.name.startsWith('.') || entry.name === 'results') continue
       const filename = path.join(directory, entry.name)
       if (entry.isDirectory()) visit(filename)
-      else if (accept(filename)) hashes[path.relative(root, filename).split(path.sep).join('/')] = sha256(readFileSync(filename))
+      else if (accept(filename))
+        hashes[path.relative(root, filename).split(path.sep).join('/')] = sha256(
+          readFileSync(filename),
+        )
     }
   }
   visit(root)
@@ -26,7 +32,8 @@ export function fileHashes(root, accept = () => true) {
 }
 
 export function statistics(values) {
-  if (values.length === 0 || values.some((value) => !Number.isFinite(value))) throw new Error('Invalid samples')
+  if (values.length === 0 || values.some((value) => !Number.isFinite(value)))
+    throw new Error('Invalid samples')
   const sorted = values.slice().sort((a, b) => a - b)
   const middle = Math.floor(sorted.length / 2)
   return {
