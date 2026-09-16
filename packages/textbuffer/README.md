@@ -1,14 +1,12 @@
 # Singapore Textbuffer
 
-**Persistent text storage with stable anchors, two treap indexes, and copy-on-write buffers.**
+Text storage for Singapore's browser editor. It uses two persistent treaps and copy-on-write buffers.
 
-Singapore's text engine is an **augmented, persistent piece tree**, not a generic treap wrapped around a string. One tree orders pieces and summarizes visible text. A second tree maps source-buffer coordinates back to those pieces. Deleted pieces remain as tombstones, so anchors retain their meaning after the text they refer to disappears.
+One tree keeps pieces in document order. The other finds them by their source-buffer coordinates. Each edit returns a new snapshot and shares unchanged data with older snapshots. Deleted pieces stay in the tree so anchors can still find them.
 
-The storage layer also includes a paged buffer store, a sequential-typing fast path, indexed line lookup, Unicode-aware edit boundaries, streaming reads, and snapshot comparison. Rendering, display measurements, selections, and undo grouping stay outside the package.
+[Storage](#storage) · [Tree choice](#why-a-treap) · [Edits](#edits-and-snapshots) · [Anchors](#anchors-and-tombstones) · [Text](#text-and-positions) · [Influences](#influences) · [Development](#development)
 
-[Architecture](#storage-architecture) · [Persistence](#persistent-edits) · [Anchors](#anchors-and-tombstones) · [Text boundaries](#coordinates-and-text-boundaries) · [API](#api-and-development)
-
-## Start with a snapshot
+## Usage
 
 ```ts
 import {
@@ -26,11 +24,11 @@ materializePieceTableFullText(edited) // 'hello world'
 materializePieceTableFullText(branch) // 'say hello'
 ```
 
-An edit returns a new version. Keeping the old snapshot preserves the old document; editing that snapshot creates another branch. There is no full-document copy or replay of inverse edits just to retain a version.
+Keep a snapshot to keep that version of the document. Edit an older snapshot to create a branch.
 
-## Storage architecture
+## Storage
 
-A snapshot holds **two roots and a buffer version**, plus its visible length and stored piece count.
+A snapshot holds two tree roots, a buffer version, the visible text length, and the stored piece count.
 
 ```mermaid
 flowchart TD
@@ -40,65 +38,73 @@ flowchart TD
   R -. "piece + order" .-> T
   T -. "buffer + start + length" .-> B
   B --> C["Paged chunk store<br/>original text + append chunks"]
-  B --> L["Memoized newline indexes<br/>Uint32Array offsets"]
+  B --> L["Cached newline indexes<br/>Uint32Array offsets"]
   B --> M["Document metadata<br/>line ending, BOM, lineage, priority seed"]
 ```
 
-### Pieces describe text; they do not own it
+### Pieces
 
-A `Piece` refers to a slice of a source buffer through `buffer`, `start`, and `length`. It also carries an `order` label, its `lineBreaks` count, and a `visible` flag. Splitting a piece creates new slice records, not copies of the source text.
+A `Piece` describes a slice of a string: `buffer`, `start`, and `length`. It also stores its `order`, `lineBreaks`, and `visible` flag. Splitting a piece creates two records that refer to the same source string.
 
-There are three distinct coordinate systems:
+| Coordinate | Meaning |
+| --- | --- |
+| Document offset | Position in the current visible text, in UTF-16 code units. |
+| Buffer offset | Position in a source string. Anchors store this. |
+| Piece order | A numeric label that orders pieces, including deleted ones. |
 
-| Coordinate      | Meaning                                                                                                                                  |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Document offset | Position in the current **visible**, LF-normalized text, measured in UTF-16 code units.                                                  |
-| Buffer offset   | Position in a particular source buffer. Anchors use this instead of a shifting document offset.                                          |
-| Piece order     | Numeric label locating a piece in the tree's full sequence, including tombstones. It is not a character offset or a permanent anchor ID. |
+See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
 
-The distinction lets the engine move through visible text while retaining the identity and ordering of deleted text. See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
+### The sequence tree
 
-### An augmented sequence treap
+Each node holds one piece and summaries of its subtree:
 
-The main tree combines implicit-position navigation with explicit order labels. Offset operations descend using visible subtree lengths; anchor resolution uses piece order to recover a visible prefix. Each node maintains these summaries:
+| Field | Meaning |
+| --- | --- |
+| `subtreeLength` | Total slice length, including deleted pieces. |
+| `subtreeVisibleLength` | Length of the visible text. |
+| `subtreePieces` | Number of stored pieces. |
+| `subtreeLineBreaks` | Number of visible line breaks. |
+| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range. |
 
-| Summary                              | What it counts                                                          |
-| ------------------------------------ | ----------------------------------------------------------------------- |
-| `subtreeLength`                      | Source-slice lengths, including tombstones.                             |
-| `subtreeVisibleLength`               | Only lengths of visible pieces. This determines document offsets.       |
-| `subtreePieces`                      | All stored pieces, including tombstones.                                |
-| `subtreeLineBreaks`                  | Only line breaks in visible pieces.                                     |
-| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order interval, used to skip or summarize whole subtrees. |
+Offset lookups use visible lengths to choose a branch. Line lookups use line-break counts. Order ranges let anchor resolution skip or sum whole subtrees.
 
-`splitByVisibleOffset()` and `merge()` provide the sequence-editing machinery. They copy affected nodes and recompute summaries on the way back up. The tree has no parent pointers or red-black color bookkeeping.
+New pieces get order labels between their neighbors. For example, a piece between `1024` and `2048` can get `1536`. When the gap becomes too small, the engine relabels the sequence and rebuilds the reverse index. Anchors keep their buffer coordinates through this change.
 
-Order labels normally leave room between neighbors: for example, an insertion between `1024` and `2048` can receive `1536`. New pieces receive labels within that gap; when the gap becomes too small, the engine relabels the sequence and rebuilds the reverse index for the new snapshot. Anchors do not store these labels, so relabeling does not require rewriting anchor objects.
+Node priorities come from a hash of piece metadata, the index kind, and `prioritySeed`, which defaults to `0`. The same input, edits, and seed produce the same tree shape. Copied nodes keep their priorities. Splitting a piece creates fresh priorities; the split path uses merging to repair the heap order when needed.
 
-Priorities are **deterministic and seedable**, rather than sampled with `Math.random()`. New-node priorities come from a hash of the seed, piece metadata, and index kind. Copied nodes retain their priorities. A split can give its new pieces different priorities, so the split path repairs the heap relationship through merging when necessary. This makes tree shapes reproducible for a given input, edit sequence, and seed, without promising a worst-case balanced height. The snapshot creation option `prioritySeed` selects the seed; its default is `0`.
+See [`tree.ts`](src/tree.ts), [`orders.ts`](src/orders.ts), and [`priority.ts`](src/priority.ts).
 
-Implementation: [`tree.ts`](src/tree.ts), [`orders.ts`](src/orders.ts), and [`priority.ts`](src/priority.ts).
+### Why a treap?
 
-### A persistent reverse-index treap
+We chose a treap because **split and merge fit our edits**. They also make path-copying and updating subtree totals straightforward. The sequence tree uses these operations; the reverse index uses keyed insertion, copy-on-write rotations, and merging on deletion.
 
-The second tree is keyed by **`(buffer, start)`**, not document position. Its entries retain the corresponding piece and its current order label. Unlike the sequence tree's split/merge path, this index uses keyed insertion with copy-on-write rotations and keyed deletion with merging.
+A red-black tree uses colors and rotations to guarantee `O(log P)` height for `P` pieces. Both tree types support persistent versions. A treap's expected logarithmic height depends on its priority distribution. Our seeded hashes make the structure reproducible, while worst-case height can reach `O(P)`.
 
-An anchor lookup finds the source slice covering the anchor's buffer offset, with left/right bias deciding boundary ownership. The main tree then turns the entry's order into a visible document offset. Splits, insertions, coalescing, and deletions update both indexes in the same returned snapshot.
+The tradeoff is simpler sequence-editing code in exchange for weaker worst-case balance guarantees. Text allocation, indexing, and retained history also affect performance.
 
-This is what makes durable positions practical without storing parent pointers or walking every piece for each normal anchor lookup. A linear resolver also exists as a reference implementation and as the fallback when indexed lookup misses. See [`reverseIndex.ts`](src/reverseIndex.ts) and [`anchors.ts`](src/anchors.ts).
+### The reverse index
 
-### Copy-on-write text buffers
+The second tree is keyed by **`(buffer, start)`**. Each entry holds a piece and its current order label.
 
-The original document is retained as **one source string**. Inserted text is divided into append chunks of at most **16,384 UTF-16 code units**; chunk boundaries avoid splitting surrogate pairs. The chunk store groups string references into pages of **1,024 entries**.
+Anchor resolution first finds the piece containing the anchor's buffer offset. It then uses the piece's order to find its visible position in the sequence tree. Bias decides which piece owns a shared boundary.
 
-Appending or extending a tail copies the outer page-reference array and the affected tail page, while sharing untouched pages. It does not clone a flat map containing every buffer entry, but the outer array copy still scales with the number of pages. Extending a chunk creates a new string in the new store version, so older snapshots still see their older chunk text.
+Edits update both trees together. A linear resolver serves as a test reference and handles indexed lookup misses.
 
-Sequential typing has a dedicated coalescing path. An insertion can extend the existing piece when that piece ends at the insertion point, refers to the newest non-original chunk, reaches the chunk's end, and still fits within the chunk limit. Both trees receive the updated piece. Eligible typing runs therefore do not create one piece per keystroke.
+See [`reverseIndex.ts`](src/reverseIndex.ts) and [`anchors.ts`](src/anchors.ts).
 
-The chunk limit applies to **inserted chunks**, not the initial document string. See [`buffers.ts`](src/buffers.ts) and `tryCoalesceInsert()` in [`edits.ts`](src/edits.ts).
+### Copy-on-write buffers
 
-## Persistent edits
+The original document stays in one string. Inserted text goes into chunks of up to **16,384 UTF-16 code units**. Chunk boundaries keep surrogate pairs together. The store groups string references into pages of **1,024 entries**.
 
-Persistence is implemented with **path-copying / copy-on-write structural sharing**. New roots reuse untouched branches; modified paths get new nodes. The same principle applies to the reverse index and paged buffer store.
+Appending copies the outer page array and the affected tail page. The other pages are shared. Extending a tail chunk creates a new string, so older snapshots keep seeing their original text. Copying the outer array costs more as the page count grows.
+
+Sequential typing can extend an existing piece. The piece must end at the insertion point, reach the end of the newest append chunk, and fit within the chunk limit after the edit. This lets a typing run share one piece across several keystrokes.
+
+See [`buffers.ts`](src/buffers.ts) and `tryCoalesceInsert()` in [`edits.ts`](src/edits.ts).
+
+## Edits and snapshots
+
+Edits copy changed paths and share untouched branches. Both tree indexes use this approach.
 
 ```mermaid
 flowchart TD
@@ -114,21 +120,23 @@ flowchart TD
   C1 --> E
 ```
 
-This illustrates sharing, not the exact shape produced by every split or merge. Retaining a snapshot is a reference operation; performing an edit still allocates nodes, updates indexes, and may allocate text.
+This example shows shared and copied nodes. The resulting shape depends on the edit and priorities.
 
-**Insertion** first tries tail coalescing. Otherwise it splits at the visible offset, appends text chunks, assigns piece orders, merges in the new pieces, and applies the matching reverse-index changes.
+**Insert:** try extending the newest append piece. Otherwise split at the offset, append chunks, assign orders, merge the pieces, and update the reverse index.
 
-**Deletion** splits out the affected visible range, marks its pieces invisible, and merges those tombstones back into the sequence. It updates their reverse-index entries rather than forgetting them.
+**Delete:** split out the range, mark its pieces invisible, merge them back, and update their index entries.
 
-**Batch edits** use coordinates from the same input snapshot. The engine validates non-overlap, repairs surrogate-boundary issues against that snapshot, then applies edits from right to left so earlier offsets remain valid. `deleteFromPieceTable(snapshot, offset, length)` takes a length; batch edits and range reads use half-open `from`/`to` or `start`/`end` coordinates.
+**Batch edit:** validate disjoint ranges against the input snapshot, repair surrogate boundaries, then apply edits from right to left. `deleteFromPieceTable()` takes an offset and length. Batch edits and range reads use half-open ranges.
 
-The engine supplies versions, not an undo policy. A host decides which snapshots to keep, when several edits form one undo step, and which selection state accompanies a version. See [`snapshot.ts`](src/snapshot.ts) and [`edits.ts`](src/edits.ts).
+The editor chooses which snapshots to keep and how to group undo steps. It also owns selections, rendering, and display measurements.
+
+See [`snapshot.ts`](src/snapshot.ts) and [`edits.ts`](src/edits.ts).
 
 ## Anchors and tombstones
 
-A real anchor stores **a buffer ID, an offset within that buffer, and a bias**. It does not store a tree node, an order label, or the current document offset. Resolution is always against a particular snapshot and returns both `offset` and `liveness`.
+An anchor stores **a buffer ID, an offset in that buffer, and a left/right bias**. Resolving it against a snapshot returns a visible offset and `live` or `deleted` liveness.
 
-Deleting `b` from `abc` produces the following **piece sequence**, not a particular balancing shape:
+Deleting `b` from `abc` leaves this piece sequence:
 
 ```mermaid
 flowchart LR
@@ -138,11 +146,9 @@ flowchart LR
   B -. "order + visible prefix" .-> P["offset: 1<br/>liveness: deleted"]
 ```
 
-The visible text is `ac`, but the full piece sequence still accounts for all three source code units. The tombstone contributes zero visible length and zero visible line breaks while retaining the deleted slice's identity.
+The visible text is `ac`. The deleted piece still identifies `b`, but contributes zero visible length and zero visible line breaks.
 
-**Old snapshots and tombstones solve different problems.** Old snapshots preserve an earlier document. Tombstones let an anchor to deleted text resolve within the newer document.
-
-Bias also matters around replacement text. A deleted anchor can stay to the left or right of the replacement while continuing to report `liveness: 'deleted'`:
+Old snapshots preserve earlier text. Tombstones preserve the location of deleted text in newer snapshots. Bias places a deleted anchor on the left or right of replacement text:
 
 ```ts
 import {
@@ -164,31 +170,31 @@ resolveAnchor(replaced, right) // { offset: 3, liveness: 'deleted' }
 resolveAnchor(original, right) // { offset: 1, liveness: 'live' }
 ```
 
-The deleted-anchor path uses neighboring source slices and visible lengths between their order labels to account for intervening insertions. Two anchors can resolve to the same offset while having different attachment semantics. `Anchor.MIN` and `Anchor.MAX` are separate sentinels for the current document's ends.
+The resolver uses neighboring source slices and visible lengths between their orders to handle intervening insertions. `Anchor.MIN` and `Anchor.MAX` always resolve to the document's ends.
 
-Treat anchors as belonging to their document history, not as globally unique or cross-branch merge identifiers. Buffer IDs are sequence-based and can be reused when editing divergent snapshots. This storage engine does not provide a collaborative merge protocol.
+Use anchors within the document history that created them. Branches can reuse sequence-based buffer IDs. Cross-branch merging needs its own identity and merge rules.
 
-Implementation and examples: [`anchors.ts`](src/anchors.ts) and [`pieceTable.test.ts`](src/pieceTable.test.ts).
+See [`anchors.ts`](src/anchors.ts) and [`pieceTable.test.ts`](src/pieceTable.test.ts).
 
-## Coordinates and text boundaries
+## Text and positions
 
-### Indexed line mapping
+### Line lookup
 
-Document offsets and `Point.column` count **UTF-16 code units**. Rows and columns are zero-based; columns are not grapheme counts, tab-expanded columns, or display widths. `pointToOffset()` clamps columns to line ends and rows beyond the document to its end.
+Offsets and columns count **UTF-16 code units**. Rows and columns start at zero. `pointToOffset()` clamps columns to the line end and out-of-range rows to the document's bounds. Grapheme navigation, tab widths, and screen coordinates belong to the editor.
 
-Line lookup combines the tree's visible-length/line-break summaries with **per-buffer newline-offset indexes**. Those indexes store absolute buffer offsets in growable `Uint32Array`s. Binary search counts line breaks within a piece slice or locates a particular break without rescanning the whole slice.
+Line lookup combines subtree summaries with per-buffer newline indexes. These store offsets in growable `Uint32Array`s and use binary search to locate line breaks within a slice.
 
-The original buffer's newline index is built during initial piece creation. Append indexes are built on demand and can extend as a tail chunk grows. `offsetToPoint()` also records the row start during its descent when possible, avoiding a second tree search in that case.
+The original string is indexed on load. Append indexes are built when needed and extended as chunks grow. `offsetToPoint()` also records the row start during its descent when possible.
 
-Document versions are persistent, but these derived indexes are **mutable memoization**, not deeply frozen snapshot data. Reuse checks the indexed text and retains indexes by chunk-store version, so a reused buffer ID from an undo branch does not silently reuse another string's line offsets.
+These indexes are mutable caches. They check the source text and retain entries by chunk-store version, so older versions and branches can reuse the correct index. `snapshot.buffers.identity` identifies a document lineage shared by its versions. Host caches keyed by lineage and buffer ID must also check the text.
 
-For editor-owned sidecars, `snapshot.buffers.identity` identifies a **document lineage**, shared across versions and branches. It is not a version ID. Caches keyed by lineage and buffer ID must also validate the text they describe. See [`buffers.ts`](src/buffers.ts) and [`positions.ts`](src/positions.ts).
+See [`positions.ts`](src/positions.ts) and [`buffers.ts`](src/buffers.ts).
 
-### LF inside, document line endings outside
+### Line endings
 
-`createPieceTableSnapshot()` normalizes CRLF, lone CR, U+2028, and U+2029 to LF, and records the detected line-ending preference and leading BOM separately. Detection uses a majority of terminators carrying CR; ties choose LF. With no ordinary line terminators, it uses the supplied fallback.
+`createPieceTableSnapshot()` converts CRLF, lone CR, U+2028, and U+2029 to LF. It records the detected line-ending preference and leading BOM separately.
 
-**Low-level edit functions expect already-normalized text.** They do not call `normalizeLineEndings()` for you. Normalize incoming text before insertion or batch application, and use the normalized length for any corresponding offset calculations.
+**Normalize incoming edit text with `normalizeLineEndings()` before calling insert or batch-edit functions.** Those functions expect LF-normalized input. Use the normalized text's length for related offset calculations.
 
 ```ts
 import {
@@ -207,33 +213,35 @@ materializePieceTableFullText(edited) // 'a\nb\nc': internal text
 pieceTableDocumentText(edited) // 'a\r\nb\r\nc': text for saving
 ```
 
-Use `pieceTableDocumentText()` to restore the document's preferred line ending and, by default, its BOM. Mixed line endings are not preserved individually; lone CR and U+2028/U+2029 are not restored to their original form. `pieceTableContainsUnusualLineTerminators()` reports whether ingestion folded U+2028/U+2029. This is normalized text storage, not a byte-preserving file container.
+Export uses one line-ending style throughout and restores the BOM by default. Mixed endings become uniform. Lone CR and U+2028/U+2029 become ordinary line breaks; `pieceTableContainsUnusualLineTerminators()` reports whether loading folded U+2028/U+2029.
 
-The `normalized: true` creation option skips ingestion for callers that already hold normalized text. It is a caller guarantee, not a validation pass. See [`lineEndings.ts`](src/lineEndings.ts) and [`documentText.ts`](src/documentText.ts).
+Detection chooses CRLF when a majority of ordinary terminators carry CR; ties choose LF. Text with zero ordinary terminators uses the supplied fallback. The `normalized: true` creation option trusts the caller and skips normalization.
 
-### Surrogate-aware editing, not display policy
+See [`lineEndings.ts`](src/lineEndings.ts) and [`documentText.ts`](src/documentText.ts).
 
-Edit repair considers the resulting text, not just whether an endpoint falls inside a surrogate pair. It preserves valid replacements of one surrogate half by another, expands deletions that would orphan a half, and moves unsafe collapsed insertions left rather than turning them into replacements. Batch repair accounts for neighboring edits and merges overlaps introduced by snapping.
+### Unicode edit boundaries
 
-Hosts reporting edits to undo, change listeners, or incremental consumers can use `snapBatchEditRanges()` to obtain the actual applied ranges. Anchor creation also snaps an offset inside a surrogate pair to the code point's start. These rules do not implement grapheme navigation or visual cursor movement. See [`edits.ts`](src/edits.ts) and [`anchors.ts`](src/anchors.ts).
+Edit repair checks whether the resulting text would leave half a surrogate pair behind. It expands unsafe deletion ranges, shifts unsafe insertion points left, and preserves replacements that keep a valid pair. Batch repair accounts for neighboring edits and merges overlaps caused by snapping.
 
-## Reading and snapshot diffs
+Use `snapBatchEditRanges()` when change listeners or undo logic need the exact applied ranges. Anchor creation also moves offsets inside a surrogate pair to its start.
 
-Range reads materialize only the requested visible interval. Chunk and piece visitors expose visible ranges without first flattening the document. A stateful walker retains a traversal stack, skips wholly invisible subtrees, and supports seeking, chunk traversal, and code-unit reads. Its `codePoint()` can join a surrogate pair across a piece boundary; advancing still uses UTF-16 code units. Crossing piece boundaries still involves traversal and can encounter interleaved tombstones, even though wholly invisible subtrees can be skipped.
+See [`edits.ts`](src/edits.ts).
 
-`diffPieceTableSnapshots(previous, next)` returns **one contiguous replacement**, or `null` for equal text. It finds a common prefix and a non-overlapping common suffix, scanning the suffix in 4,096-code-unit windows. Only the replacement payload is materialized as the returned edit's text; neither full document must be flattened first.
+## Reads and diffs
 
-This is a text comparison with snapshot/root-identity shortcuts, **not** a multi-hunk diff or a changed-subtree-only algorithm. Distant changes can produce one replacement spanning the text between them, and finding matching prefixes/suffixes can still scan substantial text. See [`reads.ts`](src/reads.ts), [`walker.ts`](src/walker.ts), and [`diff.ts`](src/diff.ts).
+Range reads return the requested visible text. Chunk and piece visitors read it in sections. The walker keeps a traversal stack and supports seeks, code-unit reads, and chunk traversal. It skips wholly invisible subtrees; crossing a boundary can still visit interleaved tombstones. `codePoint()` can join a surrogate pair across pieces.
 
-## Costs and invariants
+`diffPieceTableSnapshots()` returns **one replacement** or `null`. It finds a common prefix and suffix, reading the suffix in 4,096-code-unit windows, then collects the replacement text. Changes far apart produce a replacement spanning both. The comparison can scan large matching regions and uses snapshot/root identity to skip equal versions.
 
-The unit that matters for tree work is **stored pieces, including tombstones**, not just current text length. Navigation follows the actual tree height; seeded hash priorities do not provide a hard worst-case height bound.
+See [`reads.ts`](src/reads.ts), [`walker.ts`](src/walker.ts), and [`diff.ts`](src/diff.ts).
 
-Retaining a snapshot is constant-time, but keeping many versions is not constant-memory. Editing also pays for inserted text, affected pieces, reverse-index updates, and buffer-store copies. Deleting a large piece range visits those pieces to mark them invisible. Exhausting an order gap triggers whole-tree relabeling and reverse-index reconstruction. Dropping an undo entry does not itself compact tombstones out of the current snapshot. A cold newline index also pays for scanning its source text before indexed lookups can reuse the result. Even a short visible document can retain a large history in its pieces and source chunks.
+## Costs and checks
 
-The main invariants are that piece slices stay within their source buffers, piece order is strictly increasing, both trees satisfy their priority heap relationship, cached summaries match their subtrees, and the reverse index describes the same pieces and orders as its snapshot's main tree. Old versions must continue to read their original text.
+Tree work depends on the number of stored pieces, including tombstones, and the tree height. Keeping a snapshot reference is constant-time. Keeping versions retains their nodes, buffers, and caches.
 
-The inspection entry point checks buffer bounds, ordering, priorities, aggregates, line indexes, snapshot totals, and reverse-index consistency. The test suite includes string-model edit/read checks, retained snapshots, line-coordinate round trips, coalescing, and indexed-versus-linear anchor resolution.
+Deletion visits the affected pieces. Order-gap exhaustion relabels the tree and rebuilds the reverse index. A cold line index scans its source string. Tombstones and their text remain in the current snapshot even after older undo entries are dropped.
+
+The inspector checks buffer bounds, order labels, heap priorities, subtree totals, newline indexes, and agreement between the two trees:
 
 ```ts
 import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
@@ -244,21 +252,21 @@ const validation = validatePieceTreeInvariants(snapshot)
 validation.issues // [] for a valid snapshot
 ```
 
-Treat exposed snapshot internals as read-only even where their implementation types permit mutation. See [`inspection.ts`](src/inspection.ts), [`pieceTable.test.ts`](src/pieceTable.test.ts), and [`boundary.test.ts`](src/boundary.test.ts).
+Treat snapshot internals as read-only. See [`inspection.ts`](src/inspection.ts) and [`boundary.test.ts`](src/boundary.test.ts).
 
-## API and development
+## Influences
 
-The package is ESM with TypeScript declarations and **no runtime dependencies**. Import normal operations directly from `@singapore-editor/textbuffer`; there is no editor-side compatibility layer.
+**[Fred / fredbuf](https://github.com/cdacamar/fredbuf)** by Cameron DaCamara. His [Text Editor Data Structures](https://cdacamar.github.io/data%20structures/algorithms/benchmarking/text%20editors/c++/editor-data-structures/) article was a key inspiration. Fredbuf adapts VS Code's piece-tree approach into a persistent red-black tree with copy-on-write paths. The article covers snapshots, traversal, debugging, and the work involved in persistent tree deletion.
 
-| Area                    | Main entry point                                                                                                                                                         |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Versions and edits      | `createPieceTableSnapshot`, `insertIntoPieceTable`, `deleteFromPieceTable`, `applyBatchToPieceTable`, `snapBatchEditRanges`                                              |
-| Reads                   | `readPieceTableTextRange`, `streamPieceTableTextChunks`, `streamPieceTablePieces`, `createPieceTableWalker`, `materializePieceTableFullText`                             |
-| Coordinates and anchors | `offsetToPoint`, `pointToOffset`, `anchorAt`, `anchorBefore`, `anchorAfter`, `resolveAnchor`, `compareAnchors`, `Anchor`                                                 |
-| Comparison              | `pieceTableSnapshotsHaveSameText`, `diffPieceTableSnapshots`                                                                                                             |
-| Document I/O            | `normalizeLineEndings`, `normalizeDocumentText`, `pieceTableDocumentText`, `pieceTableLineEnding`, `pieceTableByteOrderMark`, `pieceTableContainsUnusualLineTerminators` |
+**[Zed](https://github.com/zed-industries/zed)** inspired the stable-anchor and tombstone model. Its [text coordinate systems article](https://zed.dev/blog/zed-decoded-text-coordinate-systems#anchors) explains how anchors keep referring to text through edits and deletion.
 
-`/debug` provides invariant validation and tree inspection/formatting. `/diagnostics` provides an optional, lazy, module-level diagnostic sink, disabled by default. `/internal/*` exposes implementation modules for tightly coupled integrations and tests, not a stable public contract. The complete export surface is in [`src/index.ts`](src/index.ts) and [`package.json`](package.json).
+**[VS Code](https://github.com/microsoft/vscode-textbuffer)** inspired the piece-tree layout and buffer-level line indexes. The team's [Text Buffer Reimplementation](https://code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation) article explains those choices.
+
+## Development
+
+The package ships as ESM with TypeScript declarations and zero runtime dependencies. Import its API from `@singapore-editor/textbuffer`. See [`src/index.ts`](src/index.ts) for the exports.
+
+`/debug` provides inspection and formatting helpers. `/diagnostics` provides an optional, lazy diagnostic sink, disabled by default. `/internal/*` exposes implementation details for integrations and tests; these may change between releases.
 
 From the repository root:
 
@@ -268,4 +276,4 @@ cd packages/textbuffer
 bun run verify
 ```
 
-`verify` runs typechecking, the build, the Node-based Vitest suite, and a built-package ESM smoke test. Tests run without a DOM. Production source is typechecked without DOM or Node ambient types. Use the package scripts rather than `bun test`.
+`verify` runs typechecking, the build, the Node-based Vitest suite, and a built-package smoke test. Run tests through `bun run test`. See [`package.json`](package.json) for the scripts.
