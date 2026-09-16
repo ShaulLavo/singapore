@@ -161,6 +161,25 @@ describe('history viewer', () => {
     viewer.dispose()
   })
 
+  it('lets an explicit pick acknowledge a pruning notice', () => {
+    const buffer = createEditorTextBuffer('', { retainedHistoryStates: 2 })
+    const session = createEditorBufferSession(buffer)
+    session.applyText('a')
+    session.breakTypingRun()
+    session.applyText('b')
+    const b = buffer.getHistoryGraph().currentId
+    session.undo()
+    session.undo()
+    const viewer = createHistoryViewer(buffer)
+    viewer.focus(b)
+    session.applyText('c')
+    expect(viewer.getState().lostIds).toEqual([b])
+
+    expect(viewer.focus(0)).toBe(true)
+    expect(viewer.getState().lostIds).toEqual([])
+    viewer.dispose()
+  })
+
   it('follows the current state until focus is moved elsewhere', () => {
     const buffer = createEditorTextBuffer('')
     const session = createEditorBufferSession(buffer)

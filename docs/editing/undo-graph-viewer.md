@@ -19,7 +19,8 @@ it browses is [undo-graph.md](undo-graph.md) (E017).
   selected states request one comparison through `compare(left, right, signal)`. A request
   captures the ids and node revisions it saw and a generation; a result published later is dropped
   if a newer request exists, and an amended node's new revision re-requests. Deselecting aborts the
-  pending request through its signal.
+  pending request through its signal. An explicit focus, selection or clear acknowledges a
+  pruning notice: `lostIds` empties, so a valid pick shows its preview again.
 - `restore(id, sourceView)` is `checkoutHistoryState` on the buffer and nothing else; previewing
   and browsing never edit. `dispose` unsubscribes, aborts and drops the node index.
 - `layoutHistoryGraph(graph)` puts sequence order on the x axis and lanes on the y axis: a node

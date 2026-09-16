@@ -150,9 +150,12 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
     return () => this.listeners.delete(listener)
   }
 
+  // An explicit pick acknowledges a pruning notice: the loss belongs to the refresh that
+  // reported it, not to every state chosen afterwards.
   focus(id: HistoryNodeId): boolean {
-    if (!this.nodesById.has(id) || this.state.focusedId === id) return false
-    this.publish({ ...this.state, focusedId: id })
+    if (!this.nodesById.has(id)) return false
+    if (this.state.focusedId === id && this.state.lostIds.length === 0) return false
+    this.publish({ ...this.state, focusedId: id, lostIds: [] })
     return true
   }
 
@@ -187,14 +190,14 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
     const next = selected.includes(id)
       ? selected.filter((candidate) => candidate !== id)
       : [...selected.slice(-1), id]
-    this.publish({ ...this.state, selectedIds: next })
+    this.publish({ ...this.state, selectedIds: next, lostIds: [] })
     this.syncComparison()
     return true
   }
 
   clearSelection(): void {
-    if (this.state.selectedIds.length === 0) return
-    this.publish({ ...this.state, selectedIds: [] })
+    if (this.state.selectedIds.length === 0 && this.state.lostIds.length === 0) return
+    this.publish({ ...this.state, selectedIds: [], lostIds: [] })
     this.syncComparison()
   }
 
