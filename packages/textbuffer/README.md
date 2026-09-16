@@ -50,8 +50,8 @@ A `Piece` refers to a slice of a source buffer through `buffer`, `start`, and `l
 
 There are three distinct coordinate systems:
 
-| Coordinate      | Meaning                                                                                                                               |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Coordinate      | Meaning                                                                                                                                  |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Document offset | Position in the current **visible**, LF-normalized text, measured in UTF-16 code units.                                                  |
 | Buffer offset   | Position in a particular source buffer. Anchors use this instead of a shifting document offset.                                          |
 | Piece order     | Numeric label locating a piece in the tree's full sequence, including tombstones. It is not a character offset or a permanent anchor ID. |
@@ -62,12 +62,12 @@ The distinction lets the engine move through visible text while retaining the id
 
 The main tree combines implicit-position navigation with explicit order labels. Offset operations descend using visible subtree lengths; anchor resolution uses piece order to recover a visible prefix. Each node maintains these summaries:
 
-| Summary                            | What it counts                                                        |
-| ---------------------------------- | --------------------------------------------------------------------- |
-| `subtreeLength`                    | Source-slice lengths, including tombstones.                            |
-| `subtreeVisibleLength`             | Only lengths of visible pieces. This determines document offsets.      |
-| `subtreePieces`                    | All stored pieces, including tombstones.                               |
-| `subtreeLineBreaks`                | Only line breaks in visible pieces.                                    |
+| Summary                              | What it counts                                                          |
+| ------------------------------------ | ----------------------------------------------------------------------- |
+| `subtreeLength`                      | Source-slice lengths, including tombstones.                             |
+| `subtreeVisibleLength`               | Only lengths of visible pieces. This determines document offsets.       |
+| `subtreePieces`                      | All stored pieces, including tombstones.                                |
+| `subtreeLineBreaks`                  | Only line breaks in visible pieces.                                     |
 | `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order interval, used to skip or summarize whole subtrees. |
 
 `splitByVisibleOffset()` and `merge()` provide the sequence-editing machinery. They copy affected nodes and recompute summaries on the way back up. The tree has no parent pointers or red-black color bookkeeping.
