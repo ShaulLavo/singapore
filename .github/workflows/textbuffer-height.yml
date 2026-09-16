@@ -1,0 +1,69 @@
+name: Textbuffer tree height
+
+on:
+  pull_request:
+    paths:
+      - 'packages/textbuffer/**'
+      - 'bun.lock'
+      - '.github/workflows/textbuffer-height.yml'
+  push:
+    branches: ['main']
+    paths:
+      - 'packages/textbuffer/**'
+      - 'bun.lock'
+      - '.github/workflows/textbuffer-height.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: textbuffer-height-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  height:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - name: Format height files and retain the patch
+        run: |
+          files=".github/workflows/textbuffer-height.yml packages/textbuffer/bench/height.mjs packages/textbuffer/bench/height-fixtures.mjs packages/textbuffer/bench/height.test.mjs packages/textbuffer/bench/tree-shape.mjs packages/textbuffer/bench/HEIGHT.md"
+          bunx oxfmt --write $files
+          mkdir -p packages/textbuffer/bench/results/height-format
+          git diff --binary -- $files > packages/textbuffer/bench/results/height-format/format.patch
+          tar -czf packages/textbuffer/bench/results/height-format/source.tar.gz $files
+      - name: Build and test height measurements
+        run: |
+          bun run --cwd packages/textbuffer build
+          node --test packages/textbuffer/bench/height.test.mjs
+      - name: Smoke both engines
+        run: node packages/textbuffer/bench/height.mjs --profile smoke --trace-seeds 7 --priority-seeds 0,42
+      - name: Sample both trees across edit and priority seeds
+        run: node packages/textbuffer/bench/height.mjs --profile standard
+      - name: Plot samples
+        if: always()
+        run: |
+          report=packages/textbuffer/bench/results/height-standard/height.json
+          if [ -f "$report" ]; then
+            python3 -m pip install matplotlib==3.10.8
+            python3 packages/textbuffer/bench/plot-height.py "$report" --allow-partial
+            cat packages/textbuffer/bench/results/height-standard/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain plots and raw measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: textbuffer-height-${{ github.run_id }}
+          path: packages/textbuffer/bench/results/height-*/
+          if-no-files-found: warn
