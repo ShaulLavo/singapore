@@ -23,12 +23,12 @@ A failed run can leave a partial JSON report with status `running`, never a comp
 
 ## Four independent passes
 
-| Pass | Build | What is measured | What is not claimed |
-| --- | --- | --- | --- |
-| `counters` | Disposable instrumented copy | Function entries, loop iterations, path copies, buffer-array slots copied, line-index input units and typed-array capacity requested | Operation latency or total allocation bytes |
-| `cpu` | Clean emitted library | V8 CPU samples with self and inclusive stacks | Exact per-function time or an additive inclusive breakdown |
-| `heap` | Clean emitted library | Sampled JS-heap allocation estimates, including objects subsequently collected | Exact bytes, retained memory, typed-array backing stores or native allocations |
-| `gc` | Clean emitted library | GC performance entries overlapping each operation window | Total allocator overhead or a causal attribution of every timing gap |
+| Pass       | Build                        | What is measured                                                                                                                     | What is not claimed                                                            |
+| ---------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `counters` | Disposable instrumented copy | Function entries, loop iterations, path copies, buffer-array slots copied, line-index input units and typed-array capacity requested | Operation latency or total allocation bytes                                    |
+| `cpu`      | Clean emitted library        | V8 CPU samples with self and inclusive stacks                                                                                        | Exact per-function time or an additive inclusive breakdown                     |
+| `heap`     | Clean emitted library        | Sampled JS-heap allocation estimates, including objects subsequently collected                                                       | Exact bytes, retained memory, typed-array backing stores or native allocations |
+| `gc`       | Clean emitted library        | GC performance entries overlapping each operation window                                                                             | Total allocator overhead or a causal attribution of every timing gap           |
 
 Each engine/mode runs in a fresh process. A process performs the configured fresh-buffer
 warmups, then repeats fresh workload states. CPU and heap sampling are never enabled

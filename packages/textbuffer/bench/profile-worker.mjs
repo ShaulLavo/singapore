@@ -6,10 +6,17 @@ import { performance, PerformanceObserver } from 'node:perf_hooks'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { loadAdapter } from './adapters.mjs'
 import { prepareState, runOperations, execute, validate } from './worker.mjs'
-import { createCounters, summarizeCpu, summarizeHeap, gcWithin, structure } from './profile-support.mjs'
+import {
+  createCounters,
+  summarizeCpu,
+  summarizeHeap,
+  gcWithin,
+  structure,
+} from './profile-support.mjs'
 import { sha256, statistics } from './support.mjs'
 
-const [engine, filename, expectedHash, mode, repeatsText, output, rootsFile, warmupsText] = process.argv.slice(2)
+const [engine, filename, expectedHash, mode, repeatsText, output, rootsFile, warmupsText] =
+  process.argv.slice(2)
 assert(['cpu', 'heap', 'gc', 'counters'].includes(mode), 'Unknown diagnostic mode')
 const bytes = readFileSync(filename)
 assert.equal(sha256(bytes), expectedHash, 'Fixture hash mismatch')
@@ -53,11 +60,12 @@ try {
       observer.observe({ entryTypes: ['gc'] })
     }
     if (mode === 'cpu') await session.post('Profiler.start')
-    if (mode === 'heap') await session.post('HeapProfiler.startSampling', {
-      samplingInterval: 16384,
-      includeObjectsCollectedByMajorGC: true,
-      includeObjectsCollectedByMinorGC: true,
-    })
+    if (mode === 'heap')
+      await session.post('HeapProfiler.startSampling', {
+        samplingInterval: 16384,
+        includeObjectsCollectedByMajorGC: true,
+        includeObjectsCollectedByMinorGC: true,
+      })
     if (mode === 'counters') counters.start()
     const started = performance.now()
     const result = runOperations(factory, fixture, context)
@@ -106,12 +114,21 @@ try {
   delete globalThis.__textbufferBenchCounters
 }
 const report = {
-  engine, mode, fixtureSha256: expectedHash, repeats,
+  engine,
+  mode,
+  fixtureSha256: expectedHash,
+  repeats,
   diagnosticOnly: true,
   diagnosticTimeMs: statistics(epochs.map((epoch) => epoch.diagnosticElapsedMs)),
   cpu: mode === 'cpu' ? summarizeCpu(cpuProfiles) : null,
   heap: mode === 'heap' ? summarizeHeap(heapProfiles) : null,
-  gc: mode === 'gc' ? { events: epochs.reduce((total, epoch) => total + epoch.gc.length, 0), durationMs: statistics(epochs.map((epoch) => epoch.gcMs)) } : null,
+  gc:
+    mode === 'gc'
+      ? {
+          events: epochs.reduce((total, epoch) => total + epoch.gc.length, 0),
+          durationMs: statistics(epochs.map((epoch) => epoch.gcMs)),
+        }
+      : null,
   epochs,
 }
 writeFileSync(path.join(output, 'summary.json'), JSON.stringify(report, null, 2) + '\n')

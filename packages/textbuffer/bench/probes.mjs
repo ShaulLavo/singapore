@@ -65,28 +65,61 @@ export function instrument(text, filename) {
       ts.forEachChild(node.body, (child) => visit(child, key))
       return
     }
-    if (owner && (ts.isForStatement(node) || ts.isWhileStatement(node) ||
-      ts.isForOfStatement(node) || ts.isDoStatement(node)))
+    if (
+      owner &&
+      (ts.isForStatement(node) ||
+        ts.isWhileStatement(node) ||
+        ts.isForOfStatement(node) ||
+        ts.isDoStatement(node))
+    )
       prepend(node.statement, counter(owner + '.loopIterations'))
-    if (owner === 'buffers.pushLineBreakOffset' && ts.isIfStatement(node) &&
-      node.expression.getText(source) === 'index.count === index.offsets.length')
-      prepend(node.thenStatement,
-        counter(owner + '.typedArrayCapacityBytes', 'Math.max(index.offsets.length * 2, LINE_INDEX_MIN_CAPACITY) * 4') +
-        counter(owner + '.typedArrayCopiedBytes', 'index.offsets.byteLength'))
-    if (owner === 'pieceTreeBase.createUintArray' && ts.isExpressionStatement(node) &&
-      ts.isBinaryExpression(node.expression) && ts.isNewExpression(node.expression.right)) {
+    if (
+      owner === 'buffers.pushLineBreakOffset' &&
+      ts.isIfStatement(node) &&
+      node.expression.getText(source) === 'index.count === index.offsets.length'
+    )
+      prepend(
+        node.thenStatement,
+        counter(
+          owner + '.typedArrayCapacityBytes',
+          'Math.max(index.offsets.length * 2, LINE_INDEX_MIN_CAPACITY) * 4',
+        ) + counter(owner + '.typedArrayCopiedBytes', 'index.offsets.byteLength'),
+      )
+    if (
+      owner === 'pieceTreeBase.createUintArray' &&
+      ts.isExpressionStatement(node) &&
+      ts.isBinaryExpression(node.expression) &&
+      ts.isNewExpression(node.expression.right)
+    ) {
       const allocation = node.expression.right
       const width = { Uint16Array: 2, Uint32Array: 4 }[allocation.expression.getText(source)]
-      if (width) add(node.getStart(source), counter(owner + '.typedArrayCapacityBytes', `${allocation.arguments[0].getText(source)} * ${width}`))
+      if (width)
+        add(
+          node.getStart(source),
+          counter(
+            owner + '.typedArrayCapacityBytes',
+            `${allocation.arguments[0].getText(source)} * ${width}`,
+          ),
+        )
     }
-    if (owner === 'reverseIndex.insertReverseIndexNode' && ts.isReturnStatement(node) &&
-      node.expression && ts.isObjectLiteralExpression(node.expression))
+    if (
+      owner === 'reverseIndex.insertReverseIndexNode' &&
+      ts.isReturnStatement(node) &&
+      node.expression &&
+      ts.isObjectLiteralExpression(node.expression)
+    )
       add(node.getStart(source), counter(owner + '.replacementRecords'))
-    if (owner === 'buffers.bufferLineIndex' && ts.isIfStatement(node) &&
-      node.expression.getText(source) === 'retained')
+    if (
+      owner === 'buffers.bufferLineIndex' &&
+      ts.isIfStatement(node) &&
+      node.expression.getText(source) === 'retained'
+    )
       prepend(node.thenStatement, counter(owner + '.retainedHits'))
-    if (owner === 'pieceTreeBase.PieceTreeBase.getLineContent' && ts.isIfStatement(node) &&
-      node.expression.getText(source).includes('_lastVisitedLine.lineNumber'))
+    if (
+      owner === 'pieceTreeBase.PieceTreeBase.getLineContent' &&
+      ts.isIfStatement(node) &&
+      node.expression.getText(source).includes('_lastVisitedLine.lineNumber')
+    )
       prepend(node.thenStatement, counter(owner + '.cachedLineHits'))
     ts.forEachChild(node, (child) => visit(child, owner))
   }
@@ -105,15 +138,29 @@ export function prepareProbes(destination) {
     vscode: path.join(destination, 'vscode'),
   }
   const selected = {
-    singapore: ['tree', 'reverseIndex', 'buffers', 'reads', 'positions', 'edits', 'snapshot', 'orders', 'priority'],
+    singapore: [
+      'tree',
+      'reverseIndex',
+      'buffers',
+      'reads',
+      'positions',
+      'edits',
+      'snapshot',
+      'orders',
+      'priority',
+    ],
     vscode: ['pieceTreeBase', 'pieceTreeBuilder', 'rbTreeBase'],
   }
   const manifests = {}
   for (const engine of Object.keys(roots)) {
-    const original = engine === 'singapore' ? path.join(packageRoot, 'dist') : path.join(upstreamRoot, 'dist')
+    const original =
+      engine === 'singapore' ? path.join(packageRoot, 'dist') : path.join(upstreamRoot, 'dist')
     mkdirSync(roots[engine], { recursive: true })
     cpSync(original, roots[engine], { recursive: true })
-    writeFileSync(path.join(roots[engine], 'package.json'), JSON.stringify({ type: engine === 'singapore' ? 'module' : 'commonjs' }))
+    writeFileSync(
+      path.join(roots[engine], 'package.json'),
+      JSON.stringify({ type: engine === 'singapore' ? 'module' : 'commonjs' }),
+    )
     const manifest = []
     for (const module of selected[engine]) {
       const filename = path.join(roots[engine], module + '.js')
@@ -121,11 +168,24 @@ export function prepareProbes(destination) {
       writeFileSync(filename, instrumented.text)
       manifest.push(...instrumented.manifest)
     }
-    const required = engine === 'singapore'
-      ? ['tree.cloneNode', 'reverseIndex.cloneReverseIndexNode', 'buffers.extendBufferLineIndex']
-      : ['pieceTreeBase.createLineStarts', 'pieceTreeBase.createLineStartsFast', 'rbTreeBase.TreeNode.constructor']
-    for (const key of required) assert(manifest.some((item) => item.key === key), `Missing probe ${key}`)
-    manifests[engine] = { probes: manifest, input: fileHashes(original), output: fileHashes(roots[engine]) }
+    const required =
+      engine === 'singapore'
+        ? ['tree.cloneNode', 'reverseIndex.cloneReverseIndexNode', 'buffers.extendBufferLineIndex']
+        : [
+            'pieceTreeBase.createLineStarts',
+            'pieceTreeBase.createLineStartsFast',
+            'rbTreeBase.TreeNode.constructor',
+          ]
+    for (const key of required)
+      assert(
+        manifest.some((item) => item.key === key),
+        `Missing probe ${key}`,
+      )
+    manifests[engine] = {
+      probes: manifest,
+      input: fileHashes(original),
+      output: fileHashes(roots[engine]),
+    }
   }
   return { roots, manifests }
 }

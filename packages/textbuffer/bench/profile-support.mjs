@@ -36,7 +36,8 @@ function category(frames) {
   if (/\/reverseIndex\.js/.test(urls)) return 'reverse index'
   if (/\/buffers\.js/.test(urls)) return 'buffer store / line index'
   if (/\/lineEndings\.js/.test(urls)) return 'line-ending detection / normalization'
-  if (/\/edits\.js/.test(urls) && !/\/tree\.js|\/positions\.js|\/reads\.js/.test(urls)) return 'edit preparation / boundary policy'
+  if (/\/edits\.js/.test(urls) && !/\/tree\.js|\/positions\.js|\/reads\.js/.test(urls))
+    return 'edit preparation / boundary policy'
   if (/\/positions\.js/.test(urls)) return 'position lookup'
   if (/\/tree\.js/.test(urls)) return 'piece tree'
   if (/\/rbTreeBase\.js/.test(urls)) return 'red-black tree'
@@ -45,7 +46,9 @@ function category(frames) {
 }
 
 function sorted(map) {
-  return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }))
+  return Object.entries(map)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, value]) => ({ name, value }))
 }
 
 export function summarizeCpu(profiles) {
@@ -57,7 +60,8 @@ export function summarizeCpu(profiles) {
   for (const profile of profiles) {
     const nodes = new Map(profile.nodes.map((node) => [node.id, node]))
     const parents = new Map()
-    for (const node of profile.nodes) for (const child of node.children ?? []) parents.set(child, node.id)
+    for (const node of profile.nodes)
+      for (const child of node.children ?? []) parents.set(child, node.id)
     for (const id of profile.samples ?? []) {
       const frames = []
       let node = nodes.get(id)
@@ -66,19 +70,30 @@ export function summarizeCpu(profiles) {
         node = nodes.get(parents.get(node.id))
       }
       const root = frames.findIndex(inWorkload)
-      if (root < 0) { ignoredSamples += 1; continue }
+      if (root < 0) {
+        ignoredSamples += 1
+        continue
+      }
       const measured = frames.slice(0, root + 1)
       samples += 1
       const leaf = frameName(measured[0])
       self[leaf] = (self[leaf] ?? 0) + 1
-      for (const name of new Set(measured.map(frameName))) inclusive[name] = (inclusive[name] ?? 0) + 1
+      for (const name of new Set(measured.map(frameName)))
+        inclusive[name] = (inclusive[name] ?? 0) + 1
       const group = category(measured)
       categories[group] = (categories[group] ?? 0) + 1
     }
   }
   return {
-    samples, ignoredSamples, self: sorted(self), inclusive: sorted(inclusive), categories: sorted(categories),
-    warning: samples < 100 ? 'Fewer than 100 in-workload samples: increase --repeats; do not rank small shares.' : null,
+    samples,
+    ignoredSamples,
+    self: sorted(self),
+    inclusive: sorted(inclusive),
+    categories: sorted(categories),
+    warning:
+      samples < 100
+        ? 'Fewer than 100 in-workload samples: increase --repeats; do not rank small shares.'
+        : null,
   }
 }
 
@@ -97,7 +112,8 @@ export function summarizeHeap(profiles) {
         const name = frameName(measured[0])
         sampledBytes += node.selfSize
         self[name] = (self[name] ?? 0) + node.selfSize
-        for (const frame of new Set(measured.map(frameName))) inclusive[frame] = (inclusive[frame] ?? 0) + node.selfSize
+        for (const frame of new Set(measured.map(frameName)))
+          inclusive[frame] = (inclusive[frame] ?? 0) + node.selfSize
         const group = category(measured)
         categories[group] = (categories[group] ?? 0) + node.selfSize
       } else ignoredBytes += node.selfSize
@@ -105,15 +121,24 @@ export function summarizeHeap(profiles) {
     }
     visit(profile.head, [])
   }
-  return { sampledBytes, ignoredBytes, self: sorted(self), inclusive: sorted(inclusive), categories: sorted(categories) }
+  return {
+    sampledBytes,
+    ignoredBytes,
+    self: sorted(self),
+    inclusive: sorted(inclusive),
+    categories: sorted(categories),
+  }
 }
 
 export function gcWithin(entries, started, ended) {
-  return entries.filter((entry) => entry.startTime < ended && entry.startTime + entry.duration > started)
+  return entries
+    .filter((entry) => entry.startTime < ended && entry.startTime + entry.duration > started)
     .map((entry) => ({
       startTime: entry.startTime,
-      durationMs: Math.min(ended, entry.startTime + entry.duration) - Math.max(started, entry.startTime),
-      kind: entry.detail.kind, flags: entry.detail.flags,
+      durationMs:
+        Math.min(ended, entry.startTime + entry.duration) - Math.max(started, entry.startTime),
+      kind: entry.detail.kind,
+      flags: entry.detail.flags,
     }))
 }
 

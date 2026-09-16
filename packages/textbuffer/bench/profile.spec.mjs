@@ -12,7 +12,12 @@ import { profileOptions } from './profile.mjs'
 import { execute, validate } from './worker.mjs'
 import { benchRoot, packageRoot, fileHashes, sha256 } from './support.mjs'
 
-const frame = (functionName, url = 'file:///bench/worker.mjs') => ({ functionName, url, lineNumber: 0, columnNumber: 0 })
+const frame = (functionName, url = 'file:///bench/worker.mjs') => ({
+  functionName,
+  url,
+  lineNumber: 0,
+  columnNumber: 0,
+})
 
 test('counters ignore setup and validation, reset between windows', () => {
   const counter = createCounters()
@@ -48,48 +53,94 @@ test('AST probes preserve arrow returns, class this, recursion and loops', () =>
 
 test('CPU self buckets conserve samples; recursion is not double-counted inclusively', () => {
   const tree = frame('walk', 'file:///textbuffer/dist/tree.js')
-  const profile = { nodes: [
-    { id: 1, callFrame: frame('(root)'), children: [2, 5] },
-    { id: 2, callFrame: frame('runOperations'), children: [3] },
-    { id: 3, callFrame: tree, children: [4] },
-    { id: 4, callFrame: tree, children: [] },
-    { id: 5, callFrame: frame('validate'), children: [] },
-  ], samples: [4, 3, 4, 5] }
+  const profile = {
+    nodes: [
+      { id: 1, callFrame: frame('(root)'), children: [2, 5] },
+      { id: 2, callFrame: frame('runOperations'), children: [3] },
+      { id: 3, callFrame: tree, children: [4] },
+      { id: 4, callFrame: tree, children: [] },
+      { id: 5, callFrame: frame('validate'), children: [] },
+    ],
+    samples: [4, 3, 4, 5],
+  }
   const result = summarizeCpu([profile])
   assert.equal(result.samples, 3)
   assert.equal(result.ignoredSamples, 1)
-  assert.equal(result.self.reduce((sum, item) => sum + item.value, 0), 3)
+  assert.equal(
+    result.self.reduce((sum, item) => sum + item.value, 0),
+    3,
+  )
   assert.equal(result.inclusive.find((item) => item.name.endsWith(':walk')).value, 3)
-  assert.equal(result.categories.reduce((sum, item) => sum + item.value, 0), 3)
+  assert.equal(
+    result.categories.reduce((sum, item) => sum + item.value, 0),
+    3,
+  )
   assert(result.warning)
 })
 
 test('allocation summary excludes inspector/setup stacks and labels inclusive overlap', () => {
-  const result = summarizeHeap([{ head: { callFrame: frame('(root)'), selfSize: 10, children: [
-    { callFrame: frame('runOperations'), selfSize: 20, children: [
-      { callFrame: frame('clone', 'file:///textbuffer/dist/reverseIndex.js'), selfSize: 30, children: [] },
-    ] },
-    { callFrame: frame('prepareState'), selfSize: 100, children: [] },
-  ] } }])
+  const result = summarizeHeap([
+    {
+      head: {
+        callFrame: frame('(root)'),
+        selfSize: 10,
+        children: [
+          {
+            callFrame: frame('runOperations'),
+            selfSize: 20,
+            children: [
+              {
+                callFrame: frame('clone', 'file:///textbuffer/dist/reverseIndex.js'),
+                selfSize: 30,
+                children: [],
+              },
+            ],
+          },
+          { callFrame: frame('prepareState'), selfSize: 100, children: [] },
+        ],
+      },
+    },
+  ])
   assert.equal(result.sampledBytes, 50)
   assert.equal(result.ignoredBytes, 110)
-  assert.equal(result.categories.reduce((sum, item) => sum + item.value, 0), 50)
+  assert.equal(
+    result.categories.reduce((sum, item) => sum + item.value, 0),
+    50,
+  )
 })
 
 test('GC interval excludes forced setup and validation collections', () => {
-  const entries = [0, 9, 12, 19, 30].map((startTime) => ({ startTime, duration: 2, detail: { kind: 1, flags: 0 } }))
+  const entries = [0, 9, 12, 19, 30].map((startTime) => ({
+    startTime,
+    duration: 2,
+    detail: { kind: 1, flags: 0 },
+  }))
   const result = gcWithin(entries, 10, 20)
-  assert.deepEqual(result.map((item) => item.durationMs), [1, 2, 1])
+  assert.deepEqual(
+    result.map((item) => item.durationMs),
+    [1, 2, 1],
+  )
   assert.equal(result.length, 3)
 })
 
 test('profile options fail closed instead of silently dropping modes', () => {
   assert.deepEqual(profileOptions(['--modes', 'counters,gc']).modes, ['counters', 'gc'])
-  for (const args of [['--modes', 'cpu,cpu'], ['--modes', 'oops'], ['--repeats', '0'], ['--seed', '-1'], ['--typo', 'cpu'], ['--only']]) assert.throws(() => profileOptions(args))
+  for (const args of [
+    ['--modes', 'cpu,cpu'],
+    ['--modes', 'oops'],
+    ['--repeats', '0'],
+    ['--seed', '-1'],
+    ['--typo', 'cpu'],
+    ['--only'],
+  ])
+    assert.throws(() => profileOptions(args))
 })
 
 test('every smoke workload agrees in clean and disposable instrumented builds', async () => {
-  const baseline = { source: fileHashes(path.join(packageRoot, 'src')), dist: fileHashes(path.join(packageRoot, 'dist')) }
+  const baseline = {
+    source: fileHashes(path.join(packageRoot, 'src')),
+    dist: fileHashes(path.join(packageRoot, 'dist')),
+  }
   const temporary = mkdtempSync(path.join(benchRoot, '.cache', 'probe-test-'))
   try {
     const probes = prepareProbes(temporary)
@@ -113,7 +164,13 @@ test('every smoke workload agrees in clean and disposable instrumented builds', 
         assert(Object.keys(counts).length > 0)
       }
     }
-    assert.deepEqual({ source: fileHashes(path.join(packageRoot, 'src')), dist: fileHashes(path.join(packageRoot, 'dist')) }, baseline)
+    assert.deepEqual(
+      {
+        source: fileHashes(path.join(packageRoot, 'src')),
+        dist: fileHashes(path.join(packageRoot, 'dist')),
+      },
+      baseline,
+    )
   } finally {
     delete globalThis.__textbufferBenchCounters
     rmSync(temporary, { recursive: true, force: true })
@@ -133,17 +190,44 @@ test('real CPU/heap/GC/counter worker windows validate and produce raw traces', 
     for (const mode of ['cpu', 'heap', 'gc', 'counters']) {
       const output = path.join(temporary, mode)
       mkdirSync(output)
-      const report = JSON.parse(execFileSync(process.execPath, ['--expose-gc', path.join(benchRoot, 'profile-worker.mjs'), 'singapore', filename, sha256(bytes), mode, '1', output, roots, '0'], { encoding: 'utf8' }))
+      const report = JSON.parse(
+        execFileSync(
+          process.execPath,
+          [
+            '--expose-gc',
+            path.join(benchRoot, 'profile-worker.mjs'),
+            'singapore',
+            filename,
+            sha256(bytes),
+            mode,
+            '1',
+            output,
+            roots,
+            '0',
+          ],
+          { encoding: 'utf8' },
+        ),
+      )
       assert.equal(report.epochs[0].correctness, 'passed')
       assert.equal(report.diagnosticOnly, true)
       assert.deepEqual(JSON.parse(readFileSync(path.join(output, 'summary.json'))), report)
-      if (mode === 'cpu') assert(JSON.parse(readFileSync(path.join(output, '0.cpuprofile'))).nodes.length > 0)
+      if (mode === 'cpu')
+        assert(JSON.parse(readFileSync(path.join(output, '0.cpuprofile'))).nodes.length > 0)
       if (mode === 'heap') assert(JSON.parse(readFileSync(path.join(output, '0.heapprofile'))).head)
       if (mode !== 'counters') assert.deepEqual(report.epochs[0].counters, {})
       else {
-        assert.equal(report.epochs[0].counters['buffers.createInitialBuffers.calls'], undefined, 'setup leaked into counters')
-        assert.equal(report.epochs[0].counters['edits.insertIntoPieceTable.calls'], fixture.operations.length)
+        assert.equal(
+          report.epochs[0].counters['buffers.createInitialBuffers.calls'],
+          undefined,
+          'setup leaked into counters',
+        )
+        assert.equal(
+          report.epochs[0].counters['edits.insertIntoPieceTable.calls'],
+          fixture.operations.length,
+        )
       }
     }
-  } finally { rmSync(temporary, { recursive: true, force: true }) }
+  } finally {
+    rmSync(temporary, { recursive: true, force: true })
+  }
 })

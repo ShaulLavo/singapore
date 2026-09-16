@@ -10,10 +10,14 @@ export async function loadAdapter(name, roots = {}) {
 }
 
 async function singaporeAdapter(root) {
-  const target = (file, specifier) => root ? pathToFileURL(path.join(root, file)).href : specifier
+  const target = (file, specifier) => (root ? pathToFileURL(path.join(root, file)).href : specifier)
   const api = await import(target('index.js', '@singapore-editor/textbuffer'))
-  const { lineStartOffset } = await import(target('positions.js', '@singapore-editor/textbuffer/internal/positions'))
-  const { validatePieceTreeInvariants } = await import(target('debug.js', '@singapore-editor/textbuffer/debug'))
+  const { lineStartOffset } = await import(
+    target('positions.js', '@singapore-editor/textbuffer/internal/positions')
+  )
+  const { validatePieceTreeInvariants } = await import(
+    target('debug.js', '@singapore-editor/textbuffer/debug')
+  )
   function wrap(snapshot) {
     return {
       get snapshot() {
@@ -80,7 +84,9 @@ function vscodeAdapter(root) {
         if (change.text.length) tree.insert(change.from, change.text, true)
       }
       return {
-        get tree() { return tree },
+        get tree() {
+          return tree
+        },
         length: () => tree.getLength(),
         lineCount: () => tree.getLineCount(),
         edit,
