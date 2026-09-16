@@ -17,14 +17,7 @@ Validate the package independently with `bun run --cwd packages/textbuffer verif
 Do not merge or publish until the recorded checks pass. Creating the separate GitHub repository,
 choosing a license, and publishing the initial version are separate operations.
 
-## Accepted follow-up direction, not implemented
-
-The [CRLF preservation plan](crlf-preservation-plan.md) records the intended move from LF-normalized
-storage to preserving LF/CRLF text, with caret and interactive deletion policy in the editor rather
-than CRLF-specific tree invariants. The current extraction still uses the existing normalization.
-Ingestion, export, positions, and editor/host consumers must migrate together before changing that contract.
-
 Tombstones remain required by the current [deleted-anchor contract](../positions/anchors.md).
 Persistent snapshots preserve old text; invisible pieces and reverse-index entries preserve the location
-and bias of deleted anchors in newer snapshots. Removing them is not extraction simplification or CRLF
-work. Any future reclamation must satisfy the independent [E006 ownership plan](../../plans/e006-tombstone-reclamation.md).
+and bias of deleted anchors in newer snapshots. Removing them is not extraction simplification.
+Any future reclamation must satisfy the independent [E006 ownership plan](../../plans/e006-tombstone-reclamation.md).
