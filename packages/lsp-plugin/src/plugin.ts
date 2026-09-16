@@ -491,6 +491,9 @@ class LanguageServerContribution implements EditorViewContribution {
             this.servers.requestHover(params, requestOptions, onUpdate),
           getActiveDocument: () => this.activeDocument(),
           getDiagnostics: () => this.diagnostics.diagnostics,
+          openLocation: (target) => {
+            options.onOpenDefinition?.(target)
+          },
           onRequestSuccess: () => options.onInteractiveReady?.(),
           onRequestError: (error) => this.handleRequestError(error),
         }),

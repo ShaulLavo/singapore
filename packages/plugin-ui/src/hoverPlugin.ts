@@ -10,7 +10,6 @@ export type HoverPluginOptions = {
   readonly name?: string
   readonly classNamespace?: string
   readonly markdownCodeBackground?: boolean
-  readonly themeVariables?: readonly string[]
 }
 
 type LiveHover = {

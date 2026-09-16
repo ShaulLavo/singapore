@@ -1,7 +1,7 @@
 import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
 
 import type { OffsetRange } from './offsetRange'
-import type { TooltipAction, TooltipNote } from './tooltip'
+import type { TooltipPart } from './tooltip'
 
 export { EDITOR_HOVER_PARTICIPANT, EDITOR_HOVER_PARTICIPANT_ID } from './hoverToken'
 
@@ -26,14 +26,11 @@ export type HoverRequest = {
 }
 
 /** One thing a participant has to say. The hover shows every part of every participant at once. */
-export type HoverPart = {
+export type HoverPart = TooltipPart & {
   /** Lower comes first. Parts from one participant keep the order they were emitted in. */
   readonly ordinal: number
   /** The text this part is about; the hover anchors to the union of its parts' ranges. */
   readonly range: OffsetRange
-  readonly markdown?: string
-  readonly notes?: readonly TooltipNote[]
-  readonly actions?: readonly TooltipAction[]
 }
 
 /**

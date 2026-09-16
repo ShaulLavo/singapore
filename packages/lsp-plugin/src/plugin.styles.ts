@@ -40,11 +40,11 @@ const DIAGNOSTIC_ERROR = registerEditorColor('lsp.diagnostic.error', {
   light: '#dc2626',
 })
 
-const DIAGNOSTIC_WARNING = registerEditorColor('lsp.diagnostic.warning', {
+registerEditorColor('lsp.diagnostic.warning', {
   dark: DIAGNOSTIC_HUES.warning,
   light: '#b45309',
 })
-const DIAGNOSTIC_INFORMATION = registerEditorColor('lsp.diagnostic.information', {
+registerEditorColor('lsp.diagnostic.information', {
   dark: DIAGNOSTIC_HUES.information,
   light: '#1d4ed8',
 })
@@ -55,25 +55,10 @@ const DIAGNOSTIC_HINT_BASE = firstEditorColor(
   editorColorReference('gutter.foreground'),
   DIAGNOSTIC_HUES.hint,
 )
-const DIAGNOSTIC_HINT = registerEditorColor('lsp.diagnostic.hint', {
+registerEditorColor('lsp.diagnostic.hint', {
   dark: darkenEditorColor(DIAGNOSTIC_HINT_BASE, 0.2),
   light: lightenEditorColor(DIAGNOSTIC_HINT_BASE, 0.2),
 })
-
-export const DIAGNOSTIC_FOREGROUND_COLORS = {
-  error: DIAGNOSTIC_ERROR,
-  warning: DIAGNOSTIC_WARNING,
-  information: DIAGNOSTIC_INFORMATION,
-  hint: DIAGNOSTIC_HINT,
-} as const satisfies Record<LanguageServerDiagnosticSeverity, string>
-
-/** The variables a hover tooltip must copy so a diagnostic note keeps its colour on the body. */
-export const DIAGNOSTIC_THEME_VARIABLES = [
-  '--editor-lsp-diagnostic-error',
-  '--editor-lsp-diagnostic-warning',
-  '--editor-lsp-diagnostic-information',
-  '--editor-lsp-diagnostic-hint',
-] as const
 
 // Each wash derives from its own severity colour, so restyling one id moves the range background
 // with it, and stays alpha-blended so it composes over any editor background.

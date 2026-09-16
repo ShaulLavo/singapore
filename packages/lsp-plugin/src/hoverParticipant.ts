@@ -6,7 +6,7 @@ import {
 import type { EditorHoverParticipant, HoverPart, HoverRequest } from '@singapore-editor/plugin-ui'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { diagnosticNotes } from './diagnosticNotes'
+import { diagnosticNotes, type OpenLocation } from './diagnosticNotes'
 import {
   diagnosticsAtOffset,
   indexDiagnosticOffsets,
@@ -15,9 +15,9 @@ import {
 import type { ActiveDocument } from './pluginTypes'
 import type { LanguageServerFeatureRouter, LanguageServerHoverUpdate } from './serverSet'
 
-/** Diagnostics sit under the server's prose, the way a marker hover does in VS Code. */
-const HOVER_TEXT_ORDINAL = 1
-const DIAGNOSTIC_ORDINAL = 2
+/** Diagnostics above the server's prose, the way VS Code orders its marker and Markdown hovers. */
+const DIAGNOSTIC_ORDINAL = 1
+const HOVER_TEXT_ORDINAL = 3
 
 export type LanguageServerHoverParticipantOptions = {
   readonly router: LanguageServerFeatureRouter
@@ -28,6 +28,8 @@ export type LanguageServerHoverParticipantOptions = {
   ): Promise<lsp.Hover | null>
   getActiveDocument(): ActiveDocument | null
   getDiagnostics(): readonly lsp.Diagnostic[]
+  /** Follows a diagnostic's related-information link. */
+  openLocation?: OpenLocation
   onRequestSuccess?(): void
   onRequestError(error: unknown): void
 }
@@ -71,7 +73,7 @@ export function createLanguageServerHoverParticipant(
         {
           ordinal: DIAGNOSTIC_ORDINAL,
           range: request.anchor.range,
-          notes: diagnosticNotes(diagnostics),
+          notes: diagnosticNotes(diagnostics, options.openLocation ?? (() => undefined)),
         },
       ]
     },

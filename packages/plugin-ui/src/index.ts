@@ -22,7 +22,9 @@ export {
   type TooltipAction,
   type TooltipController,
   type TooltipNote,
+  type TooltipNoteLink,
   type TooltipOptions,
+  type TooltipPart,
   type TooltipShowOptions,
 } from './tooltip'
 export {

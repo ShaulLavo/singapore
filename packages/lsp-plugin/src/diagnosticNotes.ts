@@ -1,31 +1,53 @@
-import type { TooltipNote } from '@singapore-editor/plugin-ui'
+import type { TooltipNote, TooltipNoteLink } from '@singapore-editor/plugin-ui'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { DIAGNOSTIC_FOREGROUND_COLORS } from './plugin.styles'
+import { documentUriToFileName } from './paths'
+import type { LanguageServerDefinitionTarget } from './types'
+
+export type OpenLocation = (target: LanguageServerDefinitionTarget) => void
 
 /** The lines a hover shows under its text for the diagnostics at that offset. */
-export function diagnosticNotes(diagnostics: readonly lsp.Diagnostic[]): readonly TooltipNote[] {
-  return diagnostics.map(diagnosticNote)
+export function diagnosticNotes(
+  diagnostics: readonly lsp.Diagnostic[],
+  openLocation: OpenLocation,
+): readonly TooltipNote[] {
+  return diagnostics.map((diagnostic) => diagnosticNote(diagnostic, openLocation))
 }
 
-function diagnosticNote(diagnostic: lsp.Diagnostic): TooltipNote {
+function diagnosticNote(diagnostic: lsp.Diagnostic, openLocation: OpenLocation): TooltipNote {
   return {
-    label: severityLabel(diagnostic),
-    color: severityColor(diagnostic),
     text: typeof diagnostic.message === 'string' ? diagnostic.message : diagnostic.message.value,
+    source: diagnostic.source,
+    code: diagnostic.code === undefined ? undefined : String(diagnostic.code),
+    codeHref: diagnostic.codeDescription?.href,
+    related: (diagnostic.relatedInformation ?? []).flatMap((related) =>
+      relatedLink(related, openLocation),
+    ),
   }
 }
 
-function severityLabel(diagnostic: lsp.Diagnostic): string {
-  if (diagnostic.severity === 2) return 'warning'
-  if (diagnostic.severity === 3) return 'info'
-  if (diagnostic.severity === 4) return 'hint'
-  return 'error'
+function relatedLink(
+  related: lsp.DiagnosticRelatedInformation,
+  openLocation: OpenLocation,
+): readonly TooltipNoteLink[] {
+  const fileName = documentUriToFileName(related.location.uri)
+  if (!fileName) return []
+
+  const { start } = related.location.range
+  return [
+    {
+      label: `${basename(fileName)}(${start.line + 1}, ${start.character + 1}): `,
+      text: related.message,
+      open: () =>
+        openLocation({
+          uri: related.location.uri,
+          path: fileName.replace(/^\/+/, ''),
+          range: related.location.range,
+        }),
+    },
+  ]
 }
 
-function severityColor(diagnostic: lsp.Diagnostic): string {
-  if (diagnostic.severity === 2) return DIAGNOSTIC_FOREGROUND_COLORS.warning
-  if (diagnostic.severity === 3) return DIAGNOSTIC_FOREGROUND_COLORS.information
-  if (diagnostic.severity === 4) return DIAGNOSTIC_FOREGROUND_COLORS.hint
-  return DIAGNOSTIC_FOREGROUND_COLORS.error
+function basename(fileName: string): string {
+  return fileName.slice(fileName.lastIndexOf('/') + 1)
 }

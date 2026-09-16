@@ -26,8 +26,6 @@ export type HoverControllerOptions = {
   readonly context: EditorViewContributionContext
   readonly classNamespace?: string
   readonly markdownCodeBackground?: boolean
-  /** Extra CSS variables the tooltip copies from the editor; see TooltipOptions.themeVariables. */
-  readonly themeVariables?: readonly string[]
 }
 
 export type HoverController = {
@@ -88,7 +86,6 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     reentryElement: element,
     markdownCodeBackground: options.markdownCodeBackground,
     classNamespace: options.classNamespace,
-    themeVariables: options.themeVariables,
     onDidHide: () => cancelOperation(),
     onRequestEditorFocus: () => context.focusEditor(),
   })
@@ -123,9 +120,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     tooltip.show({
       anchor: rect,
       hoverText: null,
-      hoverParts: parts.flatMap((part) => (part.markdown ? [part.markdown] : [])),
-      notes: parts.flatMap((part) => part.notes ?? []),
-      actions: parts.flatMap((part) => part.actions ?? []),
+      parts,
       theme,
       loading: current.loading && pending,
       focus: current.focusOnShow && !current.shown,

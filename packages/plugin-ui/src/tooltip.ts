@@ -61,20 +61,38 @@ export type TooltipAction = {
   readonly run: () => void
 }
 
-/** One labelled line under the hover text: a diagnostic, a warning, a status. */
-export type TooltipNote = {
+/** A place a note points at, opened by the host: the other half of a duplicate, a related site. */
+export type TooltipNoteLink = {
+  /** What is clicked, such as `file.ts(12, 3): `. */
   readonly label: string
-  /** A CSS colour for the label; usually a registered editor colour. */
-  readonly color: string
   readonly text: string
+  open(): void
+}
+
+/** One line under the hover text, laid out as a VS Code marker: a diagnostic, a warning. */
+export type TooltipNote = {
+  /** Shown as written, so a multi-line message keeps its lines. */
+  readonly text: string
+  /** Who raised it, and its code, shown muted after the message as VS Code does. */
+  readonly source?: string
+  readonly code?: string
+  /** Makes the code a link to its documentation. */
+  readonly codeHref?: string
+  readonly related?: readonly TooltipNoteLink[]
+}
+
+/** One row group of the tooltip; shown in the order given. */
+export type TooltipPart = {
+  readonly markdown?: string
+  readonly notes?: readonly TooltipNote[]
+  readonly actions?: readonly TooltipAction[]
 }
 
 export type TooltipShowOptions = {
-  readonly actions?: readonly TooltipAction[]
   readonly anchor: DOMRect
+  /** A single Markdown body, for a surface with one thing to say. */
   readonly hoverText: string | null
-  readonly hoverParts?: readonly string[]
-  readonly notes?: readonly TooltipNote[]
+  readonly parts?: readonly TooltipPart[]
   readonly theme: EditorTheme | null
   readonly loading?: boolean
   readonly focus?: boolean
@@ -87,12 +105,6 @@ export type TooltipOptions = {
   readonly reentryElement: HTMLElement
   readonly markdownCodeBackground?: boolean
   readonly classNamespace?: string
-  /**
-   * Extra CSS variables copied from `themeSource` onto the tooltip. The tooltip mounts on the
-   * body, outside the editor's cascade, so a note colour registered by a plugin only resolves here
-   * if that plugin names its variable.
-   */
-  readonly themeVariables?: readonly string[]
   onDidHide?(): void
   onRequestEditorFocus?(): void
 }
@@ -178,15 +190,14 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     const anchorChanged = !anchorRect || !sameRect(anchorRect, showOptions.anchor)
     if (anchorChanged) closestPointerDistance = null
     anchorRect = showOptions.anchor
-    const notes = showOptions.notes ?? []
-    placement = showOptions.preferredPlacement ?? (notes.length > 0 ? 'bottom' : 'top')
-    syncEditorThemeVariables(tooltip, themeSource, options.themeVariables ?? [])
+    const parts = showOptions.parts ?? []
+    const hasNotes = parts.some((part) => part.notes && part.notes.length > 0)
+    placement = showOptions.preferredPlacement ?? (hasNotes ? 'bottom' : 'top')
+    syncEditorThemeVariables(tooltip, themeSource)
     applyTooltipDimensions(tooltip, reentryElement, tooltip.hidden !== false)
     renderTooltip(tooltip, {
-      actions: showOptions.actions,
       hoverText: showOptions.hoverText,
-      hoverParts: showOptions.hoverParts,
-      notes,
+      parts,
       theme: showOptions.theme,
       loading: showOptions.loading ?? false,
       markdownCodeBackground: options.markdownCodeBackground ?? false,
@@ -355,10 +366,8 @@ function createTooltipElement(document: Document, classNamespace: string): HTMLD
 }
 
 type TooltipContent = {
-  readonly actions?: readonly TooltipAction[]
   readonly hoverText: string | null
-  readonly hoverParts?: readonly string[]
-  readonly notes: readonly TooltipNote[]
+  readonly parts: readonly TooltipPart[]
   readonly theme?: EditorTheme | null
   readonly loading: boolean
   readonly markdownCodeBackground: boolean
@@ -369,15 +378,24 @@ function renderTooltip(element: HTMLDivElement, content: TooltipContent): void {
   element.replaceChildren()
   element.setAttribute('aria-busy', String(content.loading))
   const body = createTooltipBody(element.ownerDocument, content.classNamespace)
-  const hoverParts = content.hoverParts ?? (content.hoverText ? [content.hoverText] : [])
-  hoverParts.forEach((markdown, index) =>
-    body.append(hoverPart(content, element.ownerDocument, markdown, index)),
-  )
-  if (content.notes.length > 0) body.append(noteSection(content, element.ownerDocument))
-  if (content.loading) body.append(loadingSection(content, element.ownerDocument))
-  for (const action of content.actions ?? []) {
-    body.append(tooltipAction(element.ownerDocument, content, action))
+  const parts = content.hoverText
+    ? [{ markdown: content.hoverText }, ...content.parts]
+    : content.parts
+  let markdownIndex = 0
+  for (const part of parts) {
+    if (part.markdown) {
+      body.append(hoverPart(content, element.ownerDocument, part.markdown, markdownIndex))
+      markdownIndex += 1
+    }
+    // One row per note, as VS Code gives each marker its own hover row.
+    for (const note of part.notes ?? []) {
+      body.append(noteSection(content, element.ownerDocument, note))
+    }
+    for (const action of part.actions ?? []) {
+      body.append(tooltipAction(element.ownerDocument, content, action))
+    }
   }
+  if (content.loading) body.append(loadingSection(content, element.ownerDocument))
   const firstRow = body.firstElementChild as HTMLElement | null
   if (firstRow) firstRow.style.borderTop = '0'
 
@@ -446,15 +464,13 @@ function createTooltipRow(
   return row
 }
 
-function noteSection(content: TooltipContent, document: Document): HTMLElement {
+function noteSection(content: TooltipContent, document: Document, note: TooltipNote): HTMLElement {
   const section = createTooltipRow(content, document, 'notes')
   section.tabIndex = 0
   section.setAttribute('role', 'document')
-  section.setAttribute('aria-label', content.notes.map(noteCopyText).join('. '))
-  for (const note of content.notes) {
-    section.append(noteRow(document, note))
-  }
-  const copyText = content.notes.map(noteCopyText).join('\n')
+  section.setAttribute('aria-label', noteCopyText(note))
+  section.append(noteRow(document, note))
+  const copyText = noteCopyText(note)
   const button = createCopyButton(document, copyText, content.classNamespace)
   section.append(button)
   installCopyButtonVisibility(section, button)
@@ -633,22 +649,83 @@ function plainHoverText(markdown: string): string {
 }
 
 function noteCopyText(note: TooltipNote): string {
-  return `${note.label}: ${note.text}`.trim()
+  const details = noteDetailsText(note)
+  const head = `${note.text}${details ? ` ${details}` : ''}`
+  const related = (note.related ?? []).map((link) => `${link.label}${link.text}`)
+  return [head, ...related].join('\n').trim()
 }
 
+function noteDetailsText(note: TooltipNote): string {
+  if (note.source && note.code) return `${note.source}(${note.code})`
+  if (note.source) return note.source
+  if (note.code) return `(${note.code})`
+  return ''
+}
+
+// Laid out as VS Code's marker hover: the message as written, its source and code muted after it,
+// and each related location on its own line below.
 function noteRow(document: Document, note: TooltipNote): HTMLElement {
   const row = document.createElement('div')
-  row.style.display = 'grid'
-  row.style.gridTemplateColumns = 'auto 1fr'
-  row.style.gap = '8px'
-  row.style.alignItems = 'baseline'
-  const label = document.createElement('span')
-  label.textContent = note.label
-  label.style.color = note.color
+  row.style.minWidth = '0'
   const message = document.createElement('span')
   message.textContent = note.text
-  row.append(label, message)
+  message.style.whiteSpace = 'pre-wrap'
+  row.append(message)
+  const details = noteDetails(document, note)
+  if (details) row.append(details)
+  for (const link of note.related ?? []) row.append(relatedRow(document, link))
   return row
+}
+
+function noteDetails(document: Document, note: TooltipNote): HTMLElement | null {
+  if (!note.source && !note.code) return null
+
+  const details = document.createElement('span')
+  details.style.opacity = '0.6'
+  details.style.paddingLeft = '6px'
+  if (!note.codeHref || !note.code) {
+    details.textContent = noteDetailsText(note)
+    return details
+  }
+
+  if (note.source) details.append(note.source)
+  const link = document.createElement('a')
+  link.href = note.codeHref
+  link.target = '_blank'
+  link.rel = 'noreferrer'
+  link.textContent = `(${note.code})`
+  styleNoteLink(link)
+  details.append(link)
+  return details
+}
+
+function relatedRow(document: Document, link: TooltipNoteLink): HTMLElement {
+  const row = document.createElement('div')
+  row.style.marginTop = '8px'
+  const anchor = document.createElement('a')
+  anchor.textContent = link.label
+  anchor.setAttribute('role', 'button')
+  anchor.tabIndex = 0
+  styleNoteLink(anchor)
+  const open = (event: Event): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    link.open()
+  }
+  anchor.addEventListener('click', open)
+  anchor.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') open(event)
+  })
+  const text = document.createElement('span')
+  text.textContent = link.text
+  row.append(anchor, text)
+  return row
+}
+
+function styleNoteLink(anchor: HTMLAnchorElement): void {
+  anchor.style.color = 'var(--editor-caret-color, #93c5fd)'
+  anchor.style.textDecoration = 'underline'
+  anchor.style.cursor = 'pointer'
 }
 
 function createResizeHandle(
@@ -863,14 +940,10 @@ function selectionInsideTooltip(document: Document, tooltip: HTMLElement): boole
   return tooltip.contains(selection.anchorNode) || tooltip.contains(selection.focusNode)
 }
 
-function syncEditorThemeVariables(
-  target: HTMLElement,
-  source: HTMLElement,
-  extraVariables: readonly string[],
-): void {
+function syncEditorThemeVariables(target: HTMLElement, source: HTMLElement): void {
   const style = source.ownerDocument.defaultView?.getComputedStyle(source)
   if (!style) return
-  for (const variable of [...TOOLTIP_THEME_VARIABLES, ...extraVariables]) {
+  for (const variable of TOOLTIP_THEME_VARIABLES) {
     const value =
       source.style.getPropertyValue(variable).trim() || style.getPropertyValue(variable).trim()
     if (value) target.style.setProperty(variable, value)
