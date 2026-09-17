@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { afterEach, expect, test } from 'vitest'
 import { Editor } from '@singapore-editor/core/editor'
 import type { EditorHighlightResult, EditorPlugin } from '@singapore-editor/core/extensions'
@@ -41,7 +42,7 @@ test('native capture retains committed guide paint and replaces it synchronously
   expect(restored.host.querySelectorAll('.editor-scope-line')).toHaveLength(0)
   restored.editor.openDocument({ text: source, documentId: 'file-a', languageId: 'typescript' })
   expect(restored.editor.getPresentationState()).toBe('provisional')
-  resolve({ tokens: [] })
+  resolve({ tokens: EditorTokenStore.empty() })
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
   expect(restored.host.querySelectorAll('[data-editor-saved-paint-layer]')).toHaveLength(0)
   expect(restored.host.querySelectorAll('.editor-scope-line').length).toBeGreaterThan(0)
@@ -83,7 +84,7 @@ test('late admission hides already mounted guides until authoritative takeover',
     0,
   )
 
-  resolve({ tokens: [] })
+  resolve({ tokens: EditorTokenStore.empty() })
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
   expect(getComputedStyle(root).visibility).toBe('visible')
   expect(restored.host.querySelectorAll('[data-editor-saved-paint-layer]')).toHaveLength(0)

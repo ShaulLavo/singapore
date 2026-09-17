@@ -34,6 +34,8 @@ import {
   type EditorSyntaxResult,
   type EditorSyntaxSession,
   type EditorSyntaxSessionOptions,
+  type EditorToken,
+  EditorTokenStore,
 } from '../src/public/syntax'
 import type { EditorTheme } from '../src/public/rendering'
 import type {
@@ -110,9 +112,10 @@ function createMockSyntaxSession(
 }
 
 function createHighlightResult(
-  tokens = [{ start: 0, end: 5, style: { color: '#00ff00' } }],
+  objectTokens: readonly EditorToken[] = [{ start: 0, end: 5, style: { color: '#00ff00' } }],
   theme?: EditorTheme | null,
 ): EditorHighlightResult {
+  const tokens = EditorTokenStore.fromTokens(objectTokens)
   if (theme === undefined) return { tokens }
   return { tokens, theme }
 }
@@ -665,7 +668,7 @@ function tokenHighlightRanges(): AbstractRange[] {
 }
 
 function tokenSnapshotFromLastEvent(events: readonly ViewContributionEvent[]) {
-  return events.findLast((event) => event.kind === 'tokens')?.snapshot?.tokens ?? []
+  return events.findLast((event) => event.kind === 'tokens')?.snapshot?.tokens.toTokens() ?? []
 }
 
 function latestFoldMarkers(events: readonly ViewContributionEvent[]) {

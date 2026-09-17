@@ -8,6 +8,7 @@ import {
   setHighlightRegistry,
 } from '../src/public/testing'
 import type { EditorPlugin } from '../src/plugins'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 
 /**
  * Token ranges arrive in buffer offsets while replaced rows render display text. The chunk reuse
@@ -168,8 +169,8 @@ function highlighterPlugin(): EditorPlugin {
     activate: (context) =>
       context.registerHighlighter({
         createSession: () => ({
-          refresh: async () => ({ tokens }),
-          applyChange: async () => ({ tokens }),
+          refresh: async () => ({ tokens: EditorTokenStore.fromTokens(tokens) }),
+          applyChange: async () => ({ tokens: EditorTokenStore.fromTokens(tokens) }),
           dispose: () => undefined,
         }),
       }),

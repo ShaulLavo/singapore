@@ -241,18 +241,12 @@ describe('Shiki worker client theme cache', () => {
     })
 
     const result = await highlight
-    expect(result.tokens).toEqual([
+    expect(result.tokens.toTokens()).toEqual([
       { start: 0, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 11, style: { color: '#ff0000' } },
     ])
-    expect(result.tokens[0]?.style).toBe(result.tokens[1]?.style)
-    const { getEditorTokenIndex } = await import('../../src/editor/tokenIndex')
-    expect(getEditorTokenIndex(result.tokens)).toMatchObject({
-      maxEnds: [5, 11],
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
+    expect(result.tokens.styleAt(0)).toBe(result.tokens.styleAt(1))
+    expect(result.tokens).toMatchObject({ monotonicEnd: true, nonOverlapping: true })
   }, 20_000)
 
   it('ignores tokenizer results that arrive after highlighter session disposal', async () => {
@@ -291,7 +285,9 @@ describe('Shiki worker client theme cache', () => {
       },
     })
 
-    await expect(highlight).resolves.toEqual({ tokens: [] })
+    const dropped = await highlight
+    expect(dropped.tokens.toTokens()).toEqual([])
+    expect(dropped.theme).toBeUndefined()
     await flushMicrotasks()
     expect(requestOfType('disposeDocument').payload).toMatchObject({
       runtimeSessionId: expect.any(String),
@@ -363,7 +359,9 @@ describe('Shiki worker client theme cache', () => {
     expect(fakeWorkers).toHaveLength(0)
 
     registrations.resolve(resolvedRegistrations())
-    await expect(highlight).resolves.toEqual({ tokens: [] })
+    const dropped = await highlight
+    expect(dropped.tokens.toTokens()).toEqual([])
+    expect(dropped.theme).toBeUndefined()
     await fence
 
     expect(fakeWorkers).toHaveLength(0)

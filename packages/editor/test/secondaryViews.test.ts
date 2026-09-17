@@ -10,6 +10,7 @@ import {
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
 } from '@singapore-editor/core/secondary-views'
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 
 describe('secondary view projections', () => {
   it('projects snapshot-owned view data without reading lazy fullText when a text snapshot exists', () => {
@@ -31,7 +32,7 @@ describe('secondary view projections', () => {
     expect(projection.text.length).toBe(sourceText.length)
     expect(projection.text.lineStarts).toEqual([0, 6])
     expect(projection.text.materializeFullText()).toBe(sourceText)
-    expect(projection.syntaxColors.tokens).toEqual([
+    expect(projection.syntaxColors.tokens.toTokens()).toEqual([
       { start: 0, end: 5, style: { color: '#ff0000' } },
     ])
     expect(projection.selections).toEqual([
@@ -69,7 +70,7 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
     syntaxStatus: 'ready',
     paintLayers: [],
     lineStarts: [0, 6],
-    tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }],
+    tokens: EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }]),
     // 'alpha\nbeta' carries no bracket pairs, so the parse this stands in for published none.
     brackets: [],
     selections: [

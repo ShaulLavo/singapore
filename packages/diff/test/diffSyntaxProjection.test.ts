@@ -4,14 +4,9 @@ import { projectDiffSyntaxTokens } from '../src/diffSyntax'
 import type { DiffRenderRow } from '../src/types'
 
 /**
- * `projectDiffSyntaxTokens` buckets tokens by source line before projecting, instead of scanning
- * every token for every row. That is a pure optimisation of a hot path — re-projection is
- * synchronous on the expansion-toggle path — so the thing worth testing is that it changed
- * *nothing* observable.
- *
- * The reference below is the previous implementation, verbatim: for each row, walk the whole token
- * stream. Fuzzing the two against each other is the only way to be confident about a rewrite whose
- * whole point is that the output is identical.
+ * `projectDiffSyntaxTokens` reads each row's tokens by bisection on a store instead of scanning
+ * every token for every row. The reference below is that full scan, over the order a store holds
+ * tokens in; fuzzing the two against each other is what shows the output is identical.
  */
 describe('projectDiffSyntaxTokens', () => {
   it('matches a full-scan reference across randomised sources and rows', () => {
@@ -97,7 +92,7 @@ describe('projectDiffSyntaxTokens', () => {
   })
 })
 
-/** The implementation this replaced: every row scans the entire token stream. */
+/** Every row scans the entire token stream, in store order. */
 function referenceProjection(
   rows: readonly DiffRenderRow[],
   side: 'old' | 'new' | 'stacked',
@@ -126,7 +121,7 @@ function referenceProjection(
         nextLineStart === undefined ? Number.POSITIVE_INFINITY : nextLineStart - 1,
         lineStart + row.text.length,
       )
-      for (const token of source.tokens) {
+      for (const token of sortedByStart(source.tokens)) {
         if (token.end <= lineStart) continue
         if (token.start >= lineEnd) continue
         const start = Math.max(token.start, lineStart)
@@ -143,6 +138,11 @@ function referenceProjection(
   }
 
   return projected
+}
+
+// A store holds tokens by start, ties in producer order, so that is the order a row reads them in.
+function sortedByStart(tokens: readonly EditorToken[]): readonly EditorToken[] {
+  return [...tokens].sort((left, right) => left.start - right.start)
 }
 
 function mulberry(seed: number): () => number {

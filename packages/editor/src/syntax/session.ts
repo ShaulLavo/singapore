@@ -1,7 +1,8 @@
 import type { DocumentSessionChange } from '../documentSession'
 import type { DocumentTextSnapshot } from '../documentTextSnapshot'
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
-import type { EditorToken, TextEdit } from '../tokens'
+import type { TextEdit } from '../tokens'
+import type { EditorTokenInput } from './tokenStore'
 
 export type EditorSyntaxLanguageId = string
 
@@ -117,7 +118,8 @@ export type EditorSyntaxResult = {
   readonly injections: readonly EditorSyntaxInjection[]
   readonly degraded: EditorSyntaxDegradedState | null
   readonly projection: EditorSyntaxProjectionTag
-  readonly tokens: readonly EditorToken[]
+  /** A provider that builds tokens by hand may return them as objects. */
+  readonly tokens: EditorTokenInput
 }
 
 export type EditorSyntaxResultOptions = {
@@ -160,7 +162,7 @@ export type EditorSyntaxSession = {
   canQueryRange?(): boolean
   queryRange?(range: EditorSyntaxRange): Promise<EditorSyntaxResult>
   getResult(): EditorSyntaxResult
-  getTokens(): readonly EditorToken[]
+  getTokens(): EditorTokenInput
   getSnapshotVersion(): number
   dispose(): void
 }

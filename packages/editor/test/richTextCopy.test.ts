@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { readRichTextFont, richTextForCopy, type RichTextFont } from '../src/editor/richText'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import type { EditorToken } from '../src/tokens'
 
 // What a copy hands to something that is not a text editor. Everything here is about what the
@@ -23,7 +24,7 @@ const copy = (
     startOffset: 0,
     text,
     theme: { backgroundColor: '#1e1e1e', foregroundColor: '#d4d4d4' },
-    tokens,
+    tokens: EditorTokenStore.fromTokens(tokens),
     ...overrides,
   })
 

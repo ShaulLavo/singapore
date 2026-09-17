@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createHighlighter } from 'shiki'
-import { getEditorTokenIndex } from '../../src/editor/tokenIndex'
 
 import {
   createIncrementalTokenizer,
@@ -9,6 +8,7 @@ import {
 } from '../../src/shiki'
 import { snapshotToPackedEditorTokens } from '../../src/shiki/editor-tokens'
 import { unpackEditorTokens } from '../../src/syntax/packedTokens'
+import { EditorTokenStore } from '../../src/syntax/tokenStore'
 
 describe('editor token adapters', () => {
   it('converts line-local token offsets into document offsets', () => {
@@ -31,11 +31,9 @@ describe('editor token adapters', () => {
       { end: 12, start: 6, style: { color: '#0f0' } },
       { end: 24, start: 18, style: { color: '#00f' } },
     ])
-    expect(getEditorTokenIndex(tokens)).toMatchObject({
-      maxEnds: [5, 12, 24],
+    expect(EditorTokenStore.fromTokens(tokens)).toMatchObject({
       monotonicEnd: true,
       nonOverlapping: true,
-      sortedByStart: true,
     })
   })
 
@@ -143,12 +141,9 @@ describe('editor token adapters', () => {
       },
     ])
     expect(unpacked[0]?.style).toBe(unpacked[1]?.style)
-    expect(getEditorTokenIndex(unpacked)).toMatchObject({
-      maxEnds: [3, 8, 14],
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
+    const store = EditorTokenStore.fromPacked(packed)
+    expect(store.toTokens()).toEqual(unpacked)
+    expect(store).toMatchObject({ monotonicEnd: true, nonOverlapping: true })
   })
 })
 

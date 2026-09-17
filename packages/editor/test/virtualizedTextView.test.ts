@@ -13,11 +13,12 @@ import {
   createStringTextSnapshot,
   type TextSnapshot,
 } from '../src/public/document'
-import { type EditorToken, treeSitterCapturesToEditorTokens } from '../src/public/syntax'
+import { treeSitterCapturesToEditorTokens } from '../src/public/syntax'
 import type { VirtualizedFoldMarker } from '../src/public/rendering'
 import type { EditorGutterRowContext } from '../src/public/extensions'
 import { createFoldMap } from '../src/foldMap'
 import { createInlineMap } from '../src/inlineMap'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import {
   clearBrowserTextMetricsCache,
   measureBrowserTextMetrics,
@@ -1139,7 +1140,9 @@ describe('VirtualizedTextView', () => {
   it('keeps same-window DOM and projected highlights through repeated cross-part edits', () => {
     mountLongLineView()
     let text = 'abcdefghij'.repeat(2_000)
-    let tokens: readonly EditorToken[] = [{ start: 45, end: 1_100, style: { color: '#ff0000' } }]
+    let tokens = EditorTokenStore.fromTokens([
+      { start: 45, end: 1_100, style: { color: '#ff0000' } },
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 20, 2_500 * view.getState().metrics.characterWidth)
     view.adoptTokens(tokens)
@@ -1166,7 +1169,7 @@ describe('VirtualizedTextView', () => {
       )
       const highlight = highlightsMap.get(tokenHighlightNames()[0]!)!
       expect([...highlight].map((range) => range.toString()).join('')).toBe(
-        text.slice(tokens[0]!.start, tokens[0]!.end),
+        text.slice(tokens.startAt(0), tokens.endAt(0)),
       )
     }
   })
@@ -1480,7 +1483,7 @@ describe('VirtualizedTextView', () => {
       ],
     })
     const text = 'root\n  child\ntail'
-    const tokens = [{ start: 0, end: 4, style: { color: '#ff0000' } }]
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 4, style: { color: '#ff0000' } }])
     let piece = createPieceTableSnapshot(text)
     const folds = new EditorFoldState(
       view,
@@ -1994,27 +1997,23 @@ describe('VirtualizedTextView', () => {
     expect(second?.range.endOffset).toBe(6)
   })
 
-  it('does not scan offscreen Tree-sitter token styles while rendering the viewport', () => {
+  it('does not visit offscreen Tree-sitter tokens while rendering the viewport', () => {
     const lines = createLines(10_000).split('\n')
     const captures = lineStartOffsets(lines).map((offset) => ({
       captureName: 'variable',
       endIndex: offset + 4,
       startIndex: offset,
     }))
-    const tokens = treeSitterCapturesToEditorTokens(captures)
-
-    Object.defineProperty(tokens[5_000]!, 'style', {
-      configurable: true,
-      get: () => {
-        throw new Error('unexpected offscreen token style scan')
-      },
-    })
+    const tokens = EditorTokenStore.fromTokens(treeSitterCapturesToEditorTokens(captures))
+    const walk = vi.spyOn(tokens, 'forEachInRange')
 
     view.setText(lines.join('\n'))
     view.setScrollMetrics(0, 20)
+    view.adoptTokens(tokens)
 
-    expect(() => view.setTokens(tokens)).not.toThrow()
+    const visited = walk.mock.calls.reduce((sum, [from, to]) => sum + Math.max(0, to - from), 0)
     expect(tokenHighlightRanges().length).toBeGreaterThan(0)
+    expect(visited).toBeLessThanOrEqual(view.getState().mountedRows.length)
   })
 
   it('rebuilds token style rules once for indexed viewport styles', () => {
@@ -2063,7 +2062,7 @@ describe('VirtualizedTextView', () => {
   it('does not invalidate live token ranges when adopting current projected tokens again', () => {
     const text = 'world'
     const edit = { from: 2, to: 2, text: 'X' }
-    const tokens = [{ start: 0, end: 5, style: { color: '#ff0000' } }]
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
     view.setText(text)
     view.setScrollMetrics(0, 20)
     view.adoptTokens(tokens)
@@ -2090,19 +2089,14 @@ describe('VirtualizedTextView', () => {
   it('does not rescan token styles when same-line edits keep live token ranges', () => {
     view.setText('world')
     view.setScrollMetrics(0, 20)
-    const tokens = [{ start: 0, end: 5, style: { color: '#ff0000' } }]
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
     view.adoptTokens(tokens)
     const stringify = vi.spyOn(JSON, 'stringify')
 
     try {
       view.applyEdit({ from: 2, to: 2, text: 'X' }, 'woXrld')
       const projected = projectTokensThroughEdit(tokens, { from: 2, to: 2, text: 'X' }, 'world')
-      Object.defineProperty(projected[0]!, 'style', {
-        configurable: true,
-        get: () => {
-          throw new Error('unexpected token style scan')
-        },
-      })
+      const scans = watchTokenComparisons(tokens, projected)
 
       view.setTokens(projected)
 
@@ -2110,6 +2104,7 @@ describe('VirtualizedTextView', () => {
         isTokenStyleSerializationInput(value),
       )
       expect(tokenStyleCalls).toHaveLength(0)
+      expect(scans()).toBe(0)
     } finally {
       stringify.mockRestore()
     }
@@ -2118,19 +2113,14 @@ describe('VirtualizedTextView', () => {
   it('adopts projected tokens without rescanning styles when live ranges survive', () => {
     view.setText('world')
     view.setScrollMetrics(0, 20)
-    const tokens = [{ start: 0, end: 5, style: { color: '#ff0000' } }]
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
     view.adoptTokens(tokens)
     const stringify = vi.spyOn(JSON, 'stringify')
 
     try {
       view.applyEdit({ from: 2, to: 2, text: 'X' }, 'woXrld')
       const projected = projectTokensThroughEdit(tokens, { from: 2, to: 2, text: 'X' }, 'world')
-      Object.defineProperty(projected[0]!, 'style', {
-        configurable: true,
-        get: () => {
-          throw new Error('unexpected token style scan')
-        },
-      })
+      const scans = watchTokenComparisons(tokens, projected)
 
       view.adoptTokens(projected)
 
@@ -2138,6 +2128,7 @@ describe('VirtualizedTextView', () => {
         isTokenStyleSerializationInput(value),
       )
       expect(tokenStyleCalls).toHaveLength(0)
+      expect(scans()).toBe(0)
     } finally {
       stringify.mockRestore()
     }
@@ -2153,23 +2144,23 @@ describe('VirtualizedTextView', () => {
     const style = { color: '#ff0000' }
     const tokenCount = 200
     const text = 'a '.repeat(tokenCount)
-    const tokens = Array.from({ length: tokenCount }, (_, index) => ({
-      start: index * 2,
-      end: index * 2 + 1,
-      style,
-    }))
+    const tokens = EditorTokenStore.fromTokens(
+      Array.from({ length: tokenCount }, (_, index) => ({
+        start: index * 2,
+        end: index * 2 + 1,
+        style,
+      })),
+    )
     view.setText(text)
     view.adoptTokens(tokens)
 
     const projected = projectTokensThroughEdit(tokens, { from: 0, to: 1, text: 'b' }, text)
-    Object.defineProperty(projected[0]!, 'style', {
-      configurable: true,
-      get: () => {
-        throw new Error('unexpected projected token equality scan')
-      },
-    })
+    const scans = watchTokenComparisons(tokens, projected)
 
-    expect(() => view.adoptTokens(projected)).not.toThrow()
+    view.adoptTokens(projected)
+
+    expect(scans()).toBe(0)
+    expect(view['view'].tokens).toBe(projected)
   })
 
   it('keeps token highlights below same-line edits when local segments match', () => {
@@ -2229,11 +2220,11 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row token highlights at row-local offsets across repeated typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens: readonly EditorToken[] = [
+    let tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 60)
     view.setTokens(tokens)
@@ -2245,8 +2236,9 @@ describe('VirtualizedTextView', () => {
       const previous = tokenHighlightRangeForNode(rowOne.textNode)
 
       view.applyEdit(edit, nextText)
-      tokens = [...projectTokensThroughEdit(tokens, edit, text)]
-      view.setTokens(tokens)
+      tokens = projectTokensThroughEdit(tokens, edit, text)
+      // Object tokens carry no provenance, so this takes the comparison path.
+      view.setTokens(tokens.toTokens())
       text = nextText
 
       const next = tokenHighlightRangeForNode(rowOne.textNode)
@@ -2260,11 +2252,11 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row token highlights static when adopting projected tokens repeatedly', () => {
     let text = 'aa\nbb\ncc'
-    let tokens: readonly EditorToken[] = [
+    let tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 60)
     view.adoptTokens(tokens)
@@ -2276,7 +2268,7 @@ describe('VirtualizedTextView', () => {
       const projected = projectTokensThroughEdit(tokens, edit, text)
       view.adoptTokens(projected)
       view.adoptTokens(projected)
-      tokens = [...projected]
+      tokens = projected
       text = nextText
 
       const rowOne = view.getState().mountedRows.find((row) => row.index === 1)!
@@ -2291,11 +2283,11 @@ describe('VirtualizedTextView', () => {
   it('keeps projected lower-row highlights static after an intervening viewport render', () => {
     const text = 'aa\nbb\ncc'
     const edit = { from: 1, to: 1, text: 'X' }
-    const tokens = [
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 60, 100)
     view.adoptTokens(tokens)
@@ -2316,11 +2308,11 @@ describe('VirtualizedTextView', () => {
   it('does not render shifted stale tokens below an edit before projection lands', () => {
     const text = 'aa\nbb\ncc\n'
     const edit = { from: 1, to: 1, text: 'X' }
-    const tokens = [
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 60, 100)
     view.adoptTokens(tokens)
@@ -2339,14 +2331,14 @@ describe('VirtualizedTextView', () => {
   it('fills rows mounted during a stale-token render after projected tokens land', () => {
     const text = 'aa\nbb\ncc\ndd\nee\nff'
     const edit = { from: 1, to: 1, text: 'X' }
-    const tokens = [
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
       { start: 9, end: 11, style: { color: '#ff0000' } },
       { start: 12, end: 14, style: { color: '#ff0000' } },
       { start: 15, end: 17, style: { color: '#ff0000' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 20, 100)
     view.adoptTokens(tokens)
@@ -2367,11 +2359,11 @@ describe('VirtualizedTextView', () => {
   it('does not render shifted stale tokens below a newline before projection lands', () => {
     const text = 'aa\nbb\ncc'
     const edit = { from: 1, to: 1, text: '\n' }
-    const tokens = [
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 80, 100)
     view.adoptTokens(tokens)
@@ -2394,11 +2386,11 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static after a newline followed by rapid typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens: readonly EditorToken[] = [
+    let tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 80, 100)
     view.adoptTokens(tokens)
@@ -2408,7 +2400,7 @@ describe('VirtualizedTextView', () => {
     view.applyEdit(newlineEdit, textAfterNewline)
     const projectedAfterNewline = projectTokensThroughEdit(tokens, newlineEdit, text)
     view.adoptTokens(projectedAfterNewline)
-    tokens = [...projectedAfterNewline]
+    tokens = projectedAfterNewline
     text = textAfterNewline
     let previousLowerRange = tokenHighlightRangeForNode(
       view.getState().mountedRows.find((row) => row.text === 'bb')!.textNode,
@@ -2421,7 +2413,54 @@ describe('VirtualizedTextView', () => {
       const projected = projectTokensThroughEdit(tokens, edit, text)
       view.adoptTokens(projected)
       view.adoptTokens(projected)
-      tokens = [...projected]
+      tokens = projected
+      text = nextText
+
+      const rowTwo = view.getState().mountedRows.find((row) => row.index === 2)!
+      expect(rowTwo.text).toBe('bb')
+      const range = tokenHighlightRangeForNode(rowTwo.textNode)
+      expect(range).toBeDefined()
+      // Provenance survives the edit, so the row below keeps its live range.
+      expect(range!.range).toBe(previousLowerRange)
+      expect(range!.range.startContainer).toBe(rowTwo.textNode)
+      expect(range!.range.startOffset).toBe(0)
+      expect(range!.range.endOffset).toBe(2)
+      expect(tokenHighlightColorForNode(rowTwo.textNode)).toBe('#00ff00')
+      previousLowerRange = range!.range
+    }
+  })
+
+  it('rebuilds lower-row highlights in place when typed projections lose their provenance', () => {
+    let text = 'aa\nbb\ncc'
+    let tokens = EditorTokenStore.fromTokens([
+      { start: 0, end: 2, style: { color: '#ff0000' } },
+      { start: 3, end: 5, style: { color: '#00ff00' } },
+      { start: 6, end: 8, style: { color: '#0000ff' } },
+    ])
+    view.setText(text)
+    view.setScrollMetrics(0, 80, 100)
+    view.adoptTokens(tokens)
+
+    const newlineEdit = { from: 1, to: 1, text: '\n' }
+    const textAfterNewline = 'a\na\nbb\ncc'
+    view.applyEdit(newlineEdit, textAfterNewline)
+    const projectedAfterNewline = projectTokensThroughEdit(tokens, newlineEdit, text)
+    view.adoptTokens(projectedAfterNewline)
+    tokens = EditorTokenStore.fromTokens(projectedAfterNewline.toTokens())
+    text = textAfterNewline
+    let previousLowerRange = tokenHighlightRangeForNode(
+      view.getState().mountedRows.find((row) => row.text === 'bb')!.textNode,
+    )?.range
+
+    for (const typed of ['X', 'Y']) {
+      const edit = { from: 2, to: 2, text: typed }
+      const nextText = `${text.slice(0, edit.from)}${typed}${text.slice(edit.to)}`
+      view.applyEdit(edit, nextText)
+      const projected = projectTokensThroughEdit(tokens, edit, text)
+      view.adoptTokens(projected)
+      view.adoptTokens(projected)
+      // A store rebuilt from objects is an answer with no claim about the one it replaces.
+      tokens = EditorTokenStore.fromTokens(projected.toTokens())
       text = nextText
 
       const rowTwo = view.getState().mountedRows.find((row) => row.index === 2)!
@@ -2441,11 +2480,10 @@ describe('VirtualizedTextView', () => {
     let lines = Array.from({ length: 90 }, (_, index) => ` ${index.toString().padStart(2, '0')}`)
     let text = lines.join('\n')
     let offsets = lineStartOffsets(lines)
-    let tokens: readonly EditorToken[] = offsets.map((offset) => ({
-      start: offset + 1,
-      end: offset + 3,
-      style: { color: '#00ff00' },
-    }))
+    const style = { color: '#00ff00' }
+    let tokens = EditorTokenStore.fromTokens(
+      offsets.map((offset) => ({ start: offset + 1, end: offset + 3, style })),
+    )
     view.setText(text)
     view.setScrollMetrics(0, 2000, 100)
     view.adoptTokens(tokens)
@@ -2482,11 +2520,11 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static while alternating newlines and typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens: readonly EditorToken[] = [
+    let tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 100, 100)
     view.adoptTokens(tokens)
@@ -2502,7 +2540,7 @@ describe('VirtualizedTextView', () => {
       const projected = projectTokensThroughEdit(tokens, edit, text)
       view.adoptTokens(projected)
       view.adoptTokens(projected)
-      tokens = [...projected]
+      tokens = projected
       text = nextText
     }
 
@@ -2517,11 +2555,11 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static through repeated mixed inserts above them', () => {
     let text = 'aa\nbb\ncc'
-    let tokens: readonly EditorToken[] = [
+    let tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 160, 100)
     view.adoptTokens(tokens)
@@ -2534,7 +2572,7 @@ describe('VirtualizedTextView', () => {
       view.applyEdit(edit, nextText)
       const projected = projectTokensThroughEdit(tokens, edit, text)
       view.adoptTokens(projected)
-      tokens = [...projected]
+      tokens = projected
       text = nextText
 
       const targetRow = view.getState().mountedRows.find((row) => row.text === 'bb')!
@@ -2550,11 +2588,10 @@ describe('VirtualizedTextView', () => {
   it('keeps lower-row highlights static through repeated newline-only inserts above them', () => {
     const lines = Array.from({ length: 90 }, (_, index) => ` ${index.toString().padStart(2, '0')}`)
     let text = lines.join('\n')
-    let tokens: readonly EditorToken[] = lineStartOffsets(lines).map((offset) => ({
-      start: offset + 1,
-      end: offset + 3,
-      style: { color: '#00ff00' },
-    }))
+    const style = { color: '#00ff00' }
+    let tokens = EditorTokenStore.fromTokens(
+      lineStartOffsets(lines).map((offset) => ({ start: offset + 1, end: offset + 3, style })),
+    )
     view.setText(text)
     view.setScrollMetrics(0, 2000, 100)
     view.adoptTokens(tokens)
@@ -2581,12 +2618,12 @@ describe('VirtualizedTextView', () => {
   it('does not render shifted stale tokens below a deleted newline before projection lands', () => {
     const text = 'a\na\nbb\ncc'
     const edit = { from: 1, to: 2, text: '' }
-    const tokens = [
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 1, style: { color: '#ff0000' } },
       { start: 2, end: 3, style: { color: '#ffaa00' } },
       { start: 4, end: 6, style: { color: '#00ff00' } },
       { start: 7, end: 9, style: { color: '#0000ff' } },
-    ]
+    ])
     view.setText(text)
     view.setScrollMetrics(0, 80, 100)
     view.adoptTokens(tokens)
@@ -3506,6 +3543,16 @@ function hiddenCharacterMarkerOffsets(container: HTMLElement): string[] {
   return hiddenCharacterMarkers(container).map(
     (marker) => marker.dataset.editorHiddenCharacterOffset!,
   )
+}
+
+// Provenance travels by revision, so adopting a projection never compares two stores.
+function watchTokenComparisons(...stores: readonly EditorTokenStore[]): () => number {
+  const spies = stores.flatMap((store) => [
+    vi.spyOn(store, 'equals'),
+    vi.spyOn(store, 'stylesEqual'),
+    vi.spyOn(store, 'changedRangeTo'),
+  ])
+  return () => spies.reduce((sum, spy) => sum + spy.mock.calls.length, 0)
 }
 
 function isTokenStyleSerializationInput(value: unknown): boolean {

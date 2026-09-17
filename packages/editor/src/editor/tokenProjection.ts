@@ -1,780 +1,219 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
-import type { EditorToken, TextEdit } from '../tokens'
-import { firstBatchChangeEndingAtOrAfter, type TextEditBatch } from '../textEditBatch'
+import type { TextEdit } from '../tokens'
+import { EditorTokenStore, type EditorTokenRun } from '../syntax/tokenStore'
+import type { TextEditBatch, TextEditBatchChange } from '../textEditBatch'
 import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
-import {
-  appendEditorTokenIndexEntry,
-  copyEditorTokenIndex,
-  getEditorTokenIndex,
-  setEditorTokenIndex,
-  type EditorTokenIndex,
-} from './tokenIndex'
-
-type TokenProjectionMetadata = {
-  readonly keepsLiveRanges: boolean
-  readonly sourceTokens: readonly EditorToken[]
-}
-
-type TokenProjectionBuilder = {
-  maxEnds: number[]
-  tokens: EditorToken[]
-  maxEnd: number
-  monotonicEnd: boolean
-  nonOverlapping: boolean
-  previousEnd: number
-  previousStart: number
-  sortedByStart: boolean
-}
-
-type TokenProjectionPath = 'indexed.bulk' | 'indexed.fallback' | 'indexed.lazy' | 'scan'
 
 type TokenProjectionText = string | TextSnapshot
 
-const LAZY_PROJECTED_SUFFIX_THRESHOLD = 64
-const tokenProjectionMetadata = new WeakMap<readonly EditorToken[], TokenProjectionMetadata>()
+/** A token's offsets while it is carried through an edit; reused, never retained. */
+type TokenSpan = { start: number; end: number }
 
+type TokenWindow = { readonly first: number; readonly last: number }
+
+type TokenRunWriter = {
+  readonly starts: Uint32Array
+  readonly ends: Uint32Array
+  readonly styleIds: Uint32Array
+  count: number
+}
+
+/**
+ * The tokens an edit can touch sit between two bisections; everything after them only shifts,
+ * which the store records without visiting it.
+ */
 export function projectTokensThroughEdit(
-  tokens: readonly EditorToken[],
+  tokens: EditorTokenStore,
   edit: TextEdit,
   previousText: TokenProjectionText,
-): readonly EditorToken[] {
+): EditorTokenStore {
+  if (tokens.length === 0) return tokens
+
   const delta = edit.text.length - (edit.to - edit.from)
   const lineStructureChanged = editChangesLineStructure(edit, previousText)
-  const indexed = projectIndexedTokensThroughEdit(
-    tokens,
-    edit,
-    previousText,
-    delta,
-    lineStructureChanged,
-  )
-  if (indexed) return indexed
+  const window = tokensTouchedByEdit(tokens, edit.from, edit.to)
+  const writer = createTokenRunWriter(window.last - window.first)
+  const span: TokenSpan = { start: 0, end: 0 }
+  let keepsLiveRanges = true
 
-  recordTokenProjectionPath('scan', tokens, 0, tokens.length)
-  return scanProjectTokensThroughEdit(tokens, edit, previousText, delta, lineStructureChanged)
+  tokens.forEachInRange(window.first, window.last, (start, end, styleId) => {
+    span.start = start
+    span.end = end
+    const kept = projectSpanThroughEdit(span, edit, previousText, delta, lineStructureChanged)
+    if (kept && span.end > span.start) writeTokenRun(writer, span, styleId)
+    else keepsLiveRanges = false
+  })
+
+  recordTokenProjection(tokens, window, writer.count, 1)
+  return tokens.replaceRange(window.first, window.last, finishTokenRun(writer), {
+    delta,
+    keepsLiveRanges,
+  })
 }
 
 export function projectTokensThroughEdits(
-  tokens: readonly EditorToken[],
+  tokens: EditorTokenStore,
   batch: TextEditBatch,
-): readonly EditorToken[] {
+): EditorTokenStore {
   if (tokens.length === 0 || batch.changes.length === 0) return tokens
+
   const edits = batch.changes.map((change) => ({
     from: change.from,
     to: change.to,
     text: batch.after.readRange(change.afterFrom, change.afterTo),
   }))
-  const builder = createTokenProjectionBuilder()
-  for (const token of tokens) {
-    const projected = projectTokenThroughBatch(token, batch, edits)
-    if (isRenderableToken(projected)) appendBuiltToken(builder, projected)
+  // Back to front, so the indices of the windows still to come are untouched by the ones done.
+  let projected = tokens
+  let touched = 0
+  for (const group of changeGroupsBackToFront(tokens, batch.changes)) {
+    const run = projectWindowThroughBatch(tokens, group, batch, edits)
+    touched += group.window.last - group.window.first
+    projected = projected.replaceRange(group.window.first, group.window.last, run, {
+      delta: group.delta,
+      keepsLiveRanges: false,
+    })
   }
-  recordTokenProjectionPath('scan', tokens, 0, tokens.length, undefined, {
-    editCount: batch.edits.length,
-    batch: true,
-  })
-  return finishTokenProjection(tokens, builder, false)
-}
 
-function projectTokenThroughBatch(
-  token: EditorToken,
-  batch: TextEditBatch,
-  edits: readonly TextEdit[],
-): EditorToken | null {
-  const first = firstBatchChangeEndingAtOrAfter(batch, token.start)
-  const change = batch.changes[first]
-  let startDelta = change
-    ? change.afterFrom - change.from
-    : batch.after.length - batch.before.length
-  let endDelta = startDelta
-  for (let index = first; index < batch.changes.length; index += 1) {
-    const next = batch.changes[index]!
-    if (next.from > token.end) break
-    const lineChanged = next.startRow !== next.endRow || next.afterStartRow !== next.afterEndRow
-    const projected = projectTokenThroughEdit(
-      token,
-      edits[index]!,
-      batch.before,
-      next.offsetDelta,
-      lineChanged,
-    )
-    if (!projected) return null
-    startDelta += projected.start - token.start
-    endDelta += projected.end - token.end
-  }
-  if (startDelta === 0 && endDelta === 0) return token
-  return { ...token, start: token.start + startDelta, end: token.end + endDelta }
+  recordTokenProjection(tokens, { first: 0, last: touched }, projected.length, batch.edits.length)
+  return projected
 }
 
 export function tokenProjectionLiveRangeStatus(
-  sourceTokens: readonly EditorToken[],
-  projectedTokens: readonly EditorToken[],
+  sourceTokens: EditorTokenStore,
+  projectedTokens: EditorTokenStore,
 ): boolean | null {
   if (sourceTokens === projectedTokens) return true
 
-  const metadata = tokenProjectionMetadata.get(projectedTokens)
-  if (!metadata) return null
-  if (metadata.sourceTokens !== sourceTokens) return false
-  return metadata.keepsLiveRanges
+  const origin = projectedTokens.derivedFrom
+  if (!origin) return null
+  if (origin.revision !== sourceTokens.revision) return false
+  return origin.keepsLiveRanges
 }
 
-export function copyTokenProjectionMetadata(
-  sourceTokens: readonly EditorToken[],
-  copiedTokens: readonly EditorToken[],
-): void {
-  copyEditorTokenIndex(sourceTokens, copiedTokens)
-
-  const metadata = tokenProjectionMetadata.get(sourceTokens)
-  if (metadata) tokenProjectionMetadata.set(copiedTokens, metadata)
+type ChangeGroup = {
+  readonly window: TokenWindow
+  readonly firstChange: number
+  readonly lastChange: number
+  /** Length change of this group's edits alone; later tokens already carry the rest. */
+  readonly delta: number
 }
 
-export function sourceTokensForProjectedTokens(
-  projectedTokens: readonly EditorToken[],
-): readonly EditorToken[] | null {
-  return tokenProjectionMetadata.get(projectedTokens)?.sourceTokens ?? null
-}
-
-function scanProjectTokensThroughEdit(
-  tokens: readonly EditorToken[],
-  edit: TextEdit,
-  previousText: TokenProjectionText,
-  delta: number,
-  lineStructureChanged: boolean,
-): readonly EditorToken[] {
-  const builder = createTokenProjectionBuilder()
-  let keepsLiveRanges = true
-
-  for (const token of tokens) {
-    const next = projectTokenThroughEdit(token, edit, previousText, delta, lineStructureChanged)
-    if (!isRenderableToken(next)) {
-      keepsLiveRanges = false
+/** Changes whose token windows touch are one group, because one token may span both. */
+function changeGroupsBackToFront(
+  tokens: EditorTokenStore,
+  changes: readonly TextEditBatchChange[],
+): ChangeGroup[] {
+  const groups: ChangeGroup[] = []
+  for (let index = 0; index < changes.length; index += 1) {
+    const change = changes[index]!
+    const window = tokensTouchedByEdit(tokens, change.from, change.to)
+    const previous = groups[groups.length - 1]
+    if (previous && window.first <= previous.window.last) {
+      groups[groups.length - 1] = {
+        ...previous,
+        window: { first: previous.window.first, last: Math.max(previous.window.last, window.last) },
+        lastChange: index,
+        delta: previous.delta + change.offsetDelta,
+      }
       continue
     }
 
-    appendBuiltToken(builder, next)
+    groups.push({ window, firstChange: index, lastChange: index, delta: change.offsetDelta })
   }
-
-  return finishTokenProjection(tokens, builder, keepsLiveRanges)
+  return groups.reverse()
 }
 
-function projectIndexedTokensThroughEdit(
-  tokens: readonly EditorToken[],
-  edit: TextEdit,
-  previousText: TokenProjectionText,
-  delta: number,
-  lineStructureChanged: boolean,
-): readonly EditorToken[] | null {
-  const index = getEditorTokenIndex(tokens)
-  if (!index?.sortedByStart) return null
+function projectWindowThroughBatch(
+  tokens: EditorTokenStore,
+  group: ChangeGroup,
+  batch: TextEditBatch,
+  edits: readonly TextEdit[],
+): EditorTokenRun {
+  const writer = createTokenRunWriter(group.window.last - group.window.first)
+  const span: TokenSpan = { start: 0, end: 0 }
 
-  const prefixEnd = unchangedPrefixEnd(index, edit)
-  const suffixStart = shiftedSuffixStart(tokens, edit)
-  if (prefixEnd > suffixStart) return null
-
-  const lazyProjected = projectSortedTokenRangesLazy(
-    tokens,
-    edit,
-    previousText,
-    delta,
-    prefixEnd,
-    suffixStart,
-    index,
-    lineStructureChanged,
-  )
-  if (lazyProjected) {
-    recordTokenProjectionPath('indexed.lazy', tokens, prefixEnd, suffixStart, index, {
-      resultCount: lazyProjected.length,
-    })
-    return lazyProjected
-  }
-
-  const projected = projectSortedTokenRangesBulk(
-    tokens,
-    edit,
-    previousText,
-    delta,
-    prefixEnd,
-    suffixStart,
-    index,
-    lineStructureChanged,
-  )
-  if (projected) {
-    recordTokenProjectionPath('indexed.bulk', tokens, prefixEnd, suffixStart, index, {
-      resultCount: projected.length,
-    })
-    return projected
-  }
-
-  recordTokenProjectionPath('indexed.fallback', tokens, prefixEnd, suffixStart, index)
-  return projectSortedTokenRanges(
-    tokens,
-    edit,
-    previousText,
-    delta,
-    prefixEnd,
-    suffixStart,
-    index,
-    lineStructureChanged,
-  )
-}
-
-function projectSortedTokenRangesLazy(
-  tokens: readonly EditorToken[],
-  edit: TextEdit,
-  previousText: TokenProjectionText,
-  delta: number,
-  prefixEnd: number,
-  suffixStart: number,
-  index: EditorTokenIndex,
-  lineStructureChanged: boolean,
-): readonly EditorToken[] | null {
-  if (!shouldUseLazyProjection(tokens, suffixStart)) return null
-
-  const builder = createContinuationTokenProjectionBuilder(
-    tokens[prefixEnd - 1],
-    index.maxEnds[prefixEnd - 1] ?? 0,
-    index,
-  )
-  const keepsLiveRanges = appendProjectedTokens(
-    builder,
-    tokens,
-    edit,
-    previousText,
-    delta,
-    prefixEnd,
-    suffixStart,
-    lineStructureChanged,
-  )
-  if (!canKeepLazyIndex(builder, tokens, suffixStart, delta, index)) return null
-
-  return createLazyProjectedTokenArray(
-    tokens,
-    delta,
-    prefixEnd,
-    suffixStart,
-    builder,
-    index,
-    keepsLiveRanges,
-  )
-}
-
-function projectSortedTokenRangesBulk(
-  tokens: readonly EditorToken[],
-  edit: TextEdit,
-  previousText: TokenProjectionText,
-  delta: number,
-  prefixEnd: number,
-  suffixStart: number,
-  index: EditorTokenIndex,
-  lineStructureChanged: boolean,
-): readonly EditorToken[] | null {
-  const prefixTokens = tokens.slice(0, prefixEnd)
-  const prefixMaxEnds = index.maxEnds.slice(0, prefixEnd) as number[]
-  const builder = createContinuationTokenProjectionBuilder(
-    tokens[prefixEnd - 1],
-    prefixMaxEnds[prefixMaxEnds.length - 1] ?? 0,
-    index,
-  )
-  const keepsLiveRanges = appendProjectedTokens(
-    builder,
-    tokens,
-    edit,
-    previousText,
-    delta,
-    prefixEnd,
-    suffixStart,
-    lineStructureChanged,
-  )
-  const suffixTokens = shiftedTokenRange(tokens, suffixStart, delta)
-  if (!canKeepBulkIndex(builder, suffixTokens)) return null
-
-  appendSuffixIndexEntries(builder, suffixTokens)
-  const maxEnds = prefixMaxEnds.concat(builder.maxEnds)
-  const projectedTokens = prefixTokens.concat(builder.tokens, suffixTokens)
-
-  setEditorTokenIndex(projectedTokens, {
-    maxEnds,
-    monotonicEnd: builder.monotonicEnd,
-    nonOverlapping: builder.nonOverlapping,
-    sortedByStart: true,
+  tokens.forEachInRange(group.window.first, group.window.last, (start, end, styleId) => {
+    span.start = start
+    span.end = end
+    if (!projectSpanThroughGroup(span, group, batch, edits)) return
+    if (span.end > span.start) writeTokenRun(writer, span, styleId)
   })
-  tokenProjectionMetadata.set(projectedTokens, { keepsLiveRanges, sourceTokens: tokens })
-  return projectedTokens
+  return finishTokenRun(writer)
 }
 
-function shouldUseLazyProjection(tokens: readonly EditorToken[], suffixStart: number): boolean {
-  if (suffixStart >= tokens.length) return false
-  return tokens.length - suffixStart >= LAZY_PROJECTED_SUFFIX_THRESHOLD
-}
-
-function canKeepLazyIndex(
-  builder: TokenProjectionBuilder,
-  tokens: readonly EditorToken[],
-  suffixStart: number,
-  delta: number,
-  index: EditorTokenIndex,
+/**
+ * Moves `span` through this group's edits only: earlier groups shift it when the store applies
+ * them. False when an edit swallowed the token.
+ */
+function projectSpanThroughGroup(
+  span: TokenSpan,
+  group: ChangeGroup,
+  batch: TextEditBatch,
+  edits: readonly TextEdit[],
 ): boolean {
-  if (!builder.sortedByStart) return false
+  const start = span.start
+  const end = span.end
+  const step: TokenSpan = { start, end }
+  let startDelta = 0
+  let endDelta = 0
+  for (let index = group.firstChange; index <= group.lastChange; index += 1) {
+    const change = batch.changes[index]!
+    if (change.from > end) break
+    if (change.to < start) {
+      startDelta += change.offsetDelta
+      endDelta += change.offsetDelta
+      continue
+    }
 
-  const first = tokens[suffixStart]
-  if (!first) return true
-  const projectedFirst = shiftToken(first, delta)
-  if (projectedFirst.start < builder.previousStart) return false
-  if (index.nonOverlapping && projectedFirst.start < builder.previousEnd) {
-    builder.nonOverlapping = false
+    step.start = start
+    step.end = end
+    const lineChanged =
+      change.startRow !== change.endRow || change.afterStartRow !== change.afterEndRow
+    if (
+      !projectSpanThroughEdit(step, edits[index]!, batch.before, change.offsetDelta, lineChanged)
+    ) {
+      return false
+    }
+    startDelta += step.start - start
+    endDelta += step.end - end
   }
-  if (index.monotonicEnd && projectedFirst.end < builder.maxEnd) builder.monotonicEnd = false
+
+  span.start = start + startDelta
+  span.end = end + endDelta
   return true
 }
 
-function canKeepBulkIndex(
-  builder: TokenProjectionBuilder,
-  suffixTokens: readonly EditorToken[],
-): boolean {
-  if (!builder.sortedByStart) return false
-  return suffixKeepsSortedStart(builder, suffixTokens)
+function tokensTouchedByEdit(tokens: EditorTokenStore, from: number, to: number): TokenWindow {
+  const insertion = from === to
+  const last = insertion ? tokens.firstStartingAfter(from) : tokens.firstStartingAtOrAfter(to)
+  const first = insertion
+    ? tokens.firstEndingAtOrAfter(from, last)
+    : tokens.firstEndingAfter(from, last)
+  return { first, last }
 }
 
-function createLazyProjectedTokenArray(
-  sourceTokens: readonly EditorToken[],
-  delta: number,
-  prefixEnd: number,
-  suffixStart: number,
-  builder: TokenProjectionBuilder,
-  sourceIndex: EditorTokenIndex,
-  keepsLiveRanges: boolean,
-): readonly EditorToken[] {
-  const middleTokens = builder.tokens
-  const projectedLength = prefixEnd + middleTokens.length + sourceTokens.length - suffixStart
-  const suffixOffset = prefixEnd + middleTokens.length
-  const target: EditorToken[] = []
-  target.length = projectedLength
-
-  const projectedTokens = new Proxy(target, {
-    get: (array, property, receiver) => {
-      if (property === Symbol.iterator) return projectedArrayIterator(projectedLength, tokenAt)
-      if (property === 'slice') return projectedArraySlice(projectedLength, tokenAt)
-
-      const index = arrayIndexProperty(property)
-      if (index !== null && index < projectedLength) return tokenAt(index)
-      return Reflect.get(array, property, receiver)
-    },
-    getOwnPropertyDescriptor: (array, property) => {
-      const index = arrayIndexProperty(property)
-      if (index === null || index >= projectedLength) {
-        return Reflect.getOwnPropertyDescriptor(array, property)
-      }
-
-      return {
-        configurable: true,
-        enumerable: true,
-        value: tokenAt(index),
-        writable: false,
-      }
-    },
-    has: (array, property) => {
-      const index = arrayIndexProperty(property)
-      if (index !== null && index < projectedLength) return true
-      return Reflect.has(array, property)
-    },
-  })
-
-  setEditorTokenIndex(projectedTokens, {
-    maxEnds: lazyProjectedMaxEnds(
-      projectedLength,
-      prefixEnd,
-      suffixStart,
-      builder,
-      sourceIndex,
-      delta,
-    ),
-    monotonicEnd: builder.monotonicEnd,
-    nonOverlapping: builder.nonOverlapping,
-    sortedByStart: true,
-  })
-  tokenProjectionMetadata.set(projectedTokens, { keepsLiveRanges, sourceTokens })
-  return projectedTokens
-
-  function tokenAt(index: number): EditorToken {
-    if (index < prefixEnd) return sourceTokens[index]!
-
-    const middleIndex = index - prefixEnd
-    if (middleIndex < middleTokens.length) return middleTokens[middleIndex]!
-
-    const suffixIndex = suffixStart + index - suffixOffset
-    return shiftToken(sourceTokens[suffixIndex]!, delta)
-  }
-}
-
-function lazyProjectedMaxEnds(
-  length: number,
-  prefixEnd: number,
-  suffixStart: number,
-  builder: TokenProjectionBuilder,
-  sourceIndex: EditorTokenIndex,
-  delta: number,
-): readonly number[] {
-  const target: number[] = []
-  target.length = length
-  const middleMaxEnds = builder.maxEnds
-  const suffixOffset = prefixEnd + middleMaxEnds.length
-
-  return new Proxy(target, {
-    get: (array, property, receiver) => {
-      const index = arrayIndexProperty(property)
-      if (index !== null && index < length) return maxEndAt(index)
-      return Reflect.get(array, property, receiver)
-    },
-    getOwnPropertyDescriptor: (array, property) => {
-      const index = arrayIndexProperty(property)
-      if (index === null || index >= length) {
-        return Reflect.getOwnPropertyDescriptor(array, property)
-      }
-
-      return {
-        configurable: true,
-        enumerable: true,
-        value: maxEndAt(index),
-        writable: false,
-      }
-    },
-    has: (array, property) => {
-      const index = arrayIndexProperty(property)
-      if (index !== null && index < length) return true
-      return Reflect.has(array, property)
-    },
-  })
-
-  function maxEndAt(index: number): number {
-    if (index < prefixEnd) return sourceIndex.maxEnds[index] ?? 0
-
-    const middleIndex = index - prefixEnd
-    if (middleIndex < middleMaxEnds.length) return middleMaxEnds[middleIndex] ?? 0
-
-    const sourceTokenIndex = suffixStart + index - suffixOffset
-    return Math.max(builder.maxEnd, (sourceIndex.maxEnds[sourceTokenIndex] ?? 0) + delta)
-  }
-}
-
-function projectedArrayIterator<T>(
-  length: number,
-  itemAt: (index: number) => T,
-): () => IterableIterator<T> {
-  return function* projectedArrayValues() {
-    for (let index = 0; index < length; index += 1) yield itemAt(index)
-  }
-}
-
-function projectedArraySlice<T>(
-  length: number,
-  itemAt: (index: number) => T,
-): (start?: number, end?: number) => T[] {
-  return (start, end) => {
-    const range = normalizedSliceRange(length, start, end)
-    const items: T[] = []
-    for (let index = range.start; index < range.end; index += 1) items.push(itemAt(index))
-    return items
-  }
-}
-
-function normalizedSliceRange(
-  length: number,
-  start: number | undefined,
-  end: number | undefined,
-): { readonly start: number; readonly end: number } {
-  const normalizedStart = normalizeSliceIndex(length, start ?? 0)
-  const normalizedEnd = normalizeSliceIndex(length, end ?? length)
-  return { start: normalizedStart, end: normalizedEnd }
-}
-
-function normalizeSliceIndex(length: number, index: number): number {
-  if (index < 0) return Math.max(0, length + index)
-  return Math.min(length, index)
-}
-
-function arrayIndexProperty(property: string | symbol): number | null {
-  if (typeof property !== 'string') return null
-  if (property.length === 0) return null
-
-  const index = Number(property)
-  if (!Number.isSafeInteger(index)) return null
-  if (index < 0) return null
-  return String(index) === property ? index : null
-}
-
-function projectSortedTokenRanges(
-  tokens: readonly EditorToken[],
-  edit: TextEdit,
-  previousText: TokenProjectionText,
-  delta: number,
-  prefixEnd: number,
-  suffixStart: number,
-  index: EditorTokenIndex,
-  lineStructureChanged: boolean,
-): readonly EditorToken[] {
-  const builder = createTokenProjectionBuilder(tokens, prefixEnd, index)
-  let keepsLiveRanges = true
-
-  keepsLiveRanges = appendProjectedTokens(
-    builder,
-    tokens,
-    edit,
-    previousText,
-    delta,
-    prefixEnd,
-    suffixStart,
-    lineStructureChanged,
-  )
-  appendShiftedTokens(builder, tokens, suffixStart, tokens.length, delta)
-
-  return finishTokenProjection(tokens, builder, keepsLiveRanges)
-}
-
-function appendUnchangedTokens(
-  builder: TokenProjectionBuilder,
-  tokens: readonly EditorToken[],
-  start: number,
-  end: number,
-): void {
-  for (let index = start; index < end; index += 1) {
-    appendBuiltToken(builder, tokens[index]!)
-  }
-}
-
-function appendProjectedTokens(
-  builder: TokenProjectionBuilder,
-  tokens: readonly EditorToken[],
-  edit: TextEdit,
-  previousText: TokenProjectionText,
-  delta: number,
-  start: number,
-  end: number,
-  lineStructureChanged: boolean,
-): boolean {
-  let keepsLiveRanges = true
-  for (let index = start; index < end; index += 1) {
-    const next = projectTokenThroughEdit(
-      tokens[index]!,
-      edit,
-      previousText,
-      delta,
-      lineStructureChanged,
-    )
-    if (!isRenderableToken(next)) {
-      keepsLiveRanges = false
-      continue
-    }
-
-    appendBuiltToken(builder, next)
-  }
-
-  return keepsLiveRanges
-}
-
-function appendShiftedTokens(
-  builder: TokenProjectionBuilder,
-  tokens: readonly EditorToken[],
-  start: number,
-  end: number,
-  delta: number,
-): void {
-  if (delta === 0) {
-    appendUnchangedTokens(builder, tokens, start, end)
-    return
-  }
-
-  for (let index = start; index < end; index += 1) {
-    appendBuiltToken(builder, shiftToken(tokens[index]!, delta))
-  }
-}
-
-function shiftedTokenRange(
-  tokens: readonly EditorToken[],
-  start: number,
-  delta: number,
-): EditorToken[] {
-  if (start >= tokens.length) return []
-  if (delta === 0) return tokens.slice(start) as EditorToken[]
-
-  return Array.from({ length: tokens.length - start }, (_, index) =>
-    shiftToken(tokens[start + index]!, delta),
-  )
-}
-
-function appendSuffixIndexEntries(
-  builder: TokenProjectionBuilder,
-  suffixTokens: readonly EditorToken[],
-): void {
-  for (const token of suffixTokens) {
-    if (token.start < builder.previousStart) builder.sortedByStart = false
-    if (token.start < builder.previousEnd) builder.nonOverlapping = false
-    if (token.end < builder.maxEnd) builder.monotonicEnd = false
-
-    builder.maxEnd = Math.max(builder.maxEnd, token.end)
-    builder.maxEnds.push(builder.maxEnd)
-    builder.previousEnd = token.end
-    builder.previousStart = token.start
-  }
-}
-
-function suffixKeepsSortedStart(
-  builder: TokenProjectionBuilder,
-  suffixTokens: readonly EditorToken[],
-): boolean {
-  const first = suffixTokens[0]
-  if (!first) return true
-  return first.start >= builder.previousStart
-}
-
-function finishTokenProjection(
-  sourceTokens: readonly EditorToken[],
-  builder: TokenProjectionBuilder,
-  keepsLiveRanges: boolean,
-): readonly EditorToken[] {
-  const projectedTokens = builder.tokens
-  setEditorTokenIndex(projectedTokens, {
-    maxEnds: builder.maxEnds,
-    monotonicEnd: builder.monotonicEnd,
-    nonOverlapping: builder.nonOverlapping,
-    sortedByStart: builder.sortedByStart,
-  })
-  tokenProjectionMetadata.set(projectedTokens, { keepsLiveRanges, sourceTokens })
-  return projectedTokens
-}
-
-function createTokenProjectionBuilder(
-  tokens: readonly EditorToken[] = [],
-  prefixEnd = 0,
-  index?: EditorTokenIndex,
-): TokenProjectionBuilder {
-  if (prefixEnd > 0 && index) return createPrefixedTokenProjectionBuilder(tokens, prefixEnd, index)
-
+function createTokenRunWriter(capacity: number): TokenRunWriter {
   return {
-    maxEnd: 0,
-    maxEnds: [],
-    monotonicEnd: true,
-    nonOverlapping: true,
-    previousEnd: -Infinity,
-    previousStart: -Infinity,
-    sortedByStart: true,
-    tokens: [],
+    starts: new Uint32Array(capacity),
+    ends: new Uint32Array(capacity),
+    styleIds: new Uint32Array(capacity),
+    count: 0,
   }
 }
 
-function createContinuationTokenProjectionBuilder(
-  previousToken: EditorToken | undefined,
-  prefixMaxEnd: number,
-  index: EditorTokenIndex,
-): TokenProjectionBuilder {
+function writeTokenRun(writer: TokenRunWriter, span: TokenSpan, styleId: number): void {
+  writer.starts[writer.count] = span.start
+  writer.ends[writer.count] = span.end
+  writer.styleIds[writer.count] = styleId
+  writer.count += 1
+}
+
+function finishTokenRun(writer: TokenRunWriter): EditorTokenRun {
   return {
-    maxEnd: prefixMaxEnd,
-    maxEnds: [],
-    monotonicEnd: index.monotonicEnd,
-    nonOverlapping: index.nonOverlapping,
-    previousEnd: previousToken?.end ?? -Infinity,
-    previousStart: previousToken?.start ?? -Infinity,
-    sortedByStart: true,
-    tokens: [],
+    starts: writer.starts.subarray(0, writer.count),
+    ends: writer.ends.subarray(0, writer.count),
+    styleIds: writer.styleIds.subarray(0, writer.count),
   }
-}
-
-function createPrefixedTokenProjectionBuilder(
-  tokens: readonly EditorToken[],
-  prefixEnd: number,
-  index: EditorTokenIndex,
-): TokenProjectionBuilder {
-  const prefixTokens = tokens.slice(0, prefixEnd)
-  const prefixMaxEnds = index.maxEnds.slice(0, prefixEnd) as number[]
-  const maxEnd = prefixMaxEnds[prefixMaxEnds.length - 1] ?? 0
-
-  return {
-    maxEnd,
-    maxEnds: prefixMaxEnds,
-    monotonicEnd: index.monotonicEnd,
-    nonOverlapping: index.nonOverlapping,
-    previousEnd: prefixTokens[prefixEnd - 1]?.end ?? -Infinity,
-    previousStart: prefixTokens[prefixEnd - 1]?.start ?? -Infinity,
-    sortedByStart: true,
-    tokens: prefixTokens,
-  }
-}
-
-function appendBuiltToken(builder: TokenProjectionBuilder, token: EditorToken): void {
-  appendEditorTokenIndexEntry(builder, token)
-  builder.tokens.push(token)
-}
-
-function unchangedPrefixEnd(index: EditorTokenIndex, edit: TextEdit): number {
-  if (edit.from === edit.to) return firstTokenEndingAtOrAfter(index, edit.from)
-  return firstTokenEndingAfter(index, edit.from)
-}
-
-function shiftedSuffixStart(tokens: readonly EditorToken[], edit: TextEdit): number {
-  if (edit.from === edit.to) return firstTokenStartingAfter(tokens, edit.from)
-  return firstTokenStartingAtOrAfter(tokens, edit.to)
-}
-
-function firstTokenEndingAfter(index: EditorTokenIndex, offset: number): number {
-  let low = 0
-  let high = index.maxEnds.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (index.maxEnds[middle]! > offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
-}
-
-function firstTokenEndingAtOrAfter(index: EditorTokenIndex, offset: number): number {
-  let low = 0
-  let high = index.maxEnds.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (index.maxEnds[middle]! >= offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
-}
-
-function firstTokenStartingAtOrAfter(tokens: readonly EditorToken[], offset: number): number {
-  let low = 0
-  let high = tokens.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (tokens[middle]!.start >= offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
-}
-
-function firstTokenStartingAfter(tokens: readonly EditorToken[], offset: number): number {
-  let low = 0
-  let high = tokens.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (tokens[middle]!.start > offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
 }
 
 function editChangesLineStructure(edit: TextEdit, previousText: TokenProjectionText): boolean {
@@ -783,74 +222,56 @@ function editChangesLineStructure(edit: TextEdit, previousText: TokenProjectionT
   return getProjectionTextInRange(previousText, edit.from, edit.to).includes('\n')
 }
 
-function projectTokenThroughEdit(
-  token: EditorToken,
+/** Moves `span` through the edit in place. False when the edit swallowed the token. */
+function projectSpanThroughEdit(
+  span: TokenSpan,
   edit: TextEdit,
   previousText: TokenProjectionText,
   delta: number,
   lineStructureChanged: boolean,
-): EditorToken | null {
-  if (lineStructureChanged) return projectTokenThroughLineEdit(token, edit, delta)
-  if (edit.from === edit.to) return projectTokenThroughInsertion(token, edit, previousText)
-  if (token.end <= edit.from) return token
-  if (token.start >= edit.to) return shiftToken(token, delta)
-  if (!canResizeTokenAcrossEdit(token, edit)) return null
+): boolean {
+  if (lineStructureChanged) return projectSpanThroughLineEdit(span, edit, delta)
+  if (edit.from === edit.to) return projectSpanThroughInsertion(span, edit, previousText)
+  if (span.end <= edit.from) return true
+  if (span.start >= edit.to) return shiftSpan(span, delta)
+  if (!(span.start < edit.from && edit.to < span.end)) return false
 
-  return { ...token, end: token.end + delta }
+  span.end += delta
+  return true
 }
 
-function projectTokenThroughLineEdit(
-  token: EditorToken,
-  edit: TextEdit,
-  delta: number,
-): EditorToken | null {
-  if (edit.from === edit.to) {
-    return projectTokenThroughLineInsertion(token, edit.from, edit.text.length)
-  }
-  if (token.end <= edit.from) return token
-  if (token.start >= edit.to) return shiftToken(token, delta)
-  return null
+function projectSpanThroughLineEdit(span: TokenSpan, edit: TextEdit, delta: number): boolean {
+  const shift = edit.from === edit.to ? edit.text.length : delta
+  const editEnd = edit.from === edit.to ? edit.from : edit.to
+  if (span.end <= edit.from) return true
+  if (span.start >= editEnd) return shiftSpan(span, shift)
+  return false
 }
 
-function projectTokenThroughLineInsertion(
-  token: EditorToken,
-  offset: number,
-  insertedLength: number,
-): EditorToken | null {
-  if (token.end <= offset) return token
-  if (token.start >= offset) return shiftToken(token, insertedLength)
-  return null
-}
-
-function projectTokenThroughInsertion(
-  token: EditorToken,
+function projectSpanThroughInsertion(
+  span: TokenSpan,
   edit: TextEdit,
   previousText: TokenProjectionText,
-): EditorToken {
-  if (shouldExpandTokenForInsertion(token, edit, previousText)) {
-    return { ...token, end: token.end + edit.text.length }
+): boolean {
+  if (shouldExpandSpanForInsertion(span, edit, previousText)) {
+    span.end += edit.text.length
+    return true
   }
-  if (token.start >= edit.from) return shiftToken(token, edit.text.length)
-
-  return token
+  if (span.start >= edit.from) return shiftSpan(span, edit.text.length)
+  return true
 }
 
-function canResizeTokenAcrossEdit(token: EditorToken, edit: TextEdit): boolean {
-  if (edit.text.includes('\n')) return false
-  return token.start < edit.from && edit.to < token.end
-}
-
-function shouldExpandTokenForInsertion(
-  token: EditorToken,
+function shouldExpandSpanForInsertion(
+  span: TokenSpan,
   edit: TextEdit,
   previousText: TokenProjectionText,
 ): boolean {
   if (edit.text.length === 0) return false
   if (edit.text.includes('\n')) return false
-  if (token.start < edit.from && edit.from < token.end) return true
+  if (span.start < edit.from && edit.from < span.end) return true
   if (!isWordLikeText(edit.text)) return false
-  if (token.end === edit.from) return isWordBeforeOffset(previousText, edit.from)
-  if (token.start === edit.from) {
+  if (span.end === edit.from) return isWordBeforeOffset(previousText, edit.from)
+  if (span.start === edit.from) {
     return (
       !isWordBeforeOffset(previousText, edit.from) && isWordCodePointAt(previousText, edit.from)
     )
@@ -859,17 +280,10 @@ function shouldExpandTokenForInsertion(
   return false
 }
 
-function shiftToken(token: EditorToken, delta: number): EditorToken {
-  return {
-    ...token,
-    start: token.start + delta,
-    end: token.end + delta,
-  }
-}
-
-function isRenderableToken(token: EditorToken | null): token is EditorToken {
-  if (!token) return false
-  return token.end > token.start
+function shiftSpan(span: TokenSpan, delta: number): boolean {
+  span.start += delta
+  span.end += delta
+  return true
 }
 
 function isWordLikeText(text: string): boolean {
@@ -932,22 +346,19 @@ function getProjectionTextInRange(text: TokenProjectionText, start: number, end:
   return text.readRange(start, end)
 }
 
-function recordTokenProjectionPath(
-  path: TokenProjectionPath,
-  tokens: readonly EditorToken[],
-  prefixEnd: number,
-  suffixStart: number,
-  index?: EditorTokenIndex,
-  extra?: Readonly<Record<string, unknown>>,
+function recordTokenProjection(
+  tokens: EditorTokenStore,
+  window: TokenWindow,
+  resultCount: number,
+  editCount: number,
 ): void {
   recordEditorPerformanceDiagnostic('editor.tokenProjection.path', () => ({
-    affectedCount: Math.max(0, suffixStart - prefixEnd),
-    monotonicEnd: index?.monotonicEnd ?? null,
-    nonOverlapping: index?.nonOverlapping ?? null,
-    path,
-    prefixCount: prefixEnd,
-    resultCount: extra?.resultCount,
-    suffixCount: Math.max(0, tokens.length - suffixStart),
+    affectedCount: Math.max(0, window.last - window.first),
+    editCount,
+    monotonicEnd: tokens.monotonicEnd,
+    nonOverlapping: tokens.nonOverlapping,
+    path: 'window',
+    resultCount,
     tokenCount: tokens.length,
   }))
 }

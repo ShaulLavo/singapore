@@ -9,8 +9,11 @@ import type {
   EditorViewSnapshot,
 } from '../src/plugins'
 import { setHighlightRegistry } from '../src/public/testing'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import { createError } from '../src/logging/evlog'
 import { decodePaintSnapshot } from '../src/editor/paintSnapshot'
+
+const RED_TOKENS = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: 'red' } }])
 
 const editors: Editor[] = []
 const hosts: HTMLElement[] = []
@@ -92,7 +95,7 @@ test('real document waits independently for highlights and commits once with no 
   expect(restored.editor.captureSnapshot()).toBeNull()
   expect(restored.host.querySelectorAll('[data-editor-virtual-row]')).toHaveLength(0)
 
-  result.resolve({ tokens: [{ start: 0, end: 5, style: { color: 'red' } }] })
+  result.resolve({ tokens: RED_TOKENS })
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
   expect(states).toEqual(['provisional', 'live'])
   expect(events.map((event) => event.phase)).toEqual(['text', 'highlight-settled'])
@@ -151,7 +154,7 @@ test('withdrawing eligibility cannot be undone by a stale highlight completion',
   restored.editor.clear()
   restored.editor.setSnapshot(null, 'file-b')
   restored.editor.openDocument({ documentId: 'file-b', text: 'current' })
-  result.resolve({ tokens: [{ start: 0, end: 5, style: { color: 'red' } }] })
+  result.resolve({ tokens: RED_TOKENS })
   await nextTask()
   expect(restored.editor.materializeFullText()).toBe('current')
   expect(restored.host.textContent).not.toContain('saved paint')
@@ -192,7 +195,7 @@ test('a contribution that fails after writing is disposed before authoritative p
     languageId: 'typescript',
   })
   await nextTask()
-  result.resolve({ tokens: [] })
+  result.resolve({ tokens: EditorTokenStore.empty() })
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
   expect(failed).toBe(true)
   expect(broken.isConnected).toBe(false)
@@ -222,7 +225,7 @@ test('same-file buffer replacement rejects the previous generation and applies t
     scrollPosition: { top: 220 },
   })
   await nextTask()
-  result.resolve({ tokens: [] })
+  result.resolve({ tokens: EditorTokenStore.empty() })
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
   expect(restored.editor.getScrollPosition().top).toBe(220)
   expect(restored.editor.captureSnapshot()?.buffer).toBe(replacement)
@@ -235,11 +238,7 @@ test('restore and disposal preserve shared highlight ranges belonging to another
   const saved = capture('saved paint')
   const other = mount({
     documentKey: 'other',
-    plugins: [
-      delayedHighlighter(
-        Promise.resolve({ tokens: [{ start: 0, end: 5, style: { color: 'red' } }] }),
-      ),
-    ],
+    plugins: [delayedHighlighter(Promise.resolve({ tokens: RED_TOKENS }))],
   })
   other.editor.openDocument({
     documentId: 'other',
@@ -282,7 +281,7 @@ test('saved paint may arrive after the real document while its first highlights 
   expect(restored.editor.getPresentationState()).toBe('provisional')
   expect(restored.editor.materializeFullText()).toBe('const real = 1')
   expect(restored.host.textContent).toContain('saved paint')
-  result.resolve({ tokens: [] })
+  result.resolve({ tokens: EditorTokenStore.empty() })
   await nextTask()
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
   expect(restored.host.textContent).toContain('const real')
@@ -331,7 +330,7 @@ test('a declared synchronous paint contributor that remains pending is removed b
   })
   await nextTask()
   rejectCommit = true
-  result.resolve({ tokens: [] })
+  result.resolve({ tokens: EditorTokenStore.empty() })
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
   expect(partial.isConnected).toBe(false)
   expect(restored.editor.captureSnapshot()).not.toBeNull()

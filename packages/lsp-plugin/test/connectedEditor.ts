@@ -7,6 +7,7 @@
  * stay green.
  */
 
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import {
   createStringTextSnapshot,
   type DocumentSessionChange,
@@ -546,7 +547,7 @@ function editorSnapshot(
     textSnapshot: createStringTextSnapshot(fullText),
     textVersion,
     lineStarts: lineStartsOf(fullText),
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
       {

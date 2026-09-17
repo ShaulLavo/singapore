@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { describe, expect, it, vi } from 'vitest'
 import { createStringTextSnapshot, type TextSnapshot } from '@singapore-editor/core/document'
 import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
@@ -534,7 +535,7 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
     fullText: text,
     textVersion: 1,
     lineStarts: lineStarts(text),
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },

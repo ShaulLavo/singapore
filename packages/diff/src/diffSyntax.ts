@@ -12,6 +12,9 @@ import {
   type EditorSyntaxServiceRequest,
   type EditorSyntaxSessionOptions,
   type EditorToken,
+  type EditorTokenInput,
+  type EditorTokenStore,
+  toEditorTokenStore,
 } from '@singapore-editor/core/syntax'
 import {
   EditorSecondaryViewScheduler,
@@ -28,7 +31,7 @@ let nextSyntaxControllerId = 0
 export type DiffSyntaxTokenSource = {
   readonly lineStarts: readonly number[]
   readonly side: DiffSyntaxSourceSide
-  readonly tokens: readonly EditorToken[]
+  readonly tokens: EditorTokenInput
 }
 
 export type ProjectDiffSyntaxTokensOptions = {
@@ -227,7 +230,7 @@ function projectIndexedTokens(
         row,
         rowOffset,
         side: source.side,
-        tokensByLine: source.tokensByLine,
+        tokens: source.tokens,
       })
     }
     rowOffset += row.text.length + 1
@@ -312,7 +315,7 @@ function tokenHighlighterDiffSyntaxSession(
     refresh(
       snapshot: EditorSyntaxServiceRequest['snapshot'],
       fullText?: string,
-    ): Promise<{ readonly tokens: readonly EditorToken[] }>
+    ): Promise<{ readonly tokens: EditorTokenInput }>
     dispose(): void
   },
 ): DiffSyntaxServiceSession {
@@ -352,7 +355,7 @@ function highlighterSessionOptions(
 
 function syntaxResultFromTokens(
   request: EditorSyntaxServiceRequest,
-  tokens: readonly EditorToken[],
+  tokens: EditorTokenInput,
 ): EditorSyntaxResult {
   return {
     ...createEmptySyntaxResult({
@@ -427,21 +430,12 @@ function diffSyntaxLanguageId(file: DiffFile): string | null {
 type IndexedTokenSource = {
   readonly lineStarts: readonly number[]
   readonly side: DiffSyntaxSourceSide
-  /** Tokens touching each source line, keyed by 1-based line number. */
-  readonly tokensByLine: ReadonlyMap<number, readonly EditorToken[]>
+  readonly tokens: EditorTokenStore
 }
 
 /**
- * Buckets each source's tokens by the lines they touch, once per projection.
- *
- * Without this every row scans every token in its side's stream, so a projection costs
- * rows x tokens — and re-projection sits on the synchronous expansion-toggle path, where a
- * thousand-row file against ten thousand tokens is tens of millions of comparisons per click.
- *
- * Deliberately built by locating each token's own lines rather than by walking rows in order:
- * nothing here may assume the token stream is sorted, because tree-sitter and shiki are separate
- * producers, and a projection's rows do not visit source lines monotonically once expanded
- * regions interleave.
+ * A row reads its line's tokens by bisection, and rows do not visit source lines in order once
+ * expanded regions interleave. The store is sorted whichever producer made the tokens.
  */
 function indexTokenSources(
   sources: readonly DiffSyntaxTokenSource[],
@@ -449,45 +443,8 @@ function indexTokenSources(
   return sources.map((source) => ({
     lineStarts: source.lineStarts,
     side: source.side,
-    tokensByLine: tokensByLine(source),
+    tokens: toEditorTokenStore(source.tokens),
   }))
-}
-
-function tokensByLine(source: DiffSyntaxTokenSource): ReadonlyMap<number, readonly EditorToken[]> {
-  const byLine = new Map<number, EditorToken[]>()
-  const { lineStarts } = source
-
-  for (const token of source.tokens) {
-    if (token.end <= token.start) continue
-
-    // A token can begin mid-line and run past the terminator, so it lands in every line it
-    // overlaps; bucketing by its start alone would drop it from all but the first.
-    for (
-      let line = lineIndexAtOffset(lineStarts, token.start);
-      line < lineStarts.length;
-      line += 1
-    ) {
-      if (lineStarts[line]! >= token.end) break
-
-      const bucket = byLine.get(line + 1)
-      if (bucket) bucket.push(token)
-      else byLine.set(line + 1, [token])
-    }
-  }
-
-  return byLine
-}
-
-/** The 0-based index of the line containing `offset`: the last line starting at or before it. */
-function lineIndexAtOffset(lineStarts: readonly number[], offset: number): number {
-  let low = 0
-  let high = lineStarts.length - 1
-  while (low < high) {
-    const middle = (low + high + 1) >> 1
-    if (lineStarts[middle]! <= offset) low = middle
-    else high = middle - 1
-  }
-  return Math.max(0, low)
 }
 
 function tokenSourceForRow(
@@ -506,13 +463,13 @@ function appendRowSyntaxTokens(
     row,
     rowOffset,
     side,
-    tokensByLine: rowTokensByLine,
+    tokens,
   }: {
     readonly lineStarts: readonly number[]
     readonly row: DiffRenderRow
     readonly rowOffset: number
     readonly side: DiffSyntaxSourceSide
-    readonly tokensByLine: ReadonlyMap<number, readonly EditorToken[]>
+    readonly tokens: EditorTokenStore
   },
 ): void {
   const lineNumber = sourceLineNumberForRow(row, side)
@@ -527,9 +484,11 @@ function appendRowSyntaxTokens(
     lineStart + row.text.length,
   )
 
-  for (const token of rowTokensByLine.get(lineNumber) ?? []) {
+  const last = tokens.firstStartingAtOrAfter(lineEnd)
+  tokens.forEachInRange(tokens.firstEndingAfter(lineStart, last), last, (start, end, styleId) => {
+    const token = { start, end, style: tokens.styles[styleId]! }
     appendProjectedToken(projectedTokens, token, lineStart, lineEnd, rowOffset)
-  }
+  })
 }
 
 function appendProjectedToken(

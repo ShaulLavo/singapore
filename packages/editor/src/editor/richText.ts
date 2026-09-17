@@ -1,4 +1,5 @@
 import type { EditorTheme } from '../theme'
+import type { EditorTokenStore } from '../syntax/tokenStore'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 
 /**
@@ -34,7 +35,7 @@ export type RichTextCopyInput = {
   readonly text: string
   /** Where `text` begins in the document, which is what the token offsets are measured against. */
   readonly startOffset: number
-  readonly tokens: readonly EditorToken[]
+  readonly tokens: EditorTokenStore
   readonly theme: EditorTheme | null
   readonly font: RichTextFont
 }
@@ -92,13 +93,14 @@ function richTextBody(text: string, startOffset: number, styled: readonly Editor
 
 /** Tokens that overlap the range and have something to say about it, in document order. */
 function styledTokensInRange(
-  tokens: readonly EditorToken[],
+  tokens: EditorTokenStore,
   start: number,
   end: number,
 ): readonly EditorToken[] {
-  const overlapping = tokens.filter(
-    (token) => token.end > start && token.start < end && inlineTokenStyle(token.style).length > 0,
-  )
+  const last = tokens.firstStartingAtOrAfter(end)
+  const overlapping = tokens
+    .toTokens(tokens.firstEndingAfter(start, last), last)
+    .filter((token) => token.end > start && inlineTokenStyle(token.style).length > 0)
 
   return overlapping.sort((a, b) => a.start - b.start || a.end - b.end)
 }

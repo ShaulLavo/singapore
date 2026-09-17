@@ -14,7 +14,11 @@ import {
   SEMANTIC_TOKEN_Z_INDEX,
   type SemanticTokenLayer,
 } from '../src/semanticTokenLayer'
-import { createSemanticTokenStyles, treeSitterCapturesToEditorTokens } from '../src/syntax'
+import {
+  createSemanticTokenStyles,
+  EditorTokenStore,
+  treeSitterCapturesToEditorTokens,
+} from '../src/syntax'
 import { type VirtualizedTextHighlightRegistry, VirtualizedTextView } from '../src/virtualization'
 
 /**
@@ -140,7 +144,7 @@ function snapshot(): EditorViewSnapshot {
     syntaxStatus: 'ready',
     paintLayers: [],
     lineStarts: [0, LINE_LENGTH, LINE_LENGTH * 2],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: {} as EditorViewSnapshot['metrics'],

@@ -26,7 +26,8 @@ import {
   type SelectionSet,
 } from '../selections'
 import { clamp } from '../style-utils'
-import type { EditorToken, TextEdit } from '../tokens'
+import type { EditorTokenStore } from '../syntax/tokenStore'
+import type { TextEdit } from '../tokens'
 import type { EditorTheme } from '../theme'
 import type { VirtualizedTextView } from '../virtualization/virtualizedTextView'
 import type {
@@ -165,7 +166,7 @@ export type InputSelectionControllerOptions = {
   /** Whoever may read a paste as something other than its text, best-fitting handler first. */
   getPasteHandlers(): readonly EditorPasteHandler[]
   /** The two inputs a copy needs to render the range it took as styled markup. */
-  getSyntaxTokens(): readonly EditorToken[]
+  getSyntaxTokens(): EditorTokenStore
   getEditorTheme(): EditorTheme | null
   materializeFullText(): string
   canEditDocument(): boolean

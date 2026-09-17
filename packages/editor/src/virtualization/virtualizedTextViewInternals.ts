@@ -3,7 +3,7 @@ import type { FoldMarkerSource } from './foldMarkerSource'
 import type { InlineMap } from '../inlineMap'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
 import type { SelectionAffinity } from '../selections'
-import type { EditorToken, EditorTokenStyle } from '../tokens'
+import type { EditorTokenStore } from '../syntax/tokenStore'
 import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVirtualizer } from './fixedRowVirtualizer'
 import type { SuspiciousCharacterSettings } from './virtualizedTextViewHiddenCharacters'
@@ -63,14 +63,6 @@ export type VirtualizedTextHighlightGroup = {
   signature: string
 }
 
-export type TokenRenderEntry = {
-  readonly start: number
-  readonly end: number
-  readonly style: EditorTokenStyle
-  readonly styleKey: string
-  readonly sourceIndex: number
-}
-
 export type SameLineTokenEdit = {
   readonly rowIndex: number
   readonly editedRowPatchedInPlace: boolean
@@ -118,11 +110,9 @@ export interface VirtualizedTextViewInternal {
   model: VirtualizedTextViewModelState
   textRevision: number
   displayProjectionRevision: number
-  tokens: readonly EditorToken[]
-  tokenRenderEntries: readonly TokenRenderEntry[]
-  tokenRenderEntryMaxEnds: readonly number[]
-  tokenRenderStyles: ReadonlyMap<string, EditorTokenStyle>
-  tokenRenderIndexDirty: boolean
+  tokens: EditorTokenStore
+  /** The palette changed since the token highlight groups were last matched to it. */
+  tokenPaletteDirty: boolean
   foldMarkers: readonly VirtualizedFoldMarker[]
   foldMarkerSource: FoldMarkerSource | null
   rowDecorations: ReadonlyMap<number, VirtualizedTextRowDecoration>

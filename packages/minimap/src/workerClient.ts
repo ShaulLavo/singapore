@@ -1,5 +1,5 @@
 import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
-import type { EditorToken } from '@singapore-editor/core/syntax'
+import type { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { createError } from '@singapore-editor/core/logging/evlog'
 import type {
   EditorMinimapDecoration,
@@ -234,7 +234,7 @@ export class MinimapWorkerClient {
   // Mirror of the worker's current document summary; the authoritative
   // pre-edit baseline for incremental patch accounting.
   private workerDocumentState: WorkerDocumentState | null = null
-  private latestTokenSource: readonly EditorToken[] | null
+  private latestTokenSource: EditorTokenStore | null
   private disposed = false
 
   public constructor(options: MinimapWorkerClientOptions) {
@@ -538,15 +538,12 @@ export class MinimapWorkerClient {
     this.latestTokenSource = snapshot.tokens
   }
 
-  private tokenPatch(
-    previous: readonly EditorToken[],
-    next: readonly EditorToken[],
-  ): MinimapTokenPatch {
-    const range = changedTokenRange(previous, next)
+  private tokenPatch(previous: EditorTokenStore, next: EditorTokenStore): MinimapTokenPatch {
+    const range = previous.changedRangeTo(next)
     return {
       start: range.start,
       deleteCount: range.deleteCount,
-      tokens: this.tokens(next.slice(range.start, range.insertEnd)),
+      tokens: this.tokens(next, range.start, range.insertEnd),
     }
   }
 
@@ -687,20 +684,22 @@ export class MinimapWorkerClient {
     )
   }
 
-  private tokens(tokens: readonly EditorToken[]): readonly MinimapToken[] {
-    let projected: readonly MinimapToken[] | null = null
+  private tokens(tokens: EditorTokenStore, from = 0, to = tokens.length): readonly MinimapToken[] {
     return measureMinimapPerformance(
       'minimap.tokens',
       () => {
         const foreground = this.latestBaseStyles?.foreground ?? this.baseStyles().foreground
-        projected = tokens.map((token) => ({
-          start: token.start,
-          end: token.end,
-          color: this.colorResolver.resolve(token.style.color, foreground),
-        }))
+        // One colour per palette entry, not per token.
+        const colors = tokens.styles.map((style) =>
+          this.colorResolver.resolve(style.color, foreground),
+        )
+        const projected: MinimapToken[] = []
+        tokens.forEachInRange(from, to, (start, end, styleId) => {
+          projected.push({ start, end, color: colors[styleId]! })
+        })
         return projected
       },
-      () => ({ inputTokens: tokens.length, outputTokens: projected?.length ?? 0 }),
+      () => ({ inputTokens: tokens.length, outputTokens: Math.max(0, to - from) }),
     )
   }
 
@@ -874,7 +873,7 @@ type PendingMinimapUpdate = {
   readonly syncExternalDecorations: boolean
   readonly syncViewport: boolean
   readonly syncBaseStyles: boolean
-  readonly tokenSourceAfterEdits: readonly EditorToken[] | null
+  readonly tokenSourceAfterEdits: EditorTokenStore | null
   readonly reason: string
 }
 
@@ -1614,7 +1613,7 @@ function mergeReplacementUpdate(
 function mergedTokenSourceAfterEdits(
   current: PendingMinimapUpdate,
   next: PendingMinimapUpdate,
-): readonly EditorToken[] | null {
+): EditorTokenStore | null {
   if (next.edits.length === 0) return current.tokenSourceAfterEdits
   if (current.syncTokens) return null
   return next.tokenSourceAfterEdits
@@ -1711,7 +1710,7 @@ function tokenSourceAfterEdits(
   change: DocumentSessionChange | null | undefined,
   previousSnapshot: EditorViewSnapshot,
   nextSnapshot: EditorViewSnapshot,
-): readonly EditorToken[] | null {
+): EditorTokenStore | null {
   if (!change) return null
   if (!editsPreserveLineStructure(change.edits, snapshotLineStarts(previousSnapshot))) return null
   return nextSnapshot.tokens
@@ -1754,59 +1753,6 @@ function arrayLineIndexForOffset(lineStarts: readonly number[], offset: number):
   }
 
   return Math.max(0, lineStarts.length - 1)
-}
-
-function changedTokenRange(
-  previous: readonly EditorToken[],
-  next: readonly EditorToken[],
-): {
-  readonly start: number
-  readonly deleteCount: number
-  readonly insertEnd: number
-} {
-  let start = 0
-  while (
-    start < previous.length &&
-    start < next.length &&
-    editorTokensEqual(previous[start]!, next[start]!)
-  ) {
-    start += 1
-  }
-
-  let previousEnd = previous.length
-  let nextEnd = next.length
-  while (
-    previousEnd > start &&
-    nextEnd > start &&
-    editorTokensEqual(previous[previousEnd - 1]!, next[nextEnd - 1]!)
-  ) {
-    previousEnd -= 1
-    nextEnd -= 1
-  }
-
-  return {
-    start,
-    deleteCount: previousEnd - start,
-    insertEnd: nextEnd,
-  }
-}
-
-function editorTokensEqual(left: EditorToken, right: EditorToken): boolean {
-  return (
-    left.start === right.start &&
-    left.end === right.end &&
-    tokenStylesEqual(left.style, right.style)
-  )
-}
-
-function tokenStylesEqual(left: EditorToken['style'], right: EditorToken['style']): boolean {
-  return (
-    left.color === right.color &&
-    left.backgroundColor === right.backgroundColor &&
-    left.fontStyle === right.fontStyle &&
-    left.fontWeight === right.fontWeight &&
-    left.textDecoration === right.textDecoration
-  )
 }
 
 function mergeReasons(left: string, right: string): string {

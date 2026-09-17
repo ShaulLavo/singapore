@@ -97,6 +97,7 @@
     "bench:piece-table": "bun bench/pieceTable-insertions.ts",
     "bench:virtualization": "bun bench/virtualization.ts",
     "bench:walker": "bun bench/pieceTable-walker.ts",
+    "bench:tokens": "bun bench/tokenStore.ts",
     "bidi:check": "bun scripts/generateBidiClass.mjs --check",
     "bidi:generate": "bun scripts/generateBidiClass.mjs",
     "test": "bun run bidi:check && vitest run",

@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type {
   EditorPluginContext,
   EditorViewContributionContext,
@@ -524,7 +525,7 @@ function snapshot(): EditorViewSnapshot {
     fullText,
     textVersion: 1,
     lineStarts: [0, fullText.indexOf('\n') + 1],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
       { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
@@ -726,7 +727,7 @@ function layerSnapshot(
     fullText,
     textVersion,
     lineStarts: [0, lineLength],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
       { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },

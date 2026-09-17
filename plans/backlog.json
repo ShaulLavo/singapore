@@ -555,9 +555,9 @@
     },
     {
       "id": "E035",
-      "file": "e035-packed-token-store.md",
+      "reference": "../docs/performance/e035-packed-token-store.md",
       "title": "Make packed tokens the canonical token store",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

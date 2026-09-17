@@ -71,6 +71,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 | `PieceTreeNode` | `packages/textbuffer/src/pieceTableTypes.ts` |
 | `PieceTableSnapshot` | `packages/textbuffer/src/pieceTableTypes.ts` |
 | `EditorToken`, `EditorTokenStyle`, `TextEdit` | `packages/editor/src/tokens.ts` |
+| `EditorTokenStore` (the document's tokens; object tokens are input only) | `packages/editor/src/syntax/tokenStore.ts` |
 | `TreeSitterLanguageContribution`, `TreeSitterBackend` | `packages/tree-sitter/src/index.ts` |
 | `TokenPatch`, `IncrementalTokenizer` | `packages/editor/src/shiki/tokenizer.ts` |
 | `Editor` (class) | `packages/editor/src/editor.ts` |

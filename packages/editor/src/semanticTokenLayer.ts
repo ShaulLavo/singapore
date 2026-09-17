@@ -102,18 +102,17 @@ type PaintedGroup = {
 /**
  * Semantic colour, painted as range highlights over the syntactic layer.
  *
- * Deliberately *not* merged into the token array. `Editor.adoptTokens` is on the per-keystroke path,
- * so a merge there would cost a concat, a sort and a full token-index rebuild per character — and,
- * because the merged array is fresh, would lose the live-range fast path and force a whole-document
- * token re-render on every keystroke. The range-highlight layer is the second layer the view already
- * composes: it stacks by declared `zIndex`, paints only over mounted rows by bisection, and skips
- * redundant updates by signature.
+ * Deliberately *not* merged into the token store. A semantic span sits inside the syntactic token it
+ * recolours, and a store whose ends do not grow with its starts is kept as one flat run, so every
+ * keystroke would copy the document's tokens instead of sharing them. The range-highlight layer is
+ * the second layer the view already composes: it stacks by declared `zIndex`, paints only over
+ * mounted rows by bisection, and skips redundant updates by signature.
  *
  * The price is that semantic colour does not reach the minimap, sticky scroll or the diff panes.
  * Those views hold their own `VirtualizedTextView` and read colour from `snapshot.tokens`; a
  * range-highlight layer is not a token. That is a product decision, not an oversight — the only
- * shape that would fix it is a genuine second token array, which costs a second index, an overlay
- * term in the per-row skip signature, and overlay-aware segment composition.
+ * shape that would fix it is a genuine second token store, which costs an overlay term in the
+ * per-row skip signature and overlay-aware segment composition.
  */
 export function createSemanticTokenLayer(
   context: EditorViewContributionContext,

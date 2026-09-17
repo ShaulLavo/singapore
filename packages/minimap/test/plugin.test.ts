@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   EditorCapabilityContributionProvider,
@@ -726,7 +727,7 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
     },
     changesSinceDocumentSyncPoint: () => null,
     lineStarts: [0],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },

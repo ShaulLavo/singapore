@@ -1,3 +1,5 @@
+import type { EditorTokenInput } from './syntax/tokenStore'
+
 export interface EditorTokenStyle {
   color?: string
   backgroundColor?: string
@@ -20,5 +22,5 @@ export interface TextEdit {
 
 export interface EditorDocument {
   text: string
-  tokens?: readonly EditorToken[]
+  tokens?: EditorTokenInput
 }

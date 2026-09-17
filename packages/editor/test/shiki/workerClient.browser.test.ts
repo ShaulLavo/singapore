@@ -46,11 +46,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     })
     const result = await fresh!.refresh(createPieceTableSnapshot(text), text)
     fresh!.dispose()
-    return result.tokens.map((token) => ({
-      start: token.start,
-      end: token.end,
-      style: token.style,
-    }))
+    return result.tokens.toTokens()
   }
 
   beforeEach(() => {
@@ -78,7 +74,9 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     const result = await session!.refresh(createPieceTableSnapshot(text), text)
 
     expect(result.tokens.length).toBeGreaterThan(0)
-    expect(result.tokens.every((token) => token.start >= 0 && token.end <= text.length)).toBe(true)
+    expect(
+      result.tokens.toTokens().every((token) => token.start >= 0 && token.end <= text.length),
+    ).toBe(true)
     session!.dispose()
   })
 
@@ -113,11 +111,9 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     )
 
     expect(result.tokens.length).toBeGreaterThan(0)
-    expect(result.tokens.some((token) => token.end > initialText.length)).toBe(true)
+    expect(result.tokens.toTokens().some((token) => token.end > initialText.length)).toBe(true)
     // The edit answered with its own lines only; spliced in, they equal a full tokenization.
-    expect(
-      result.tokens.map((token) => ({ start: token.start, end: token.end, style: token.style })),
-    ).toEqual(await fullTokens(nextText))
+    expect(result.tokens.toTokens()).toEqual(await fullTokens(nextText))
     session!.dispose()
   })
 
@@ -141,7 +137,9 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       createChange(nextText, { from: 11, to: 11, text: 'r' }),
     )
 
-    expect(result.tokens.some((token) => token.start === 6 && token.end === 12)).toBe(true)
+    expect(result.tokens.toTokens().some((token) => token.start === 6 && token.end === 12)).toBe(
+      true,
+    )
     session!.dispose()
   })
 
@@ -169,11 +167,13 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       ),
     )
 
-    expect(result.tokens.some((token) => token.start === 6 && token.end === 12)).toBe(true)
-    expect(result.tokens.some((token) => token.start === 24 && token.end === 29)).toBe(true)
-    expect(
-      result.tokens.map((token) => ({ start: token.start, end: token.end, style: token.style })),
-    ).toEqual(await fullTokens(nextText))
+    expect(result.tokens.toTokens().some((token) => token.start === 6 && token.end === 12)).toBe(
+      true,
+    )
+    expect(result.tokens.toTokens().some((token) => token.start === 24 && token.end === 29)).toBe(
+      true,
+    )
+    expect(result.tokens.toTokens()).toEqual(await fullTokens(nextText))
     session!.dispose()
   })
 
@@ -252,7 +252,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       createChange(nextText, { from: 6, to: 12, text: 'secondValue' }),
     )
 
-    expect(result.tokens.some((token) => token.end > secondText.length)).toBe(true)
+    expect(result.tokens.toTokens().some((token) => token.end > secondText.length)).toBe(true)
     second!.dispose()
   })
 })

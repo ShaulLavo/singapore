@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   EditorPluginContext,
@@ -81,7 +82,7 @@ describe('createDecodePlugin', () => {
   it('hides the real rows on open but waits for tokens before revealing', () => {
     const { context, contribution } = mount()
 
-    contribution.update(snapshot({ tokens: [] }), 'document')
+    contribution.update(snapshot({ tokens: EditorTokenStore.empty() }), 'document')
 
     expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(true)
     expect(rowAnimations()).toHaveLength(0)
@@ -92,7 +93,7 @@ describe('createDecodePlugin', () => {
     const { context, contribution } = mount()
     const withTokens = snapshot({ tokens: someTokens() })
 
-    contribution.update(snapshot({ tokens: [] }), 'document')
+    contribution.update(snapshot({ tokens: EditorTokenStore.empty() }), 'document')
     contribution.update(withTokens, 'tokens')
 
     const expected = withTokens.visibleRows.filter((r) => r.kind === 'text' && r.text.length > 0)
@@ -427,7 +428,7 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
     fullText: text,
     textVersion: 1,
     lineStarts: lineStarts(text),
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },
@@ -469,7 +470,9 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
 }
 
 function someTokens(): EditorViewSnapshot['tokens'] {
-  return [{ start: 0, end: 8, style: { color: 'var(--editor-syntax-keyword)' } }]
+  return EditorTokenStore.fromTokens([
+    { start: 0, end: 8, style: { color: 'var(--editor-syntax-keyword)' } },
+  ])
 }
 
 function visibleRows(text: string): EditorViewSnapshot['visibleRows'] {

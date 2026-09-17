@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import {
@@ -847,7 +848,7 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
     textVersion: 1,
     lineStarts,
     textSnapshot: createStringTextSnapshot(fullText),
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
       { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },

@@ -6,14 +6,21 @@ export {
   createSyntaxLanguageConfiguration,
   createSyntaxProjectionTag,
   createSyntaxSnapshotTag,
+  EditorTokenStore,
   isEditorSyntaxLanguage,
   packEditorTokens,
   packedEditorTokenTransfers,
   styleForTreeSitterCapture,
+  toEditorTokenStore,
   treeSitterCapturesToEditorTokens,
   unpackEditorTokens,
 } from '../syntax'
-export type { PackedEditorTokens } from '../syntax'
+export type {
+  EditorTokenInput,
+  EditorTokenStoreOrigin,
+  PackedEditorTokenPatch,
+  PackedEditorTokens,
+} from '../syntax'
 export type {
   BracketInfo,
   EditorSyntaxCapture,

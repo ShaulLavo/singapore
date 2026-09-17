@@ -16,6 +16,7 @@
  * and the narrow factory speaks WebSocket only.
  */
 
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type {
   DocumentChangesSinceSyncPoint,
   DocumentLogicalRevisionScope,
@@ -414,7 +415,7 @@ class EditorFixture {
       documentSyncPoint: this.#chain.point(this.textVersion),
       changesSinceDocumentSyncPoint: (point, scope) =>
         this.#chain.changesSince(point, scope, this.textVersion),
-      tokens: [],
+      tokens: EditorTokenStore.empty(),
       brackets: [],
       selections: [
         { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },

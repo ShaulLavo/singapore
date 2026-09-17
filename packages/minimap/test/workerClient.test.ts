@@ -5,6 +5,12 @@ import {
   type TextEdit,
 } from '@singapore-editor/core/document'
 import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
+import {
+  EditorTokenStore,
+  toEditorTokenStore,
+  type EditorToken,
+  type EditorTokenInput,
+} from '@singapore-editor/core/syntax'
 import { resolveMinimapOptions } from '../src/options'
 import { computeRenderLayout } from '../src/layout'
 import { MinimapWorkerClient, type MinimapHost } from '../src/workerClient'
@@ -1310,7 +1316,153 @@ describe('MinimapWorkerClient', () => {
       runtime.restore()
     }
   })
+
+  it('posts the token patch an element-wise diff would after a one-line edit', () => {
+    const runtime = installMinimapRuntime()
+    try {
+      const host = createHost()
+      const lines = Array.from({ length: 400 }, (_, index) => `line ${index}`)
+      const text = lines.join('\n')
+      const starts = lineStarts(text)
+      const original = EditorTokenStore.fromTokens(
+        lines.flatMap((line, index) => [
+          { start: starts[index]!, end: starts[index]! + 4, style: PATCH_STYLES[index % 3]! },
+          { start: starts[index]! + 5, end: starts[index]! + line.length, style: PATCH_STYLES[2]! },
+        ]),
+      )
+      const client = new MinimapWorkerClient({
+        host,
+        options: resolveMinimapOptions(),
+        snapshot: snapshot({}, { fullText: text, tokens: original }),
+        decorations: [],
+        onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
+      })
+      const worker = runtime.workers[0]!
+      const opened = worker.postMessage.mock.calls
+        .map((call) => call[0] as MinimapWorkerRequest)
+        .find((request) => request.type === 'openDocument')
+      const openedTokens = opened?.type === 'openDocument' ? opened.document.tokens : []
+      worker.send(renderedResponse(1))
+      worker.postMessage.mockClear()
+
+      // Derived the way the editor derives them, so the stores share every untouched segment.
+      const editedLine = 200
+      const lineStart = starts[editedLine]!
+      const lineEnd = lineStart + lines[editedLine]!.length
+      const first = editedLine * 2
+      // `fromTokens` numbers styles in the order it meets them, so ids come from the palette.
+      const [red, green, blue] = PATCH_STYLES.map((style) => original.styles.indexOf(style))
+      const italic = { color: PATCH_STYLES[1]!.color, fontStyle: 'italic' as const }
+      const projected = original.replaceRange(
+        first,
+        first + 2,
+        tokenRun([
+          [lineStart, lineStart + 4, blue!],
+          [lineStart + 5, lineEnd + 1, blue!],
+        ]),
+        { delta: 1, keepsLiveRanges: true },
+      )
+      const refreshed = projected.replaceRange(
+        first,
+        first + 2,
+        tokenRun([
+          [lineStart, lineStart + 4, red!],
+          [lineStart + 5, lineEnd, original.styles.length],
+          [lineEnd, lineEnd + 1, green!],
+        ]),
+        { delta: 0, keepsLiveRanges: null, styles: [...original.styles, italic] },
+      )
+      const editedText = `${text.slice(0, lineEnd)}x${text.slice(lineEnd)}`
+      client.update(
+        snapshot({}, { fullText: editedText, tokens: projected }),
+        'content',
+        documentEdit({ from: lineEnd, to: lineEnd, text: 'x' }, editedText),
+      )
+      runtime.flushAnimationFrames()
+      worker.send(renderedResponse(lastRenderSequence(worker)))
+      worker.postMessage.mockClear()
+
+      client.update(snapshot({}, { fullText: editedText, tokens: refreshed }), 'tokens')
+      runtime.flushAnimationFrames()
+
+      const requests = worker.postMessage.mock.calls.map((call) => call[0] as MinimapWorkerRequest)
+      const tokenPatch = requests[0] as Extract<MinimapWorkerRequest, { type: 'updateTokenRange' }>
+      const expected = elementWiseTokenPatch(projected.toTokens(), refreshed.toTokens())
+      const colors = new Map(
+        original.toTokens().map((token, index) => [token.style.color, openedTokens[index]?.color]),
+      )
+
+      expect(requests.map((request) => request.type)).toEqual(['updateTokenRange', 'render'])
+      expect(expected.tokens).toHaveLength(3)
+      expect(tokenPatch.patch).toEqual({
+        start: expected.start,
+        deleteCount: expected.deleteCount,
+        tokens: expected.tokens.map((token) => ({
+          start: token.start,
+          end: token.end,
+          color: colors.get(token.style.color),
+        })),
+      })
+
+      client.dispose()
+      host.root.remove()
+      host.colorScope.remove()
+    } finally {
+      runtime.restore()
+    }
+  })
 })
+
+const PATCH_STYLES = [{ color: '#ff0000' }, { color: '#00ff00' }, { color: '#0000ff' }]
+
+function tokenRun(tokens: readonly (readonly [start: number, end: number, styleId: number])[]): {
+  readonly starts: Uint32Array
+  readonly ends: Uint32Array
+  readonly styleIds: Uint32Array
+} {
+  return {
+    starts: Uint32Array.from(tokens, ([start]) => start),
+    ends: Uint32Array.from(tokens, ([, end]) => end),
+    styleIds: Uint32Array.from(tokens, ([, , styleId]) => styleId),
+  }
+}
+
+/** The diff of two object-token lists: common prefix, then common suffix, the rest replaced. */
+function elementWiseTokenPatch(
+  previous: readonly EditorToken[],
+  next: readonly EditorToken[],
+): {
+  readonly start: number
+  readonly deleteCount: number
+  readonly tokens: readonly EditorToken[]
+} {
+  let start = 0
+  while (start < previous.length && start < next.length) {
+    if (!sameToken(previous[start]!, next[start]!)) break
+    start += 1
+  }
+
+  let previousEnd = previous.length
+  let nextEnd = next.length
+  while (previousEnd > start && nextEnd > start) {
+    if (!sameToken(previous[previousEnd - 1]!, next[nextEnd - 1]!)) break
+    previousEnd -= 1
+    nextEnd -= 1
+  }
+  return { start, deleteCount: previousEnd - start, tokens: next.slice(start, nextEnd) }
+}
+
+function sameToken(left: EditorToken, right: EditorToken): boolean {
+  if (left.start !== right.start || left.end !== right.end) return false
+  return (
+    left.style.color === right.style.color &&
+    left.style.backgroundColor === right.style.backgroundColor &&
+    left.style.fontStyle === right.style.fontStyle &&
+    left.style.fontWeight === right.style.fontWeight &&
+    left.style.textDecoration === right.style.textDecoration
+  )
+}
 
 function createHost(): MinimapHost {
   const root = document.createElement('div')
@@ -1338,7 +1490,9 @@ function setElementBox(
 
 function snapshot(
   viewport: Partial<EditorViewSnapshot['viewport']> = {},
-  overrides: Partial<Pick<EditorViewSnapshot, 'contentWidth' | 'fullText' | 'tokens'>> = {},
+  overrides: Partial<Pick<EditorViewSnapshot, 'contentWidth' | 'fullText'>> & {
+    readonly tokens?: EditorTokenInput
+  } = {},
 ): EditorViewSnapshot {
   const text = overrides.fullText ?? 'line 1\nline 2\nline 3'
   const starts = lineStarts(text)
@@ -1359,7 +1513,7 @@ function snapshot(
     },
     changesSinceDocumentSyncPoint: () => null,
     lineStarts: starts,
-    tokens: overrides.tokens ?? [],
+    tokens: toEditorTokenStore(overrides.tokens ?? []),
     brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },

@@ -15,6 +15,7 @@ import {
   unchangedChangesSinceDocumentSyncPoint,
 } from './factories/documentSync'
 import type { BracketInfo } from '../src/syntax/session'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 
 const TEXT = 'fn(a)'
 const BRACKETS: BracketInfo[] = [
@@ -152,7 +153,7 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
     ],
     tabSize: 2,
     textVersion: 1,
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     totalHeight: 20,
     viewport: {
       clientHeight: 20,

@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
 import type {
@@ -1679,7 +1680,7 @@ function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSn
     fullText,
     textVersion,
     lineStarts: [0],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: {} as EditorViewSnapshot['metrics'],

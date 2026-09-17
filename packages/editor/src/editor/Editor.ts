@@ -34,11 +34,7 @@ import {
 import { LineStartsView } from '../virtualization/lineStartIndex'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
-import {
-  copyTokenProjectionMetadata,
-  projectTokensThroughEdit,
-  projectTokensThroughEdits,
-} from './tokenProjection'
+import { projectTokensThroughEdit, projectTokensThroughEdits } from './tokenProjection'
 import { createTextEditBatch, type TextEditBatch } from '../textEditBatch'
 import { projectRowDecorationMapThroughEdits } from '../virtualization/rowDecorationProjection'
 import {
@@ -198,7 +194,8 @@ import {
 import type { FoldRange } from '../syntax/session'
 import type { EditorTheme } from '../theme'
 import { editorThemesEqual, mergeEditorThemes } from '../theme'
-import type { EditorDocument, EditorToken, TextEdit } from '../tokens'
+import { EditorTokenStore, toEditorTokenStore, type EditorTokenInput } from '../syntax/tokenStore'
+import type { EditorDocument, TextEdit } from '../tokens'
 import {
   createStringTextSnapshot,
   defineLazyFullTextProperty,
@@ -461,7 +458,7 @@ export class Editor {
     return this.syntax.status
   }
 
-  private get tokens(): readonly EditorToken[] {
+  private get tokens(): EditorTokenStore {
     return this.syntax.tokens
   }
 
@@ -1001,7 +998,7 @@ export class Editor {
     this.view.setText(textSnapshot)
     this.retagDisplayProjectionSources()
     this.syncInjectedTextRows()
-    this.setTokens([])
+    this.setTokens(EditorTokenStore.empty())
     this.dropManualFolds()
     this.clearSyntaxFolds()
     this.applyRangeDecorations()
@@ -1009,21 +1006,16 @@ export class Editor {
     this.recordContentSet()
   }
 
-  setTokens(tokens: readonly EditorToken[]): void {
-    copyTokenProjectionMetadata(tokens, tokens)
-    this.adoptTokens(tokens)
+  setTokens(tokens: EditorTokenInput): void {
+    this.adoptTokens(toEditorTokenStore(tokens))
   }
 
-  applyEdit(edit: TextEdit, tokens: readonly EditorToken[], textSnapshot?: TextSnapshot): void {
+  applyEdit(edit: TextEdit, tokens: EditorTokenInput, textSnapshot?: TextSnapshot): void {
     if (editorBufferSession(this.session)) return
-    this.renderEdit(edit, tokens, textSnapshot)
+    this.renderEdit(edit, toEditorTokenStore(tokens), textSnapshot)
   }
 
-  private renderEdit(
-    edit: TextEdit,
-    tokens: readonly EditorToken[],
-    textSnapshot?: TextSnapshot,
-  ): void {
+  private renderEdit(edit: TextEdit, tokens: EditorTokenStore, textSnapshot?: TextSnapshot): void {
     this.view.runAtomicRender(() => {
       const nextTextSnapshot = textSnapshot ?? this.legacyEditTextSnapshot(edit)
       const batch = createTextEditBatch(this.textSnapshot, nextTextSnapshot, [edit])
@@ -1044,7 +1036,7 @@ export class Editor {
     })
   }
 
-  private adoptTokens(tokens: readonly EditorToken[]): void {
+  private adoptTokens(tokens: EditorTokenStore): void {
     this.syntax.setTokens(tokens)
   }
 
@@ -1055,7 +1047,7 @@ export class Editor {
 
   private renderDocument(document: EditorDocument): void {
     this.renderContent(document.text)
-    this.setTokens(document.tokens ?? [])
+    this.setTokens(document.tokens ?? EditorTokenStore.empty())
   }
 
   /** Turns soft wrap on or off. Returns the state actually in effect afterwards. */

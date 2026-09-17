@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { resolveMinimapOptions } from '../src/options'
 import { MinimapWorkerRenderer } from '../src/renderer'
 import { canUseMinimapWorker, MinimapWorkerClient, type MinimapHost } from '../src/workerClient'
@@ -145,7 +146,9 @@ function snapshot(text: string): EditorViewSnapshot {
     },
     changesSinceDocumentSyncPoint: () => null,
     lineStarts: lineStarts(text),
-    tokens: [{ start: 0, end: 5, style: { color: 'var(--editor-syntax-keyword)' } }],
+    tokens: EditorTokenStore.fromTokens([
+      { start: 0, end: 5, style: { color: 'var(--editor-syntax-keyword)' } },
+    ]),
     brackets: [],
     selections: [
       { anchorOffset: 0, headOffset: 5, startOffset: 0, endOffset: 5, affinity: 'after' },

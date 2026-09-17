@@ -2,7 +2,7 @@ import type { TextContent } from '../textContent'
 import type { FoldMap, FoldPoint } from '../foldMap'
 import type { InlineMap } from '../inlineMap'
 import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
-import type { EditorToken, EditorTokenStyle } from '../tokens'
+import type { EditorTokenStyle } from '../tokens'
 import { clamp } from '../style-utils'
 import type { FixedRowVirtualizerOptions, FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
 import type {
@@ -177,26 +177,6 @@ export function createInputElement(container: HTMLElement): HTMLTextAreaElement 
   return input
 }
 
-export function editorTokensEqual(
-  left: readonly EditorToken[],
-  right: readonly EditorToken[],
-): boolean {
-  if (left === right) return true
-
-  const length = left.length
-  if (length !== right.length) return false
-
-  for (let index = 0; index < length; index += 1) {
-    const leftToken = left[index]!
-    const rightToken = right[index]!
-    if (leftToken === rightToken) continue
-    if (leftToken.start !== rightToken.start || leftToken.end !== rightToken.end) return false
-    if (!tokenStylesEqual(leftToken, rightToken)) return false
-  }
-
-  return true
-}
-
 export function foldMarkersEqual(
   left: readonly VirtualizedFoldMarker[],
   right: readonly VirtualizedFoldMarker[],
@@ -221,20 +201,6 @@ function foldMarkerEqual(left: VirtualizedFoldMarker, right: VirtualizedFoldMark
     left.startRow === right.startRow &&
     left.endRow === right.endRow &&
     left.collapsed === right.collapsed
-  )
-}
-
-export function tokenStylesEqual(left: EditorToken, right: EditorToken): boolean {
-  const leftStyle = left.style
-  const rightStyle = right.style
-  if (leftStyle === rightStyle) return true
-
-  return (
-    (leftStyle.color || undefined) === (rightStyle.color || undefined) &&
-    (leftStyle.backgroundColor || undefined) === (rightStyle.backgroundColor || undefined) &&
-    (leftStyle.fontStyle || undefined) === (rightStyle.fontStyle || undefined) &&
-    (leftStyle.fontWeight || undefined) === (rightStyle.fontWeight || undefined) &&
-    (leftStyle.textDecoration || undefined) === (rightStyle.textDecoration || undefined)
   )
 }
 

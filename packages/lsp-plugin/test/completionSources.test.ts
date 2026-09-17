@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import { createEditorLanguageFeatureToken } from '@singapore-editor/core/extensions'
 import type {
@@ -377,7 +378,7 @@ function editorSnapshot(
     fullText,
     textVersion,
     lineStarts: [0],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
       {

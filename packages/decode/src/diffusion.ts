@@ -6,8 +6,7 @@ import type { ResolvedDecodeOptions } from './options'
 import type { DecodeRevealRow } from './rows'
 import type { RevealHandle } from './reveal'
 
-/** A syntax token as carried by the view snapshot: `{ start, end, style.color }`. */
-type DecodeToken = EditorViewSnapshot['tokens'][number]
+type DecodeTokens = EditorViewSnapshot['tokens']
 
 const LAYER_CLASS = 'editor-decode-glyph-layer'
 const ROW_CLASS = 'editor-decode-glyph-row'
@@ -58,7 +57,7 @@ type GlyphCell = {
 export function runDiffusion(
   context: EditorViewContributionContext,
   rows: readonly DecodeRevealRow[],
-  tokens: readonly DecodeToken[],
+  tokens: DecodeTokens,
   options: ResolvedDecodeOptions,
   onDone: () => void,
 ): RevealHandle {
@@ -78,7 +77,7 @@ function buildCells(
   document: Document,
   layer: HTMLElement,
   rows: readonly DecodeRevealRow[],
-  tokens: readonly DecodeToken[],
+  tokens: DecodeTokens,
 ): GlyphCell[] {
   const colorAt = tokenColorLookup(tokens)
   const cells: GlyphCell[] = []
@@ -144,13 +143,14 @@ function thresholdAt(column: number, rowOrdinal: number): number {
  * Maps a document offset to its syntax colour. Tokens are ascending and we read
  * offsets in order, so a single advancing cursor covers the whole pass.
  */
-function tokenColorLookup(tokens: readonly DecodeToken[]): (offset: number) => string | undefined {
-  let cursor = 0
+function tokenColorLookup(tokens: DecodeTokens): (offset: number) => string | undefined {
+  let cursor = -1
   return (offset) => {
-    while (cursor < tokens.length && lessThanOrEqual(tokens[cursor]?.end, offset)) cursor += 1
-    const token = tokens[cursor]
-    if (!token || !lessThanOrEqual(token.start, offset)) return undefined
-    return token.style.color
+    // The first read finds its place by bisection, so a reveal deep in a file skips the tokens above.
+    if (cursor < 0) cursor = tokens.firstEndingAfter(offset)
+    while (cursor < tokens.length && tokens.endAt(cursor) <= offset) cursor += 1
+    if (cursor >= tokens.length || tokens.startAt(cursor) > offset) return undefined
+    return tokens.styleAt(cursor).color
   }
 }
 
@@ -241,10 +241,6 @@ function scrambleGlyph(index: number, seed: number): string {
 
 function isWhitespace(char: string): boolean {
   return char.trim().length === 0
-}
-
-function lessThanOrEqual(value: number | undefined, offset: number): boolean {
-  return typeof value === 'number' && value <= offset
 }
 
 // Two-octave value noise in ~[0, 1): smooth over space, so nearby cells get

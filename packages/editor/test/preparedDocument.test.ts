@@ -18,6 +18,7 @@ import {
   type EditorSyntaxProvider,
   type EditorSyntaxSession,
 } from '../src/syntax/session'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 
 describe('prepared editor documents', () => {
   it('prepares fixed-tab fallback folds without materializing or reading the full snapshot', () => {
@@ -210,10 +211,10 @@ describe('prepared editor documents', () => {
     }
     const highlighterSession = highlightSession()
     highlighterSession.refresh = vi.fn(async () => ({
-      tokens: [
+      tokens: EditorTokenStore.fromTokens([
         { start: 0, end: 1, style: { color: 'first' } },
         { start: 2, end: 3, style: { color: 'second' } },
-      ],
+      ]),
     }))
     const highlighterProvider: EditorHighlighterProvider = {
       createSession: () => highlighterSession,
@@ -296,7 +297,7 @@ describe('prepared editor documents', () => {
     expect(claimed?.lineStarts).toEqual([0, 17])
     expect(claimed?.structural?.runtimeSessionId).not.toBe(claimed?.highlighter?.runtimeSessionId)
     expect(claimed?.structural?.readyResult).toBe(structuralSession.getResult())
-    expect(claimed?.highlighter?.readyResult?.tokens).toEqual([])
+    expect(claimed?.highlighter?.readyResult?.tokens.toTokens()).toEqual([])
     expect(structuralProvider.createSession).toHaveBeenCalledWith(
       expect.objectContaining({ fullText: 'const value = 1;\n' }),
     )
@@ -474,7 +475,9 @@ describe('prepared editor documents', () => {
 
   it('installs ready prepared tokens without publishing an empty initial token state', async () => {
     const buffer = createEditorTextBuffer('const value = 1;\n')
-    const readyTokens = [{ start: 0, end: 5, style: { color: 'prepared-token' } }] as const
+    const readyTokens = EditorTokenStore.fromTokens([
+      { start: 0, end: 5, style: { color: 'prepared-token' } },
+    ])
     const highlighterSession = highlightSession()
     highlighterSession.refresh = vi.fn(async () => ({ tokens: readyTokens }))
     const highlighterProvider: EditorHighlighterProvider = {
@@ -487,7 +490,7 @@ describe('prepared editor documents', () => {
         context.registerViewContribution({
           createContribution: () => ({
             update: (snapshot) => {
-              observedTokenColors.push(snapshot.tokens.map((token) => token.style.color))
+              observedTokenColors.push(snapshot.tokens.toTokens().map((token) => token.style.color))
             },
             dispose: () => undefined,
           }),
@@ -837,7 +840,7 @@ describe('prepared editor documents', () => {
         context.registerViewContribution({
           createContribution: () => ({
             update: (snapshot) => {
-              observedTokenColors.push(snapshot.tokens.map((token) => token.style.color))
+              observedTokenColors.push(snapshot.tokens.toTokens().map((token) => token.style.color))
             },
             dispose: () => undefined,
           }),
@@ -875,7 +878,9 @@ describe('prepared editor documents', () => {
     )
     editor.edit({ from: 0, to: 0, text: 'x' })
     completion.resolve({
-      tokens: [{ start: 0, end: 5, style: { color: 'stale-prepared-token' } }],
+      tokens: EditorTokenStore.fromTokens([
+        { start: 0, end: 5, style: { color: 'stale-prepared-token' } },
+      ]),
     })
     await Promise.resolve()
     await Promise.resolve()
@@ -1043,9 +1048,9 @@ function syntaxSession(): EditorSyntaxSession {
 
 function highlightSession(): EditorHighlighterSession {
   return {
-    applyChange: vi.fn(async () => ({ tokens: [] })),
+    applyChange: vi.fn(async () => ({ tokens: EditorTokenStore.empty() })),
     dispose: vi.fn(),
-    refresh: vi.fn(async () => ({ tokens: [] })),
+    refresh: vi.fn(async () => ({ tokens: EditorTokenStore.empty() })),
   }
 }
 

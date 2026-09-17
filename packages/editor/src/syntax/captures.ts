@@ -1,10 +1,5 @@
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import {
-  appendEditorTokenIndexEntry,
-  createEditorTokenIndexBuilder,
-  finishEditorTokenIndex,
-} from '../editor/tokenIndex'
-import {
   createEditorScopeStyles,
   editorColorReference,
   editorColorValue,
@@ -195,14 +190,7 @@ const sharedStyleForTreeSitterCapture = (captureName: string): EditorTokenStyle 
 
 export const treeSitterCapturesToEditorTokens = (
   captures: readonly EditorSyntaxCapture[],
-): EditorToken[] => {
-  const tokens = resolveOverlappingCaptures(captures)
-  const indexBuilder = createEditorTokenIndexBuilder()
-  for (const token of tokens) appendEditorTokenIndexEntry(indexBuilder, token)
-
-  finishEditorTokenIndex(tokens, indexBuilder)
-  return tokens
-}
+): EditorToken[] => resolveOverlappingCaptures(captures)
 
 /** A capture that would paint something, with the two numbers that decide whether it gets to. */
 type CaptureCandidate = {

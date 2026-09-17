@@ -7,7 +7,8 @@ import { EditorDisposableStore, MutableEditorDisposable } from './editor/disposa
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type { SnippetMirrorRange, SnippetSessionStop } from './editor/snippetSession'
 import type { EditorSyntaxThemeColor, EditorTheme, EditorThemeType } from './theme'
-import type { EditorToken, TextEdit } from './tokens'
+import type { EditorTokenStore } from './syntax/tokenStore'
+import type { TextEdit } from './tokens'
 import type { DisplayTextRowSource, InjectedTextRow } from './displayTransforms'
 import {
   type BracketInfo,
@@ -153,7 +154,7 @@ export const EDITOR_MINIMAP_FEATURE =
   createEditorCapabilityToken<EditorMinimapFeature>(EDITOR_MINIMAP_FEATURE_ID)
 
 export type EditorHighlightResult = {
-  readonly tokens: readonly EditorToken[]
+  readonly tokens: EditorTokenStore
   readonly theme?: EditorTheme | null
 }
 
@@ -341,7 +342,7 @@ export type EditorVisiblePaintChunkJSON = {
   readonly rowLocalStart: number
   readonly rowLocalEnd: number
   readonly parts: readonly EditorMountedChunkPaintPartJSON[]
-  readonly replayFidelity: 'exact' | 'plain-transformed' | 'plain-overlap' | 'plain-core-rendered'
+  readonly replayFidelity: 'exact' | 'plain-transformed' | 'plain-core-rendered'
   readonly runs: readonly EditorVisiblePaintRunJSON[]
 }
 
@@ -413,11 +414,13 @@ export type EditorViewSnapshotJSON = {
   readonly textVersion: number
   readonly initialHighlightStatus: EditorInitialHighlightStatus
   readonly lineStarts: readonly number[]
-  readonly tokens: readonly {
-    readonly start: number
-    readonly end: number
-    readonly style: EditorTokenStyleJSON
-  }[]
+  /** Packed: token `i` spans `[starts[i], ends[i])` and is styled by `styles[styleIds[i]]`. */
+  readonly tokens: {
+    readonly starts: readonly number[]
+    readonly ends: readonly number[]
+    readonly styleIds: readonly number[]
+    readonly styles: readonly EditorTokenStyleJSON[]
+  }
   readonly brackets: readonly BracketInfo[]
   readonly selections: readonly EditorResolvedSelection[]
   readonly metrics: { readonly rowHeight: number; readonly characterWidth: number }
@@ -463,7 +466,7 @@ export type EditorViewSnapshot = {
   // per-keystroke paths.
   readonly lineStarts: readonly number[]
   readonly lineStartsView?: EditorLineStartsView
-  readonly tokens: readonly EditorToken[]
+  readonly tokens: EditorTokenStore
   /** Bracket positions from the last structural parse, sorted by offset; empty when unavailable. */
   readonly brackets: readonly BracketInfo[]
   readonly selections: readonly EditorResolvedSelection[]

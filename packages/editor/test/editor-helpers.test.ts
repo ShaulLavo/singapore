@@ -39,13 +39,7 @@ import {
   projectTokensThroughEdit,
   tokenProjectionLiveRangeStatus,
 } from '../src/editor/tokenProjection'
-import {
-  appendEditorTokenIndexEntry,
-  createEditorTokenIndexBuilder,
-  finishEditorTokenIndex,
-  getEditorTokenIndex,
-  setEditorTokenIndex,
-} from '../src/editor/tokenIndex'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import { createStringTextSnapshot, type TextSnapshot } from '../src/documentTextSnapshot'
 import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type { FoldRange } from '../src/syntax'
@@ -515,38 +509,52 @@ function createEmptyChange(): DocumentSessionChange {
 }
 
 describe('token projection', () => {
+  const style = { color: 'red' }
+  const store = (tokens: readonly EditorToken[]) => EditorTokenStore.fromTokens(tokens)
+
   it('shifts, expands, and drops tokens across edits', () => {
-    const style = { color: 'red' }
-    const tokens = [
+    const tokens = store([
       { start: 0, end: 5, style },
       { start: 6, end: 10, style },
       { start: 11, end: 16, style },
-    ]
+    ])
 
     expect(
-      projectTokensThroughEdit(tokens, { from: 5, to: 5, text: 'Name' }, 'alpha beta gamma'),
+      projectTokensThroughEdit(
+        tokens,
+        { from: 5, to: 5, text: 'Name' },
+        'alpha beta gamma',
+      ).toTokens(),
     ).toEqual([
       { start: 0, end: 9, style },
       { start: 10, end: 14, style },
       { start: 15, end: 20, style },
     ])
     expect(
-      projectTokensThroughEdit(tokens, { from: 7, to: 9, text: '\n' }, 'alpha beta gamma'),
+      projectTokensThroughEdit(
+        tokens,
+        { from: 7, to: 9, text: '\n' },
+        'alpha beta gamma',
+      ).toTokens(),
     ).toEqual([
       { start: 0, end: 5, style },
       { start: 10, end: 15, style },
     ])
     expect(
-      projectTokensThroughEdit(tokens, { from: 2, to: 2, text: '\n' }, 'alpha beta gamma'),
+      projectTokensThroughEdit(
+        tokens,
+        { from: 2, to: 2, text: '\n' },
+        'alpha beta gamma',
+      ).toTokens(),
     ).toEqual([
       { start: 7, end: 11, style },
       { start: 12, end: 17, style },
     ])
   })
 
+  // The failure is a lost fast path: a same-line keystroke that re-renders every mounted row.
   it('records whether projected tokens can keep live ranges', () => {
-    const style = { color: 'red' }
-    const tokens = indexedTokens([
+    const tokens = store([
       { start: 0, end: 5, style },
       { start: 6, end: 10, style },
     ])
@@ -554,265 +562,151 @@ describe('token projection', () => {
     const shifted = projectTokensThroughEdit(tokens, { from: 5, to: 5, text: 'X' }, 'alpha beta')
     const dropped = projectTokensThroughEdit(tokens, { from: 7, to: 9, text: '\n' }, 'alpha beta')
 
+    expect(tokenProjectionLiveRangeStatus(tokens, tokens)).toBe(true)
     expect(tokenProjectionLiveRangeStatus(tokens, shifted)).toBe(true)
     expect(tokenProjectionLiveRangeStatus(tokens, dropped)).toBe(false)
-    expect(tokenProjectionLiveRangeStatus([], shifted)).toBe(false)
+    expect(tokenProjectionLiveRangeStatus(store([{ start: 0, end: 1, style }]), shifted)).toBe(
+      false,
+    )
+    expect(tokenProjectionLiveRangeStatus(shifted, tokens)).toBeNull()
   })
 
-  it('bulk-projects monotonic indexed token insertions, deletions, and replacements', () => {
-    const style = { color: 'red' }
+  it('projects deletions and replacements inside a token', () => {
     const base = [
       { start: 0, end: 5, style },
       { start: 6, end: 10, style },
       { start: 11, end: 16, style },
     ]
 
-    const inserted = projectTokensThroughEdit(
-      indexedTokens(base),
-      { from: 5, to: 5, text: 'Name' },
-      'alpha beta gamma',
-    )
-    expect(inserted).toEqual([
-      { start: 0, end: 9, style },
-      { start: 10, end: 14, style },
-      { start: 15, end: 20, style },
-    ])
-    expect(getEditorTokenIndex(inserted)).toMatchObject({
-      maxEnds: [9, 14, 20],
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
-
     const deleted = projectTokensThroughEdit(
-      indexedTokens(base),
+      store(base),
       { from: 7, to: 9, text: '' },
       'alpha beta gamma',
     )
-    expect(deleted).toEqual([
+    expect(deleted.toTokens()).toEqual([
       { start: 0, end: 5, style },
       { start: 6, end: 8, style },
       { start: 9, end: 14, style },
     ])
-    expect(getEditorTokenIndex(deleted)?.maxEnds).toEqual([5, 8, 14])
+    expect(deleted).toMatchObject({ monotonicEnd: true, nonOverlapping: true })
 
     const replaced = projectTokensThroughEdit(
-      indexedTokens(base),
+      store(base),
       { from: 7, to: 9, text: 'ZZ' },
       'alpha beta gamma',
     )
-    expect(replaced).toEqual(base)
-    expect(getEditorTokenIndex(replaced)?.maxEnds).toEqual([5, 10, 16])
+    expect(replaced.toTokens()).toEqual(base)
   })
 
-  it('uses the indexed bulk path for small unchanged suffixes', () => {
-    const style = { color: 'red' }
-    const tokenCount = 32
-    const text = 'a '.repeat(tokenCount)
-    const tokens = indexedTokens(
-      Array.from({ length: tokenCount }, (_, index) => ({
-        start: index * 2,
-        end: index * 2 + 1,
-        style,
-      })),
-    )
-
-    const diagnostics = collectPerformanceDiagnostics(() => {
-      const projected = projectTokensThroughEdit(tokens, { from: 1, to: 1, text: 'X' }, text)
-      expect(projected).toHaveLength(tokenCount)
-    })
-
-    expect(diagnostics.find(tokenProjectionPath)?.detail).toMatchObject({
-      path: 'indexed.bulk',
-      suffixCount: tokenCount - 1,
-      tokenCount,
-    })
-  })
-
-  it('uses lazy indexed projection for very large unchanged suffixes', () => {
-    const style = { color: 'red' }
+  // The failure is a keystroke whose cost grows with the document below the caret.
+  it('visits only the tokens the edit touches, however long the suffix', () => {
     const tokenCount = 5_000
     const text = 'a '.repeat(tokenCount)
-    const tokens = indexedTokens(
+    const tokens = store(
       Array.from({ length: tokenCount }, (_, index) => ({
         start: index * 2,
         end: index * 2 + 1,
         style,
       })),
     )
-    let projected: readonly EditorToken[] = []
+    let projected = tokens
 
     const diagnostics = collectPerformanceDiagnostics(() => {
       projected = projectTokensThroughEdit(tokens, { from: 1, to: 1, text: 'X' }, text)
     })
 
     expect(diagnostics.find(tokenProjectionPath)?.detail).toMatchObject({
-      path: 'indexed.lazy',
-      suffixCount: tokenCount - 1,
+      affectedCount: 1,
       tokenCount,
     })
-    expect(Array.isArray(projected)).toBe(true)
     expect(projected).toHaveLength(tokenCount)
-    expect(projected[0]).toEqual({ start: 0, end: 2, style })
-    expect(projected[1]).toEqual({ start: 3, end: 4, style })
-    expect(projected.slice(0, 3)).toEqual([
+    expect(projected.toTokens(0, 3)).toEqual([
       { start: 0, end: 2, style },
       { start: 3, end: 4, style },
       { start: 5, end: 6, style },
     ])
-    expect(projected.map((token) => token.start).slice(0, 3)).toEqual([0, 3, 5])
-    expect([...projected].at(-1)).toEqual({
+    expect(projected.tokenAt(tokenCount - 1)).toEqual({
       start: (tokenCount - 1) * 2 + 1,
       end: (tokenCount - 1) * 2 + 2,
       style,
     })
-    expect(getEditorTokenIndex(projected)?.maxEnds[tokenCount - 1]).toBe((tokenCount - 1) * 2 + 2)
   })
 
-  it('does not slice prefix maxEnds for lazy indexed projections', () => {
-    const style = { color: 'red' }
-    const tokenCount = 200
-    const text = 'a '.repeat(tokenCount)
-    const tokens = Array.from({ length: tokenCount }, (_, index) => ({
-      start: index * 2,
-      end: index * 2 + 1,
-      style,
-    }))
-    const maxEnds = tokens.map((token) => token.end)
-    let sliceReads = 0
-
-    setEditorTokenIndex(tokens, {
-      maxEnds: new Proxy(maxEnds, {
-        get: (target, property, receiver) => {
-          if (property === 'slice') {
-            sliceReads += 1
-            throw new Error('lazy projection must not slice prefix maxEnds')
-          }
-
-          return Reflect.get(target, property, receiver)
-        },
-      }),
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
-
-    const diagnostics = collectPerformanceDiagnostics(() => {
-      const projected = projectTokensThroughEdit(tokens, { from: 201, to: 201, text: 'X' }, text)
-      expect(projected).toHaveLength(tokenCount)
-    })
-
-    expect(sliceReads).toBe(0)
-    expect(diagnostics.find(tokenProjectionPath)?.detail).toMatchObject({
-      path: 'indexed.lazy',
-      suffixCount: 99,
-      tokenCount,
-    })
-  })
-
-  it('bulk-projects overlapping tokens when their ends stay monotonic', () => {
-    const style = { color: 'red' }
-    const tokens = indexedTokens([
+  it('projects overlapping tokens whose ends stay monotonic', () => {
+    const tokens = store([
       { start: 0, end: 5, style },
       { start: 0, end: 5, style },
       { start: 6, end: 10, style },
     ])
 
-    const diagnostics = collectPerformanceDiagnostics(() => {
-      const projected = projectTokensThroughEdit(
-        tokens,
-        { from: 5, to: 5, text: 'Name' },
-        'alpha beta',
-      )
-      expect(projected).toEqual([
-        { start: 0, end: 9, style },
-        { start: 0, end: 9, style },
-        { start: 10, end: 14, style },
-      ])
-      expect(getEditorTokenIndex(projected)).toMatchObject({
-        maxEnds: [9, 9, 14],
-        monotonicEnd: true,
-        nonOverlapping: false,
-        sortedByStart: true,
-      })
-    })
+    const projected = projectTokensThroughEdit(
+      tokens,
+      { from: 5, to: 5, text: 'Name' },
+      'alpha beta',
+    )
 
-    expect(diagnostics.find(tokenProjectionPath)?.detail).toMatchObject({
-      monotonicEnd: true,
-      nonOverlapping: false,
-      path: 'indexed.bulk',
-    })
+    expect(projected.toTokens()).toEqual([
+      { start: 0, end: 9, style },
+      { start: 0, end: 9, style },
+      { start: 10, end: 14, style },
+    ])
+    expect(projected).toMatchObject({ monotonicEnd: true, nonOverlapping: false })
   })
 
-  it('bulk-projects non-monotonic overlapping indexed tokens and preserves exact maxEnds', () => {
-    const style = { color: 'red' }
-    const tokens = indexedTokens([
+  // The failure is a nested token hiding its parent from the bisection that finds a row's tokens.
+  it('keeps an exact running maximum end for non-monotonic overlapping tokens', () => {
+    const tokens = store([
       { start: 0, end: 10, style },
       { start: 2, end: 5, style },
       { start: 11, end: 15, style },
     ])
 
-    const diagnostics = collectPerformanceDiagnostics(() => {
-      const projected = projectTokensThroughEdit(
-        tokens,
-        { from: 10, to: 10, text: '.' },
-        'abcdefghij klmn',
-      )
-      expect(projected).toEqual([
-        { start: 0, end: 10, style },
-        { start: 2, end: 5, style },
-        { start: 12, end: 16, style },
-      ])
-      expect(getEditorTokenIndex(projected)).toMatchObject({
-        maxEnds: [10, 10, 16],
-        monotonicEnd: false,
-        nonOverlapping: false,
-        sortedByStart: true,
-      })
-    })
+    const projected = projectTokensThroughEdit(
+      tokens,
+      { from: 10, to: 10, text: '.' },
+      'abcdefghij klmn',
+    )
 
-    expect(diagnostics.find(tokenProjectionPath)?.detail).toMatchObject({
-      monotonicEnd: false,
-      path: 'indexed.bulk',
-    })
+    expect(projected.toTokens()).toEqual([
+      { start: 0, end: 10, style },
+      { start: 2, end: 5, style },
+      { start: 12, end: 16, style },
+    ])
+    expect(projected).toMatchObject({ monotonicEnd: false, nonOverlapping: false })
+    expect(projected.firstEndingAfter(7)).toBe(0)
+    expect(projected.firstEndingAfter(10)).toBe(2)
   })
 
   it('uses snapshot ranges for token word-boundary checks', () => {
-    const style = { color: 'red' }
-    const tokens = [{ start: 0, end: 5, style }]
     const projected = projectTokensThroughEdit(
-      tokens,
+      store([{ start: 0, end: 5, style }]),
       { from: 5, to: 5, text: 'Name' },
       lazyTextSnapshot('alpha beta'),
     )
 
-    expect(projected).toEqual([{ start: 0, end: 9, style }])
+    expect(projected.toTokens()).toEqual([{ start: 0, end: 9, style }])
   })
 
   it('reads only tiny snapshot ranges for token word-boundary checks', () => {
-    const style = { color: 'red' }
     const reads: Array<readonly [number, number]> = []
     const projected = projectTokensThroughEdit(
-      indexedTokens([{ start: 0, end: 5, style }]),
+      store([{ start: 0, end: 5, style }]),
       { from: 5, to: 5, text: 'Name' },
       recordingTextSnapshot('alpha beta', reads),
     )
 
-    expect(projected).toEqual([{ start: 0, end: 9, style }])
+    expect(projected.toTokens()).toEqual([{ start: 0, end: 9, style }])
     expect(reads.every(([start, end]) => end - start <= 2)).toBe(true)
   })
 
   it('handles snapshot-backed surrogate-pair word-boundary checks', () => {
-    const style = { color: 'red' }
-    const text = '😀alpha'
-    const tokens = [{ start: 2, end: 7, style }]
     const projected = projectTokensThroughEdit(
-      tokens,
+      store([{ start: 2, end: 7, style }]),
       { from: 2, to: 2, text: 'X' },
-      lazyTextSnapshot(text),
+      lazyTextSnapshot('😀alpha'),
     )
 
-    expect(projected).toEqual([{ start: 2, end: 8, style }])
+    expect(projected.toTokens()).toEqual([{ start: 2, end: 8, style }])
   })
 })
 
@@ -856,14 +750,6 @@ function recordingTextSnapshot(
       if (text.length > 0) visit(text, 0, text.length)
     },
   }
-}
-
-function indexedTokens(tokens: readonly EditorToken[]): readonly EditorToken[] {
-  const indexed = [...tokens]
-  const builder = createEditorTokenIndexBuilder()
-  for (const token of indexed) appendEditorTokenIndexEntry(builder, token)
-  finishEditorTokenIndex(indexed, builder)
-  return indexed
 }
 
 type TestPerformanceDiagnostic = {

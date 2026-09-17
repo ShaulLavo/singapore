@@ -12,6 +12,7 @@ import type {
 import type { EditorTheme } from '../src/theme'
 import {
   createEmptySyntaxResult,
+  EditorTokenStore,
   type EditorSyntaxResult,
   type EditorSyntaxSession,
   styleForTreeSitterCapture,
@@ -116,7 +117,9 @@ describe('authoritative initial paint', () => {
     expect(editor.getState().initialHighlightStatus).toBe('loading')
     expect(events.map((event) => event.phase)).toEqual(['text'])
 
-    result.resolve({ tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }] })
+    result.resolve({
+      tokens: EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }]),
+    })
     await nextTask()
 
     expect(editor.getState().initialHighlightStatus).toBe('painted')
@@ -154,7 +157,7 @@ describe('authoritative initial paint', () => {
     expect(editor.getState().initialHighlightStatus).toBe('loading')
     expect(order).toContain('snapshot:tokens:loading')
 
-    result.resolve({ tokens: [] })
+    result.resolve({ tokens: EditorTokenStore.empty() })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('painted')
     expect(events.filter(isHighlightSettled).map((event) => event.status)).toEqual([
@@ -192,9 +195,9 @@ describe('authoritative initial paint', () => {
         await nextTask()
         expect(editor.getState().initialHighlightStatus).toBe('loading')
         expect(events.filter(isHighlightSettled)).toHaveLength(0)
-        highlight.resolve({ tokens: [] })
+        highlight.resolve({ tokens: EditorTokenStore.empty() })
       } else {
-        highlight.resolve({ tokens: [] })
+        highlight.resolve({ tokens: EditorTokenStore.empty() })
         await nextTask()
         expect(editor.getState().initialHighlightStatus).toBe('painted')
         expect(events.filter(isHighlightSettled)).toHaveLength(1)
@@ -275,7 +278,7 @@ describe('authoritative initial paint', () => {
     }
     const highlighter: EditorHighlighterSession = {
       refresh: async () => ({
-        tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }],
+        tokens: EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }]),
       }),
       applyChange: () => editedHighlight.promise,
       dispose: () => undefined,
@@ -295,7 +298,7 @@ describe('authoritative initial paint', () => {
     expect(syntaxSessionCount).toBeGreaterThan(1)
 
     editedHighlight.resolve({
-      tokens: [{ start: 1, end: 6, style: { color: '#00ff00' } }],
+      tokens: EditorTokenStore.fromTokens([{ start: 1, end: 6, style: { color: '#00ff00' } }]),
     })
     await nextTask()
     expect(snapshots.at(-1)?.tokens).toEqual([[1, 6]])
@@ -326,13 +329,17 @@ describe('authoritative initial paint', () => {
     await nextTask()
     editor.openDocument({ documentId: 'same.ts', languageId: 'typescript', text: TEXT })
     await nextTask()
-    first.resolve({ tokens: [{ start: 0, end: 5, style: { color: 'stale' } }] })
+    first.resolve({
+      tokens: EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: 'stale' } }]),
+    })
     await nextTask()
 
     expect(editor.getState().initialHighlightStatus).toBe('loading')
     expect(events.filter(isHighlightSettled)).toHaveLength(0)
 
-    second.resolve({ tokens: [{ start: 0, end: 5, style: { color: 'fresh' } }] })
+    second.resolve({
+      tokens: EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: 'fresh' } }]),
+    })
     await nextTask()
 
     const terminal = events.filter(isHighlightSettled)
@@ -371,7 +378,7 @@ describe('authoritative initial paint', () => {
     expect(events.filter(isTextPaint)).toHaveLength(1)
     expect(events.filter(isHighlightSettled)).toHaveLength(1)
 
-    replacement.resolve({ tokens: [] })
+    replacement.resolve({ tokens: EditorTokenStore.empty() })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('painted')
     expect(events.filter(isTextPaint)).toHaveLength(1)
@@ -406,7 +413,9 @@ describe('authoritative initial paint', () => {
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('loading')
 
-    highlight.resolve({ tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }] })
+    highlight.resolve({
+      tokens: EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }]),
+    })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('loading')
     expect(events.filter(isHighlightSettled)).toHaveLength(1)
@@ -449,7 +458,7 @@ describe('authoritative initial paint', () => {
       highlighterPlugin(highlighterSession(highlight), () => theme.promise),
     )
     await nextTask()
-    highlight.resolve({ tokens: [] })
+    highlight.resolve({ tokens: EditorTokenStore.empty() })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('loading')
 
@@ -487,7 +496,7 @@ describe('authoritative initial paint', () => {
     editor.setTheme({ foregroundColor: '#abcdef' })
     expect(editor.getState().initialHighlightStatus).toBe('loading')
     expect(snapshots.at(-1)?.foregroundColor).toBe('#abcdef')
-    initial.resolve({ tokens: [] })
+    initial.resolve({ tokens: EditorTokenStore.empty() })
     await nextTask()
 
     expect(editor.getState().initialHighlightStatus).toBe('painted')
@@ -510,7 +519,7 @@ describe('authoritative initial paint', () => {
     })
     editor.openDocument({ documentId: 'config.ts', languageId: 'typescript', text: TEXT })
     await nextTask()
-    initial.resolve({ tokens: [] })
+    initial.resolve({ tokens: EditorTokenStore.empty() })
     await nextTask()
     expect(events.filter(isHighlightSettled)).toHaveLength(1)
 
@@ -543,7 +552,7 @@ describe('authoritative initial paint', () => {
     })
     editor.openDocument({ documentId: 'non-applicable.ts', languageId: 'typescript', text: TEXT })
     await nextTask()
-    initial.resolve({ tokens: [] })
+    initial.resolve({ tokens: EditorTokenStore.empty() })
     await nextTask()
 
     editor.addPlugin({
@@ -599,7 +608,7 @@ describe('authoritative initial paint', () => {
     const highlighter: EditorHighlighterSession = {
       refresh: () => {
         refreshCount += 1
-        if (refreshCount === 1) return Promise.resolve({ tokens: [] })
+        if (refreshCount === 1) return Promise.resolve({ tokens: EditorTokenStore.empty() })
         return replacementHighlight.promise
       },
       applyChange: () => replacementHighlight.promise,
@@ -630,7 +639,7 @@ describe('authoritative initial paint', () => {
       'painted',
     ])
 
-    replacementHighlight.resolve({ tokens: [] })
+    replacementHighlight.resolve({ tokens: EditorTokenStore.empty() })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('painted')
 
@@ -640,7 +649,7 @@ describe('authoritative initial paint', () => {
   })
 
   it('refreshes highlighter tokens when syntax providers change', async () => {
-    const refresh = vi.fn(async () => ({ tokens: [] }))
+    const refresh = vi.fn(async () => ({ tokens: EditorTokenStore.empty() }))
     const highlighter: EditorHighlighterSession = {
       refresh,
       applyChange: refresh,
@@ -738,7 +747,7 @@ function themeSnapshotPlugin(
             snapshots.push({
               foregroundColor: snapshot.theme?.foregroundColor ?? null,
               status: snapshot.initialHighlightStatus,
-              tokens: snapshot.tokens.map((token) => [token.start, token.end]),
+              tokens: snapshot.tokens.toTokens().map((token) => [token.start, token.end]),
             })
           },
           dispose: () => undefined,

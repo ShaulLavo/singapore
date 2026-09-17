@@ -17,8 +17,8 @@ import type {
   EditorVisibleSnapshotJSON,
 } from '../plugins'
 import type { EditorTheme } from '../theme'
+import type { EditorTokenStore } from '../syntax/tokenStore'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
-import { getEditorTokenIndex, type EditorTokenIndex } from './tokenIndex'
 import { copyEditorVisiblePaintLayers } from './visiblePaint'
 
 type RuntimeViewSnapshot = Omit<EditorViewSnapshot, 'toJSON' | 'toVisibleSnapshot' | 'paintLayers'>
@@ -125,11 +125,7 @@ function editorViewSnapshotToJSON(snapshot: EditorViewSnapshot): EditorViewSnaps
     textVersion: finite('textVersion', snapshot.textVersion),
     initialHighlightStatus: snapshot.initialHighlightStatus,
     lineStarts: snapshot.lineStarts.map((value) => finite('lineStarts', value)),
-    tokens: snapshot.tokens.map((token) => ({
-      start: finite('token.start', token.start),
-      end: finite('token.end', token.end),
-      style: copyTokenStyle(token.style),
-    })),
+    tokens: packedTokensToJSON(snapshot.tokens),
     brackets: snapshot.brackets.map((bracket) => ({
       index: finite('bracket.index', bracket.index),
       char: bracket.char,
@@ -218,87 +214,24 @@ function classifyChunk(
   return { chunk, parts, replayFidelity, runs: [] }
 }
 
-function attachTokenRuns(tokens: readonly EditorToken[], chunks: readonly ClassifiedChunk[]): void {
-  const index = getEditorTokenIndex(tokens)
-  if (index?.sortedByStart) {
-    for (const chunk of chunks) {
-      const entries = indexedTokenEntries(tokens, index, chunk)
-      chunk.runs = index.nonOverlapping
-        ? paintLinearRunsForEntries(chunk, entries)
-        : paintPrecedenceRunsForEntries(chunk, entries)
-    }
-    return
-  }
-
-  const partitions = partitionExternalTokens(tokens, chunks)
+function attachTokenRuns(tokens: EditorTokenStore, chunks: readonly ClassifiedChunk[]): void {
   for (const chunk of chunks) {
-    const intersecting = (partitions.get(chunk) ?? []).toSorted(compareTokenEntries)
-    if (hasOverlappingTokens(intersecting)) {
-      chunk.replayFidelity = 'plain-overlap'
-      chunk.runs = []
-      continue
-    }
-
-    chunk.runs = paintLinearRunsForEntries(chunk, intersecting)
+    const entries = tokenEntriesForChunk(tokens, chunk)
+    chunk.runs = tokens.nonOverlapping
+      ? paintLinearRunsForEntries(chunk, entries)
+      : paintPrecedenceRunsForEntries(chunk, entries)
   }
 }
 
-function partitionExternalTokens(
-  tokens: readonly EditorToken[],
-  chunks: readonly ClassifiedChunk[],
-): ReadonlyMap<ClassifiedChunk, readonly TokenEntry[]> {
-  const sortedChunks = chunks.toSorted(
-    (left, right) => left.chunk.sourceStartOffset - right.chunk.sourceStartOffset,
-  )
-  const maxEnds: number[] = []
-  let maxEnd = -Infinity
-  for (const chunk of sortedChunks) {
-    maxEnd = Math.max(maxEnd, chunk.chunk.sourceEndOffset)
-    maxEnds.push(maxEnd)
-  }
-  const partitions = new Map<ClassifiedChunk, TokenEntry[]>()
-  for (let sourceIndex = 0; sourceIndex < tokens.length; sourceIndex += 1) {
-    const token = tokens[sourceIndex]!
-    if (!validToken(token)) continue
-    const entry = { token, sourceIndex }
-    const firstCandidate = upperBound(
-      sortedChunks.length,
-      (index) => maxEnds[index] ?? -Infinity,
-      token.start,
-    )
-    for (let index = firstCandidate; index < sortedChunks.length; index += 1) {
-      const chunk = sortedChunks[index]!
-      if (chunk.chunk.sourceStartOffset >= token.end) break
-      if (!tokenIntersectsChunk(token, chunk.chunk)) continue
-      const partition = partitions.get(chunk) ?? []
-      partition.push(entry)
-      partitions.set(chunk, partition)
-    }
-  }
-  return partitions
-}
-
-function indexedTokenEntries(
-  tokens: readonly EditorToken[],
-  index: EditorTokenIndex,
-  chunk: ClassifiedChunk,
-): TokenEntry[] {
-  const endIndex = lowerBound(
-    tokens.length,
-    (position) => tokens[position]!.start,
-    chunk.chunk.sourceEndOffset,
-  )
-  const startIndex = upperBound(
-    endIndex,
-    (position) => index.maxEnds[position] ?? 0,
-    chunk.chunk.sourceStartOffset,
-  )
+function tokenEntriesForChunk(tokens: EditorTokenStore, chunk: ClassifiedChunk): TokenEntry[] {
+  const endIndex = tokens.firstStartingAtOrAfter(chunk.chunk.sourceEndOffset)
+  const startIndex = tokens.firstEndingAfter(chunk.chunk.sourceStartOffset, endIndex)
   const entries: TokenEntry[] = []
-  for (let sourceIndex = startIndex; sourceIndex < endIndex; sourceIndex += 1) {
-    const token = tokens[sourceIndex]!
-    if (!validToken(token) || !tokenIntersectsChunk(token, chunk.chunk)) continue
+  tokens.forEachInRange(startIndex, endIndex, (start, end, styleId, sourceIndex) => {
+    const token = { start, end, style: tokens.styles[styleId]! }
+    if (!validToken(token) || !tokenIntersectsChunk(token, chunk.chunk)) return
     entries.push({ token, sourceIndex })
-  }
+  })
   return entries
 }
 
@@ -562,6 +495,16 @@ function copyTheme(
   }) as EditorThemeJSON
 }
 
+function packedTokensToJSON(tokens: EditorTokenStore): EditorViewSnapshotJSON['tokens'] {
+  const packed = tokens.toPacked()
+  return {
+    starts: Array.from(packed.starts),
+    ends: Array.from(packed.ends),
+    styleIds: Array.from(packed.styleIds),
+    styles: packed.styles.map(copyTokenStyle),
+  }
+}
+
 function copyTokenStyle(style: EditorTokenStyle): EditorTokenStyleJSON {
   return compactRecord({
     color: style.color,
@@ -648,25 +591,12 @@ function copyFoldMarker(marker: EditorViewSnapshot['foldMarkers'][number]) {
   }
 }
 
-function hasOverlappingTokens(entries: readonly TokenEntry[]): boolean {
-  let previousEnd = -Infinity
-  for (const { token } of entries) {
-    if (token.start < previousEnd) return true
-    previousEnd = Math.max(previousEnd, token.end)
-  }
-  return false
-}
-
 function validToken(token: EditorToken): boolean {
   return Number.isFinite(token.start) && Number.isFinite(token.end) && token.end > token.start
 }
 
 function tokenIntersectsChunk(token: EditorToken, chunk: EditorVisibleChunkSnapshot): boolean {
   return token.end > chunk.sourceStartOffset && token.start < chunk.sourceEndOffset
-}
-
-function compareTokenEntries(left: TokenEntry, right: TokenEntry): number {
-  return left.token.start - right.token.start || left.sourceIndex - right.sourceIndex
 }
 
 function compactStylesEqual(
@@ -696,26 +626,4 @@ function compactRecord<T extends Record<string, unknown>>(record: T): T {
     delete record[key]
   }
   return record
-}
-
-function lowerBound(length: number, valueAt: (index: number) => number, target: number): number {
-  let low = 0
-  let high = length
-  while (low < high) {
-    const middle = (low + high) >> 1
-    if (valueAt(middle) < target) low = middle + 1
-    else high = middle
-  }
-  return low
-}
-
-function upperBound(length: number, valueAt: (index: number) => number, target: number): number {
-  let low = 0
-  let high = length
-  while (low < high) {
-    const middle = (low + high) >> 1
-    if (valueAt(middle) <= target) low = middle + 1
-    else high = middle
-  }
-  return low
 }

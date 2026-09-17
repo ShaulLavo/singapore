@@ -6,9 +6,9 @@ import { setHighlightRegistry } from '../src/public/testing'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxResult,
+  EditorTokenStore,
   type EditorSyntaxSession,
 } from '../src/syntax'
-import type { EditorToken } from '../src/tokens'
 import { createVisibleEditor } from './factories/visibleEditor'
 
 type PendingResult<T> = {
@@ -54,7 +54,7 @@ async function syntaxEditor() {
       const syntax = context.registerSyntaxProvider({ createSession: () => syntaxSession })
       const highlight = context.registerHighlighter({
         createSession: () => ({
-          refresh: async () => ({ tokens: [] }),
+          refresh: async () => ({ tokens: EditorTokenStore.empty() }),
           applyChange: (change) => enqueueResult(highlights, change),
           dispose() {},
         }),
@@ -97,25 +97,27 @@ test('older batch syntax and highlighting cannot repaint a newer document versio
   await vi.advanceTimersByTimeAsync(200)
   expect(structural).toHaveLength(2)
   expect(highlights).toHaveLength(2)
-  const tokens: readonly EditorToken[] = [
+  const tokens = EditorTokenStore.fromTokens([
     { start: 0, end: 2, style: { color: 'var(--editor-syntax-string)' } },
-  ]
+  ])
   const folds = [{ startIndex: 0, endIndex: 11, startLine: 0, endLine: 1, type: 'current' }]
 
   structural[1]!.resolve({ ...createEmptySyntaxResult(), folds })
   highlights[1]!.resolve({ tokens })
   await vi.advanceTimersByTimeAsync(0)
-  expect(editor['tokens']).toEqual(tokens)
+  expect(editor['tokens'].toTokens()).toEqual(tokens.toTokens())
   expect(editor['syntaxFoldProjection']()).toEqual(folds)
 
   structural[0]!.resolve(createEmptySyntaxResult())
   highlights[0]!.resolve({
-    tokens: [{ start: 5, end: 8, style: { color: 'var(--editor-syntax-comment)' } }],
+    tokens: EditorTokenStore.fromTokens([
+      { start: 5, end: 8, style: { color: 'var(--editor-syntax-comment)' } },
+    ]),
   })
   await vi.advanceTimersByTimeAsync(0)
 
   expect(editor.materializeFullText()).toBe('BAhead\nbody\ntailAB')
-  expect(editor['tokens']).toEqual(tokens)
+  expect(editor['tokens'].toTokens()).toEqual(tokens.toTokens())
   expect(editor['syntaxFoldProjection']()).toEqual(folds)
   expect(editor['view'].getState().mountedRows[0]?.text).toBe('BAhead')
 })
@@ -164,7 +166,9 @@ test.each(['replace', 'dispose'])('pending batch results are cancelled on %s', a
     ...createEmptySyntaxResult(),
     tokens: [{ start: 0, end: 2, style: {} }],
   })
-  highlights[0]!.resolve({ tokens: [{ start: 0, end: 2, style: { fontWeight: 700 } }] })
+  highlights[0]!.resolve({
+    tokens: EditorTokenStore.fromTokens([{ start: 0, end: 2, style: { fontWeight: 700 } }]),
+  })
   await vi.advanceTimersByTimeAsync(0)
 
   expect(adopt).not.toHaveBeenCalled()

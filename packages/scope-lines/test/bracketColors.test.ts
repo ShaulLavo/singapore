@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { BracketInfo } from '@singapore-editor/core/syntax'
+import { EditorTokenStore, type BracketInfo } from '@singapore-editor/core/syntax'
 import {
   applyEditorTheme,
   type VirtualizedTextHighlightStyle,
@@ -296,7 +296,7 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
     fullText: text,
     textVersion: 1,
     lineStarts: [0],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },

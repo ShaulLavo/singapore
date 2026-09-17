@@ -8,7 +8,7 @@ import type {
 } from '../plugins'
 import type { EditorSyntaxLanguageId } from '../syntax'
 import type { EditorTheme } from '../theme'
-import type { EditorToken } from '../tokens'
+import type { EditorTokenStore } from '../syntax/tokenStore'
 import type { BrowserTextMetrics, VirtualizedFoldMarker } from '../virtualization'
 
 export { EditorWorkScheduler as EditorSecondaryViewScheduler } from '../editor/workScheduler'
@@ -47,7 +47,7 @@ export type EditorSecondaryViewLineModel = {
 export type EditorSecondaryViewSyntaxColors = {
   readonly languageId: EditorSyntaxLanguageId | null
   readonly theme?: EditorTheme | null
-  readonly tokens: readonly EditorToken[]
+  readonly tokens: EditorTokenStore
 }
 
 export type EditorSecondaryViewDecoration = {

@@ -10,6 +10,7 @@ import {
   type EditorSyntaxResult,
   type EditorSyntaxSession,
 } from '../src/syntax/session'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 
 const disposers: Array<() => void> = []
 
@@ -38,8 +39,8 @@ describe('fallback folding ownership', () => {
           activate: (context) =>
             context.registerHighlighter({
               createSession: () => ({
-                refresh: async () => ({ tokens: [] }),
-                applyChange: async () => ({ tokens: [] }),
+                refresh: async () => ({ tokens: EditorTokenStore.empty() }),
+                applyChange: async () => ({ tokens: EditorTokenStore.empty() }),
                 dispose: () => undefined,
               }),
             }),

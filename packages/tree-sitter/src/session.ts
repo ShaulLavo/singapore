@@ -13,13 +13,12 @@ import {
   createEmptySyntaxResult,
   createEditorRuntimeSessionId,
   type EditorSyntaxDegradedState,
-  type EditorToken,
   type EditorSyntaxRange,
   type EditorSyntaxResult,
   type EditorSyntaxSession,
   type EditorSyntaxFoldingSupport,
   treeSitterCapturesToEditorTokens,
-  unpackEditorTokens,
+  EditorTokenStore,
 } from '@singapore-editor/core/syntax'
 import { documentSessionChangeTextSnapshot } from '@singapore-editor/core/internal'
 import type {
@@ -214,7 +213,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     return this.result
   }
 
-  public getTokens(): readonly EditorSyntaxResult['tokens'][number][] {
+  public getTokens(): EditorSyntaxResult['tokens'] {
     return this.result.tokens
   }
 
@@ -608,11 +607,11 @@ const treeSitterParseResultToEditorSyntaxResultInner = (
   tokens: resultTokens(result),
 })
 
-function resultTokens(result: TreeSitterParseResult): readonly EditorToken[] {
-  if (result.tokens) return result.tokens
-  if (result.tokensPacked) return unpackEditorTokens(result.tokensPacked)
-
-  return treeSitterCapturesToEditorTokens(result.captures)
+function resultTokens(result: TreeSitterParseResult): EditorTokenStore {
+  if (result.tokensPacked) return EditorTokenStore.fromPacked(result.tokensPacked)
+  return EditorTokenStore.fromTokens(
+    result.tokens ?? treeSitterCapturesToEditorTokens(result.captures),
+  )
 }
 
 function recordParseResultPayload(result: TreeSitterParseResult): void {

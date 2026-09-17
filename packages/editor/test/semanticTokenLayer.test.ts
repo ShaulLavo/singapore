@@ -14,7 +14,7 @@ import {
   SEMANTIC_TOKEN_Z_INDEX,
   type SemanticTokenLayerOptions,
 } from '../src/semanticTokenLayer'
-import { createSemanticTokenStyles, type SemanticTokenSpan } from '../src/syntax'
+import { createSemanticTokenStyles, EditorTokenStore, type SemanticTokenSpan } from '../src/syntax'
 import type { VirtualizedTextHighlightStyle } from '../src/virtualization'
 
 const LINE_COUNT = 12
@@ -101,7 +101,7 @@ function baseSnapshot(): EditorViewSnapshot {
     syntaxStatus: 'ready',
     paintLayers: [],
     lineStarts: Array.from({ length: LINE_COUNT }, (_, row) => row * LINE_LENGTH),
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: {} as EditorViewSnapshot['metrics'],

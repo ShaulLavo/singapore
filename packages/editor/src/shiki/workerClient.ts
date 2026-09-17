@@ -7,11 +7,7 @@ import {
 } from '@singapore-editor/textbuffer'
 import type { TextEdit } from '../tokens'
 
-import {
-  splicePackedEditorTokens,
-  unpackEditorTokens,
-  type PackedEditorTokens,
-} from '../syntax/packedTokens'
+import { EditorTokenStore } from '../syntax/tokenStore'
 import type {
   EditorHighlightResult,
   EditorHighlighterSession,
@@ -359,7 +355,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   private snapshot: PieceTableSnapshot
   private textSnapshot: DocumentTextSnapshot
   // The whole document's tokens, kept packed so an edit answer only has to splice its lines in.
-  private packed: PackedEditorTokens | null = null
+  private store: EditorTokenStore | null = null
   private preloadScheduled = false
   private opened = false
   private disposed = false
@@ -407,7 +403,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       this.textSnapshot = textSnapshot
       this.opened = true
       this.disposed = false
-      this.packed = result?.tokensPacked ?? null
+      this.store = result?.tokensPacked ? EditorTokenStore.fromPacked(result.tokensPacked) : null
       return { tokens: this.currentTokens(), theme: result?.theme }
     })
   }
@@ -465,19 +461,17 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
   private adoptEditResult(result: ShikiWorkerTransportResult | undefined): void {
     if (result?.tokensPacked) {
-      this.packed = result.tokensPacked
+      this.store = EditorTokenStore.fromPacked(result.tokensPacked)
       return
     }
     if (!result?.patchesPacked) return
-    if (!this.packed) throw new Error('Shiki token patches arrived before any full tokens')
+    if (!this.store) throw new Error('Shiki token patches arrived before any full tokens')
 
-    for (const patch of result.patchesPacked) {
-      this.packed = splicePackedEditorTokens(this.packed, patch)
-    }
+    for (const patch of result.patchesPacked) this.store = this.store.applyPatch(patch)
   }
 
-  private currentTokens(): EditorHighlightResult['tokens'] {
-    return this.packed ? unpackEditorTokens(this.packed) : []
+  private currentTokens(): EditorTokenStore {
+    return this.store ?? EditorTokenStore.empty()
   }
 
   private async editPayloadForChange(
@@ -527,7 +521,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 }
 
 function emptyHighlightResult(): EditorHighlightResult {
-  return { tokens: [] }
+  return { tokens: EditorTokenStore.empty() }
 }
 
 export const createTextDiffEdit = (previousText: string, nextText: string) => {

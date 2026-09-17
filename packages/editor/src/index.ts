@@ -411,6 +411,8 @@ export type {
   FoldRange,
 } from './public/syntax'
 export type { EditorToken, EditorTokenStyle } from './tokens'
+export { EditorTokenStore, toEditorTokenStore } from './syntax/tokenStore'
+export type { EditorTokenInput, EditorTokenStoreOrigin } from './syntax/tokenStore'
 export type {
   CreateMergeConflictDocumentTextOptions,
   EditorMergeConflictFeature,

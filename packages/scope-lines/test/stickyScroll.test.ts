@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Editor } from '@singapore-editor/core/editor'
 import { VirtualizedTextView } from '@singapore-editor/core/internal'
 import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
-import type { EditorToken } from '@singapore-editor/core/syntax'
+import { EditorTokenStore, type EditorToken } from '@singapore-editor/core/syntax'
 import type {
   EditorPluginContext,
   EditorViewContributionContext,
@@ -243,7 +243,10 @@ describe('createStickyScrollPlugin', () => {
   it('carries the tokens of the rows it mirrors, rewritten into the stack', () => {
     const setTokens = vi.spyOn(EditorSecondaryTextView.prototype, 'setTokens')
     const registration = registeredProvider(createStickyScrollPlugin())
-    const testContext = context({ ...scrolledSnapshot(60), tokens: tokens() })
+    const testContext = context({
+      ...scrolledSnapshot(60),
+      tokens: EditorTokenStore.fromTokens(tokens()),
+    })
 
     registration?.createContribution(testContext)
 
@@ -456,7 +459,7 @@ function snapshot(): EditorViewSnapshot {
     },
     changesSinceDocumentSyncPoint: () => null,
     lineStarts: lineStarts(),
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
     metrics: { rowHeight: ROW_HEIGHT, characterWidth: 8 },

@@ -52,7 +52,7 @@ test('a sparse batch preserves highlights, collapsed syntax folds and row decora
     { from: text.length, to: text.length, text: '\nlast' },
   ])
 
-  expect(editor['tokens']).toEqual([{ ...token, start: 11, end: 13 }])
+  expect(editor['tokens'].toTokens()).toEqual([{ ...token, start: 11, end: 13 }])
   expect(editor['syntaxFoldProjection']()).toEqual([
     { startIndex: startIndex + 6, endIndex: endIndex + 6, startLine: 2, endLine: 4, type: 'block' },
   ])
@@ -196,7 +196,7 @@ test('batch contributions see matching final text, tokens, folds and mounted row
   expect(snapshots.length).toBeGreaterThan(0)
   for (const snapshot of snapshots) {
     expect(snapshot.fullText).toBe(`X${text}Y`)
-    expect(snapshot.tokens).toEqual([{ start: 6, end: 10, style: { color: 'red' } }])
+    expect(snapshot.tokens.toTokens()).toEqual([{ start: 6, end: 10, style: { color: 'red' } }])
     expect(snapshot.visibleRows[0]?.text).toBe('Xhead')
   }
 })

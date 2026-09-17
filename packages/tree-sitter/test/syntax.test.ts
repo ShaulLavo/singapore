@@ -8,7 +8,10 @@ import {
 } from '@singapore-editor/core/document'
 import {
   styleForTreeSitterCapture,
+  toEditorTokenStore,
   treeSitterCapturesToEditorTokens,
+  type EditorToken,
+  type EditorTokenInput,
 } from '@singapore-editor/core/syntax'
 import { EditorPluginHost } from '@singapore-editor/core/testing'
 import {
@@ -424,7 +427,7 @@ describe('Tree-sitter syntax capture conversion', () => {
 
     expect(parsePayloads[0]?.includeCaptures).toBe(false)
     expect(result.captures).toEqual([])
-    expect(result.tokens).toEqual(tokens)
+    expect(tokenObjects(result.tokens)).toEqual(tokens)
   })
 
   it('tags full syntax results with snapshot and language configuration', async () => {
@@ -532,7 +535,7 @@ describe('Tree-sitter syntax capture conversion', () => {
 
     expect(parsePayloads[0]?.includeCaptures).toBe(true)
     expect(result.captures).toEqual(captures)
-    expect(result.tokens).toEqual(treeSitterCapturesToEditorTokens(captures))
+    expect(tokenObjects(result.tokens)).toEqual(treeSitterCapturesToEditorTokens(captures))
   })
 
   it('uses parse acknowledgements and explicit range queries in range syntax mode', async () => {
@@ -567,7 +570,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     const ranged = await session.queryRange({ startIndex: 0, endIndex: 6 })
 
     expect(parsePayloads[0]?.resultMode).toBe('parseOnly')
-    expect(refreshed.tokens).toEqual([])
+    expect(tokenObjects(refreshed.tokens)).toEqual([])
     expect(refreshed.projection).toMatchObject({
       language: { languageId: 'typescript', mode: 'range' },
       requestedRanges: [],
@@ -580,7 +583,7 @@ describe('Tree-sitter syntax capture conversion', () => {
       length: text.length,
       version: 1,
     })
-    expect(ranged.tokens).toEqual(tokens)
+    expect(tokenObjects(ranged.tokens)).toEqual(tokens)
   })
 
   it('maps worker degraded states onto syntax results', async () => {
@@ -690,7 +693,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     const pendingRange = await session.queryRange({ startIndex: 0, endIndex: 6 })
 
     expect(session.canQueryRange()).toBe(false)
-    expect(pendingRange.tokens).toEqual([])
+    expect(tokenObjects(pendingRange.tokens)).toEqual([])
     expect(rangePayloads).toHaveLength(0)
 
     parseResult.resolve(createParseAck(1))
@@ -699,7 +702,9 @@ describe('Tree-sitter syntax capture conversion', () => {
 
     expect(session.canQueryRange()).toBe(true)
     expect(rangePayloads).toHaveLength(1)
-    expect(readyRange.tokens).toEqual([{ start: 0, end: 5, style: { color: '#123456' } }])
+    expect(tokenObjects(readyRange.tokens)).toEqual([
+      { start: 0, end: 5, style: { color: '#123456' } },
+    ])
   })
 
   it('suppresses stale range query results', async () => {
@@ -727,7 +732,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     await session.refresh(createPieceTableSnapshot(text), text)
     const result = await session.queryRange({ startIndex: 0, endIndex: 6 })
 
-    expect(result.tokens).toEqual([])
+    expect(tokenObjects(result.tokens)).toEqual([])
   })
 
   it('suppresses stale parse results after a newer refresh starts', async () => {
@@ -772,7 +777,9 @@ describe('Tree-sitter syntax capture conversion', () => {
     })
     await firstRefresh
 
-    expect(session.getResult().tokens).toEqual([{ start: 6, end: 7, style: { color: '#00ff00' } }])
+    expect(tokenObjects(session.getResult().tokens)).toEqual([
+      { start: 6, end: 7, style: { color: '#00ff00' } },
+    ])
   })
 
   it('reuses document change edits when they apply to the cached syntax snapshot', async () => {
@@ -1085,6 +1092,10 @@ describe('Tree-sitter syntax capture conversion', () => {
     expect(session.getSnapshotVersion()).toBe(3)
   })
 })
+
+function tokenObjects(tokens: EditorTokenInput): readonly EditorToken[] {
+  return toEditorTokenStore(tokens).toTokens()
+}
 
 function createCapturingTreeSitterBackend() {
   const backend = {

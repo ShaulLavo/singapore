@@ -8,7 +8,6 @@ import {
 import { createEditorViewSnapshot } from '../src/editor/viewSnapshot'
 import { EditorViewContributionController } from '../src/editor/viewContributions'
 import { MAX_VISIBLE_PAINT_RECTANGLES } from '../src/editor/visiblePaint'
-import { setEditorTokenIndex } from '../src/editor/tokenIndex'
 import { createInlineMap } from '../src/inlineMap'
 import { createPieceTableSnapshot } from '../src/public/document'
 import type {
@@ -18,6 +17,7 @@ import type {
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
 } from '../src/plugins'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import type { EditorToken } from '../src/tokens'
 import { VirtualizedTextView } from '../src/virtualization'
 
@@ -33,19 +33,13 @@ type SnapshotHarness = {
 
 describe('editor view snapshot serialization', () => {
   it('attaches non-enumerable methods and keeps compact extraction mounted and bounded', () => {
-    const tokens: EditorToken[] = [
+    const tokens = EditorTokenStore.fromTokens([
       {
         start: 0,
         end: 5,
         style: { color: '#ff0000', fontWeight: 700 },
       },
-    ]
-    setEditorTokenIndex(tokens, {
-      maxEnds: [5],
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
+    ])
     const harness = snapshotHarness({ tokens })
 
     expect(Object.keys(harness.snapshot)).not.toContain('toJSON')
@@ -89,13 +83,8 @@ describe('editor view snapshot serialization', () => {
   })
 
   it('does no source or token work for transformed, injected, core-rendered, or refused paint', () => {
-    let tokenReads = 0
-    const tokens = new Proxy<readonly EditorToken[]>([], {
-      get(target, property, receiver) {
-        if (typeof property === 'string' && /^\d+$/.test(property)) tokenReads += 1
-        return Reflect.get(target, property, receiver)
-      },
-    })
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: 'red' } }])
+    const tokenReads = watchTokenReads(tokens)
     const transformed = snapshotHarness({
       tokens,
       chunks: [chunk(0, 1_000_000, [{ kind: 'text', text: 'x' }])],
@@ -105,7 +94,7 @@ describe('editor view snapshot serialization', () => {
       'plain-transformed',
     )
     expect(transformed.readRange).not.toHaveBeenCalled()
-    expect(tokenReads).toBe(0)
+    expect(tokenReads.calls()).toBe(0)
 
     const injected = snapshotHarness({
       rowSource: 'injected',
@@ -131,40 +120,27 @@ describe('editor view snapshot serialization', () => {
     expect(unsupported.readRange).not.toHaveBeenCalled()
   })
 
-  it('scans an unindexed external source once and refuses ambiguous overlap only', () => {
-    let tokenReads = 0
-    const external = new Proxy<readonly EditorToken[]>(
-      [
-        { start: 0, end: 4, style: { color: 'red' } },
-        { start: 2, end: 5, style: { color: 'blue' } },
-      ],
-      {
-        get(target, property, receiver) {
-          if (typeof property === 'string' && /^\d+$/.test(property)) tokenReads += 1
-          return Reflect.get(target, property, receiver)
-        },
-      },
-    )
-    const harness = snapshotHarness({ tokens: external })
+  it('replays hand-built unsorted overlap exactly, in store order', () => {
+    const tokens = EditorTokenStore.fromTokens([
+      { start: 2, end: 5, style: { color: 'blue' } },
+      { start: 0, end: 4, style: { color: 'red' } },
+    ])
+    const harness = snapshotHarness({ tokens })
 
     expect(harness.snapshot.toVisibleSnapshot()?.rows[0]?.chunks[0]).toMatchObject({
-      replayFidelity: 'plain-overlap',
-      runs: [],
+      replayFidelity: 'exact',
+      runs: [
+        { start: 0, end: 2, style: { color: 'red' } },
+        { start: 2, end: 5, style: { color: 'blue' } },
+      ],
     })
-    expect(tokenReads).toBe(external.length)
   })
 
-  it('replays indexed built-in overlap in deterministic source order', () => {
-    const tokens: EditorToken[] = [
+  it('replays overlap in deterministic store order', () => {
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 5, style: { color: 'red' } },
       { start: 2, end: 4, style: { color: 'blue' } },
-    ]
-    setEditorTokenIndex(tokens, {
-      maxEnds: [5, 5],
-      monotonicEnd: false,
-      nonOverlapping: false,
-      sortedByStart: true,
-    })
+    ])
     const harness = snapshotHarness({ tokens })
 
     expect(harness.snapshot.toVisibleSnapshot()?.rows[0]?.chunks[0]?.runs).toEqual([
@@ -185,25 +161,49 @@ describe('editor view snapshot serialization', () => {
     expect(harness.lineStartsViewToArray).not.toHaveBeenCalled()
   })
 
+  it('serializes tokens packed, and the packed arrays rebuild an equal store', () => {
+    const keyword = { color: '#ff0000', fontWeight: 700 }
+    const tokens = EditorTokenStore.fromTokens([
+      { start: 6, end: 11, style: { color: '#00ff00', fontStyle: 'italic' } },
+      { start: 0, end: 5, style: keyword },
+      { start: 14, end: 15, style: keyword },
+    ])
+    const harness = snapshotHarness({ tokens })
+
+    const json = JSON.parse(JSON.stringify(harness.snapshot)).tokens
+    expect(json).toEqual({
+      starts: [0, 6, 14],
+      ends: [5, 11, 15],
+      styleIds: [1, 0, 1],
+      styles: [{ color: '#00ff00', fontStyle: 'italic' }, keyword],
+    })
+
+    const rebuilt = EditorTokenStore.fromPacked({
+      starts: Uint32Array.from(json.starts),
+      ends: Uint32Array.from(json.ends),
+      styleIds: Uint32Array.from(json.styleIds),
+      styles: json.styles,
+      monotonicEnd: false,
+      nonOverlapping: false,
+      sortedByStart: false,
+    })
+    expect(rebuilt.equals(tokens)).toBe(true)
+    expect(rebuilt.nonOverlapping).toBe(true)
+  })
+
   it('rejects non-finite numeric token style values instead of JSON-null coercion', () => {
     const harness = snapshotHarness({
-      tokens: [{ start: 0, end: 5, style: { fontWeight: Number.POSITIVE_INFINITY } }],
+      tokens: EditorTokenStore.fromTokens([
+        { start: 0, end: 5, style: { fontWeight: Number.POSITIVE_INFINITY } },
+      ]),
     })
 
     expect(() => harness.snapshot.toJSON()).toThrow(/fontWeight.*finite/)
   })
 
   it('checks same-length transformed paint before token work and keeps all fallbacks zero-work', () => {
-    let tokenReads = 0
-    const tokens = new Proxy<readonly EditorToken[]>(
-      [{ start: 0, end: 5, style: { color: 'red' } }],
-      {
-        get(target, property, receiver) {
-          if (typeof property === 'string' && /^\d+$/.test(property)) tokenReads += 1
-          return Reflect.get(target, property, receiver)
-        },
-      },
-    )
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: 'red' } }])
+    const tokenReads = watchTokenReads(tokens)
     const sameLength = snapshotHarness({
       tokens,
       chunks: [chunk(0, 5, [{ kind: 'text', text: 'other' }])],
@@ -213,7 +213,7 @@ describe('editor view snapshot serialization', () => {
       'plain-transformed',
     )
     expect(sameLength.readRange).toHaveBeenCalledTimes(1)
-    expect(tokenReads).toBe(0)
+    expect(tokenReads.calls()).toBe(0)
 
     const allFallback = snapshotHarness({
       tokens,
@@ -224,10 +224,10 @@ describe('editor view snapshot serialization', () => {
     })
     expect(allFallback.snapshot.toVisibleSnapshot()?.rows[0]?.chunks).toHaveLength(2)
     expect(allFallback.readRange).not.toHaveBeenCalled()
-    expect(tokenReads).toBe(0)
+    expect(tokenReads.calls()).toBe(0)
   })
 
-  it('bounds indexed token reads to the mounted exact chunk', () => {
+  it('bounds token reads to the mounted exact chunk', () => {
     const text = 'x'.repeat(100_000)
     const source = Array.from(
       { length: 10_000 },
@@ -237,19 +237,8 @@ describe('editor view snapshot serialization', () => {
         style: { color: `#${index.toString(16).padStart(6, '0').slice(-6)}` },
       }),
     )
-    let tokenReads = 0
-    const tokens = new Proxy<readonly EditorToken[]>(source, {
-      get(target, property, receiver) {
-        if (typeof property === 'string' && /^\d+$/.test(property)) tokenReads += 1
-        return Reflect.get(target, property, receiver)
-      },
-    })
-    setEditorTokenIndex(tokens, {
-      maxEnds: source.map((token) => token.end),
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
+    const tokens = EditorTokenStore.fromTokens(source)
+    const tokenReads = watchTokenReads(tokens)
     const harness = snapshotHarness({
       text,
       tokens,
@@ -257,27 +246,25 @@ describe('editor view snapshot serialization', () => {
     })
 
     expect(harness.snapshot.toVisibleSnapshot()?.rows[0]?.chunks[0]?.runs).toHaveLength(1)
-    expect(tokenReads).toBeLessThan(64)
+    expect(tokenReads.visited()).toBeLessThan(64)
     expect(harness.readRange).toHaveBeenCalledWith(50_000, 50_005)
   })
 
-  it('projects many non-overlapping indexed runs in one linear pass', () => {
+  it('projects many non-overlapping runs in one linear pass', () => {
     const count = 5_000
     const text = 'x'.repeat(count)
-    const tokens = Array.from(
-      { length: count },
-      (_value, index): EditorToken => ({
-        start: index,
-        end: index + 1,
-        style: { color: index % 2 === 0 ? 'red' : 'blue' },
-      }),
+    const red = { color: 'red' }
+    const blue = { color: 'blue' }
+    const tokens = EditorTokenStore.fromTokens(
+      Array.from(
+        { length: count },
+        (_value, index): EditorToken => ({
+          start: index,
+          end: index + 1,
+          style: index % 2 === 0 ? red : blue,
+        }),
+      ),
     )
-    setEditorTokenIndex(tokens, {
-      maxEnds: tokens.map((token) => token.end),
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
     const harness = snapshotHarness({
       text,
       tokens,
@@ -287,7 +274,7 @@ describe('editor view snapshot serialization', () => {
     expect(harness.snapshot.toVisibleSnapshot()?.rows[0]?.chunks[0]?.runs).toHaveLength(count)
   })
 
-  it('partitions many exact chunks with one unindexed external token pass', () => {
+  it('reads each token once across many exact chunks', () => {
     const text = 'x'.repeat(2_000)
     const source = Array.from(
       { length: 200 },
@@ -297,20 +284,15 @@ describe('editor view snapshot serialization', () => {
         style: { color: 'red' },
       }),
     )
-    let tokenReads = 0
-    const tokens = new Proxy<readonly EditorToken[]>(source, {
-      get(target, property, receiver) {
-        if (typeof property === 'string' && /^\d+$/.test(property)) tokenReads += 1
-        return Reflect.get(target, property, receiver)
-      },
-    })
+    const tokens = EditorTokenStore.fromTokens(source)
+    const tokenReads = watchTokenReads(tokens)
     const chunks = source.map((token) =>
       chunk(token.start, token.end, [{ kind: 'text', text: 'xxxxx' }]),
     )
     const harness = snapshotHarness({ text, tokens, chunks })
 
     expect(harness.snapshot.toVisibleSnapshot()?.rows[0]?.chunks).toHaveLength(chunks.length)
-    expect(tokenReads).toBe(source.length)
+    expect(tokenReads.visited()).toBe(source.length)
   })
 
   it('copies only live horizontal chunks and source ranges from a huge mounted line', () => {
@@ -532,19 +514,8 @@ describe('editor view snapshot serialization', () => {
     const parts: Extract<EditorMountedChunkPaintJSON, { kind: 'replayable' }>['parts'] = [
       { kind: 'text', text: 'const' },
     ]
-    const tokens: EditorToken[] = [
-      {
-        start: 0,
-        end: 5,
-        style: { color: '#ff0000', fontStyle: 'italic', fontWeight: 700 },
-      },
-    ]
-    setEditorTokenIndex(tokens, {
-      maxEnds: [5],
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
+    const style = { color: '#ff0000', fontStyle: 'italic' as const, fontWeight: 700 }
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 5, style }])
     const harness = snapshotHarness({
       metadata,
       theme,
@@ -560,11 +531,11 @@ describe('editor view snapshot serialization', () => {
     expect(visible.rows).not.toBe(harness.snapshot.visibleRows)
     expect(visible.rows[0]?.chunks).not.toBe(harness.snapshot.visibleRows[0]?.chunks)
     expect(visible.rows[0]?.chunks[0]?.parts).not.toBe(parts)
-    expect(visible.rows[0]?.chunks[0]?.runs[0]?.style).not.toBe(tokens[0]?.style)
+    expect(visible.rows[0]?.chunks[0]?.runs[0]?.style).not.toBe(style)
 
     theme.syntax.keyword = '#changed'
     ;(parts[0] as { text: string }).text = 'changed'
-    ;(tokens[0]!.style as { color?: string }).color = '#changed'
+    style.color = '#changed'
     ;(visibleJSON.rows[0]!.chunks[0]!.parts[0] as { text: string }).text = 'json changed'
     expect(visible.theme?.syntax?.keyword).toBe('#ff0000')
     expect(visible.rows[0]?.chunks[0]?.parts[0]).toEqual({ kind: 'text', text: 'const' })
@@ -618,17 +589,11 @@ describe('editor view snapshot serialization', () => {
 
   it('clips half-open token edges to an exact mounted chunk', () => {
     const text = 'abcdefghijklmno'
-    const tokens: EditorToken[] = [
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 5, style: { color: 'before' } },
       { start: 4, end: 6, style: { color: 'crossing' } },
       { start: 10, end: 12, style: { color: 'after' } },
-    ]
-    setEditorTokenIndex(tokens, {
-      maxEnds: [5, 6, 12],
-      monotonicEnd: true,
-      nonOverlapping: false,
-      sortedByStart: true,
-    })
+    ])
     const harness = snapshotHarness({
       text,
       tokens,
@@ -641,13 +606,9 @@ describe('editor view snapshot serialization', () => {
   })
 
   it('preserves a mounted tab and token offsets in buffer coordinates', () => {
-    const tokens: EditorToken[] = [{ start: 1, end: 6, style: { color: 'after-tab' } }]
-    setEditorTokenIndex(tokens, {
-      maxEnds: [6],
-      monotonicEnd: true,
-      nonOverlapping: true,
-      sortedByStart: true,
-    })
+    const tokens = EditorTokenStore.fromTokens([
+      { start: 1, end: 6, style: { color: 'after-tab' } },
+    ])
     const harness = snapshotHarness({
       text: '\talpha',
       tokens,
@@ -980,6 +941,16 @@ describe('visible contribution paint snapshots', () => {
   })
 })
 
+// Every snapshot token read goes through a bisection and then `forEachInRange`.
+function watchTokenReads(tokens: EditorTokenStore) {
+  const bisect = vi.spyOn(tokens, 'firstStartingAtOrAfter')
+  const walk = vi.spyOn(tokens, 'forEachInRange')
+  return {
+    calls: () => bisect.mock.calls.length + walk.mock.calls.length,
+    visited: () => walk.mock.calls.reduce((sum, [from, to]) => sum + Math.max(0, to - from), 0),
+  }
+}
+
 function paintRectangle(overrides: Partial<EditorVisiblePaintRectangle> = {}) {
   return { left: 12, top: 20, width: 1, height: 40, backgroundColor: 'rgb(1, 2, 3)', ...overrides }
 }
@@ -990,7 +961,7 @@ function snapshotHarness(
     readonly syntaxStatus?: EditorViewSnapshot['syntaxStatus']
     readonly metadata?: unknown
     readonly theme?: EditorViewSnapshot['theme']
-    readonly tokens?: readonly EditorToken[]
+    readonly tokens?: EditorTokenStore
     readonly chunks?: readonly EditorVisibleRowSnapshot['chunks'][number][]
     readonly rows?: readonly EditorVisibleRowSnapshot[]
     readonly rowSource?: EditorVisibleRowSnapshot['source']
@@ -1071,7 +1042,7 @@ function snapshotHarness(
       firstIndexAtOrAfter: () => 0,
       toArray: lineStartsViewToArray,
     },
-    tokens: options.tokens ?? [],
+    tokens: options.tokens ?? EditorTokenStore.empty(),
     brackets: [{ index: 0, char: '{', depth: 0 }],
     selections: [
       { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' as const },

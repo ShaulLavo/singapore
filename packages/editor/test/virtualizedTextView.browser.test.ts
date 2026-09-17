@@ -11,6 +11,7 @@ import { clearBrowserTextMetricsCache } from '../src/virtualization/browserMetri
 import { FixedRowVirtualizer } from '../src/virtualization/fixedRowVirtualizer'
 import { VirtualizedTextView } from '../src/virtualization'
 import { projectTokensThroughEdit } from '../src/editor/tokenProjection'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import type { EditorToken } from '../src/public/syntax'
 
 describe.skipIf(typeof globalThis.Highlight === 'undefined')(
@@ -200,11 +201,11 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
         selectionHighlightName: 'native-token-test',
       })
       let text = 'aa\nbb\ncc'
-      let tokens: readonly EditorToken[] = [
+      let tokens = EditorTokenStore.fromTokens([
         { start: 0, end: 2, style: { color: '#ff0000' } },
         { start: 3, end: 5, style: { color: '#ff0000' } },
         { start: 6, end: 8, style: { color: '#ff0000' } },
-      ]
+      ])
       view.setText(text)
       view.setScrollMetrics(0, 60)
       view.setTokens(tokens)
@@ -216,8 +217,9 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
       const edit = { from: 1, to: 1, text: 'X' }
       const nextText = `${text.slice(0, edit.from)}${edit.text}${text.slice(edit.to)}`
       view.applyEdit(edit, nextText)
-      tokens = [...projectTokensThroughEdit(tokens, edit, text)]
-      view.setTokens(tokens)
+      tokens = projectTokensThroughEdit(tokens, edit, text)
+      // Object tokens carry no provenance, so this takes the comparison path.
+      view.setTokens(tokens.toTokens())
       text = nextText
 
       // The edit is on the row above, so this row's own text and the offsets

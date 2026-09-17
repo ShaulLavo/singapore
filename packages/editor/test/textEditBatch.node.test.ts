@@ -19,6 +19,7 @@ import {
 } from '@singapore-editor/textbuffer'
 
 import type { FoldRange } from '../src/syntax/session'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import { createTextEditBatch, mapTextEditBatchOffset } from '../src/textEditBatch'
 import type { TextEdit } from '../src/tokens'
 import { resolveSelection } from '../src/selections'
@@ -149,17 +150,17 @@ function unreadableSnapshot(snapshot: TextSnapshot): TextSnapshot {
 describe('batch projections', () => {
   it('retains tokens in sparse gaps and applies word and line boundary policies once', () => {
     const style = { color: 'red' }
-    const tokens = [
+    const tokens = EditorTokenStore.fromTokens([
       { start: 0, end: 5, style },
       { start: 6, end: 10, style },
       { start: 11, end: 16, style },
-    ]
+    ])
     const batch = committedBatch('alpha beta gamma', [
       { from: 5, to: 5, text: 'Name' },
       { from: 12, to: 14, text: '\n' },
     ])
     const projected = projectTokensThroughEdits(tokens, batch)
-    expect(projected).toEqual([
+    expect(projected.toTokens()).toEqual([
       { start: 0, end: 9, style },
       { start: 10, end: 14, style },
     ])
@@ -171,7 +172,8 @@ describe('batch projections', () => {
       { from: 5, to: 5, text: 'X' },
       { from: 5, to: 5, text: 'Y' },
     ])
-    expect(projectTokensThroughEdits([{ start: 0, end: 5, style: {} }], batch)).toEqual([
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: {} }])
+    expect(projectTokensThroughEdits(tokens, batch).toTokens()).toEqual([
       { start: 0, end: 7, style: {} },
     ])
   })

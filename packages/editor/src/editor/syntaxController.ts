@@ -22,14 +22,10 @@ import type {
 import type { EditorSyntaxLanguageId, FoldRange } from '../syntax/session'
 import type { EditorTheme } from '../theme'
 import { editorThemesEqual } from '../theme'
-import type { EditorToken, TextEdit } from '../tokens'
+import { EditorTokenStore, toEditorTokenStore, type EditorTokenInput } from '../syntax/tokenStore'
+import type { TextEdit } from '../tokens'
 import { foldRangeKey } from './folds'
 import type { EditorSyntaxStatus } from './types'
-import {
-  appendEditorTokenIndexEntry,
-  createEditorTokenIndexBuilder,
-  finishEditorTokenIndex,
-} from './tokenIndex'
 import { LatestAsyncRequest } from './latestAsyncRequest'
 import { getEditorSyntaxSessionFactory } from './runtime'
 import { syntaxRefreshDelay, SYNTAX_REFRESH_MAX_DELAY_MS } from './editorUtils'
@@ -74,7 +70,7 @@ export type EditorSyntaxControllerOptions = {
   getSession(): DocumentSession | null
   getDocumentEditChain(): Pick<DocumentEditChain, 'changesSince' | 'point'>
   getVisibleSyntaxRange(): EditorSyntaxRange | null
-  adoptTokens(tokens: readonly EditorToken[]): void
+  adoptTokens(tokens: EditorTokenStore): void
   clearSyntaxFolds(): void
   setSyntaxFolds(folds: readonly FoldRange[]): void
   notifyChange(change: DocumentSessionChange | null): void
@@ -232,7 +228,7 @@ export class EditorSyntaxController {
     key: 'editor.syntax.highlighterTheme',
     taskClass: 'background-derived',
   })
-  private currentTokens: readonly EditorToken[] = []
+  private currentTokens = EditorTokenStore.empty()
   private currentBrackets: readonly BracketInfo[] = []
   private currentInjections: readonly EditorSyntaxInjection[] = []
   private syntaxContentVersion = 0
@@ -305,7 +301,7 @@ export class EditorSyntaxController {
     return this.initialHighlightState
   }
 
-  get tokens(): readonly EditorToken[] {
+  get tokens(): EditorTokenStore {
     return this.currentTokens
   }
 
@@ -333,7 +329,7 @@ export class EditorSyntaxController {
     return this.highlighterTheme
   }
 
-  setTokens(tokens: readonly EditorToken[]): void {
+  setTokens(tokens: EditorTokenStore): void {
     this.currentTokens = tokens
     if (this.preparedInitialTokensInstalled) {
       this.preparedInitialTokensInstalled = false
@@ -342,11 +338,11 @@ export class EditorSyntaxController {
     this.options.adoptTokens(tokens)
   }
 
-  stagePreparedReadyTokens(prepared: EditorPreparedDocumentPayload | null): readonly EditorToken[] {
+  stagePreparedReadyTokens(prepared: EditorPreparedDocumentPayload | null): EditorTokenStore {
     const highlighterResult = prepared?.highlighter?.readyResult
     const structuralResult = prepared?.structural?.readyResult
     const structuralTokens = prepared?.highlighter ? undefined : structuralResult?.tokens
-    const tokens = highlighterResult?.tokens ?? structuralTokens ?? []
+    const tokens = highlighterResult?.tokens ?? toEditorTokenStore(structuralTokens ?? [])
 
     this.currentTokens = tokens
     this.preparedInitialTokensInstalled = Boolean(highlighterResult || structuralTokens)
@@ -1397,11 +1393,12 @@ export class EditorSyntaxController {
   }
 
   private syntaxTokensForResult(
-    tokens: readonly EditorToken[],
+    tokens: EditorTokenInput,
     range: EditorSyntaxRange | null,
-  ): readonly EditorToken[] {
-    if (!range) return tokens
-    return mergeSyntaxRangeTokens(this.currentTokens, tokens, range)
+  ): EditorTokenStore {
+    const store = toEditorTokenStore(tokens)
+    if (!range) return store
+    return mergeSyntaxRangeTokens(this.currentTokens, store, range)
   }
 
   private applyCachedSyntaxFolds(range: EditorSyntaxRange): void {
@@ -1557,7 +1554,11 @@ export class EditorSyntaxController {
     })
     warnEditorSyntax('clear plugin highlighting after error', this.debugContext(documentVersion))
     this.setHighlighterTheme(null)
-    this.commitInitialHighlightStatus('error', () => this.setTokens([]), configurationGeneration)
+    this.commitInitialHighlightStatus(
+      'error',
+      () => this.setTokens(EditorTokenStore.empty()),
+      configurationGeneration,
+    )
     this.options.notifyChange(null)
   }
 
@@ -1844,37 +1845,11 @@ const syntaxErrorMessage = (error: unknown): string => {
 }
 
 const mergeSyntaxRangeTokens = (
-  currentTokens: readonly EditorToken[],
-  rangeTokens: readonly EditorToken[],
+  currentTokens: EditorTokenStore,
+  rangeTokens: EditorTokenStore,
   range: EditorSyntaxRange,
-): readonly EditorToken[] => {
-  const merged: EditorToken[] = []
-  appendTokensOutsideRange(merged, currentTokens, range)
-  appendTokens(merged, rangeTokens)
-  merged.sort(compareEditorTokens)
-
-  const indexBuilder = createEditorTokenIndexBuilder()
-  for (const token of merged) appendEditorTokenIndexEntry(indexBuilder, token)
-  finishEditorTokenIndex(merged, indexBuilder)
-  return merged
-}
-
-const appendTokensOutsideRange = (
-  target: EditorToken[],
-  tokens: readonly EditorToken[],
-  range: EditorSyntaxRange,
-): void => {
-  for (const token of tokens) {
-    if (token.end <= range.startIndex || token.start >= range.endIndex) target.push(token)
-  }
-}
-
-const appendTokens = (target: EditorToken[], tokens: readonly EditorToken[]): void => {
-  for (const token of tokens) target.push(token)
-}
-
-const compareEditorTokens = (left: EditorToken, right: EditorToken): number =>
-  left.start - right.start || left.end - right.end
+): EditorTokenStore =>
+  currentTokens.replaceOffsetRange(range.startIndex, range.endIndex, rangeTokens)
 
 const appendCachedSyntaxRange = (
   ranges: readonly EditorSyntaxRange[],

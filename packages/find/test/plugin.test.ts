@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   EditorCapabilityContributionProvider,
@@ -297,7 +298,7 @@ function snapshot(): EditorViewSnapshot {
     },
     changesSinceDocumentSyncPoint: () => null,
     lineStarts: [0],
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
       { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },

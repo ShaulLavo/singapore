@@ -30,7 +30,9 @@ export {
 } from './session'
 export { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from './captures'
 export { packEditorTokens, packedEditorTokenTransfers, unpackEditorTokens } from './packedTokens'
-export type { PackedEditorTokens } from './packedTokens'
+export type { PackedEditorTokenPatch, PackedEditorTokens } from './packedTokens'
+export { EditorTokenStore, toEditorTokenStore } from './tokenStore'
+export type { EditorTokenInput, EditorTokenStoreOrigin } from './tokenStore'
 export { createSemanticTokenStyles } from './semanticTokens'
 export type {
   SemanticTokenDropReason,

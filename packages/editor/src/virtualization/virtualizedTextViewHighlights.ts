@@ -1,15 +1,11 @@
-import type { EditorToken, EditorTokenStyle } from '../tokens'
+import { EditorTokenStore, toEditorTokenStore, type EditorTokenInput } from '../syntax/tokenStore'
+import type { EditorTokenStyle } from '../tokens'
 import type { SelectionAffinity } from '../selections'
 import {
   editorPerformanceDiagnosticsEnabled,
   recordEditorPerformanceDiagnostic,
 } from '../editor/performanceDiagnostics'
-import {
-  copyTokenProjectionMetadata,
-  sourceTokensForProjectedTokens,
-  tokenProjectionLiveRangeStatus,
-} from '../editor/tokenProjection'
-import { getEditorTokenIndex, type EditorTokenIndex } from '../editor/tokenIndex'
+import { tokenProjectionLiveRangeStatus } from '../editor/tokenProjection'
 import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
 import { lowerBound, upperBound } from './rowHeightIndex'
 import { getSharedTokenHighlights } from './sharedTokenHighlights'
@@ -19,13 +15,11 @@ import {
   addTokenRangeToChunk,
   appendTokenRange,
   appendTokenSegmentForChunk,
-  editorTokensEqual,
   getOrCreateTokenSegments,
   setElementHidden,
   setStyleValue,
   type TokenSegmentAppendResult,
   tokenRowSignature,
-  tokenStylesEqual,
 } from './virtualizedTextViewHelpers'
 import {
   caretPosition,
@@ -48,7 +42,6 @@ import type {
 } from './virtualizedTextViewTypes'
 import type {
   SameLineTokenEdit,
-  TokenRenderEntry,
   VirtualizedTextHighlightGroup,
   VirtualizedTextHighlightRange,
   VirtualizedTextHighlightStyle,
@@ -57,9 +50,9 @@ import type {
   VirtualizedTextViewInternal,
 } from './virtualizedTextViewInternals'
 
-type TokenStyleSource = {
-  readonly entriesByIndex: ReadonlyMap<number, TokenRenderEntry> | null
-  readonly tokens: readonly EditorToken[]
+type TokenRenderStyle = {
+  readonly style: EditorTokenStyle
+  readonly styleKey: string
 }
 
 type TokenSegmentBuildStats = {
@@ -88,7 +81,7 @@ type TokenRangeReconcileStats = {
   rebuiltRowCount: number
   skippedRowCount: number
   staticRangeCount: number
-  readonly tokenRenderIndexDirty: boolean
+  readonly tokenPaletteDirty: boolean
 }
 
 type RangeHighlightIndex = {
@@ -113,30 +106,21 @@ const rangeHighlightIndexes = new WeakMap<
   RangeHighlightIndex
 >()
 
-export function setTokens(view: VirtualizedTextViewInternal, tokens: readonly EditorToken[]): void {
-  const copiedTokens = [...tokens]
-  copyTokenProjectionMetadata(tokens, copiedTokens)
-  adoptTokens(view, copiedTokens)
+export function setTokens(view: VirtualizedTextViewInternal, tokens: EditorTokenInput): void {
+  adoptTokens(view, toEditorTokenStore(tokens))
 }
 
-export function adoptTokens(
-  view: VirtualizedTextViewInternal,
-  tokens: readonly EditorToken[],
-): void {
+export function adoptTokens(view: VirtualizedTextViewInternal, tokens: EditorTokenStore): void {
   const projectionStatus = tokenProjectionLiveRangeStatus(view.tokens, tokens)
   if (projectionStatus === true && !view.sameLineTokenEdit) {
-    view.tokens = tokens
-    view.tokenRenderIndexDirty = true
+    installTokens(view, tokens)
     if (view.rowTokenRanges.size === 0 && tokens.length > 0) renderTokenHighlights(view)
     return
   }
 
   if (canKeepLiveTokenRanges(view, tokens, projectionStatus)) {
-    const styleSource =
-      projectionStatus === true ? tokenStyleSourceForProjection(view, tokens) : null
-    view.tokens = tokens
-    view.tokenRenderIndexDirty = true
-    reconcileTokenHighlightsAfterSameLineEdit(view, styleSource)
+    installTokens(view, tokens)
+    reconcileTokenHighlightsAfterSameLineEdit(view)
     return
   }
 
@@ -151,9 +135,9 @@ export function adoptTokens(
   }
 
   view.tokenProjectionDirtyStartRow = null
-  if (editorTokensEqual(view.tokens, tokens)) {
+  if (view.tokens.equals(tokens)) {
     view.sameLineTokenEdit = null
-    view.tokens = tokens
+    installTokens(view, tokens)
     renderTokenHighlights(view)
     return
   }
@@ -161,14 +145,10 @@ export function adoptTokens(
   adoptChangedTokens(view, tokens)
 }
 
-function adoptChangedTokens(
-  view: VirtualizedTextViewInternal,
-  tokens: readonly EditorToken[],
-): void {
+function adoptChangedTokens(view: VirtualizedTextViewInternal, tokens: EditorTokenStore): void {
   const pendingEdit = takeSameLineTokenEdit(view)
   const dirtyStartRow = view.tokenProjectionDirtyStartRow
-  view.tokens = tokens
-  view.tokenRenderIndexDirty = true
+  installTokens(view, tokens)
   if (pendingEdit) {
     reconcileTokenHighlightsFromRow(
       view,
@@ -182,27 +162,10 @@ function adoptChangedTokens(
   renderTokenHighlights(view)
 }
 
-function tokenStyleSourceForProjection(
-  view: VirtualizedTextViewInternal,
-  tokens: readonly EditorToken[],
-): TokenStyleSource | null {
-  const sourceTokens = sourceTokensForProjectedTokens(tokens)
-  if (!sourceTokens) return null
-
-  return {
-    entriesByIndex: tokenRenderEntriesBySourceIndex(view.tokenRenderEntries),
-    tokens: sourceTokens,
-  }
-}
-
-function tokenRenderEntriesBySourceIndex(
-  entries: readonly TokenRenderEntry[],
-): ReadonlyMap<number, TokenRenderEntry> | null {
-  if (entries.length === 0) return null
-
-  const byIndex = new Map<number, TokenRenderEntry>()
-  for (const entry of entries) byIndex.set(entry.sourceIndex, entry)
-  return byIndex
+// A palette only changes by growing or being replaced, so its identity says when groups are stale.
+function installTokens(view: VirtualizedTextViewInternal, tokens: EditorTokenStore): void {
+  if (view.tokens.styles !== tokens.styles) view.tokenPaletteDirty = true
+  view.tokens = tokens
 }
 
 export function setSelection(
@@ -449,20 +412,16 @@ function reconcileTokenHighlightsForRow(
   return result.styleRulesDirty
 }
 
-function reconcileTokenHighlightsAfterSameLineEdit(
-  view: VirtualizedTextViewInternal,
-  styleSource: TokenStyleSource | null = null,
-): void {
+function reconcileTokenHighlightsAfterSameLineEdit(view: VirtualizedTextViewInternal): void {
   const edit = takeSameLineTokenEdit(view)
   if (!edit) return
 
-  reconcileTokenHighlightsAfterEdit(view, edit, styleSource)
+  reconcileTokenHighlightsAfterEdit(view, edit)
 }
 
 function reconcileTokenHighlightsAfterEdit(
   view: VirtualizedTextViewInternal,
   edit: SameLineTokenEdit,
-  styleSource: TokenStyleSource | null = null,
 ): void {
   if (edit.kind === 'multi-line') {
     reconcileTokenHighlightsFromRow(view, edit.rowIndex)
@@ -470,23 +429,17 @@ function reconcileTokenHighlightsAfterEdit(
     return
   }
 
-  if (view.tokenProjectionDirtyStartRow !== null) {
-    reconcileSameLineTokenRows(view, edit, styleSource)
-    return
-  }
-
-  reconcileSameLineTokenRows(view, edit, styleSource)
+  reconcileSameLineTokenRows(view, edit)
 }
 
 function reconcileSameLineTokenRows(
   view: VirtualizedTextViewInternal,
   edit: SameLineTokenEdit,
-  styleSource: TokenStyleSource | null,
 ): void {
   const rows = rowsNeedingSameLineProjectionReconcile(view, edit)
   if (rows.length === 0) return
 
-  const segmentsByRow = tokenSegmentsForRows(view, rows, styleSource)
+  const segmentsByRow = tokenSegmentsForRows(view, rows)
   let styleRulesDirty = false
   for (const row of rows) {
     styleRulesDirty =
@@ -627,59 +580,30 @@ function restoreStyleRuleElements(view: VirtualizedTextViewInternal): void {
   syncStyleElementConnection(view, view.styleEl.textContent ?? '')
 }
 
-function ensureTokenRenderIndex(view: VirtualizedTextViewInternal): void {
-  if (!view.tokenRenderIndexDirty) return
+// Groups follow the palette, which is a few dozen styles however long the document is.
+function syncTokenGroupsToPalette(view: VirtualizedTextViewInternal): void {
+  if (!view.tokenPaletteDirty) return
 
-  rebuildTokenRenderIndex(view)
-  syncTokenGroupsToStyles(view, view.tokenRenderStyles)
-  view.tokenRenderIndexDirty = false
-}
-
-function rebuildTokenRenderIndex(view: VirtualizedTextViewInternal): void {
-  const entries: TokenRenderEntry[] = []
   const styles = new Map<string, EditorTokenStyle>()
-  let previousEntry: TokenRenderEntry | undefined
-  let sorted = true
-  for (let index = 0; index < view.tokens.length; index += 1) {
-    const token = view.tokens[index]!
-    const entry = tokenRenderEntry(view, token, index)
-    if (!entry) continue
-    if (previousEntry && previousEntry.start > entry.start) sorted = false
-    entries.push(entry)
-    styles.set(entry.styleKey, entry.style)
-    previousEntry = entry
+  for (const style of view.tokens.styles) {
+    const renderStyle = tokenRenderStyle(style)
+    if (renderStyle) styles.set(renderStyle.styleKey, renderStyle.style)
   }
-
-  if (!sorted) entries.sort(compareTokenRenderEntries)
-  view.tokenRenderEntries = entries
-  view.tokenRenderEntryMaxEnds = tokenRenderEntryMaxEnds(entries)
-  view.tokenRenderStyles = styles
+  syncTokenGroupsToStyles(view, styles)
+  view.tokenPaletteDirty = false
 }
 
-function tokenRenderEntry(
-  view: VirtualizedTextViewInternal,
-  token: EditorToken,
-  sourceIndex: number,
-  styleSource: TokenStyleSource | null = null,
-): TokenRenderEntry | null {
-  const sourceEntry = styleSource?.entriesByIndex?.get(sourceIndex)
-  const sourceStyle = styleSource?.tokens[sourceIndex]?.style ?? token.style
-  const style = sourceEntry?.style ?? normalizeTokenStyle(sourceStyle)
-  if (!style) return null
-  const styleKey = sourceEntry?.styleKey ?? serializeTokenStyle(style)
+// Keyed by the palette's style object, which every store derived from one answer shares.
+const tokenRenderStyles = new WeakMap<EditorTokenStyle, TokenRenderStyle | null>()
 
-  const start = clamp(token.start, 0, view.model.textLength)
-  const end = clamp(token.end, start, view.model.textLength)
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
-  if (end <= start) return null
+function tokenRenderStyle(source: EditorTokenStyle): TokenRenderStyle | null {
+  const cached = tokenRenderStyles.get(source)
+  if (cached !== undefined) return cached
 
-  return {
-    start,
-    end,
-    style,
-    styleKey,
-    sourceIndex,
-  }
+  const style = normalizeTokenStyle(source)
+  const renderStyle = style ? { style, styleKey: serializeTokenStyle(style) } : null
+  tokenRenderStyles.set(source, renderStyle)
+  return renderStyle
 }
 
 function firstStartingAtOrAfter(
@@ -696,115 +620,15 @@ function firstEndingAfter(maxEnds: readonly number[], offset: number, endIndex: 
 function tokenSegmentsForRows(
   view: VirtualizedTextViewInternal,
   rows: readonly MountedVirtualizedTextRow[],
-  styleSource: TokenStyleSource | null = null,
 ): Map<number, TokenRowSegment[]> {
   const segmentsByRow = new Map<number, TokenRowSegment[]>()
   const stats = createTokenSegmentBuildStats(rows)
   const startedAt = stats ? performanceNow() : 0
 
-  appendTokenSegmentsForRows(view, segmentsByRow, rows, styleSource, stats)
+  syncTokenGroupsToPalette(view)
+  for (const row of rows) appendTokenSegmentsForMountedRow(view, segmentsByRow, row, stats)
   recordTokenSegmentBuildStats(stats, segmentsByRow, startedAt)
   return segmentsByRow
-}
-
-function appendTokenSegmentsForRows(
-  view: VirtualizedTextViewInternal,
-  segmentsByRow: Map<number, TokenRowSegment[]>,
-  rows: readonly MountedVirtualizedTextRow[],
-  styleSource: TokenStyleSource | null,
-  stats: TokenSegmentBuildStats | null,
-): void {
-  if (rows.length === 0) return
-  if (appendIndexedTokenSegmentsForRows(view, segmentsByRow, rows, styleSource, stats)) return
-
-  ensureTokenRenderIndex(view)
-  if (view.tokenRenderEntries.length === 0) return
-
-  for (const row of rows) {
-    appendTokenSegmentsForMountedRow(view, segmentsByRow, row, stats)
-  }
-}
-
-function appendIndexedTokenSegmentsForRows(
-  view: VirtualizedTextViewInternal,
-  segmentsByRow: Map<number, TokenRowSegment[]>,
-  rows: readonly MountedVirtualizedTextRow[],
-  styleSource: TokenStyleSource | null,
-  stats: TokenSegmentBuildStats | null,
-): boolean {
-  const tokenIndex = getEditorTokenIndex(view.tokens)
-  if (!tokenIndex?.sortedByStart) return false
-
-  for (const row of rows) {
-    appendIndexedTokenSegmentsForMountedRow(
-      view,
-      tokenIndex,
-      segmentsByRow,
-      row,
-      styleSource,
-      stats,
-    )
-  }
-
-  return true
-}
-
-function appendIndexedTokenSegmentsForMountedRow(
-  view: VirtualizedTextViewInternal,
-  tokenIndex: EditorTokenIndex,
-  segmentsByRow: Map<number, TokenRowSegment[]>,
-  row: MountedVirtualizedTextRow,
-  styleSource: TokenStyleSource | null,
-  stats: TokenSegmentBuildStats | null,
-): void {
-  if (row.kind !== 'text') return
-
-  for (const chunk of row.chunks) {
-    appendIndexedTokenSegmentsForChunk(
-      view,
-      tokenIndex,
-      segmentsByRow,
-      row,
-      chunk,
-      styleSource,
-      stats,
-    )
-  }
-}
-
-function appendIndexedTokenSegmentsForChunk(
-  view: VirtualizedTextViewInternal,
-  tokenIndex: EditorTokenIndex,
-  segmentsByRow: Map<number, TokenRowSegment[]>,
-  row: MountedVirtualizedTextRow,
-  chunk: VirtualizedTextChunk,
-  styleSource: TokenStyleSource | null,
-  stats: TokenSegmentBuildStats | null,
-): void {
-  if (chunk.endOffset <= chunk.startOffset) return
-  if (stats) stats.chunkCount += 1
-
-  const endIndex = firstStartingAtOrAfter(view.tokens, chunk.endOffset)
-  const startIndex = firstEndingAfter(tokenIndex.maxEnds, chunk.startOffset, endIndex)
-  if (startIndex >= endIndex) return
-
-  const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
-  for (let index = startIndex; index < endIndex; index += 1) {
-    if (stats) stats.tokenScanCount += 1
-
-    const token = tokenRenderEntry(view, view.tokens[index]!, index, styleSource)
-    if (!token) continue
-    if (token.end <= chunk.startOffset) continue
-    const result = appendTokenSegmentForChunk(
-      segments,
-      row,
-      chunk,
-      token,
-      token.style,
-      token.styleKey,
-    )
-    recordTokenSegmentAppend(stats, result)
-  }
 }
 
 function appendTokenSegmentsForMountedRow(
@@ -830,26 +654,32 @@ function appendTokenSegmentsForChunk(
   if (chunk.endOffset <= chunk.startOffset) return
   if (stats) stats.chunkCount += 1
 
-  const endIndex = firstStartingAtOrAfter(view.tokenRenderEntries, chunk.endOffset)
-  const startIndex = firstEndingAfter(view.tokenRenderEntryMaxEnds, chunk.startOffset, endIndex)
+  const tokens = view.tokens
+  const endIndex = tokens.firstStartingAtOrAfter(chunk.endOffset)
+  const startIndex = tokens.firstEndingAfter(chunk.startOffset, endIndex)
   if (startIndex >= endIndex) return
 
+  const textLength = view.model.textLength
   const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
-  for (let index = startIndex; index < endIndex; index += 1) {
+  tokens.forEachInRange(startIndex, endIndex, (tokenStart, tokenEnd, styleId) => {
     if (stats) stats.tokenScanCount += 1
 
-    const token = view.tokenRenderEntries[index]!
-    if (token.end <= chunk.startOffset) continue
+    const renderStyle = tokenRenderStyle(tokens.styles[styleId]!)
+    if (!renderStyle) return
+    const start = clamp(tokenStart, 0, textLength)
+    const end = clamp(tokenEnd, start, textLength)
+    if (end <= start || end <= chunk.startOffset) return
+
     const result = appendTokenSegmentForChunk(
       segments,
       row,
       chunk,
-      token,
-      token.style,
-      token.styleKey,
+      { start, end },
+      renderStyle.style,
+      renderStyle.styleKey,
     )
     recordTokenSegmentAppend(stats, result)
-  }
+  })
 }
 
 function createTokenSegmentBuildStats(
@@ -942,7 +772,7 @@ function createTokenRangeReconcileStats(
     rebuiltRowCount: 0,
     skippedRowCount: 0,
     staticRangeCount: 0,
-    tokenRenderIndexDirty: view.tokenRenderIndexDirty,
+    tokenPaletteDirty: view.tokenPaletteDirty,
   }
 }
 
@@ -962,7 +792,7 @@ function recordTokenRangeReconcileStats(
       rebuiltRowCount: stats.rebuiltRowCount,
       skippedRowCount: stats.skippedRowCount,
       staticRangeCount: stats.staticRangeCount,
-      tokenRenderIndexDirty: stats.tokenRenderIndexDirty,
+      tokenPaletteDirty: stats.tokenPaletteDirty,
     },
     performanceNow() - startedAt,
   )
@@ -1114,17 +944,12 @@ function deleteViewTokenRangesForStyle(
 
 function canKeepLiveTokenRanges(
   view: VirtualizedTextViewInternal,
-  tokens: readonly EditorToken[],
+  tokens: EditorTokenStore,
   projectionStatus: boolean | null,
 ): boolean {
   if (!view.sameLineTokenEdit) return false
   if (projectionStatus !== null) return projectionStatus
-  if (view.tokens.length !== tokens.length) return false
-
-  return view.tokens.every((token, index) => {
-    const nextToken = tokens[index]
-    return nextToken ? tokenStylesEqual(token, nextToken) : false
-  })
+  return view.tokens.stylesEqual(tokens)
 }
 
 export function deleteTokenRangesForRow(
@@ -1561,20 +1386,4 @@ function mixRangeHighlightChunkSignature(
 
 function mixSignatureHash(hash: number, value: number): number {
   return Math.imul(hash ^ (value | 0), SIGNATURE_HASH_PRIME) >>> 0
-}
-
-function compareTokenRenderEntries(left: TokenRenderEntry, right: TokenRenderEntry): number {
-  return left.start - right.start || left.sourceIndex - right.sourceIndex
-}
-
-function tokenRenderEntryMaxEnds(entries: readonly TokenRenderEntry[]): number[] {
-  const maxEnds: number[] = []
-  let maxEnd = 0
-
-  for (const entry of entries) {
-    maxEnd = Math.max(maxEnd, entry.end)
-    maxEnds.push(maxEnd)
-  }
-
-  return maxEnds
 }

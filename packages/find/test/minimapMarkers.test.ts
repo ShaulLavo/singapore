@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   EditorMinimapDecoration,
@@ -220,7 +221,7 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
     },
     changesSinceDocumentSyncPoint: () => null,
     lineStarts,
-    tokens: [],
+    tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
       {

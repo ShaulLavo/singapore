@@ -16,7 +16,8 @@ import type {
   EditorViewportSnapshot,
 } from '../plugins'
 import type { SelectionAffinity, SelectionGoal } from '../selections'
-import type { EditorToken, TextEdit } from '../tokens'
+import { EditorTokenStore, type EditorTokenInput } from '../syntax/tokenStore'
+import type { TextEdit } from '../tokens'
 import { applyEditorTheme } from '../theme'
 import { measureBrowserTextMetrics, type BrowserTextMetrics } from './browserMetrics'
 import { FixedRowVirtualizer, type FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
@@ -360,11 +361,8 @@ export class VirtualizedTextView {
       model: initialModel,
       textRevision: 0,
       displayProjectionRevision: 0,
-      tokens: [],
-      tokenRenderEntries: [],
-      tokenRenderEntryMaxEnds: [],
-      tokenRenderStyles: new Map(),
-      tokenRenderIndexDirty: true,
+      tokens: EditorTokenStore.empty(),
+      tokenPaletteDirty: true,
       foldMarkers: [],
       foldMarkerSource: null,
       rowDecorations: new Map(),
@@ -616,14 +614,16 @@ export class VirtualizedTextView {
     text: string | TextSnapshot,
     textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text,
     preparedLineStarts?: readonly number[],
-    preparedTokens?: readonly EditorToken[],
+    preparedTokens?: EditorTokenStore,
   ): void {
     const view = this.view
     this.pendingReveal = null
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
-    view.tokenRenderIndexDirty = true
-    if (preparedTokens) view.tokens = preparedTokens
+    if (preparedTokens) {
+      view.tokens = preparedTokens
+      view.tokenPaletteDirty = true
+    }
     const { lineCountChanged } =
       typeof text === 'string'
         ? setTextLayoutState(view, textSnapshot, preparedLineStarts)
@@ -806,7 +806,6 @@ export class VirtualizedTextView {
     view.rowDecorations = projectRowDecorationMapThroughEdits(view.rowDecorations, batch)
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
-    view.tokenRenderIndexDirty = true
     if (previousLineCount !== view.model.lineCount) view.gutterWidthDirty = true
     clampStoredSelection(view)
     clearRowTokenState(view)
@@ -816,11 +815,11 @@ export class VirtualizedTextView {
     updateVirtualizerRows(view)
   }
 
-  public setTokens(tokens: readonly EditorToken[]): void {
+  public setTokens(tokens: EditorTokenInput): void {
     setViewTokens(this.view, tokens)
   }
 
-  public adoptTokens(tokens: readonly EditorToken[]): void {
+  public adoptTokens(tokens: EditorTokenStore): void {
     adoptViewTokens(this.view, tokens)
   }
 
@@ -1441,7 +1440,6 @@ export class VirtualizedTextView {
   ): void {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
-    view.tokenRenderIndexDirty = true
     applyTextLayoutTransition(view, {
       before: view.model.textSnapshot,
       after: nextText,
@@ -1478,7 +1476,6 @@ export class VirtualizedTextView {
     updateFoldState?: () => void,
   ): void {
     const view = this.view
-    view.tokenRenderIndexDirty = true
     applyTextLayoutTransition(view, {
       before: view.model.textSnapshot,
       after: nextText,
@@ -1525,7 +1522,6 @@ export class VirtualizedTextView {
     }
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
-    view.tokenRenderIndexDirty = true
     if (previousLineCount !== view.model.lineCount) view.gutterWidthDirty = true
     clampStoredSelection(view)
     clearRowTokenState(view)

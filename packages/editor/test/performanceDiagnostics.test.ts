@@ -12,6 +12,7 @@ import {
   type EditorPerformanceDiagnostic,
 } from '../src/editor/performanceDiagnostics'
 import { setHighlightRegistry } from '../src/public/testing'
+import { EditorTokenStore } from '../src/syntax/tokenStore'
 import { createVisibleEditor } from './factories/visibleEditor'
 
 const editors: Editor[] = []
@@ -346,7 +347,7 @@ test('late highlighter results keep their origin and cannot apply after newer ed
   const disposed = vi.fn()
   const applyChange = () => new Promise<EditorHighlightResult>((resolve) => pending.push(resolve))
   const createSession = () => ({
-    refresh: async () => ({ tokens: [] }),
+    refresh: async () => ({ tokens: EditorTokenStore.empty() }),
     applyChange,
     dispose: disposed,
   })
@@ -362,12 +363,12 @@ test('late highlighter results keep their origin and cannot apply after newer ed
   await vi.runAllTimersAsync()
   expect(pending).toHaveLength(2)
   const inputs = records.filter((event) => event.name === 'editor.input')
-  pending[0]?.({ tokens: [] })
+  pending[0]?.({ tokens: EditorTokenStore.empty() })
   await vi.runAllTimersAsync()
   expect(records.filter((event) => event.name === 'editor.syntax.highlight.accepted')).toHaveLength(
     0,
   )
-  pending[1]?.({ tokens: [] })
+  pending[1]?.({ tokens: EditorTokenStore.empty() })
   await vi.runAllTimersAsync()
   expect(records.find((event) => event.name === 'editor.syntax.highlight.accepted')).toMatchObject({
     operation: { id: inputs.at(-1)?.operation?.id },
@@ -378,7 +379,7 @@ test('late highlighter results keep their origin and cannot apply after newer ed
   insert(editor, 'Z')
   await vi.runAllTimersAsync()
   editor.openDocument({ documentId: 'second.txt', text: 'replacement' })
-  pending[2]?.({ tokens: [] })
+  pending[2]?.({ tokens: EditorTokenStore.empty() })
   await vi.runAllTimersAsync()
   expect(editor.materializeFullText()).toBe('replacement')
   expect(
@@ -391,7 +392,7 @@ test('late highlighter results keep their origin and cannot apply after newer ed
   await vi.runAllTimersAsync()
   expect(pending).toHaveLength(4)
   editor.dispose()
-  pending[3]?.({ tokens: [] })
+  pending[3]?.({ tokens: EditorTokenStore.empty() })
   await vi.runAllTimersAsync()
   expect(records.filter((event) => event.name === 'editor.syntax.highlight.accepted')).toHaveLength(
     0,

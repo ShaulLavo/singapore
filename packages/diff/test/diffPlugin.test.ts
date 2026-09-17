@@ -3,8 +3,11 @@ import { Editor } from '@singapore-editor/core/editor'
 import { createVisibleEditor } from './support/visibleEditor'
 import {
   createEmptySyntaxResult,
+  EditorTokenStore,
+  toEditorTokenStore,
   type EditorSyntaxSessionOptions,
   type EditorToken,
+  type EditorTokenInput,
 } from '@singapore-editor/core/syntax'
 import { createDiffPlugin, createTextDiff, diffSyntaxBackend, joinRenderLines } from '../src'
 import { createDiffGutterContribution } from '../src/diffGutter'
@@ -341,10 +344,10 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
 
   it('uses a host-owned highlighter provider instead of constructing a diff worker', async () => {
     const createSession = vi.fn(() => ({
-      applyChange: vi.fn(async () => ({ tokens: [] })),
+      applyChange: vi.fn(async () => ({ tokens: EditorTokenStore.empty() })),
       dispose: vi.fn(),
       refresh: vi.fn(async () => ({
-        tokens: [{ start: 0, end: 4, style: { color: 'gold' } }],
+        tokens: EditorTokenStore.fromTokens([{ start: 0, end: 4, style: { color: 'gold' } }]),
       })),
     }))
     mountDiff({
@@ -713,11 +716,13 @@ function tokenTexts(tokens: readonly EditorToken[], text: string): string[] {
   return tokens.map((token) => text.slice(token.start, token.end))
 }
 
-type SetTokensSpy = { readonly mock: { readonly calls: readonly [readonly EditorToken[]][] } }
+type SetTokensSpy = { readonly mock: { readonly calls: readonly [EditorTokenInput][] } }
 
 /** Non-empty token arrays that reached a real `Editor`, in call order. */
 function appliedTokens(setTokens: SetTokensSpy): readonly (readonly EditorToken[])[] {
-  return setTokens.mock.calls.map(([tokens]) => tokens).filter((tokens) => tokens.length > 0)
+  return setTokens.mock.calls
+    .map(([tokens]) => toEditorTokenStore(tokens).toTokens())
+    .filter((tokens) => tokens.length > 0)
 }
 
 async function flushPromises(): Promise<void> {

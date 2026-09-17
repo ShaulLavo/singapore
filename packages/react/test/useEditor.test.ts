@@ -1,3 +1,4 @@
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import {
   Editor,
   observeEditorMountTiming,
@@ -1067,7 +1068,7 @@ function delayedHighlighter() {
   return {
     plugin,
     release: async () => {
-      resolve({ tokens: [] })
+      resolve({ tokens: EditorTokenStore.empty() })
       await completion
     },
   }

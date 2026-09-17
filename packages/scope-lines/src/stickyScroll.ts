@@ -1,7 +1,7 @@
 import type { DocumentSessionChange, TextSnapshot } from '@singapore-editor/core/document'
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import type { EditorTheme, VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
-import type { EditorToken } from '@singapore-editor/core/syntax'
+import type { EditorToken, EditorTokenStore } from '@singapore-editor/core/syntax'
 import type {
   EditorPlugin,
   EditorViewContribution,
@@ -97,7 +97,7 @@ class StickyScrollContribution implements EditorViewContribution {
   private readonly root: HTMLDivElement
   private lineView: EditorSecondaryTextView | null = null
   private appliedText = ''
-  private appliedTokens: readonly EditorToken[] = []
+  private appliedTokens: EditorTokenStore | null = null
   private appliedTheme: EditorTheme | null = null
   private appliedRowHeight = 0
   private contentKey = ''
@@ -444,37 +444,19 @@ function stickyScrollContent(
 
 function appendRowTokens(
   tokens: EditorToken[],
-  documentTokens: readonly EditorToken[],
+  documentTokens: EditorTokenStore,
   range: StickyScrollRowRange,
   base: number,
 ): void {
-  for (
-    let index = firstTokenEndingAfter(documentTokens, range.start);
-    index < documentTokens.length;
-    index += 1
-  ) {
-    const token = documentTokens[index]!
-    if (token.start >= range.end) return
-
+  const last = documentTokens.firstStartingAtOrAfter(range.end)
+  const first = documentTokens.firstEndingAfter(range.start, last)
+  documentTokens.forEachInRange(first, last, (start, end, styleId) => {
     tokens.push({
-      start: base + Math.max(token.start, range.start) - range.start,
-      end: base + Math.min(token.end, range.end) - range.start,
-      style: token.style,
+      start: base + Math.max(start, range.start) - range.start,
+      end: base + Math.min(end, range.end) - range.start,
+      style: documentTokens.styles[styleId]!,
     })
-  }
-}
-
-function firstTokenEndingAfter(tokens: readonly EditorToken[], offset: number): number {
-  let low = 0
-  let high = tokens.length
-
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (tokens[middle]!.end > offset) high = middle
-    else low = middle + 1
-  }
-
-  return low
+  })
 }
 
 function rowTextRange(
