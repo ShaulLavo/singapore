@@ -24,12 +24,12 @@ function control(): PieceTableSnapshot {
   const base = createPieceTableSnapshot('a\nb\n')
   const buffer = base.buffers.original
   const left = createNode(
-    { buffer, start: 0, length: 2, order: 1, lineBreaks: 1, visible: true },
+    { buffer, start: 0, length: 2, order: 1, lineBreaks: 1, firstLineBreak: 0, visible: true },
     null,
     null,
   )
   const root = createNode(
-    { buffer, start: 2, length: 2, order: 2, lineBreaks: 1, visible: false },
+    { buffer, start: 2, length: 2, order: 2, lineBreaks: 1, firstLineBreak: 1, visible: false },
     left,
     null,
   )

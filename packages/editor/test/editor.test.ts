@@ -614,6 +614,7 @@ function countingTextSnapshot(
     length: textSnapshot.length,
     lineCount: textSnapshot.lineCount,
     lineStart: (line) => textSnapshot.lineStart(line),
+    lineRange: (line) => textSnapshot.lineRange(line),
     lineAt: (offset) => textSnapshot.lineAt(offset),
     materializeFullText: () => textSnapshot.materializeFullText(),
     readRange: (start, end) => {

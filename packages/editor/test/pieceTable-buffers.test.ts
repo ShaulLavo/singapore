@@ -4,14 +4,13 @@ import {
   appendChunksToBuffers,
   BUFFER_CHUNK_SIZE,
   bufferForPiece,
-  countBufferLineBreaks,
   countLineBreaks,
   createInitialBuffers,
   createOriginalPiece,
   createPiece,
   extendTailChunk,
-  findBufferLineBreakOffset,
   getBufferText,
+  pieceLineBreakOffsets,
 } from '@singapore-editor/textbuffer/internal/buffers'
 import {
   createPieceTableSnapshot,
@@ -135,31 +134,34 @@ describe('piece table buffers', () => {
     const buffers = createInitialBuffers(text)
     const buffer = buffers.original
 
+    // A piece is how the index is read: its breaks are the entries from
+    // `firstLineBreak` on, so each slice is checked against a scan of the text.
+    const breakOffsets = (start: number, end: number): number[] => {
+      const piece = createPiece(buffers, buffer, start, end - start, 0)
+      const first = piece.firstLineBreak
+      return [...pieceLineBreakOffsets(buffers, piece).subarray(first, first + piece.lineBreaks)]
+    }
+
     for (let start = 0; start <= text.length; start += 97) {
       for (const candidate of [start, start + 1, start + 500, text.length]) {
         const end = Math.min(candidate, text.length)
-        expect(countBufferLineBreaks(buffers, buffer, start, end)).toBe(
-          countLineBreaks(text, start, end),
-        )
-      }
-
-      for (const ordinal of [1, 2, 3, lineCount]) {
-        expect(findBufferLineBreakOffset(buffers, buffer, start, ordinal)).toBe(
-          nthLineBreakOffset(text, start, ordinal),
-        )
+        const found = breakOffsets(start, end)
+        expect(found).toHaveLength(countLineBreaks(text, start, end))
+        for (const ordinal of [1, 2, 3, Math.max(1, found.length)]) {
+          expect(found[ordinal - 1] ?? null).toBe(
+            ordinal <= found.length ? nthLineBreakOffset(text, start, ordinal) : null,
+          )
+        }
       }
     }
 
     // Boundaries the sweep above steps over: the very first break, the very
-    // last one, the ordinal one past it, and a start beyond every break.
-    expect(findBufferLineBreakOffset(buffers, buffer, 0, 1)).toBe(text.indexOf('\n'))
-    expect(findBufferLineBreakOffset(buffers, buffer, 0, lineCount - 1)).toBe(
-      text.lastIndexOf('\n'),
-    )
-    expect(findBufferLineBreakOffset(buffers, buffer, 0, lineCount)).toBeNull()
-    expect(findBufferLineBreakOffset(buffers, buffer, text.lastIndexOf('\n') + 1, 1)).toBeNull()
-    expect(countBufferLineBreaks(buffers, buffer, 0, text.length)).toBe(lineCount - 1)
-    expect(countBufferLineBreaks(buffers, buffer, text.lastIndexOf('\n') + 1, text.length)).toBe(0)
+    // last one, and a start beyond every break.
+    const every = breakOffsets(0, text.length)
+    expect(every).toHaveLength(lineCount - 1)
+    expect(every[0]).toBe(text.indexOf('\n'))
+    expect(every.at(-1)).toBe(text.lastIndexOf('\n'))
+    expect(breakOffsets(text.lastIndexOf('\n') + 1, text.length)).toEqual([])
 
     const index = buffers.lineIndexes?.get(buffer)
     expect(index?.count).toBe(lineCount - 1)
@@ -174,21 +176,20 @@ describe('piece table buffers', () => {
     const buffer = appended.pieces[0]!.buffer
     let text = 'a\n'
 
-    expect(countBufferLineBreaks(buffers, buffer, 0, text.length)).toBe(1)
+    const whole = () => createPiece(buffers, buffer, 0, text.length, 0)
+    expect(whole().lineBreaks).toBe(1)
 
     for (let round = 0; round < 200; round += 1) {
       const added = `line ${round}\n`
-      buffers = extendTailChunk(buffers, added)
+      buffers = extendTailChunk(buffers, added, 1)
       text += added
-      expect(countBufferLineBreaks(buffers, buffer, 0, text.length)).toBe(countLineBreaks(text))
+      expect(whole().lineBreaks).toBe(countLineBreaks(text))
     }
 
+    const offsets = pieceLineBreakOffsets(buffers, whole())
     for (const ordinal of [1, 2, 100, 201]) {
-      expect(findBufferLineBreakOffset(buffers, buffer, 0, ordinal)).toBe(
-        nthLineBreakOffset(text, 0, ordinal),
-      )
+      expect(offsets[ordinal - 1]).toBe(nthLineBreakOffset(text, 0, ordinal))
     }
-    expect(findBufferLineBreakOffset(buffers, buffer, 0, 202)).toBeNull()
 
     const index = buffers.lineIndexes?.get(buffer)
     expect(index?.count).toBe(201)
@@ -215,14 +216,14 @@ describe('piece table buffers', () => {
       backing = offsets
     }
 
-    countBufferLineBreaks(buffers, buffer, 0, text.length)
+    createPiece(buffers, buffer, 0, text.length, 0)
     observeBacking()
 
     for (let round = 0; round < pushes; round += 1) {
       const added = `line ${round}\n`
-      buffers = extendTailChunk(buffers, added)
+      buffers = extendTailChunk(buffers, added, 1)
       text += added
-      countBufferLineBreaks(buffers, buffer, 0, text.length)
+      createPiece(buffers, buffer, 0, text.length, 0)
       observeBacking()
     }
 

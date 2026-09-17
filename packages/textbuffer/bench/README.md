@@ -58,7 +58,8 @@ The source revision is deliberately pinned; this is not a moving claim about VS 
 Shared workloads cover load (short lines and a long line), sequential typing, the same typing with
 a caret-to-position lookup after every keystroke, random insertions, random replacements,
 eight-cursor batches, mixed edit churn, large paste/delete cycles, sequential and random line reads
-after churn, offset-range reads, full reads, and both position conversions.
+after churn, offset-range reads, full reads, both position conversions, and random replacements
+of an ASCII-only document, which no edit checks for a cut surrogate pair.
 Standard fixtures contain 10,000 Unicode-rich lines, 1,500 edits and 3,000 read queries. Load fixtures
 are larger. Paste/delete repeats 16 roughly 256-Ki-code-unit pastes. Exact sizes are recorded per case.
 These are synthetic traces, not captured user sessions; change seeds and repeat on target machines.
@@ -70,13 +71,13 @@ The adapters express the same user-observable operations, not necessarily identi
 | Load                   | `createPieceTableSnapshot`                | Builder + factory, LF mode                                                   |
 | Replacement            | `applyBatchToPieceTable` with one edit    | delete, then mutable insert                                                  |
 | Batch                  | `applyBatchToPieceTable`                  | Descending-offset loop of delete/insert; no equivalent native batch API here |
-| Line read              | Indexed start/end lookup + range read     | `getLineContent`                                                             |
+| Line read              | `readPieceTableLine`                      | `getLineContent`                                                             |
 | Offset-range/full read | Native offset-based range/materialization | Two `getPositionAt` calls + `getValueInRange`                                |
 | Coordinates            | Zero-based Point API                      | One-based API translated to zero-based                                       |
 
 Those adapter costs are included and intentional. In particular, the offset-range result cannot be
 attributed exclusively to tree traversal because the VS Code API needs position conversion. Likewise,
-Singapore has no dedicated cached `getLineContent` API in this package. Do not present the comparison
+Singapore's `readPieceTableLine` finds the row in one descent but keeps no cache of the last line. Do not present the comparison
 as equal primitive counts, equal caching, or equal semantics for capabilities one side does not offer.
 Original input is delivered as one string chunk to both constructors; streaming ingestion is not measured.
 

@@ -5,11 +5,13 @@ import type {
   PieceTableTreeSnapshot,
   PieceTreeNode,
 } from './pieceTableTypes'
-import type { EditContext, InsertContext } from './internalTypes'
+import type { EditContext, HideSnap, InsertContext } from './internalTypes'
 import { extendTailChunk } from './buffers'
 import { applyReverseIndexChanges } from './reverseIndex'
-import { ensureValidRange, isHighSurrogate, isLowSurrogate, splitsSurrogatePair } from './reads'
+import { codeUnitAt, ensureValidRange, splitsSurrogatePair } from './reads'
+import { isHighSurrogate, isLowSurrogate, mendsCutAtEnd, mendsCutAtStart } from './surrogates'
 import { createNormalizedSnapshot, createSnapshot, editingEpoch } from './snapshot'
+import { getSubtreeVisibleLength } from './node'
 import { hideVisibleRange, insertAtVisibleOffset } from './tree'
 
 const compareEditsDescending = (left: PieceTableEdit, right: PieceTableEdit): number => {
@@ -49,7 +51,7 @@ const orphansSurrogateAtStart = (
   // A sibling edit ending here consumes the leading half, so the pair leaves the
   // document whole rather than in halves.
   if (coveredByAnother(boundaries.ends, edit.from)) return false
-  return !isLowSurrogate(edit.text.charCodeAt(0))
+  return !mendsCutAtStart(edit.text)
 }
 
 const orphansSurrogateAtEnd = (
@@ -59,7 +61,7 @@ const orphansSurrogateAtEnd = (
 ): boolean => {
   if (!splitsSurrogatePair(snapshot, edit.to)) return false
   if (coveredByAnother(boundaries.starts, edit.to)) return false
-  return !isHighSurrogate(edit.text.charCodeAt(edit.text.length - 1))
+  return !mendsCutAtEnd(edit.text)
 }
 
 const snapEditToCodePoints = (
@@ -67,6 +69,8 @@ const snapEditToCodePoints = (
   edit: PieceTableEdit,
   boundaries: BatchBoundaries,
 ): PieceTableEdit => {
+  if (!snapshot.buffers.containsSurrogates) return edit
+
   const atStart = orphansSurrogateAtStart(snapshot, edit, boundaries)
   const atEnd = orphansSurrogateAtEnd(snapshot, edit, boundaries)
   if (!atStart && !atEnd) return edit
@@ -135,16 +139,6 @@ export const snapBatchEditRanges = (
   return snapped
 }
 
-// One edit has no sibling to consume a half for it, so the batch's sorting,
-// overlap check and boundary counting have nothing to decide: only the
-// snapping policy runs, shared with the batch path so the two cannot drift.
-const NO_SIBLINGS: BatchBoundaries = { starts: new Map(), ends: new Map() }
-
-const snapEditRange = (snapshot: PieceTableTreeSnapshot, edit: PieceTableEdit): PieceTableEdit => {
-  ensureValidRange(snapshot, edit.from, edit.to)
-  return snapEditToCodePoints(snapshot, edit, NO_SIBLINGS)
-}
-
 const countBoundaries = (
   edits: readonly PieceTableEdit[],
   offsetOf: (edit: PieceTableEdit) => number,
@@ -189,7 +183,8 @@ const finishEdit = (snapshot: PieceTableTreeSnapshot, state: EditState): PieceTa
 const insertContext = (state: EditState, text: string, snap: boolean): InsertContext => ({
   changes: state.changes,
   normalizeOrders: false,
-  probe: { text, snap, leftTurns: [], outcome: 'insert' },
+  snap: null,
+  probe: { text, snap, leftTurns: [], lineBreaks: 0, outcome: 'insert' },
   appendedBuffers: null,
 })
 
@@ -213,7 +208,33 @@ const insertText = (
     state.buffers = context.appendedBuffers!
     return
   }
-  state.buffers = extendTailChunk(state.buffers, text)
+  state.buffers = extendTailChunk(state.buffers, text, context.probe.lineBreaks)
+}
+
+const hideRange = (
+  state: EditState,
+  edit: PieceTableEdit,
+  epoch: number,
+  snap: HideSnap | null,
+): void => {
+  const context = edit.text.length > 0 ? insertContext(state, edit.text, false) : null
+  const hiding: EditContext = context ?? { changes: state.changes, normalizeOrders: false, snap }
+  // An insert context is made without one; the range's own check rides on it.
+  hiding.snap = snap
+  const root = hideVisibleRange(
+    state.root,
+    edit.from,
+    edit.to,
+    state.buffers,
+    hiding,
+    epoch,
+    context,
+  )
+  if (snap?.retry) return
+
+  state.root = root
+  state.normalizeOrders ||= hiding.normalizeOrders
+  if (context) state.buffers = context.appendedBuffers!
 }
 
 // One descent for both halves of a replacement: the range is hidden and the
@@ -224,19 +245,57 @@ const replaceRange = (state: EditState, edit: PieceTableEdit, epoch: number): vo
     return
   }
 
-  const context = edit.text.length > 0 ? insertContext(state, edit.text, false) : null
-  const hiding: EditContext = context ?? { changes: state.changes, normalizeOrders: false }
-  state.root = hideVisibleRange(
-    state.root,
-    edit.from,
-    edit.to,
-    state.buffers,
-    hiding,
-    epoch,
-    context,
-  )
-  state.normalizeOrders ||= hiding.normalizeOrders
-  if (context) state.buffers = context.appendedBuffers!
+  hideRange(state, edit, epoch, null)
+}
+
+const unitAt = (state: EditState, offset: number): number =>
+  codeUnitAt(state.root, state.buffers, offset)
+
+// One range edit that nobody snapped: it has no sibling to consume a half for
+// it, so the pass that hides the range checks its two ends; see HideSnap. The
+// widened range is the one snapBatchEditRanges reports for the same edit.
+const replaceUnsnappedRange = (
+  state: EditState,
+  edit: PieceTableEdit,
+  length: number,
+  epoch: number,
+): void => {
+  const text = edit.text
+  const end = edit.to < length
+  const snap = { text, start: edit.from > 0, end, retry: false, highAtPieceEnd: false }
+  hideRange(state, edit, epoch, snap)
+  if (snap.retry) {
+    // The range starts on a low half at a piece's start. Nothing has changed
+    // yet, so the piece before is read and the edit runs again from there.
+    const from = isHighSurrogate(unitAt(state, edit.from - 1)) ? edit.from - 1 : edit.from
+    const again = { text, start: false, end, retry: false, highAtPieceEnd: false }
+    hideRange(state, { ...edit, from }, epoch, again)
+    snap.highAtPieceEnd = again.highAtPieceEnd
+  }
+  if (!snap.highAtPieceEnd) return
+
+  // The range ended on a high half at a piece's end. The unit that followed
+  // it is as far from the document's end as it was before the edit.
+  const after = getSubtreeVisibleLength(state.root) - (length - edit.to)
+  if (!isLowSurrogate(unitAt(state, after))) return
+  hideRange(state, { from: after, to: after + 1, text: '' }, epoch, null)
+}
+
+// An edit call with one edit. Its range is checked but never sorted, and an
+// insert snaps at its landing as insertIntoPieceTable's does.
+const applyOneEdit = (
+  snapshot: PieceTableTreeSnapshot,
+  state: EditState,
+  edit: PieceTableEdit,
+  epoch: number,
+): void => {
+  const length = snapshot.length
+  const snaps = snapshot.buffers.containsSurrogates
+  if (edit.to > edit.from && snaps) return replaceUnsnappedRange(state, edit, length, epoch)
+  if (edit.to > edit.from) return hideRange(state, edit, epoch, null)
+
+  const snap = snaps && edit.from > 0 && edit.from < length
+  insertText(state, edit.from, edit.text, snap, epoch)
 }
 
 export const insertIntoPieceTable = (
@@ -253,7 +312,8 @@ export const insertIntoPieceTable = (
   // document's ends are never inside a pair, so those skip the probe's reads.
   const epoch = editingEpoch(snapshot)
   const state = beginEdit(snapshot)
-  insertText(state, offset, text, offset > 0 && offset < snapshot.length, epoch)
+  const snap = snapshot.buffers.containsSurrogates && offset > 0 && offset < snapshot.length
+  insertText(state, offset, text, snap, epoch)
   return finishEdit(snapshot, state)
 }
 
@@ -264,11 +324,10 @@ export const deleteFromPieceTable = (
 ): PieceTableTreeSnapshot => {
   if (length <= 0) return snapshot
 
-  const snapped = snapEditRange(snapshot, { from: offset, to: offset + length, text: '' })
-  if (snapped.to <= snapped.from) return snapshot
+  ensureValidRange(snapshot, offset, offset + length)
   const epoch = editingEpoch(snapshot)
   const state = beginEdit(snapshot)
-  replaceRange(state, snapped, epoch)
+  applyOneEdit(snapshot, state, { from: offset, to: offset + length, text: '' }, epoch)
   return finishEdit(snapshot, state)
 }
 
@@ -281,8 +340,20 @@ const snappedEdits = (
   edits: readonly PieceTableEdit[],
 ): readonly PieceTableEdit[] => {
   if (snappedAgainst.get(edits) === snapshot) return edits
-  if (edits.length === 1) return [snapEditRange(snapshot, edits[0]!)]
   return snapBatchEditRanges(snapshot, edits)
+}
+
+const applyUnsnappedEdit = (
+  snapshot: PieceTableTreeSnapshot,
+  edit: PieceTableEdit,
+): PieceTableTreeSnapshot => {
+  ensureValidRange(snapshot, edit.from, edit.to)
+  if (edit.to === edit.from && edit.text.length === 0) return snapshot
+
+  const epoch = editingEpoch(snapshot)
+  const state = beginEdit(snapshot)
+  applyOneEdit(snapshot, state, edit, epoch)
+  return finishEdit(snapshot, state)
 }
 
 export const applyBatchToPieceTable = (
@@ -290,6 +361,9 @@ export const applyBatchToPieceTable = (
   edits: readonly PieceTableEdit[],
 ): PieceTableTreeSnapshot => {
   if (edits.length === 0) return snapshot
+  if (edits.length === 1 && snappedAgainst.get(edits) !== snapshot) {
+    return applyUnsnappedEdit(snapshot, edits[0]!)
+  }
 
   const applied = snappedEdits(snapshot, edits)
   if (!applied.some((edit) => edit.to > edit.from || edit.text.length > 0)) return snapshot

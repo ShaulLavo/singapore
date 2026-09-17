@@ -8,6 +8,7 @@ import type {
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEndings'
 import { recordTextBufferDiagnostic } from './diagnostics'
+import { containsSurrogate } from './surrogates'
 
 export const BUFFER_CHUNK_SIZE = 16 * 1024
 const LINE_INDEX_MIN_CAPACITY = 64
@@ -45,6 +46,9 @@ class PieceBufferChunkView implements PieceBufferChunks {
     public readonly size: number,
     public readonly tailLength: number,
     public readonly bufferCount: number,
+    // Line breaks in this view's tail, so an appended piece knows where its
+    // breaks begin in the tail's index without that index existing yet.
+    public readonly tailLineBreaks: number,
   ) {}
 
   public static from(original: string): PieceBufferChunkView {
@@ -54,7 +58,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
       lineIndexes: new Map(),
       tailLastUnit: original.charCodeAt(original.length - 1),
     }
-    return new PieceBufferChunkView(log, 1, original.length, 1)
+    return new PieceBufferChunkView(log, 1, original.length, 1, 0)
   }
 
   public get lineIndexes(): Map<number, PieceBufferLineIndex> {
@@ -149,10 +153,16 @@ class PieceBufferChunkView implements PieceBufferChunks {
       lineIndexes,
       tailLastUnit: chunks[this.size - 1]!.charCodeAt(this.tailLength - 1),
     }
-    return new PieceBufferChunkView(log, this.size, this.tailLength, this.bufferCount)
+    return new PieceBufferChunkView(
+      log,
+      this.size,
+      this.tailLength,
+      this.bufferCount,
+      this.tailLineBreaks,
+    )
   }
 
-  public extendTail(text: string): PieceBufferChunkView {
+  public extendTail(text: string, lineBreaks: number): PieceBufferChunkView {
     this.log.chunks[this.size - 1] += text
     this.log.tailLastUnit = text.charCodeAt(text.length - 1)
     return new PieceBufferChunkView(
@@ -160,10 +170,11 @@ class PieceBufferChunkView implements PieceBufferChunks {
       this.size,
       this.tailLength + text.length,
       this.bufferCount,
+      this.tailLineBreaks + lineBreaks,
     )
   }
 
-  public fill(text: string): PieceBufferChunkView {
+  public fill(text: string, lineBreaks: number): PieceBufferChunkView {
     this.log.chunks[this.size - 1] += text
     this.log.chunkOfBuffer.push(this.size - 1)
     this.log.tailLastUnit = text.charCodeAt(text.length - 1)
@@ -172,14 +183,21 @@ class PieceBufferChunkView implements PieceBufferChunks {
       this.size,
       this.tailLength + text.length,
       this.bufferCount + 1,
+      this.tailLineBreaks + lineBreaks,
     )
   }
 
-  public open(text: string): PieceBufferChunkView {
+  public open(text: string, lineBreaks: number): PieceBufferChunkView {
     this.log.chunks.push(text)
     this.log.chunkOfBuffer.push(this.size)
     this.log.tailLastUnit = text.charCodeAt(text.length - 1)
-    return new PieceBufferChunkView(this.log, this.size + 1, text.length, this.bufferCount + 1)
+    return new PieceBufferChunkView(
+      this.log,
+      this.size + 1,
+      text.length,
+      this.bufferCount + 1,
+      lineBreaks,
+    )
   }
 }
 
@@ -206,6 +224,8 @@ export type PieceTableBufferOptions = {
   // For callers that ingested the text themselves: the folded text no longer
   // carries the evidence, so their own finding is the only source left.
   readonly containsUnusualLineTerminators?: boolean
+  // For a caller that already knows. True is always safe; false is trusted.
+  readonly containsSurrogates?: boolean
   // Edits mutate in place between explicit retains instead of cloning every
   // path. The caller then owns the retain points; see retainPieceTableSnapshot.
   readonly transient?: boolean
@@ -228,15 +248,25 @@ const writableStore = (chunks: PieceBufferChunks): PieceBufferChunkView => {
   return store.isCurrent() ? store : store.fork()
 }
 
+// Only the appended text is tested: what was there before is already known.
 const withStore = (
   buffers: PieceTableBuffers,
   chunks: PieceBufferChunkView,
   nextBufferSequence: number,
+  appended: string,
 ): PieceTableBuffers => ({
-  ...buffers,
-  chunks,
+  // Every field by name, in createInitialBuffers' order: one object shape,
+  // and a keystroke makes one of these, which a spread makes slower.
+  original: buffers.original,
+  identity: buffers.identity,
+  lineage: buffers.lineage,
   lineIndexes: chunks.lineIndexes,
+  chunks,
   nextBufferSequence,
+  lineEnding: buffers.lineEnding,
+  byteOrderMark: buffers.byteOrderMark,
+  containsUnusualLineTerminators: buffers.containsUnusualLineTerminators,
+  containsSurrogates: buffers.containsSurrogates || containsSurrogate(appended),
 })
 
 export const bufferStoreExtent = (buffers: PieceTableBuffers): PieceBufferStoreExtent | null =>
@@ -329,36 +359,36 @@ const firstLineBreakAtOrAfter = (index: PieceBufferLineIndex, target: number): n
   return low
 }
 
-export const countBufferLineBreaks = (
+// The index of a piece's chunk, scanned at least to the piece's end. A longer
+// scan serves too: the log is append-only, so it only adds entries after.
+const pieceLineIndex = (buffers: PieceTableBuffers, piece: Piece): PieceBufferLineIndex => {
+  const index = buffers.lineIndexes.get(chunkOfBuffer(buffers, piece.buffer))
+  if (index && index.scannedLength >= piece.start + piece.length) return index
+  return bufferLineIndex(buffers, piece.buffer, getBufferText(buffers, piece.buffer))
+}
+
+// Line breaks in the first `prefixLength` units of a piece that has some.
+export const countPieceLineBreaksBefore = (
   buffers: PieceTableBuffers,
-  buffer: PieceBufferId,
-  start: number,
-  end: number,
+  piece: Piece,
+  prefixLength: number,
 ): number => {
-  if (end <= start) return 0
+  const offsets = pieceLineIndex(buffers, piece).offsets
+  const target = piece.start + prefixLength
+  let low = piece.firstLineBreak
+  let high = low + piece.lineBreaks
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (offsets[middle]! < target) low = middle + 1
+    else high = middle
+  }
 
-  const text = getBufferText(buffers, buffer)
-  const index = bufferLineIndex(buffers, buffer, text)
-  return (
-    firstLineBreakAtOrAfter(index, Math.min(end, text.length)) -
-    firstLineBreakAtOrAfter(index, Math.min(start, text.length))
-  )
+  return low - piece.firstLineBreak
 }
 
-// Absolute buffer offset of the ordinal-th (1-based) '\n' at or after start.
-export const findBufferLineBreakOffset = (
-  buffers: PieceTableBuffers,
-  buffer: PieceBufferId,
-  start: number,
-  ordinal: number,
-): number | null => {
-  const text = getBufferText(buffers, buffer)
-  const index = bufferLineIndex(buffers, buffer, text)
-  const at = firstLineBreakAtOrAfter(index, start) + ordinal - 1
-  if (at >= index.count) return null
-  const offset = index.offsets[at]!
-  return offset < text.length ? offset : null
-}
+// Chunk offsets of line breaks; a piece's own start at `piece.firstLineBreak`.
+export const pieceLineBreakOffsets = (buffers: PieceTableBuffers, piece: Piece): Uint32Array =>
+  pieceLineIndex(buffers, piece).offsets
 
 export const bufferUnitAt = (
   buffers: PieceTableBuffers,
@@ -380,12 +410,16 @@ export const createPiece = (
   order: number,
   visible = true,
 ): Piece => {
+  const text = getBufferText(buffers, buffer)
+  const index = bufferLineIndex(buffers, buffer, text)
+  const firstLineBreak = firstLineBreakAtOrAfter(index, start)
   return {
     buffer,
     start,
     length,
     order,
-    lineBreaks: countBufferLineBreaks(buffers, buffer, start, start + length),
+    lineBreaks: firstLineBreakAtOrAfter(index, start + length) - firstLineBreak,
+    firstLineBreak,
     visible,
   }
 }
@@ -409,12 +443,18 @@ const chunkEndFor = (text: string, start: number, capacity: number): number => {
   return splitsPair ? end - 1 : end
 }
 
-const createAppendedPiece = (sequence: number, start: number, text: string): Piece => ({
+const createAppendedPiece = (
+  sequence: number,
+  start: number,
+  text: string,
+  firstLineBreak: number,
+): Piece => ({
   buffer: createBufferId(sequence),
   start,
   length: text.length,
   order: 0,
   lineBreaks: countLineBreaks(text),
+  firstLineBreak,
   visible: true,
 })
 
@@ -437,8 +477,14 @@ export const appendChunksToBuffers = (
   if (fillEnd > 0) {
     const fill = text.slice(0, fillEnd)
     const previousLength = store.tailLength
-    pieces.push(createAppendedPiece(nextBufferSequence, previousLength, fill))
-    store = store.fill(fill)
+    const piece = createAppendedPiece(
+      nextBufferSequence,
+      previousLength,
+      fill,
+      store.tailLineBreaks,
+    )
+    pieces.push(piece)
+    store = store.fill(fill, piece.lineBreaks)
     growTailLineIndex(store, previousLength, fill)
     nextBufferSequence += 1
     offset = fillEnd
@@ -446,24 +492,29 @@ export const appendChunksToBuffers = (
 
   while (offset < text.length) {
     const chunkText = text.slice(offset, chunkEndFor(text, offset, BUFFER_CHUNK_SIZE))
-    pieces.push(createAppendedPiece(nextBufferSequence, 0, chunkText))
-    store = store.open(chunkText)
+    const piece = createAppendedPiece(nextBufferSequence, 0, chunkText, 0)
+    pieces.push(piece)
+    store = store.open(chunkText, piece.lineBreaks)
     nextBufferSequence += 1
     offset += chunkText.length
   }
 
-  return { buffers: withStore(buffers, store, nextBufferSequence), pieces }
+  return { buffers: withStore(buffers, store, nextBufferSequence, text), pieces }
 }
 
-export const extendTailChunk = (buffers: PieceTableBuffers, text: string): PieceTableBuffers => {
+export const extendTailChunk = (
+  buffers: PieceTableBuffers,
+  text: string,
+  lineBreaks: number,
+): PieceTableBuffers => {
   if (text.length === 0) return buffers
   if (buffers.chunks.size < 2) throw new Error('piece buffer tail not found')
 
   const store = writableStore(buffers.chunks)
   const previousLength = store.tailLength
-  const grown = store.extendTail(text)
+  const grown = store.extendTail(text, lineBreaks)
   growTailLineIndex(grown, previousLength, text)
-  return withStore(buffers, grown, buffers.nextBufferSequence)
+  return withStore(buffers, grown, buffers.nextBufferSequence, text)
 }
 
 // The tail's index, when one exists and is up to date, grows from the appended
@@ -510,6 +561,7 @@ export const createInitialBuffers = (
     lineEnding: options.lineEnding ?? DEFAULT_DOCUMENT_LINE_ENDING,
     byteOrderMark: options.byteOrderMark ?? '',
     containsUnusualLineTerminators: options.containsUnusualLineTerminators ?? false,
+    containsSurrogates: options.containsSurrogates ?? containsSurrogate(original),
   }
 }
 
@@ -523,6 +575,7 @@ export const createOriginalPiece = (buffers: PieceTableBuffers): Piece | null =>
     length: original.length,
     order: PIECE_ORDER_STEP,
     lineBreaks: bufferLineIndex(buffers, buffers.original, original).count,
+    firstLineBreak: 0,
     visible: true,
   }
 }

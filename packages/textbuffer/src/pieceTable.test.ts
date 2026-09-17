@@ -14,15 +14,18 @@ import {
   readPieceTableTextRange,
   insertIntoPieceTable,
   debugPieceTable,
+  lineRange,
   materializePieceTableFullText,
   offsetToPoint,
   pieceTableContainsUnusualLineTerminators,
   pieceTableSnapshotsHaveSameText,
   pointToOffset,
+  readPieceTableLine,
   resolveAnchor,
   resolveAnchorLinear,
 } from './index'
 import { BUFFER_CHUNK_SIZE } from './buffers'
+import { validatePieceTreeInvariants } from './inspection'
 
 type PieceTableSnapshot = ReturnType<typeof createPieceTableSnapshot>
 type Random = () => number
@@ -60,6 +63,29 @@ const expectSnapshotText = (snapshot: PieceTableSnapshot, text: string) => {
   expect(materializePieceTableFullText(snapshot)).toBe(text)
   expect(snapshot.length).toBe(text.length)
   expect(snapshot.root?.subtreeLineBreaks ?? 0).toBe(countLineBreaks(text))
+}
+
+// A row's bounds, its text and a clamped column against the split string.
+const expectRow = (snapshot: PieceTableSnapshot, lines: readonly string[], row: number) => {
+  let start = 0
+  for (let index = 0; index < row; index++) start += lines[index]!.length + 1
+  const line = lines[row]!
+  expect(lineRange(snapshot, row)).toEqual({ start, end: start + line.length })
+  expect(readPieceTableLine(snapshot, row)).toBe(line)
+  expect(pointToOffset(snapshot, { row, column: line.length >> 1 })).toBe(
+    start + (line.length >> 1),
+  )
+  expect(pointToOffset(snapshot, { row, column: line.length + 3 })).toBe(start + line.length)
+}
+
+const expectRows = (snapshot: PieceTableSnapshot, text: string, random: Random) => {
+  const lines = text.split('\n')
+  expectRow(snapshot, lines, 0)
+  expectRow(snapshot, lines, lines.length - 1)
+  for (let index = 0; index < 8; index++)
+    expectRow(snapshot, lines, randomInt(random, lines.length))
+  expect(lineRange(snapshot, lines.length)).toEqual({ start: text.length, end: text.length })
+  expect(readPieceTableLine(snapshot, lines.length)).toBe('')
 }
 
 const expectRandomRanges = (snapshot: PieceTableSnapshot, text: string, random: Random) => {
@@ -137,6 +163,8 @@ const runRandomEditScenario = (seed: number): void => {
     text = result.text
     expectSnapshotText(snapshot, text)
     expectRandomRanges(snapshot, text, random)
+    expectRows(snapshot, text, random)
+    expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
   }
 }
 
@@ -416,6 +444,39 @@ describe('piece table', () => {
     expect(pointToOffset(snapshot, { row: 3, column: 1 })).toBe(9)
     expect(pointToOffset(snapshot, { row: 99, column: 0 })).toBe(9)
     expect(pointToOffset(snapshot, { row: -1, column: -1 })).toBe(0)
+  })
+
+  test('finds both ends of every row, whatever pieces they fall in', () => {
+    for (const text of ['', 'one', '\n', 'ab\ncde\n\nf', 'ab\ncde\n\nf\n']) {
+      const snapshot = createPieceTableSnapshot(text)
+      const lines = text.split('\n')
+      for (let row = 0; row < lines.length; row++) expectRow(snapshot, lines, row)
+      expect(lineRange(snapshot, -2)).toEqual(lineRange(snapshot, 0))
+      expect(lineRange(snapshot, lines.length + 5)).toEqual({
+        start: text.length,
+        end: text.length,
+      })
+    }
+  })
+
+  test('a row ends in a later piece, past the tombstones between its breaks', () => {
+    // Row 1 starts in the original piece, crosses an insert, two tombstones
+    // and a breakless piece, and ends at a break three pieces further on.
+    let snapshot = createPieceTableSnapshot('aa\nbbbbbbbb\ncc\ndd')
+    snapshot = insertIntoPieceTable(snapshot, 6, 'XYZ')
+    snapshot = deleteFromPieceTable(snapshot, 7, 1)
+    snapshot = deleteFromPieceTable(snapshot, 9, 2)
+    const text = 'aa\nbbbXZbbb\ncc\ndd'
+    expect(materializePieceTableFullText(snapshot)).toBe(text)
+    expect(debugPieceTable(snapshot).filter((piece) => !piece.visible)).toHaveLength(2)
+
+    const lines = text.split('\n')
+    for (let row = 0; row < lines.length; row++) expectRow(snapshot, lines, row)
+
+    // Hiding the break that ended row 1 moves its end into the next piece.
+    const joined = deleteFromPieceTable(snapshot, text.indexOf('\ncc'), 1)
+    const joinedLines = text.replace('\ncc', 'cc').split('\n')
+    for (let row = 0; row < joinedLines.length; row++) expectRow(joined, joinedLines, row)
   })
 
   test('round-trips every offset through point conversion', () => {

@@ -49,6 +49,7 @@ function piece(): Piece {
     length: 1,
     order: 0,
     lineBreaks: 0,
+    firstLineBreak: 0,
     visible: true,
   }
 }

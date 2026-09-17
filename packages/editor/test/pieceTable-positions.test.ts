@@ -11,6 +11,7 @@ import {
   pointToOffset,
 } from '@singapore-editor/textbuffer'
 import type { PieceTreeNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
+import { lineStartOffset } from '@singapore-editor/textbuffer/internal/positions'
 
 describe('piece table positions', () => {
   it('converts offsets to points at line boundaries', () => {
@@ -68,27 +69,25 @@ describe('piece table positions', () => {
     expect(manyReads).toBeLessThan(fewReads * 4)
   })
 
-  it('costs less than a two-descent round trip because the column comes for free', () => {
+  it('finds both ends of a row for little more than the descent to its start', () => {
     const snapshot = buildEditedSourceSnapshot()
     const text = materializePieceTableFullText(snapshot)
-    let offsetReads = 0
+    let startReads = 0
     let pointReads = 0
 
     for (let offset = 0; offset <= text.length; offset += 1) {
       const point = oracleOffsetToPoint(text, offset)
-      offsetReads += countTreeReads(snapshot, (probe) => {
-        expect(offsetToPoint(probe, offset)).toEqual(point)
+      startReads += countTreeReads(snapshot, (probe) => {
+        lineStartOffset(probe, point.row)
       })
       pointReads += countTreeReads(snapshot, (probe) => {
         expect(pointToOffset(probe, point)).toBe(offset)
       })
     }
 
-    // pointToOffset has to descend twice, for the row start and the row end.
-    // offsetToPoint takes the row start out of the descent that counted the
-    // rows, so it only pays for a second descent on the rare offset whose last
-    // break sits off that path.
-    expect(offsetReads).toBeLessThan(pointReads * 0.75)
+    // The row's end is in the piece the descent lands in, or a short walk on
+    // from it. A second descent for the end would double the reads.
+    expect(pointReads).toBeLessThan(startReads * 1.5)
   })
 
   it('matches a brute-force scan of the materialized text at every offset', () => {

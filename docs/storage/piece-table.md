@@ -44,6 +44,9 @@ All subtree aggregates (`subtreeVisibleLength`, `subtreePieces`, `subtreeLineBre
 **Phase 1 — Line breaks:**
 
 - Piece gains `lineBreaks` field (newline count in its buffer slice)
+- Piece gains `firstLineBreak` (E046): the position of its first break in its chunk's line index.
+  A chunk only grows at its end, so the position never moves. A cut gives the right part the left
+  part's position plus the left part's count, and an appended piece takes the tail's running count
 - Treap node gains `subtreeLineBreaks` aggregate
 - Enables O(log n) offset-to-row/column conversion
 

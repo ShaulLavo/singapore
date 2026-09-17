@@ -1009,6 +1009,7 @@ function snapshotHarness(
   const textSnapshot = {
     lineCount: 1,
     lineStart: () => 0,
+    lineRange: () => ({ start: 0, end: text.length }),
     lineAt: () => 0,
     length: text.length,
     readRange,

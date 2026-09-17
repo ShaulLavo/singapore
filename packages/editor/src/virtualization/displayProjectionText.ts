@@ -17,11 +17,6 @@ import type {
   WrapSummary,
 } from './displayProjectionTypes'
 
-export function lineEnd(snapshot: TextSnapshot, row: number): number {
-  if (row + 1 >= snapshot.lineCount) return snapshot.length
-  return Math.max(snapshot.lineStart(row), snapshot.lineStart(row + 1) - 1)
-}
-
 export function inlineSummary(
   length: number,
   replacements: readonly InlineReplacement[],

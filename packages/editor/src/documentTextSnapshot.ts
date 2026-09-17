@@ -8,7 +8,7 @@ import {
 } from '@singapore-editor/textbuffer'
 import { getSubtreeLineBreaks } from '@singapore-editor/textbuffer/internal/node'
 import { forEachTextInRange } from '@singapore-editor/textbuffer/internal/tree'
-import { lineStartOffset } from '@singapore-editor/textbuffer/internal/positions'
+import { lineRange, lineStartOffset } from '@singapore-editor/textbuffer/internal/positions'
 
 import {
   measureString,
@@ -22,10 +22,19 @@ import {
   recordEditorPerformanceDiagnostic,
 } from './editor/performanceDiagnostics'
 
+// A row's first offset and the offset of the break that ends it, or of the
+// document's end for the last row.
+export type TextLineRange = {
+  readonly start: number
+  readonly end: number
+}
+
 export type TextSnapshot = {
   readonly length: number
   readonly lineCount: number
   lineStart(lineIndex: number): number
+  // Both ends from one lookup; two lineStart calls walk the tree twice.
+  lineRange(lineIndex: number): TextLineRange
   lineAt(offset: number): number
   readRange(start: number, end: number): string
   materializeFullText(): string
@@ -132,6 +141,10 @@ class PieceTableDocumentTextSnapshot implements DocumentTextSnapshot {
     return lineStartOffset(this.snapshot, lineIndex)
   }
 
+  lineRange(lineIndex: number): TextLineRange {
+    return lineRange(this.snapshot, lineIndex)
+  }
+
   lineAt(offset: number): number {
     return offsetToPoint(this.snapshot, Math.max(0, Math.min(offset, this.length))).row
   }
@@ -211,6 +224,11 @@ class StringTextSnapshot implements TextSnapshot {
     if (lineIndex <= 0) return 0
     const offset = this.lineBreaks[lineIndex - 1]
     return offset === undefined ? this.length : offset + 1
+  }
+
+  lineRange(lineIndex: number): TextLineRange {
+    const row = Math.max(0, lineIndex)
+    return { start: this.lineStart(row), end: this.lineBreaks[row] ?? this.length }
   }
 
   lineAt(offset: number): number {

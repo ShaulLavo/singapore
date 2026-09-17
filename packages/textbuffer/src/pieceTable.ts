@@ -12,9 +12,10 @@ export {
 } from './anchors'
 export { diffPieceTableSnapshots } from './diff'
 export { applyBatchToPieceTable, deleteFromPieceTable, insertIntoPieceTable } from './edits'
-export { offsetToPoint, pointToOffset } from './positions'
+export { lineRange, offsetToPoint, pointToOffset } from './positions'
 export {
   getPieceTableLength,
+  readPieceTableLine,
   readPieceTableTextRange,
   materializePieceTableFullText,
   forEachPieceTableTextChunk,

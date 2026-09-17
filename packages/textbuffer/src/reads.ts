@@ -1,8 +1,14 @@
-import type { Piece, PieceTableTreeSnapshot } from './pieceTableTypes'
+import type {
+  Piece,
+  PieceTableBuffers,
+  PieceTableTreeSnapshot,
+  PieceTreeNode,
+} from './pieceTableTypes'
 import { getBufferText } from './buffers'
 import { collectTextInRange, forEachTextInRange } from './tree'
 import { getPieceVisibleLength, getSubtreeVisibleLength } from './node'
 import { createPieceTableWalker } from './walker'
+import { findLineRange, type LineRangeResult } from './positions'
 import { isHighSurrogate, isLowSurrogate } from './surrogates'
 
 export const getPieceTableLength = (snapshot: PieceTableTreeSnapshot): number => snapshot.length
@@ -29,13 +35,30 @@ export const readPieceTableTextRange = (
   return chunks.join('')
 }
 
+// A row's text without its line break. One descent finds both ends; a row
+// inside one piece, which most are, is sliced straight from that piece's chunk.
+export const readPieceTableLine = (snapshot: PieceTableTreeSnapshot, row: number): string => {
+  const range: LineRangeResult = { start: 0, end: 0, piece: null, pieceOffset: 0 }
+  findLineRange(snapshot, row, range)
+  if (range.start === range.end) return ''
+
+  const piece = range.piece
+  if (!piece) return readPieceTableTextRange(snapshot, range.start, range.end)
+  const from = piece.start - range.pieceOffset
+  return getBufferText(snapshot.buffers, piece.buffer).slice(from + range.start, from + range.end)
+}
+
 export { isHighSurrogate, isLowSurrogate } from './surrogates'
 
 // Iterative descent to the visible piece holding `offset`, reading the unit
-// straight out of that piece's chunk: the edit path asks this twice per edit,
-// so it must not build a string. Past the end it answers -1.
-const codeUnitAt = (snapshot: PieceTableTreeSnapshot, offset: number): number => {
-  let node = snapshot.root
+// straight out of that piece's chunk, so no string is built. Past the end it
+// answers -1.
+export const codeUnitAt = (
+  root: PieceTreeNode | null,
+  buffers: PieceTableBuffers,
+  offset: number,
+): number => {
+  let node = root
   let base = 0
 
   while (node) {
@@ -47,7 +70,7 @@ const codeUnitAt = (snapshot: PieceTableTreeSnapshot, offset: number): number =>
 
     const pieceEnd = pieceStart + getPieceVisibleLength(node.piece)
     if (offset < pieceEnd) {
-      const text = getBufferText(snapshot.buffers, node.piece.buffer)
+      const text = getBufferText(buffers, node.piece.buffer)
       return text.charCodeAt(node.piece.start + offset - pieceStart)
     }
 
@@ -68,6 +91,7 @@ const codeUnitAt = (snapshot: PieceTableTreeSnapshot, offset: number): number =>
 // offset is the piece's first unit, and only then is a second descent needed.
 export const splitsSurrogatePair = (snapshot: PieceTableTreeSnapshot, offset: number): boolean => {
   if (offset <= 0 || offset >= snapshot.length) return false
+  if (!snapshot.buffers.containsSurrogates) return false
 
   let node = snapshot.root
   let base = 0
@@ -84,7 +108,7 @@ export const splitsSurrogatePair = (snapshot: PieceTableTreeSnapshot, offset: nu
       const at = node.piece.start + offset - pieceStart
       if (!isLowSurrogate(text.charCodeAt(at))) return false
       if (offset > pieceStart) return isHighSurrogate(text.charCodeAt(at - 1))
-      return isHighSurrogate(codeUnitAt(snapshot, offset - 1))
+      return isHighSurrogate(codeUnitAt(snapshot.root, snapshot.buffers, offset - 1))
     }
 
     base = pieceEnd

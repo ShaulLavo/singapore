@@ -87,13 +87,14 @@ export function oracleQuery(text, starts, operation) {
   throw new Error(`Unknown query ${operation.kind}`)
 }
 
-function editFixture(name, initial, count, random, style, versions) {
+const unicodeTokens = ['x', '\n', 'hello ', '😀', 'שלום', 'e\u0301', '\t', '中']
+
+function editFixture(name, initial, count, random, style, versions, tokens = unicodeTokens) {
   let text = initial
   let cursor = safeBoundary(text, Math.floor(text.length / 2))
   const operations = []
   const retained = []
   const retainEvery = Math.max(1, Math.ceil(count / versions))
-  const tokens = ['x', '\n', 'hello ', '😀', 'שלום', 'e\u0301', '\t', '中']
   for (let index = 0; index < count; index += 1) {
     if (index % retainEvery === 0) retained.push({ before: index, sha256: sha256(text) })
     let operation
@@ -216,7 +217,7 @@ const heldUnit = (anchor) => (anchor.bias === 'left' ? anchor.offset - 1 : ancho
 // decided by the string model alone, not by the library's gap rules.
 function anchorDensityFixture(name, initial, anchorCount, editCount, random) {
   let text = initial
-  const tokens = ['x', '\n', 'hello ', '😀', 'שלום', 'e\u0301', '\t', '中']
+  const tokens = unicodeTokens
   const anchors = Array.from({ length: anchorCount }, (_, index) => ({
     offset: safeBoundary(text, 1 + random(text.length - 2)),
     bias: index % 2 ? 'right' : 'left',
@@ -339,6 +340,20 @@ export function makeFixtures(profileName, seed = 20260916) {
       config.densityAnchors,
       config.densityEdits,
       random,
+    ),
+  )
+  // A document that never held a surrogate: no edit of it looks for a cut pair.
+  const asciiLine = 'const value = "hello world"; // text\n'
+  const asciiTokens = ['x', '\n', 'hello ', 'ok', 'abcd', 'e', '\t', 'z']
+  result.push(
+    editFixture(
+      'ascii-replacements',
+      asciiLine.repeat(config.rows),
+      config.edits,
+      random,
+      'replace',
+      config.versions,
+      asciiTokens,
     ),
   )
   return result

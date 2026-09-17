@@ -1,5 +1,5 @@
 import { inlineColumnToSourceColumn } from '../displayTransforms'
-import type { TextSnapshot } from '../documentTextSnapshot'
+import type { TextLineRange, TextSnapshot } from '../documentTextSnapshot'
 import {
   wrappedRowPrefix,
   wrappedSourceLine,
@@ -7,7 +7,7 @@ import {
   type ProjectionLocation,
 } from './displayProjectionIndex'
 import { injectedRowCount } from './displayProjectionBuild'
-import { lineEnd, uniformWrap, wrapRange } from './displayProjectionText'
+import { uniformWrap, wrapRange } from './displayProjectionText'
 import type {
   DisplayRowMetrics,
   InjectedSummary,
@@ -30,31 +30,33 @@ export function resolveProjectionRow(
   if (entry.kind === 'wrapped') {
     const localLine = wrappedSourceLine(entry, index - rowStart)
     const bufferRow = sourceStart + localLine
-    const length = lineEnd(snapshot, bufferRow) - snapshot.lineStart(bufferRow)
+    const range = snapshot.lineRange(bufferRow)
     return documentRow(
-      snapshot,
+      range,
       bufferRow,
       index,
-      wrappedLineSummary(entry, localLine, length),
+      wrappedLineSummary(entry, localLine, range.end - range.start),
       null,
       index - rowStart - wrappedRowPrefix(entry, localLine),
     )
   }
   if (entry.kind === 'run') {
     const bufferRow = sourceStart + index - rowStart
-    const length = lineEnd(snapshot, bufferRow) - snapshot.lineStart(bufferRow)
-    return documentRow(snapshot, bufferRow, index, uniformWrap(length, null), null, 0)
+    const range = snapshot.lineRange(bufferRow)
+    const wrap = uniformWrap(range.end - range.start, null)
+    return documentRow(range, bufferRow, index, wrap, null, 0)
   }
   const before = injectedRowCount(entry.before)
   const local = index - rowStart
   if (local < before) return injectedRow(snapshot, sourceStart, index, entry.before, local)
   if (local >= before + entry.wrap.rows)
     return injectedRow(snapshot, sourceStart, index, entry.after, local - before - entry.wrap.rows)
-  return documentRow(snapshot, sourceStart, index, entry.wrap, entry.inline, local - before)
+  const range = snapshot.lineRange(sourceStart)
+  return documentRow(range, sourceStart, index, entry.wrap, entry.inline, local - before)
 }
 
 function documentRow(
-  snapshot: TextSnapshot,
+  range: TextLineRange,
   bufferRow: number,
   index: number,
   wrap: WrapSummary,
@@ -66,7 +68,7 @@ function documentRow(
     ? inlineColumnToSourceColumn(inline.mapping, start, 'before')
     : start
   const sourceEndColumn = inline ? inlineColumnToSourceColumn(inline.mapping, end, 'after') : end
-  const lineStart = snapshot.lineStart(bufferRow)
+  const lineStart = range.start
   const metrics: DisplayRowMetrics = {
     kind: 'text',
     source: 'document',
@@ -80,7 +82,7 @@ function documentRow(
     displayEndColumn: end,
     wrapSegment: segment,
     textLength: end - start,
-    sourceLength: lineEnd(snapshot, bufferRow) - lineStart,
+    sourceLength: range.end - lineStart,
     ...(inline ? { inlineRow: inline.mapping } : {}),
   }
   return { metrics, inline, injected: null }
@@ -101,7 +103,7 @@ function injectedRow(
     }
     return injectedSegment(snapshot, bufferRow, index, row, segment)
   }
-  return documentRow(snapshot, bufferRow, index, uniformWrap(0, null), null, 0)
+  return documentRow(snapshot.lineRange(bufferRow), bufferRow, index, uniformWrap(0, null), null, 0)
 }
 
 function injectedSegment(
@@ -114,7 +116,7 @@ function injectedSegment(
   const { input, wrap } = injected
   const [start, end] = wrapRange(wrap, segment)
   const offset =
-    input.placement === 'before' ? snapshot.lineStart(bufferRow) : lineEnd(snapshot, bufferRow)
+    input.placement === 'before' ? snapshot.lineStart(bufferRow) : snapshot.lineRange(bufferRow).end
   const metrics: DisplayRowMetrics = {
     kind: 'text',
     source: 'injected',

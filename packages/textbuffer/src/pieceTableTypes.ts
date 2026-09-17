@@ -41,6 +41,10 @@ export type Piece = {
   readonly length: number
   readonly order: number
   readonly lineBreaks: number
+  // Where the piece's breaks begin in its chunk's line index: the position of
+  // the first break at or after `start`. A chunk only grows at its end, so the
+  // position never moves and a search covers `lineBreaks` entries, not the chunk.
+  readonly firstLineBreak: number
   readonly visible: boolean
 }
 
@@ -72,6 +76,10 @@ export type PieceTableBuffers = {
   // acted on: the fold is not reversible, and only the host can decide whether
   // a warning is owed. See pieceTable/lineEndings.ts.
   readonly containsUnusualLineTerminators: boolean
+  // Some text this lineage ever held has a surrogate code unit. While false no
+  // offset can cut a pair, so edits skip every surrogate check. Never cleared:
+  // deleted text stays as a tombstone an undo can bring back.
+  readonly containsSurrogates: boolean
   // One index per chunk string, keyed by chunk sequence and shared by every
   // snapshot on the same log. Original-piece counting builds chunk 0's index;
   // append indexes remain lazy.

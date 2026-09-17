@@ -1,16 +1,16 @@
 import type { Piece, PieceBufferId, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
-import type { EditContext, InsertContext, InsertProbe } from './internalTypes'
+import type { EditContext, HideSnap, InsertContext, InsertProbe } from './internalTypes'
 import {
   appendChunksToBuffers,
   BUFFER_CHUNK_SIZE,
   bufferForPiece,
   bufferUnitAt,
-  countBufferLineBreaks,
   countLineBreaks,
+  countPieceLineBreaksBefore,
   getBufferText,
   isNewestBuffer,
 } from './buffers'
-import { isHighSurrogate, isLowSurrogate } from './surrogates'
+import { isHighSurrogate, isLowSurrogate, mendsCutAtEnd, mendsCutAtStart } from './surrogates'
 import {
   allocateOrderBetween,
   assignPieceOrders,
@@ -42,10 +42,11 @@ const coalescedPiece = (
   const chunkText = getBufferText(buffers, piece.buffer)
   if (piece.start + piece.length !== chunkText.length) return null
   if (chunkText.length + probe.text.length > BUFFER_CHUNK_SIZE) return null
+  probe.lineBreaks = countLineBreaks(probe.text)
   return {
     ...piece,
     length: piece.length + probe.text.length,
-    lineBreaks: piece.lineBreaks + countLineBreaks(probe.text),
+    lineBreaks: piece.lineBreaks + probe.lineBreaks,
   }
 }
 
@@ -196,11 +197,14 @@ const orderAfter = (order: number, upper: number | null, context: EditContext): 
   return allocated ?? order + PIECE_ORDER_MIN_GAP
 }
 
+// `breaksBefore` is the piece's line breaks ahead of `from`, which places the
+// slice's own breaks in the chunk's line index.
 const slicePiece = (
   piece: Piece,
   from: number,
   to: number,
   order: number,
+  breaksBefore: number,
   lineBreaks: number,
   visible: boolean,
 ): Piece => ({
@@ -209,8 +213,13 @@ const slicePiece = (
   length: to - from,
   order,
   lineBreaks,
+  firstLineBreak: piece.firstLineBreak + breaksBefore,
   visible,
 })
+
+// A piece with no line breaks has none on either side of a cut.
+const lineBreaksBefore = (buffers: PieceTableBuffers, piece: Piece, prefixLength: number): number =>
+  piece.lineBreaks === 0 ? 0 : countPieceLineBreaksBefore(buffers, piece, prefixLength)
 
 const appendRun = (
   tree: PieceTreeNode | null,
@@ -351,17 +360,14 @@ const insertAtLanding = (
     return join(next.left, next, prependRun(pieces, next.right, epoch), epoch)
   }
 
-  // A piece with no line breaks has none on either side of a cut.
-  const leftLineBreaks =
-    piece.lineBreaks === 0
-      ? 0
-      : countBufferLineBreaks(buffers, piece.buffer, piece.start, piece.start + localOffset)
-  const leftPiece = slicePiece(piece, 0, localOffset, piece.order, leftLineBreaks, piece.visible)
+  const leftLineBreaks = lineBreaksBefore(buffers, piece, localOffset)
+  const leftPiece = slicePiece(piece, 0, localOffset, piece.order, 0, leftLineBreaks, piece.visible)
   const rightPiece = slicePiece(
     piece,
     localOffset,
     nodeLen,
     orderAfter(piece.order, upper, context),
+    leftLineBreaks,
     piece.lineBreaks - leftLineBreaks,
     piece.visible,
   )
@@ -417,30 +423,28 @@ const hidePieceRange = (
   }
 
   const upper = right ? finite(getSubtreeMinOrder(right)) : upperOrder
-  const count = (start: number, end: number): number =>
-    piece.lineBreaks === 0
-      ? 0
-      : countBufferLineBreaks(buffers, piece.buffer, piece.start + start, piece.start + end)
+  const breaksBeforeTo = to === length ? piece.lineBreaks : lineBreaksBefore(buffers, piece, to)
   const tail: Piece[] = []
   if (from === 0) {
-    const hidden = slicePiece(piece, 0, to, piece.order, count(0, to), false)
-    next.piece = hidden
+    next.piece = slicePiece(piece, 0, to, piece.order, 0, breaksBeforeTo, false)
     tail.push(
       slicePiece(
         piece,
         to,
         length,
         orderAfter(piece.order, upper, context),
-        piece.lineBreaks - hidden.lineBreaks,
+        breaksBeforeTo,
+        piece.lineBreaks - breaksBeforeTo,
         true,
       ),
     )
   } else {
-    const kept = slicePiece(piece, 0, from, piece.order, count(0, from), true)
+    const keptBreaks = lineBreaksBefore(buffers, piece, from)
     const hiddenOrder = orderAfter(piece.order, upper, context)
-    const hiddenBreaks = to === length ? piece.lineBreaks - kept.lineBreaks : count(from, to)
-    next.piece = kept
-    tail.push(slicePiece(piece, from, to, hiddenOrder, hiddenBreaks, false))
+    next.piece = slicePiece(piece, 0, from, piece.order, 0, keptBreaks, true)
+    tail.push(
+      slicePiece(piece, from, to, hiddenOrder, keptBreaks, breaksBeforeTo - keptBreaks, false),
+    )
     if (to < length) {
       tail.push(
         slicePiece(
@@ -448,7 +452,8 @@ const hidePieceRange = (
           to,
           length,
           orderAfter(hiddenOrder, upper, context),
-          piece.lineBreaks - kept.lineBreaks - hiddenBreaks,
+          breaksBeforeTo,
+          piece.lineBreaks - breaksBeforeTo,
           true,
         ),
       )
@@ -461,10 +466,69 @@ const hidePieceRange = (
   return prependRun(placedPieces(buffers, pending, piece.order, tail[0]!.order), after, epoch)
 }
 
+const lastVisibleUnit = (node: PieceTreeNode, buffers: PieceTableBuffers): number => {
+  const location = findVisiblePieceEndingAt(node, node.subtreeVisibleLength)
+  return location ? lastUnitOf(location.piece, buffers) : -1
+}
+
+// Where a cut that starts `cutFrom` units into a visible piece should start.
+const snappedCutStart = (
+  piece: Piece,
+  cutFrom: number,
+  buffers: PieceTableBuffers,
+  snap: HideSnap,
+): number => {
+  const at = piece.start + cutFrom
+  if (!isLowSurrogate(bufferUnitAt(buffers, piece.buffer, at)) || mendsCutAtStart(snap.text)) {
+    return cutFrom
+  }
+  if (cutFrom === 0) {
+    snap.retry = true
+    return cutFrom
+  }
+  return isHighSurrogate(bufferUnitAt(buffers, piece.buffer, at - 1)) ? cutFrom - 1 : cutFrom
+}
+
+const snappedCutEnd = (
+  piece: Piece,
+  cutTo: number,
+  buffers: PieceTableBuffers,
+  snap: HideSnap,
+): number => {
+  const at = piece.start + cutTo
+  if (!isHighSurrogate(bufferUnitAt(buffers, piece.buffer, at - 1)) || mendsCutAtEnd(snap.text)) {
+    return cutTo
+  }
+  if (cutTo === piece.length) {
+    snap.highAtPieceEnd = true
+    return cutTo
+  }
+  return isLowSurrogate(bufferUnitAt(buffers, piece.buffer, at)) ? cutTo + 1 : cutTo
+}
+
+// A whole subtree is hidden without visiting its end pieces, so its two end
+// units are read here. Both sit at a piece's edge.
+const snapWholeSubtree = (
+  node: PieceTreeNode,
+  from: number,
+  to: number,
+  buffers: PieceTableBuffers,
+  snap: HideSnap,
+): void => {
+  if (snap.start && from === 0 && !mendsCutAtStart(snap.text)) {
+    snap.retry = isLowSurrogate(firstVisibleUnit(node, buffers))
+  }
+  if (snap.end && to === node.subtreeVisibleLength && !mendsCutAtEnd(snap.text)) {
+    snap.highAtPieceEnd = isHighSurrogate(lastVisibleUnit(node, buffers))
+  }
+}
+
 // Delete in one descent: tombstone the visible range [from, to) in place,
 // cutting only the pieces its two ends fall inside. With `pending`, a
 // replacement: its text is placed where the range began, on the same pass.
 // `pending` travels down only the side that holds the range's first unit.
+// `from` and `to` go down unclamped, so a node can tell the range's own ends
+// from a subtree's: the first unit is here only if `from` is not negative.
 export const hideVisibleRange = (
   node: PieceTreeNode | null,
   from: number,
@@ -477,29 +541,40 @@ export const hideVisibleRange = (
   upperOrder: number | null = null,
 ): PieceTreeNode | null => {
   if (!node || from >= to) return node
-  if (from <= 0 && to >= node.subtreeVisibleLength) {
-    const hidden = hideTree(node, epoch)
-    if (!pending) return hidden
-    const upper = finite(getSubtreeMinOrder(node))
-    return prependRun(placedPieces(buffers, pending, lowerOrder, upper), hidden, epoch)
+  const snap = context.snap
+  // Not with `pending`: its text goes before the first unit hidden, after any
+  // tombstones the subtree starts with, and only the descent finds that place.
+  if (from <= 0 && to >= node.subtreeVisibleLength && !pending) {
+    if (snap) snapWholeSubtree(node, from, to, buffers, snap)
+    if (snap?.retry) return node
+    return hideTree(node, epoch)
   }
 
   const leftLen = getSubtreeVisibleLength(node.left)
   const nodeEnd = leftLen + getPieceVisibleLength(node.piece)
   const order = node.piece.order
+  const cuts = Math.max(from, leftLen) < Math.min(to, nodeEnd)
+  let cutFrom = Math.max(from, leftLen) - leftLen
+  let cutTo = Math.min(to, nodeEnd) - leftLen
+  // The range's first unit is checked before the pass changes anything, so a
+  // retry leaves every node as it was.
+  if (snap?.start && cuts && from >= leftLen) {
+    cutFrom = snappedCutStart(node.piece, cutFrom, buffers, snap)
+    if (snap.retry) return node
+  }
+
   const next = own(node, epoch)
   let left = next.left
   let right = next.right
-  if (from < leftLen) {
-    const end = Math.min(to, leftLen)
-    left = hideVisibleRange(left, from, end, buffers, context, epoch, pending, lowerOrder, order)
+  if (from < leftLen && leftLen > 0) {
+    left = hideVisibleRange(left, from, to, buffers, context, epoch, pending, lowerOrder, order)
+    if (snap?.retry) return node
   }
   if (to > nodeEnd) {
     const below = from >= nodeEnd ? pending : null
-    const start = Math.max(from - nodeEnd, 0)
     right = hideVisibleRange(
       right,
-      start,
+      from - nodeEnd,
       to - nodeEnd,
       buffers,
       context,
@@ -510,9 +585,10 @@ export const hideVisibleRange = (
     )
   }
 
-  const cutFrom = Math.max(from, leftLen) - leftLen
-  const cutTo = Math.min(to, nodeEnd) - leftLen
-  if (cutFrom >= cutTo) return join(left, next, right, epoch)
+  if (snap?.retry) return node
+  if (!cuts) return join(left, next, right, epoch)
+
+  if (snap?.end && to <= nodeEnd) cutTo = snappedCutEnd(next.piece, cutTo, buffers, snap)
 
   const here = from >= leftLen ? pending : null
   if (here && cutFrom === 0) {

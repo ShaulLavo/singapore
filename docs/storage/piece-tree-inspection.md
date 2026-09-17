@@ -49,6 +49,10 @@ maximum order. The checker scans LF characters directly in buffer ranges; it doe
 aggregate helpers or the buffer line-index cache. Invisible pieces still require valid bounds and
 raw line-break counts. Invalid ranges produce an issue before scanning.
 
+A piece's `firstLineBreak` is where its breaks begin in its chunk's line index (E046). The checker
+expects the count of LF characters in the chunk ahead of `p.start`, scanned once per chunk. Row
+lookups and cuts read the index at that position without a search, so a wrong value is a wrong row.
+
 Every left order is strictly below its parent; every right order is strictly above. The tree is
 an AVL tree since E040: a node's stored height is one more than its taller child's, and sibling
 heights differ by at most one.

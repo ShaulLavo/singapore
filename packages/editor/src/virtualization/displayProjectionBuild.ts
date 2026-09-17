@@ -2,12 +2,7 @@ import { buildWrappedSpan } from './displayProjectionWrap'
 import type { InjectedTextRow } from '../displayTransforms'
 import type { TextSnapshot } from '../documentTextSnapshot'
 import { entryNode, join, runNode, type ProjectionNode } from './displayProjectionIndex'
-import {
-  inlineSummary,
-  lineEnd,
-  summarizeDocumentWrap,
-  summarizeReadWrap,
-} from './displayProjectionText'
+import { inlineSummary, summarizeDocumentWrap, summarizeReadWrap } from './displayProjectionText'
 import type {
   DisplayProjectionConfig,
   InjectedSummary,
@@ -135,8 +130,7 @@ function firstAtOrAfter(rows: readonly number[], row: number): number | undefine
 
 function buildLine(context: BuildContext, row: number): ProjectionNode {
   const { snapshot, config, counters } = context
-  const start = snapshot.lineStart(row)
-  const end = lineEnd(snapshot, row)
+  const { start, end } = snapshot.lineRange(row)
   const inline = inlineSummary(end - start, config.inlineMap?.rowReplacements.get(row) ?? [])
   const wrap = summarizeDocumentWrap(
     snapshot,

@@ -63,6 +63,7 @@ function throwingFullTextSnapshot(text: string): TextSnapshot {
   return {
     lineCount: source.lineCount,
     lineStart: (line) => source.lineStart(line),
+    lineRange: (line) => source.lineRange(line),
     lineAt: (offset) => source.lineAt(offset),
     length: text.length,
     materializeFullText: () => {

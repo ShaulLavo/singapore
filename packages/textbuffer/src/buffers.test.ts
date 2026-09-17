@@ -179,6 +179,40 @@ describe('branches over a shared log', () => {
     }
   })
 
+  test('two branches filling one tail chunk place their own line breaks, then cut them', () => {
+    const original = 'one\ntwo\nthree\n'
+    let trunk = createPieceTableSnapshot(original)
+    trunk = insertIntoPieceTable(trunk, 4, 'T\nT\n')
+    const trunkText = 'one\nT\nT\ntwo\nthree\n'
+
+    // The left branch appends in place; the right one forks the log, so the
+    // same tail offsets hold different breaks at the same index positions.
+    const left = insertIntoPieceTable(trunk, 0, 'L\n\nL\nL')
+    const right = insertIntoPieceTable(trunk, trunkText.length, 'RR\nR\n\n\nR')
+    const leftCut = deleteFromPieceTable(insertIntoPieceTable(left, 3, '\n!\n'), 1, 8)
+    const rightCut = deleteFromPieceTable(right, trunkText.length + 1, 5)
+
+    const leftText = 'L\n\nL\nL' + trunkText
+    const leftCutText = (leftText.slice(0, 3) + '\n!\n' + leftText.slice(3)).replace(
+      /^(.).{8}/s,
+      '$1',
+    )
+    const rightText = trunkText + 'RR\nR\n\n\nR'
+    const rightCutText =
+      rightText.slice(0, trunkText.length + 1) + rightText.slice(trunkText.length + 6)
+    for (const [snapshot, text] of [
+      [trunk, trunkText],
+      [left, leftText],
+      [right, rightText],
+      [leftCut, leftCutText],
+      [rightCut, rightCutText],
+    ] as const) {
+      expect(materializePieceTableFullText(snapshot)).toBe(text)
+      expectEveryOffsetMapped(snapshot, text)
+      expectValid(snapshot)
+    }
+  })
+
   test('an undone branch re-minting a buffer id does not leak its text or line index', () => {
     const base = createPieceTableSnapshot('one\ntwo\nthree')
     expectEveryOffsetMapped(base, 'one\ntwo\nthree')

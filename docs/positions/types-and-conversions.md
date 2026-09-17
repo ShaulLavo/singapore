@@ -61,6 +61,10 @@ Walks treap using `subtreeLineBreaks` to count newlines preceding target. O(log 
 ### pointToOffset
 
 Seeks to target row via `subtreeLineBreaks`, adds column. Clamps column to line end if out of range.
+Both ends of the row come from one descent (`findLineRange`, E046): the break that ends the row is
+in the piece the descent lands in, or it is the first break after it, found by walking on from the
+landing. `lineRange` and `readPieceTableLine` are the same lookup; a row inside one piece is sliced
+straight from that piece's chunk.
 
 ---
 

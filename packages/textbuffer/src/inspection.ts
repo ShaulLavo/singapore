@@ -7,7 +7,7 @@ import type {
 } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
 import { reverseIndexEntries, reverseIndexSlot } from './reverseIndex'
-import { bufferStoreExtent } from './buffers'
+import { bufferStoreExtent, chunkOfBuffer } from './buffers'
 import { ORIGINAL_BUFFER } from './node'
 
 export type PieceTreeIssueKind =
@@ -71,6 +71,7 @@ export const inspectionPieceFields = [
   'length',
   'order',
   'lineBreaks',
+  'firstLineBreak',
   'visible',
 ] as const
 export const inspectionPieceKey = (piece: Pick<Piece, 'buffer' | 'start'>): string =>
@@ -82,10 +83,31 @@ function rawLineBreaks(text: string, start: number, end: number): number {
   return count
 }
 
+// Break offsets of each chunk, read from the text once per validation.
+type ChunkBreaks = Map<number, number[]>
+
+function chunkBreaksBefore(breaks: ChunkBreaks, chunk: number, text: string, end: number): number {
+  let offsets = breaks.get(chunk)
+  if (!offsets) {
+    offsets = []
+    for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', at + 1)) offsets.push(at)
+    breaks.set(chunk, offsets)
+  }
+  let low = 0
+  let high = offsets.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (offsets[middle]! < end) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
 function checkPiece(
   snapshot: PieceTableSnapshot,
   node: PieceTreeNode,
   id: string,
+  chunkBreaks: ChunkBreaks,
   report: Report,
 ): number {
   const piece = node.piece
@@ -113,6 +135,9 @@ function checkPiece(
   if (text === undefined || !validStart || !validLength) return NaN
   const breaks = rawLineBreaks(text, piece.start, piece.start + piece.length)
   report('line-breaks', id, 'piece.lineBreaks', breaks, piece.lineBreaks)
+  const chunk = chunkOfBuffer(snapshot.buffers, piece.buffer)
+  const before = chunkBreaksBefore(chunkBreaks, chunk, text, piece.start)
+  report('line-breaks', id, 'piece.firstLineBreak', before, piece.firstLineBreak)
   return breaks
 }
 
@@ -282,6 +307,7 @@ export function validatePieceTreeInvariants(
   const breaks = new Map<PieceTreeNode, number>()
   const pieces = new Map<string, PieceTreeNode>()
   const visited: PieceTreeNode[] = []
+  const chunkBreaks: ChunkBreaks = new Map()
   const counts = { nodes: 0, visible: 0, invisible: 0, reverseEntries: 0, lineIndexes: 0 }
   walkInspectionTree(
     snapshot.root,
@@ -291,7 +317,7 @@ export function validatePieceTreeInvariants(
       if (node.piece.visible) counts.visible++
       else counts.invisible++
       const id = label(node)
-      breaks.set(node, checkPiece(snapshot, node, id, report))
+      breaks.set(node, checkPiece(snapshot, node, id, chunkBreaks, report))
       checkBalance(node, id, report)
       const key = inspectionPieceKey(node.piece)
       if (pieces.has(key)) report('structure', id, 'piece.key', 'unique buffer/start', key)

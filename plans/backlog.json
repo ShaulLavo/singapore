@@ -747,9 +747,9 @@
     },
     {
       "id": "E046",
-      "file": "e046-one-walk-rows-and-cuts.md",
+      "reference": "../docs/performance/e046-one-walk-rows-and-cuts.md",
       "title": "Find a row in one walk, check surrogates inside the edit, and search line breaks within the piece",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

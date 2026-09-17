@@ -44,7 +44,7 @@ flowchart TD
 
 ### Pieces
 
-A `Piece` describes a slice of a string: `buffer`, `start`, and `length`. It also stores its `order`, `lineBreaks`, and `visible` flag. Splitting a piece creates two records that refer to the same source string.
+A `Piece` describes a slice of a string: `buffer`, `start`, and `length`. It also stores its `order`, `lineBreaks`, `visible` flag, and `firstLineBreak`: where its breaks begin in its chunk's newline index, so a lookup inside the piece reads that index without searching the whole chunk. Splitting a piece creates two records that refer to the same source string.
 
 | Coordinate      | Meaning                                                     |
 | --------------- | ----------------------------------------------------------- |
@@ -194,7 +194,9 @@ See [`anchors.ts`](src/anchors.ts) and [`pieceTable.test.ts`](src/pieceTable.tes
 
 Offsets and columns count **UTF-16 code units**. Rows and columns start at zero. `pointToOffset()` clamps columns to the line end and out-of-range rows to the document's bounds. Grapheme navigation, tab widths, and screen coordinates belong to the editor.
 
-Line lookup combines subtree summaries with per-buffer newline indexes. These store offsets in growable `Uint32Array`s and use binary search to locate line breaks within a slice.
+Line lookup combines subtree summaries with per-chunk newline indexes. These store offsets in growable `Uint32Array`s. A piece knows where its own breaks begin in its chunk's index, so its K-th break is an array read and a count inside it searches only its own entries.
+
+`lineRange()` returns a row's start and end from one descent: the break that ends the row is in the piece the descent lands in, or it is the first break after it. `pointToOffset()` and `readPieceTableLine()` are built on it, and a row that lies inside one piece is sliced straight from that piece's chunk.
 
 The original string is indexed on load. Append indexes are built when needed and extended as chunks grow. `offsetToPoint()` also records the row start during its descent when possible.
 
@@ -234,6 +236,8 @@ See [`lineEndings.ts`](src/lineEndings.ts) and [`documentText.ts`](src/documentT
 ### Unicode edit boundaries
 
 Edit repair checks whether the resulting text would leave half a surrogate pair behind. It expands unsafe deletion ranges, shifts unsafe insertion points left, and preserves replacements that keep a valid pair. Batch repair accounts for neighboring edits and merges overlaps caused by snapping.
+
+A document that has never held a surrogate code unit skips all of this: the buffers carry a `containsSurrogates` flag, set at load or by the first insert that brings one and never cleared, because deleted text stays as a tombstone an undo can restore. A single range edit checks its two ends on the pass that hides the range, with no descent of its own.
 
 Use `snapBatchEditRanges()` when change listeners or undo logic need the exact applied ranges. Anchor creation also moves offsets inside a surrogate pair to its start.
 
@@ -298,7 +302,7 @@ Run `bun run bench:check`, then `bun run bench -- --profile standard` from this 
 
 ### Current results
 
-Commit `0330aae` (E039), 2026-09-17, Node 26.7.0, V8 14.6, Intel Core i7-14700K, Linux. Standard profile: a 380,000 UTF-16 code unit document of 10,000 lines unless the row says otherwise, 9 samples per lane, each a fresh process, median over seeds `20260916`, `7` and `12345`.
+E046, 2026-09-17, Node 26.7.0, V8 14.6, Intel Core i7-14700K, Linux. Standard profile: a 380,000 UTF-16 code unit document of 10,000 lines unless the row says otherwise, 9 samples per lane, each a fresh process, median over seeds `20260916`, `7` and `12345`.
 
 - **Time** is milliseconds for the whole workload, lower is better.
 - **Per operation** divides Singapore's time by the operation count, in microseconds unless marked.
@@ -308,29 +312,30 @@ The control is the pinned `vscode-textbuffer`. It mutates in place and has no sn
 
 | Lane                         | Work per run                                                            | Control (ms) | Singapore (ms) | Per operation | Ratio | Ratio, 8 warmups |
 | ---------------------------- | ----------------------------------------------------------------------- | -----------: | -------------: | ------------: | ----: | ---------------: |
-| load-short-lines             | 1 load of 1,520,000 code units                                          |         3.77 |           2.13 |       2.13 ms | 0.57x |            0.78x |
-| load-long-line               | 1 load of 1,280,000 code units                                          |         2.83 |           1.06 |       1.06 ms | 0.38x |            0.84x |
-| sequential-typing            | 1,500 keystrokes                                                        |         0.61 |           0.40 |       0.27 µs | 0.66x |            0.97x |
-| typing-with-lookups          | 3,000 operations: 1,500 keystrokes, a caret lookup after each           |         0.95 |           0.62 |       0.21 µs | 0.65x |            0.77x |
-| random-insertions            | 1,500 inserts                                                           |         1.08 |           1.60 |       1.07 µs | 1.47x |            1.45x |
-| random-replacements          | 1,500 replacements                                                      |         1.39 |           3.23 |       2.15 µs | 2.31x |            1.87x |
-| eight-cursor-batches         | 187 batches of 8 edits                                                  |         1.17 |           1.97 |      10.51 µs | 1.68x |            1.70x |
-| mixed-edit-churn             | 1,500 mixed edits                                                       |         1.24 |           2.64 |       1.76 µs | 2.13x |            2.18x |
-| large-paste-delete           | 32 operations: 16 pastes of about 256,000 code units, each then deleted |        12.63 |           4.57 |     142.76 µs | 0.36x |            0.36x |
-| lines-sequential-after-churn | 3,000 line reads                                                        |         0.49 |           1.26 |       0.42 µs | 2.57x |            3.38x |
-| lines-random-after-churn     | 3,000 line reads                                                        |         0.76 |           1.92 |       0.64 µs | 2.51x |            2.88x |
-| ranges-after-churn           | 3,000 offset-range reads                                                |         3.08 |           1.31 |       0.44 µs | 0.43x |            0.42x |
-| offset-to-position           | 3,000 conversions                                                       |         1.62 |           1.24 |       0.41 µs | 0.77x |            1.50x |
-| position-to-offset           | 3,000 conversions                                                       |         0.42 |           1.10 |       0.37 µs | 2.64x |            3.29x |
-| full-read-after-churn        | 12 full reads                                                           |         1.30 |           2.13 |     177.56 µs | 1.64x |            1.46x |
+| load-short-lines             | 1 load of 1,520,000 code units                                          |         3.75 |           2.15 |       2.15 ms | 0.57x |            0.78x |
+| load-long-line               | 1 load of 1,280,000 code units                                          |         2.87 |           1.06 |       1.06 ms | 0.37x |            0.85x |
+| sequential-typing            | 1,500 keystrokes                                                        |         0.61 |           0.40 |       0.27 µs | 0.66x |            0.98x |
+| typing-with-lookups          | 3,000 operations: 1,500 keystrokes, a caret lookup after each           |         0.96 |           0.62 |       0.21 µs | 0.65x |            0.74x |
+| random-insertions            | 1,500 inserts                                                           |         1.09 |           1.40 |       0.94 µs | 1.28x |            1.25x |
+| random-replacements          | 1,500 replacements                                                      |         1.38 |           2.74 |       1.82 µs | 1.98x |            1.51x |
+| eight-cursor-batches         | 187 batches of 8 edits                                                  |         1.16 |           1.78 |       9.51 µs | 1.54x |            1.53x |
+| mixed-edit-churn             | 1,500 mixed edits                                                       |         1.22 |           2.36 |       1.57 µs | 1.93x |            1.82x |
+| large-paste-delete           | 32 operations: 16 pastes of about 256,000 code units, each then deleted |        12.67 |           4.64 |     145.04 µs | 0.37x |            0.37x |
+| lines-sequential-after-churn | 3,000 line reads                                                        |         0.50 |           0.69 |       0.23 µs | 1.39x |            1.64x |
+| lines-random-after-churn     | 3,000 line reads                                                        |         0.77 |           0.93 |       0.31 µs | 1.20x |            1.25x |
+| ranges-after-churn           | 3,000 offset-range reads                                                |         3.07 |           1.31 |       0.44 µs | 0.43x |            0.42x |
+| offset-to-position           | 3,000 conversions                                                       |         1.63 |           0.77 |       0.26 µs | 0.47x |            0.88x |
+| position-to-offset           | 3,000 conversions                                                       |         0.41 |           0.59 |       0.20 µs | 1.45x |            1.56x |
+| full-read-after-churn        | 12 full reads                                                           |         1.29 |           2.04 |     169.86 µs | 1.58x |            1.44x |
+| ascii-replacements           | 1,500 replacements of an ASCII-only document                            |         1.37 |           2.53 |       1.69 µs | 1.85x |            1.50x |
 
 Lanes the control cannot run:
 
-| Lane                          | Work per run                                       | Singapore (ms) |                             Per operation | 8 warmups (ms) |
-| ----------------------------- | -------------------------------------------------- | -------------: | ----------------------------------------: | -------------: |
-| persistent-history            | 1,500 edits retaining up to 64 roots               |           2.86 |                                   1.91 µs |           2.44 |
-| branch-edits                  | 64 branches from one churned root, one insert each |           0.28 |                                   4.34 µs |           0.23 |
-| anchor-resolution-after-churn | 3,000 resolutions across 128 anchors               |           0.49 |                                   0.16 µs |           0.31 |
-| anchor-density                | 300 edits, all 500 anchors resolved after each     |          10.56 | 35.19 µs per edit and its 500 resolutions |          10.03 |
+| Lane                          | Work per run                                       | Singapore (ms) | Per operation | 8 warmups (ms) |
+| ----------------------------- | -------------------------------------------------- | -------------: | ------------: | -------------: |
+| persistent-history            | 1,500 edits retaining up to 64 roots               |           2.51 |       1.67 µs |           2.03 |
+| branch-edits                  | 64 branches from one churned root, one insert each |           0.28 |       4.31 µs |           0.22 |
+| anchor-resolution-after-churn | 3,000 resolutions across 128 anchors               |           0.49 |       0.16 µs |           0.31 |
+| anchor-density                | 300 edits, all 500 anchors resolved after each     |          10.58 |      35.26 µs |          11.22 |
 
-Read lanes run after a 1,500-edit churn that leaves about twice as many pieces in Singapore's tree, because deleted text stays as tombstones. Line reads go through two line-start lookups and a range read; the control has a cached `getLineContent`. These are synthetic traces on one machine; rerun before quoting them elsewhere.
+Read lanes run after a 1,500-edit churn that leaves about twice as many pieces in Singapore's tree, because deleted text stays as tombstones. Line reads are one `readPieceTableLine` call; the control has a cached `getLineContent`, which is most of what is left of the sequential lane's gap. `anchor-density` has two modes about 10% apart, and which build lands in the slower one changes with the warmup count; see the [E046 report](../../docs/performance/e046-one-walk-rows-and-cuts.md). These are synthetic traces on one machine; rerun before quoting them elsewhere.

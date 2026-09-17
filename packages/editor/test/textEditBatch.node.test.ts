@@ -132,6 +132,7 @@ function unreadableSnapshot(snapshot: TextSnapshot): TextSnapshot {
     length: snapshot.length,
     lineCount: snapshot.lineCount,
     lineStart: (row) => snapshot.lineStart(row),
+    lineRange: (row) => snapshot.lineRange(row),
     lineAt: (offset) => snapshot.lineAt(offset),
     readRange: vi.fn(() => {
       throw new RangeError('unexpected range read')

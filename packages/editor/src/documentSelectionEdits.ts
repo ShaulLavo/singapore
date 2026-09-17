@@ -2,6 +2,7 @@ import { normalizeTabSize, visualColumnLength } from './displayTransforms'
 import { previousDeleteBoundary } from './graphemes'
 import {
   applyBatchToPieceTable,
+  lineRange,
   offsetToPoint,
   type PieceTableAnchor,
   type PieceTableEdit,
@@ -117,9 +118,10 @@ export const indentSelections = (
 
   const selections = resolvedSelectionsToRanges(snapshot, set)
   const rows = touchedRowsForSelections(snapshot, selections)
-  const edits = rows.map((row) =>
-    rangeToEdit({ start: lineStart(snapshot, row), end: lineStart(snapshot, row) }, text),
-  )
+  const edits = rows.map((row) => {
+    const start = lineStart(snapshot, row)
+    return rangeToEdit({ start, end: start }, text)
+  })
   const nextSnapshot = applyBatchToPieceTable(snapshot, edits)
 
   return {
@@ -300,16 +302,12 @@ const lastTouchedRow = (snapshot: PieceTableSnapshot, selection: ResolvedSelecti
 const lineStart = (snapshot: PieceTableSnapshot, row: number): number =>
   pointToOffset(snapshot, { row, column: 0 })
 
-const lineEnd = (snapshot: PieceTableSnapshot, row: number): number =>
-  pointToOffset(snapshot, { row, column: Number.MAX_SAFE_INTEGER })
-
 const outdentEditForRow = (
   snapshot: PieceTableSnapshot,
   row: number,
   tabSize: number,
 ): PieceTableEdit | null => {
-  const start = lineStart(snapshot, row)
-  const end = lineEnd(snapshot, row)
+  const { start, end } = lineRange(snapshot, row)
   if (start >= end) return null
 
   const prefix = readPieceTableTextRange(snapshot, start, Math.min(end, start + tabSize))

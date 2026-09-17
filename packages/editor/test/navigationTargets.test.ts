@@ -138,6 +138,7 @@ function charactersReadForCaretMove(lineCount: number): number {
     length: source.length,
     lineCount: source.lineCount,
     lineStart: (line) => source.lineStart(line),
+    lineRange: (line) => source.lineRange(line),
     lineAt: (offset) => source.lineAt(offset),
     readRange: (start, end) => {
       const value = source.readRange(start, end)

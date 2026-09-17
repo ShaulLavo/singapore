@@ -31,7 +31,6 @@ import {
 import { resolveProjectionRow, type ResolvedProjectionRow } from './displayProjectionRows'
 import {
   inlineWrapSegmentForSourceColumn,
-  lineEnd,
   read,
   readProjectedText,
   wrapSegmentForColumn,
@@ -233,19 +232,18 @@ export class DisplayProjection {
     const location = locateSourceLine(this.root, sourceLineIndex(row))
     if (!location || location.entry.kind === 'run') return this.rowForBufferRow(row)
     const { entry } = location
+    const range = this.textSnapshot.lineRange(row)
     if (entry.kind === 'wrapped') {
-      const length = lineEnd(this.textSnapshot, row) - this.textSnapshot.lineStart(row)
       return (
         this.rowForBufferRow(row) +
         wrapSegmentForColumn(
-          wrappedLineSummary(entry, row - location.sourceStart, length),
-          target - this.textSnapshot.lineStart(row),
+          wrappedLineSummary(entry, row - location.sourceStart, range.end - range.start),
+          target - range.start,
           bias,
         )
       )
     }
-    const column =
-      Math.min(lineEnd(this.textSnapshot, row), target) - this.textSnapshot.lineStart(row)
+    const column = Math.min(range.end, target) - range.start
     const segment = entry.inline
       ? inlineWrapSegmentForSourceColumn(entry.wrap, entry.inline.mapping, column, bias)
       : wrapSegmentForColumn(entry.wrap, column, bias)

@@ -37,7 +37,7 @@ describe('piece table tree', () => {
   it('cuts a piece in place when a range inside it is hidden', () => {
     const buffers = createInitialBuffers('abcdef')
     const tree = createNode(createOriginalPiece(buffers)!)
-    const context: EditContext = { changes: [], normalizeOrders: false }
+    const context: EditContext = { changes: [], normalizeOrders: false, snap: null }
     const hidden = hideVisibleRange(tree, 2, 4, buffers, context, Number.NaN)
 
     expect(tree.piece.length).toBe(6)
@@ -57,7 +57,7 @@ describe('piece table tree', () => {
   it('hides a whole tree and normalizes orders without mutating the source tree', () => {
     const buffers = createInitialBuffers('abc')
     const tree = createNode({ ...createOriginalPiece(buffers)!, order: 1 })
-    const context: EditContext = { changes: [], normalizeOrders: false }
+    const context: EditContext = { changes: [], normalizeOrders: false, snap: null }
     const invisible = hideVisibleRange(tree, 0, 3, buffers, context, Number.NaN)
     const normalized = normalizePieceOrders(invisible, { value: PIECE_ORDER_STEP })
 

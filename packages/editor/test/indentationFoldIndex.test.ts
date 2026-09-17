@@ -46,6 +46,7 @@ function guardedSnapshot(text: string): TextSnapshot {
     lineCount: snapshot.lineCount,
     lineAt: (offset) => snapshot.lineAt(offset),
     lineStart: (row) => snapshot.lineStart(row),
+    lineRange: (row) => snapshot.lineRange(row),
     readRange: () => {
       throw new RangeError('index must consume chunks')
     },

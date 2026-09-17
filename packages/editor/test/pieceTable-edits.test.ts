@@ -6,6 +6,7 @@ import {
   deleteFromPieceTable,
   insertIntoPieceTable,
   materializePieceTableFullText,
+  type PieceTableSnapshot,
   snapBatchEditRanges,
 } from '@singapore-editor/textbuffer'
 
@@ -191,8 +192,27 @@ describe('piece table surrogate pair snapping', () => {
     ).toThrow(RangeError)
   })
 
-  it('leaves no lone surrogate behind on any edit path', () => {
-    const snapshot = createPieceTableSnapshot('a\u{1F600}b\u{1F600}')
+  // The checks run only while the lineage is flagged as holding a surrogate,
+  // so the sweep covers every way the flag comes to be set.
+  const flagged: ReadonlyArray<readonly [string, () => PieceTableSnapshot]> = [
+    ['found at load', () => createPieceTableSnapshot('a\u{1F600}b\u{1F600}')],
+    [
+      'forced on',
+      () => createPieceTableSnapshot('a\u{1F600}b\u{1F600}', { containsSurrogates: true }),
+    ],
+    [
+      'gained by insert',
+      () => {
+        const plain = createPieceTableSnapshot('ab')
+        return insertIntoPieceTable(insertIntoPieceTable(plain, 2, '\u{1F600}'), 1, '\u{1F600}')
+      },
+    ],
+  ]
+
+  it.each(flagged)('leaves no lone surrogate behind on any edit path, flag %s', (_, create) => {
+    const snapshot = create()
+    expect(snapshot.buffers.containsSurrogates).toBe(true)
+    expect(materializePieceTableFullText(snapshot)).toBe('a\u{1F600}b\u{1F600}')
 
     for (let from = 0; from <= snapshot.length; from += 1) {
       expect(

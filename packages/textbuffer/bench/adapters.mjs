@@ -23,9 +23,6 @@ async function singaporeAdapter(root, retention) {
   const api = await import(target('index.js', '@singapore-editor/textbuffer'))
   const transient = retention !== 'always'
   const retainPerCall = retention === 'transaction'
-  const { lineStartOffset } = await import(
-    target('positions.js', '@singapore-editor/textbuffer/internal/positions')
-  )
   const { validatePieceTreeInvariants } = await import(
     target('debug.js', '@singapore-editor/textbuffer/debug')
   )
@@ -51,12 +48,7 @@ async function singaporeAdapter(root, retention) {
         if (retainPerCall) api.retainPieceTableSnapshot(snapshot)
         snapshot = api.applyBatchToPieceTable(snapshot, edits)
       },
-      line(row) {
-        const start = lineStartOffset(snapshot, row)
-        const count = (snapshot.root?.subtreeLineBreaks ?? 0) + 1
-        const end = row + 1 < count ? lineStartOffset(snapshot, row + 1) - 1 : snapshot.length
-        return api.readPieceTableTextRange(snapshot, start, end)
-      },
+      line: (row) => api.readPieceTableLine(snapshot, row),
       range: (from, to) => api.readPieceTableTextRange(snapshot, from, to),
       point: (offset) => api.offsetToPoint(snapshot, offset),
       offset: (point) => api.pointToOffset(snapshot, point),
