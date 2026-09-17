@@ -744,6 +744,24 @@
         "Input latency as an enforced budget"
       ],
       "baseline": "97555fa21dd6d07b0faa12b6cb0350fd2d561485"
+    },
+    {
+      "id": "E046",
+      "file": "e046-one-walk-rows-and-cuts.md",
+      "title": "Find a row in one walk, check surrogates inside the edit, and search line breaks within the piece",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": [
+        "E039",
+        "E045"
+      ],
+      "topics": [
+        "Input latency as an enforced budget"
+      ],
+      "baseline": "7cafb67f0d441fe50cbdb19d59da9375422a438f"
     }
   ]
 }
