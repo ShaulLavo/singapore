@@ -164,7 +164,6 @@ export function prepareProbes(destination) {
       'edits',
       'snapshot',
       'orders',
-      'priority',
     ],
     vscode: ['pieceTreeBase', 'pieceTreeBuilder', 'rbTreeBase'],
   }

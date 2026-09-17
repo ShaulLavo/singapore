@@ -46,9 +46,9 @@ jobs:
       - name: Build, prepare the pinned control and test the measurements
         run: bun run --cwd packages/textbuffer bench:check
       - name: Smoke both engines
-        run: bun run --cwd packages/textbuffer bench:height -- --profile smoke --trace-seeds 7 --priority-seeds 0,42 --out bench/results/height-smoke
+        run: bun run --cwd packages/textbuffer bench:height -- --profile smoke --trace-seeds 7 --out bench/results/height-smoke
       # The standard sweep is a long replay whose output is an artifact, not a gate; pull requests get the smoke run only.
-      - name: Sample both trees across edit and priority seeds
+      - name: Sample both trees across edit seeds
         if: github.event_name != 'pull_request'
         run: bun run --cwd packages/textbuffer bench:height -- --profile standard
       - name: Plot samples

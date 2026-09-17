@@ -63,7 +63,6 @@ export type PieceTableBuffers = {
   readonly original: PieceBufferId
   readonly chunks: PieceBufferChunks
   readonly nextBufferSequence: number
-  readonly prioritySeed: number
   // Stored text is always LF-only; these record what the document arrived with
   // so a host can round-trip it on save. See pieceTable/lineEndings.ts.
   readonly lineEnding: DocumentLineEnding
@@ -118,7 +117,9 @@ export type PieceTableReverseIndexNode = {
   start: number
   piece: Piece
   order: number
-  priority: number
+  // The children's heights, kept here so a rebalance never reads a sibling.
+  leftHeight: number
+  rightHeight: number
   epoch: number
   left: PieceTableReverseIndexNode | null
   right: PieceTableReverseIndexNode | null

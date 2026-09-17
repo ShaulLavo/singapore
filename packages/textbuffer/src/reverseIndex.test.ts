@@ -8,8 +8,9 @@ import {
   anchorAt,
 } from './index'
 import { validatePieceTreeInvariants } from './debug'
-import type { PieceTableReverseIndexNode, PieceTableSnapshot } from './pieceTableTypes'
-import { flattenPieces } from './tree'
+import type { Piece, PieceTableReverseIndexNode, PieceTableSnapshot } from './pieceTableTypes'
+import { buildReverseIndex, relabelReverseIndex } from './reverseIndex'
+import { flattenPieces, normalizePieceOrders } from './tree'
 
 const reverseKeys = (node: PieceTableReverseIndexNode | null, keys: string[] = []): string[] => {
   if (!node) return keys
@@ -55,5 +56,43 @@ describe('reverse index maintenance', () => {
     for (const anchor of anchors) {
       expect(resolveAnchor(snapshot, anchor)).toEqual(resolveAnchorLinear(snapshot, anchor))
     }
+  })
+})
+
+describe('relabelling after order normalization', () => {
+  const orders = (node: PieceTableReverseIndexNode | null, out: string[] = []): string[] => {
+    if (!node) return out
+    orders(node.left, out)
+    out.push(`${node.buffer}:${node.start}=${node.order}/${node.piece.order}`)
+    orders(node.right, out)
+    return out
+  }
+
+  // A miss would silently fall back to the rebuild and hide a broken fast path.
+  test('carries every entry over without a rebuild and matches one', () => {
+    let snapshot = createPieceTableSnapshot('abcdefghij\nklmnop')
+    for (let edit = 0; edit < 40; edit += 1) {
+      snapshot = insertIntoPieceTable(snapshot, 1 + (edit % 9), `${edit % 10}`)
+      if (edit % 3 === 0) snapshot = deleteFromPieceTable(snapshot, 2, 1)
+    }
+
+    const relabeled = new Map<Piece, Piece>()
+    const root = normalizePieceOrders(snapshot.root, { value: 1024 }, Number.NaN, relabeled)
+    const carried = relabelReverseIndex(snapshot.reverseIndexRoot, relabeled, Number.NaN)
+
+    expect(carried).not.toBeUndefined()
+    expect(orders(carried!)).toEqual(orders(buildReverseIndex(root)))
+    expect(relabelReverseIndex(snapshot.reverseIndexRoot, new Map(), Number.NaN)).toBeUndefined()
+  })
+
+  test('an edit that runs out of orders leaves a valid, fully indexed snapshot', () => {
+    let snapshot = createPieceTableSnapshot('ab')
+    const anchor = anchorAt(snapshot, 1, 'right')
+    for (let edit = 0; edit < 120; edit += 1)
+      snapshot = insertIntoPieceTable(snapshot, 1, `${edit % 10}`)
+
+    expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
+    expect(reverseKeys(snapshot.reverseIndexRoot)).toHaveLength(snapshot.pieceCount)
+    expect(resolveAnchor(snapshot, anchor)).toEqual(resolveAnchorLinear(snapshot, anchor))
   })
 })

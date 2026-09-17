@@ -72,7 +72,7 @@ def plot_report(source, allow_partial=False):
         status += f"; {len(data['failures'])} failed runs"
     intro = (
         f"{status}. Heights count levels: root = 1, empty = 0. "
-        "Lines show medians across priority seeds; whiskers show the sampled min/max. "
+        "Lines show medians across runs; whiskers show the sampled min/max. "
         "Each trace seed has its own charts. VS Code runs once per trace. "
         "The piece-count scatter uses every sampled seed. Tree shape is measured in a separate replay."
     )

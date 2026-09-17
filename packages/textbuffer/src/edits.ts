@@ -1,5 +1,11 @@
-import type { PieceTableEdit, PieceTableTreeSnapshot } from './pieceTableTypes'
-import type { EditContext, InsertContext, InsertProbe } from './internalTypes'
+import type {
+  Piece,
+  PieceTableBuffers,
+  PieceTableEdit,
+  PieceTableTreeSnapshot,
+  PieceTreeNode,
+} from './pieceTableTypes'
+import type { EditContext, InsertContext } from './internalTypes'
 import { extendTailChunk } from './buffers'
 import { applyReverseIndexChanges } from './reverseIndex'
 import { ensureValidRange, isHighSurrogate, isLowSurrogate, splitsSurrogatePair } from './reads'
@@ -10,6 +16,9 @@ const compareEditsDescending = (left: PieceTableEdit, right: PieceTableEdit): nu
   if (left.from !== right.from) return right.from - left.from
   return right.to - left.to
 }
+
+// Results of snapBatchEditRanges, by the snapshot they were snapped against.
+const snappedAgainst = new WeakMap<readonly PieceTableEdit[], PieceTableTreeSnapshot>()
 
 type BatchBoundaries = {
   readonly starts: ReadonlyMap<number, number>
@@ -119,9 +128,11 @@ export const snapBatchEditRanges = (
     starts: countBoundaries(sorted, (edit) => edit.from),
     ends: countBoundaries(sorted, (edit) => edit.to),
   }
-  return mergeSnappedOverlaps(
+  const snapped = mergeSnappedOverlaps(
     sorted.map((edit) => snapEditToCodePoints(snapshot, edit, boundaries)),
   )
+  snappedAgainst.set(snapped, snapshot)
+  return snapped
 }
 
 // One edit has no sibling to consume a half for it, so the batch's sorting,
@@ -151,6 +162,87 @@ const countBoundaries = (
   return counts
 }
 
+// An edit call in flight. Every primitive edit of one call writes with one
+// epoch and the reverse index is written once at the end, because no snapshot
+// between the primitives is ever handed out.
+type EditState = {
+  buffers: PieceTableBuffers
+  root: PieceTreeNode | null
+  readonly changes: Piece[]
+  normalizeOrders: boolean
+}
+
+const beginEdit = (snapshot: PieceTableTreeSnapshot): EditState => ({
+  buffers: snapshot.buffers,
+  root: snapshot.root,
+  changes: [],
+  normalizeOrders: false,
+})
+
+// The index is written before any relabelling, which then carries it over.
+const finishEdit = (
+  snapshot: PieceTableTreeSnapshot,
+  state: EditState,
+  epoch: number,
+): PieceTableTreeSnapshot => {
+  const reverseIndexRoot = applyReverseIndexChanges(snapshot.reverseIndexRoot, state.changes, epoch)
+  return createSnapshotWithIndex(state.buffers, state.root, reverseIndexRoot, state.normalizeOrders)
+}
+
+const insertContext = (state: EditState, text: string, snap: boolean): InsertContext => ({
+  changes: state.changes,
+  normalizeOrders: false,
+  probe: { text, snap, leftTurns: [], outcome: 'insert', coalesced: null },
+  appendedBuffers: null,
+})
+
+// One descent. The landing probes for a surrogate pair and for a piece the
+// text can extend; a pair straddling two pieces asks for a retry one unit
+// left, which is already snapped so it cannot recur.
+const insertText = (
+  state: EditState,
+  from: number,
+  text: string,
+  snap: boolean,
+  epoch: number,
+): void => {
+  const context = insertContext(state, text, snap)
+  const root = insertAtVisibleOffset(state.root, from, state.buffers, context, epoch)
+  if (context.probe.outcome === 'retry') return insertText(state, from - 1, text, false, epoch)
+
+  state.root = root
+  state.normalizeOrders ||= context.normalizeOrders
+  if (context.probe.outcome !== 'coalesce') {
+    state.buffers = context.appendedBuffers!
+    return
+  }
+  state.buffers = extendTailChunk(state.buffers, text)
+  state.changes.push(context.probe.coalesced!)
+}
+
+// One descent for both halves of a replacement: the range is hidden and the
+// text is placed where it began.
+const replaceRange = (state: EditState, edit: PieceTableEdit, epoch: number): void => {
+  if (edit.to <= edit.from) {
+    if (edit.text.length > 0) insertText(state, edit.from, edit.text, false, epoch)
+    return
+  }
+
+  const context = edit.text.length > 0 ? insertContext(state, edit.text, false) : null
+  const hiding: EditContext = context ?? { changes: state.changes, normalizeOrders: false }
+  state.root = hideVisibleRange(
+    state.root,
+    edit.from,
+    edit.to,
+    state.buffers,
+    hiding,
+    epoch,
+    context,
+  )
+  state.normalizeOrders ||= hiding.normalizeOrders
+  if (context) state.buffers = context.appendedBuffers!
+}
+
 export const insertIntoPieceTable = (
   snapshot: PieceTableTreeSnapshot,
   offset: number,
@@ -163,38 +255,10 @@ export const insertIntoPieceTable = (
 
   // The offset is snapped at the insert's landing; see InsertProbe. The
   // document's ends are never inside a pair, so those skip the probe's reads.
-  return insertTextAt(snapshot, offset, text, offset > 0 && offset < snapshot.length)
-}
-
-// One descent. The landing probes for a surrogate pair and for a piece the
-// text can extend; a pair straddling two pieces asks for a retry one unit
-// left, which is already snapped so it cannot recur.
-const insertTextAt = (
-  snapshot: PieceTableTreeSnapshot,
-  from: number,
-  text: string,
-  snap: boolean,
-  epoch = editingEpoch(snapshot),
-): PieceTableTreeSnapshot => {
-  const probe: InsertProbe = { text, snap, leftTurns: [], outcome: 'insert', coalesced: null }
-  const context: InsertContext = {
-    changes: [],
-    normalizeOrders: false,
-    probe,
-    appendedBuffers: null,
-  }
-  const root = insertAtVisibleOffset(snapshot.root, from, snapshot.buffers, context, epoch)
-  if (probe.outcome === 'retry') return insertTextAt(snapshot, from - 1, text, false, epoch)
-
-  const coalesced = probe.outcome === 'coalesce'
-  const buffers = coalesced ? extendTailChunk(snapshot.buffers, text) : context.appendedBuffers!
-  const reverseIndexRoot = applyReverseIndexChanges(
-    snapshot.reverseIndexRoot,
-    coalesced ? [probe.coalesced!] : context.changes,
-    buffers.prioritySeed,
-    epoch,
-  )
-  return createSnapshotWithIndex(buffers, root, reverseIndexRoot, context.normalizeOrders)
+  const epoch = editingEpoch(snapshot)
+  const state = beginEdit(snapshot)
+  insertText(state, offset, text, offset > 0 && offset < snapshot.length, epoch)
+  return finishEdit(snapshot, state, epoch)
 }
 
 export const deleteFromPieceTable = (
@@ -205,26 +269,24 @@ export const deleteFromPieceTable = (
   if (length <= 0) return snapshot
 
   const snapped = snapEditRange(snapshot, { from: offset, to: offset + length, text: '' })
-  return deleteRange(snapshot, snapped.from, snapped.to)
+  if (snapped.to <= snapped.from) return snapshot
+  const epoch = editingEpoch(snapshot)
+  const state = beginEdit(snapshot)
+  replaceRange(state, snapped, epoch)
+  return finishEdit(snapshot, state, epoch)
 }
 
-const deleteRange = (
+// Snapped once, against this snapshot: re-snapping per edit as the tree
+// changes underneath would measure offsets against a document that no longer
+// matches the one the caller asked about. A caller that already ran
+// snapBatchEditRanges on this snapshot is not made to pay for it again.
+const snappedEdits = (
   snapshot: PieceTableTreeSnapshot,
-  from: number,
-  to: number,
-): PieceTableTreeSnapshot => {
-  if (to <= from) return snapshot
-
-  const epoch = editingEpoch(snapshot)
-  const context: EditContext = { changes: [], normalizeOrders: false }
-  const root = hideVisibleRange(snapshot.root, from, to, snapshot.buffers, context, epoch)
-  const reverseIndexRoot = applyReverseIndexChanges(
-    snapshot.reverseIndexRoot,
-    context.changes,
-    snapshot.buffers.prioritySeed,
-    epoch,
-  )
-  return createSnapshotWithIndex(snapshot.buffers, root, reverseIndexRoot, context.normalizeOrders)
+  edits: readonly PieceTableEdit[],
+): readonly PieceTableEdit[] => {
+  if (snappedAgainst.get(edits) === snapshot) return edits
+  if (edits.length === 1) return [snapEditRange(snapshot, edits[0]!)]
+  return snapBatchEditRanges(snapshot, edits)
 }
 
 export const applyBatchToPieceTable = (
@@ -232,23 +294,15 @@ export const applyBatchToPieceTable = (
   edits: readonly PieceTableEdit[],
 ): PieceTableTreeSnapshot => {
   if (edits.length === 0) return snapshot
-  if (edits.length === 1) return applyEdit(snapshot, snapEditRange(snapshot, edits[0]!))
 
-  // Snapped once, against this snapshot. Re-snapping per edit as the tree
-  // changes underneath would measure offsets against a document that no longer
-  // matches the ones the caller asked about.
-  const applied = snapBatchEditRanges(snapshot, edits)
+  const applied = snappedEdits(snapshot, edits)
+  if (!applied.some((edit) => edit.to > edit.from || edit.text.length > 0)) return snapshot
 
-  let next = snapshot
-  for (const edit of applied.toSorted(compareEditsDescending)) next = applyEdit(next, edit)
-  return next
-}
-
-const applyEdit = (
-  snapshot: PieceTableTreeSnapshot,
-  edit: PieceTableEdit,
-): PieceTableTreeSnapshot => {
-  const deleted = deleteRange(snapshot, edit.from, edit.to)
-  if (edit.text.length === 0) return deleted
-  return insertTextAt(deleted, edit.from, edit.text, false)
+  const epoch = editingEpoch(snapshot)
+  const state = beginEdit(snapshot)
+  // Last first keeps earlier offsets valid. The sort is stable, so edits at
+  // one offset apply in the order given and the later one lands in front.
+  const ordered = applied.length === 1 ? applied : applied.toSorted(compareEditsDescending)
+  for (const edit of ordered) replaceRange(state, edit, epoch)
+  return finishEdit(snapshot, state, epoch)
 }

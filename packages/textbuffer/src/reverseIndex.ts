@@ -6,7 +6,6 @@ import type {
 } from './pieceTableTypes'
 import { flattenNodes } from './tree'
 import { PERSISTENT_EPOCH } from './node'
-import { priorityForReverseKey } from './priority'
 
 export const compareReverseKeys = (
   leftBuffer: PieceBufferId,
@@ -26,7 +25,8 @@ const cloneReverseIndexNode = (
   start: node.start,
   piece: node.piece,
   order: node.order,
-  priority: node.priority,
+  leftHeight: node.leftHeight,
+  rightHeight: node.rightHeight,
   epoch,
   left: node.left,
   right: node.right,
@@ -37,29 +37,41 @@ const ownReverseIndexNode = (
   epoch: number,
 ): PieceTableReverseIndexNode => (node.epoch === epoch ? node : cloneReverseIndexNode(node, epoch))
 
+// A node carries its children's heights rather than its own, so a rebalance
+// reads only nodes already on the insert's path. Reading a sibling for its
+// height would load a node the insert otherwise never touches, once a level.
+export const reverseHeight = (node: PieceTableReverseIndexNode | null): number => {
+  if (!node) return 0
+  return (node.leftHeight > node.rightHeight ? node.leftHeight : node.rightHeight) + 1
+}
+
 const createReverseIndexNode = (
   piece: Piece,
-  prioritySeed: number,
   epoch: number,
+  left: PieceTableReverseIndexNode | null = null,
+  right: PieceTableReverseIndexNode | null = null,
 ): PieceTableReverseIndexNode => ({
   buffer: piece.buffer,
   start: piece.start,
   piece,
   order: piece.order,
-  priority: priorityForReverseKey(piece.buffer, piece.start, prioritySeed),
+  leftHeight: reverseHeight(left),
+  rightHeight: reverseHeight(right),
   epoch,
-  left: null,
-  right: null,
+  left,
+  right,
 })
 
+// Both rotations take an owned node and own the pivot they lift.
 const rotateReverseRight = (
   node: PieceTableReverseIndexNode,
   epoch: number,
 ): PieceTableReverseIndexNode => {
   const pivot = ownReverseIndexNode(node.left!, epoch)
-  const newRight = ownReverseIndexNode(node, epoch)
-  newRight.left = pivot.right
-  pivot.right = newRight
+  node.left = pivot.right
+  node.leftHeight = pivot.rightHeight
+  pivot.right = node
+  pivot.rightHeight = reverseHeight(node)
   return pivot
 }
 
@@ -68,38 +80,60 @@ const rotateReverseLeft = (
   epoch: number,
 ): PieceTableReverseIndexNode => {
   const pivot = ownReverseIndexNode(node.right!, epoch)
-  const newLeft = ownReverseIndexNode(node, epoch)
-  newLeft.right = pivot.left
-  pivot.left = newLeft
+  node.right = pivot.left
+  node.rightHeight = pivot.leftHeight
+  pivot.left = node
+  pivot.leftHeight = reverseHeight(node)
   return pivot
+}
+
+// AVL repair of an owned node one of whose subtrees grew by at most one level.
+const rebalanceReverse = (
+  node: PieceTableReverseIndexNode,
+  epoch: number,
+): PieceTableReverseIndexNode => {
+  const lean = node.leftHeight - node.rightHeight
+  if (lean > 1) {
+    const left = node.left!
+    if (left.rightHeight > left.leftHeight) {
+      node.left = rotateReverseLeft(ownReverseIndexNode(left, epoch), epoch)
+    }
+    return rotateReverseRight(node, epoch)
+  }
+  if (lean < -1) {
+    const right = node.right!
+    if (right.leftHeight > right.rightHeight) {
+      node.right = rotateReverseRight(ownReverseIndexNode(right, epoch), epoch)
+    }
+    return rotateReverseLeft(node, epoch)
+  }
+  return node
 }
 
 const insertReverseIndexNode = (
   root: PieceTableReverseIndexNode | null,
   piece: Piece,
-  prioritySeed: number,
   epoch: number,
 ): PieceTableReverseIndexNode => {
-  if (!root) return createReverseIndexNode(piece, prioritySeed, epoch)
+  if (!root) return createReverseIndexNode(piece, epoch)
 
   const comparison = compareReverseKeys(piece.buffer, piece.start, root.buffer, root.start)
+  if (comparison === 0) {
+    const replaced = ownReverseIndexNode(root, epoch)
+    replaced.piece = piece
+    replaced.order = piece.order
+    return replaced
+  }
 
+  const next = ownReverseIndexNode(root, epoch)
   if (comparison < 0) {
-    const next = ownReverseIndexNode(root, epoch)
-    next.left = insertReverseIndexNode(next.left, piece, prioritySeed, epoch)
-    return next.left.priority < next.priority ? rotateReverseRight(next, epoch) : next
+    next.left = insertReverseIndexNode(next.left, piece, epoch)
+    next.leftHeight = reverseHeight(next.left)
+  } else {
+    next.right = insertReverseIndexNode(next.right, piece, epoch)
+    next.rightHeight = reverseHeight(next.right)
   }
-
-  if (comparison > 0) {
-    const next = ownReverseIndexNode(root, epoch)
-    next.right = insertReverseIndexNode(next.right, piece, prioritySeed, epoch)
-    return next.right.priority < next.priority ? rotateReverseLeft(next, epoch) : next
-  }
-
-  const replaced = ownReverseIndexNode(root, epoch)
-  replaced.piece = piece
-  replaced.order = piece.order
-  return replaced
+  return rebalanceReverse(next, epoch)
 }
 
 // Every entry is keyed by (buffer, start), and no edit ever moves a piece off
@@ -108,33 +142,67 @@ const insertReverseIndexNode = (
 export const applyReverseIndexChanges = (
   root: PieceTableReverseIndexNode | null,
   pieces: readonly Piece[],
-  prioritySeed = 0,
   epoch = PERSISTENT_EPOCH,
 ): PieceTableReverseIndexNode | null => {
   let next = root
 
   for (const piece of pieces) {
     if (piece.length === 0) continue
-    next = insertReverseIndexNode(next, piece, prioritySeed, epoch)
+    next = insertReverseIndexNode(next, piece, epoch)
   }
 
   return next
 }
 
+// Relabelling orders moves no key, so the index keeps its shape and only
+// swaps pieces. Returns undefined when an entry's piece is not in the map,
+// which sends the caller to a full rebuild.
+export const relabelReverseIndex = (
+  node: PieceTableReverseIndexNode | null,
+  relabeled: ReadonlyMap<Piece, Piece>,
+  epoch: number,
+): PieceTableReverseIndexNode | null | undefined => {
+  if (!node) return null
+  const piece = relabeled.get(node.piece)
+  if (!piece) return undefined
+  const left = relabelReverseIndex(node.left, relabeled, epoch)
+  if (left === undefined) return undefined
+  const right = relabelReverseIndex(node.right, relabeled, epoch)
+  if (right === undefined) return undefined
+
+  const next = ownReverseIndexNode(node, epoch)
+  next.piece = piece
+  next.order = piece.order
+  next.left = left
+  next.right = right
+  return next
+}
+
+const buildBalancedReverse = (
+  pieces: readonly Piece[],
+  from: number,
+  to: number,
+  epoch: number,
+): PieceTableReverseIndexNode | null => {
+  if (from >= to) return null
+  const middle = (from + to) >>> 1
+  return createReverseIndexNode(
+    pieces[middle]!,
+    epoch,
+    buildBalancedReverse(pieces, from, middle, epoch),
+    buildBalancedReverse(pieces, middle + 1, to, epoch),
+  )
+}
+
 export const buildReverseIndex = (
   root: PieceTableTreeSnapshot['root'],
-  prioritySeed = 0,
   epoch = PERSISTENT_EPOCH,
 ): PieceTableReverseIndexNode | null => {
-  let indexRoot: PieceTableReverseIndexNode | null = null
-  const nodes = flattenNodes(root, [])
-
-  for (const node of nodes) {
-    if (node.piece.length === 0) continue
-    indexRoot = insertReverseIndexNode(indexRoot, node.piece, prioritySeed, epoch)
-  }
-
-  return indexRoot
+  const pieces = flattenNodes(root, [])
+    .map((node) => node.piece)
+    .filter((piece) => piece.length > 0)
+    .sort((left, right) => compareReverseKeys(left.buffer, left.start, right.buffer, right.start))
+  return buildBalancedReverse(pieces, 0, pieces.length, epoch)
 }
 
 export const reversePredecessor = (

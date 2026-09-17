@@ -91,6 +91,3 @@ export const join = (
   if (difference < -1) return joinLeft(left, middle, right!, epoch)
   return link(middle, left, right)
 }
-
-export const balanceHolds = (node: PieceTreeNode): boolean =>
-  Math.abs(heightOf(node.left) - heightOf(node.right)) <= 1

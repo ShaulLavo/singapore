@@ -100,8 +100,8 @@ test('fixtures are repeatable and all edit boundaries respect UTF-16 pairs', () 
 test('all smoke traces check both indexes and leave retained snapshots intact', async () => {
   const adapter = await loadAdapter('singapore')
   for (const fixture of makeHeightFixtures('smoke', 7, 64)) {
-    for (const prioritySeed of [0, 42]) {
-      const original = createPieceTableSnapshot(fixture.initial, { prioritySeed })
+    {
+      const original = createPieceTableSnapshot(fixture.initial)
       const buffer = adapter.restore(original)
       const samples = []
       runHeightTrace(buffer, fixture, 16, (sample) => samples.push(sample))

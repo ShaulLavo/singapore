@@ -6,7 +6,7 @@ import type {
   PieceTreeNode,
 } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
-import { balanceHolds } from './join'
+import { reverseHeight } from './reverseIndex'
 import { bufferStoreExtent } from './buffers'
 
 export type PieceTreeIssueKind =
@@ -16,7 +16,6 @@ export type PieceTreeIssueKind =
   | 'aggregate'
   | 'buffer-bounds'
   | 'line-breaks'
-  | 'priority'
   | 'balance'
   | 'snapshot'
   | 'reverse-index'
@@ -141,24 +140,22 @@ function checkTotals(
   return result
 }
 
+// Sibling heights at most one apart, in both trees.
 function checkBalance(node: PieceTreeNode, id: string, report: Report): void {
-  const height = 1 + Math.max(node.left?.height ?? 0, node.right?.height ?? 0)
-  report('balance', id, 'height', height, node.height)
-  if (!balanceHolds(node)) report('balance', id, 'children', 'balanced subtrees', 'unbalanced')
+  const left = node.left?.height ?? 0
+  const right = node.right?.height ?? 0
+  report('balance', id, 'height', 1 + Math.max(left, right), node.height)
+  if (Math.abs(left - right) > 1) {
+    report('balance', id, 'children', 'balanced subtrees', 'unbalanced')
+  }
 }
 
-function checkPriority(
-  node: { priority: number; left: { priority: number } | null; right: { priority: number } | null },
-  id: string,
-  report: Report,
-): void {
-  if (!Number.isFinite(node.priority))
-    report('priority', id, 'priority', 'finite priority', node.priority)
-  // Merge chooses the right root on a tie; rotations can retain equal children on either side.
-  for (const edge of ['left', 'right'] as const) {
-    const child = node[edge]
-    if (child && child.priority < node.priority)
-      report('priority', id, `${edge}.priority`, `>= ${node.priority}`, child.priority)
+// The reverse index stores each child's height on the parent.
+function checkReverseBalance(node: PieceTableReverseIndexNode, id: string, report: Report): void {
+  report('balance', id, 'leftHeight', reverseHeight(node.left), node.leftHeight)
+  report('balance', id, 'rightHeight', reverseHeight(node.right), node.rightHeight)
+  if (Math.abs(node.leftHeight - node.rightHeight) > 1) {
+    report('balance', id, 'children', 'balanced subtrees', 'unbalanced')
   }
 }
 
@@ -280,7 +277,7 @@ export function validatePieceTreeInvariants(
     ({ node }) => {
       counts.reverseEntries++
       const id = label(node)
-      checkPriority(node, id, report)
+      checkReverseBalance(node, id, report)
       checkReverseEntry(node, pieces, id, report)
       const key = inspectionPieceKey(node)
       if (entries.has(key)) report('reverse-index', id, 'key', 'unique buffer/start', key)

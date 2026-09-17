@@ -21,7 +21,7 @@ function measure<T>(operation: string, run: () => T) {
   return { result, cost: { operation, ms, heapBeforeCollection, retainedHeapBytes } }
 }
 
-let snapshot = createPieceTableSnapshot('row\n'.repeat(1000000), { prioritySeed: 7 })
+let snapshot = createPieceTableSnapshot('row\n'.repeat(1000000))
 let seed = 123
 const edits = measure('10000 inserts and 3334 deletes, inspection disabled', () => {
   for (let i = 0; i < 10000; i++) {

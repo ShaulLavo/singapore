@@ -1,6 +1,7 @@
 import type { Piece, PieceTableSnapshot } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
 import { inspectionPieceFields, inspectionPieceKey } from './inspection'
+import { reverseHeight } from './reverseIndex'
 
 export type PieceInspectionNode = {
   readonly id: string
@@ -10,8 +11,7 @@ export type PieceInspectionNode = {
   readonly tree: 'pieces' | 'reverse'
   readonly left: string | null
   readonly right: string | null
-  // Height in the sequence tree, heap priority in the reverse index.
-  readonly rank: number
+  readonly height: number
   readonly piece: Piece
   readonly values: Readonly<Record<string, number | string>>
   readonly excerpt: string | null
@@ -110,7 +110,7 @@ export function createPieceTreeInspectionSession() {
             tree: 'pieces',
             left: node.left ? label(node.left) : null,
             right: node.right ? label(node.right) : null,
-            rank: node.height,
+            height: node.height,
             piece: Object.freeze({ ...node.piece }),
             values: Object.freeze({
               subtreeLength: node.subtreeLength,
@@ -139,7 +139,7 @@ export function createPieceTreeInspectionSession() {
             tree: 'reverse',
             left: node.left ? label(node.left) : null,
             right: node.right ? label(node.right) : null,
-            rank: node.priority,
+            height: reverseHeight(node),
             piece: Object.freeze({ ...node.piece }),
             values: Object.freeze({ buffer: node.buffer, start: node.start, order: node.order }),
             excerpt: excerpt(snapshot, node.piece, length),

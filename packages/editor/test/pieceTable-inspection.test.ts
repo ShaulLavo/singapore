@@ -34,7 +34,7 @@ function control(): PieceTableSnapshot {
 }
 
 function churn(count: number): PieceTableSnapshot {
-  let snapshot = createPieceTableSnapshot('line\n'.repeat(200), { prioritySeed: 7 })
+  let snapshot = createPieceTableSnapshot('line\n'.repeat(200))
   let expected = 'line\n'.repeat(200)
   let seed = 123
   for (let i = 0; i < count; i++) {
@@ -164,7 +164,7 @@ describe('piece tree inspection', () => {
     )
   })
 
-  it('checks the stored height, the balance rule and the reverse index heap', () => {
+  it('checks the stored height and the balance rule in both trees', () => {
     const snapshot = control()
     expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
     snapshot.root!.height = 5
@@ -175,10 +175,13 @@ describe('piece tree inspection', () => {
     expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
       expect.objectContaining({ kind: 'balance', field: 'children' }),
     )
-    snapshot.reverseIndexRoot!.priority = Infinity
-    expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
-      expect.objectContaining({ kind: 'priority', field: 'priority' }),
-    )
+    const reverseLabel = expect.stringMatching(/^n/)
+    snapshot.reverseIndexRoot!.leftHeight = 9
+    expect(
+      validatePieceTreeInvariants(snapshot).issues.filter((issue) => issue.actual === 9),
+    ).toEqual([
+      expect.objectContaining({ kind: 'balance', field: 'leftHeight', node: reverseLabel }),
+    ])
   })
 
   it('reports cycles in either tree, repeated children and deep corruption iteratively', () => {

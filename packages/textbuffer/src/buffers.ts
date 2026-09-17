@@ -6,7 +6,6 @@ import type {
   PieceTableBuffers,
 } from './pieceTableTypes'
 import { PIECE_ORDER_STEP } from './orders'
-import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
 import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEndings'
 import { recordTextBufferDiagnostic } from './diagnostics'
 
@@ -200,7 +199,6 @@ const shareOrCopyLineIndex = (index: PieceBufferLineIndex, text: string): PieceB
 }
 
 export type PieceTableBufferOptions = {
-  readonly prioritySeed?: number
   // Recorded, not applied: `original` is expected to already be LF-normalized
   // by the caller (see createPieceTableSnapshot).
   readonly lineEnding?: DocumentLineEnding
@@ -509,7 +507,6 @@ export const createInitialBuffers = (
     lineIndexes: chunks.lineIndexes,
     chunks,
     nextBufferSequence: 1,
-    prioritySeed: options.prioritySeed ?? DEFAULT_PIECE_TABLE_PRIORITY_SEED,
     lineEnding: options.lineEnding ?? DEFAULT_DOCUMENT_LINE_ENDING,
     byteOrderMark: options.byteOrderMark ?? '',
     containsUnusualLineTerminators: options.containsUnusualLineTerminators ?? false,

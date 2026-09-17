@@ -1,11 +1,12 @@
 import type {
+  Piece,
   PieceTableBuffers,
   PieceTableReverseIndexNode,
   PieceTableTreeSnapshot,
   PieceTreeNode,
 } from './pieceTableTypes'
 import { createInitialBuffers, createOriginalPiece, type PieceTableBufferOptions } from './buffers'
-import { buildReverseIndex } from './reverseIndex'
+import { buildReverseIndex, relabelReverseIndex } from './reverseIndex'
 import { normalizePieceOrders } from './tree'
 import { createNode, getSubtreePieces, getSubtreeVisibleLength } from './node'
 import { PIECE_ORDER_STEP } from './orders'
@@ -34,12 +35,12 @@ export const createSnapshotWithIndex = (
   if (!normalizeOrders) return createSnapshot(buffers, root, reverseIndexRoot)
 
   const epoch = buffers.lineage.epoch
-  const normalizedRoot = normalizePieceOrders(root, { value: PIECE_ORDER_STEP }, epoch)
-  return createSnapshot(
-    buffers,
-    normalizedRoot,
-    buildReverseIndex(normalizedRoot, buffers.prioritySeed, epoch),
-  )
+  const relabeled = new Map<Piece, Piece>()
+  const normalizedRoot = normalizePieceOrders(root, { value: PIECE_ORDER_STEP }, epoch, relabeled)
+  const index =
+    relabelReverseIndex(reverseIndexRoot, relabeled, epoch) ??
+    buildReverseIndex(normalizedRoot, epoch)
+  return createSnapshot(buffers, normalizedRoot, index)
 }
 
 // Makes the snapshot persistent: nothing created before this call is ever
@@ -87,5 +88,5 @@ export const createPieceTableSnapshot = (
   const originalPiece = createOriginalPiece(buffers)
   const epoch = buffers.lineage.epoch
   const root = originalPiece ? createNode(originalPiece, null, null, epoch) : null
-  return createSnapshot(buffers, root, buildReverseIndex(root, buffers.prioritySeed, epoch))
+  return createSnapshot(buffers, root, buildReverseIndex(root, epoch))
 }

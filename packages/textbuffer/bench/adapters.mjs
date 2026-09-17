@@ -38,6 +38,11 @@ async function singaporeAdapter(root, retention) {
       lineCount: () => (snapshot.root?.subtreeLineBreaks ?? 0) + 1,
       edit(edit) {
         if (retainPerCall) api.retainPieceTableSnapshot(snapshot)
+        // A replacement goes through the batch call, as the editor's do.
+        if (edit.to > edit.from && edit.text.length) {
+          snapshot = api.applyBatchToPieceTable(snapshot, [edit])
+          return
+        }
         if (edit.to > edit.from)
           snapshot = api.deleteFromPieceTable(snapshot, edit.from, edit.to - edit.from)
         if (edit.text.length) snapshot = api.insertIntoPieceTable(snapshot, edit.from, edit.text)

@@ -352,12 +352,11 @@ const insertAtLanding = (
     return join(next.left, next, prependRun(pieces, next.right, epoch), epoch)
   }
 
-  const leftLineBreaks = countBufferLineBreaks(
-    buffers,
-    piece.buffer,
-    piece.start,
-    piece.start + localOffset,
-  )
+  // A piece with no line breaks has none on either side of a cut.
+  const leftLineBreaks =
+    piece.lineBreaks === 0
+      ? 0
+      : countBufferLineBreaks(buffers, piece.buffer, piece.start, piece.start + localOffset)
   const leftPiece = slicePiece(piece, 0, localOffset, piece.order, leftLineBreaks, piece.visible)
   const rightPiece = slicePiece(
     piece,
@@ -392,8 +391,21 @@ const hideTree = (
   return summarize(next)
 }
 
+// The pieces of a replacement's text, recorded and ready to place.
+const placedPieces = (
+  buffers: PieceTableBuffers,
+  pending: InsertContext,
+  lower: number | null,
+  upper: number | null,
+): readonly Piece[] => {
+  const pieces = piecesForInsert(buffers, pending, lower, upper)
+  for (const added of pieces) pending.changes.push(added)
+  return pieces
+}
+
 // Hides [from, to) of an owned node's visible piece. The node keeps the first
 // part, so its reverse-index key stands; later parts become its successors.
+// A replacement's text goes where the hidden part begins.
 const hidePieceRange = (
   next: PieceTreeNode,
   from: number,
@@ -403,6 +415,7 @@ const hidePieceRange = (
   context: EditContext,
   epoch: number,
   upperOrder: number | null,
+  pending: InsertContext | null,
 ): PieceTreeNode | null => {
   const piece = next.piece
   const length = piece.length
@@ -414,7 +427,9 @@ const hidePieceRange = (
 
   const upper = right ? finite(getSubtreeMinOrder(right)) : upperOrder
   const count = (start: number, end: number): number =>
-    countBufferLineBreaks(buffers, piece.buffer, piece.start + start, piece.start + end)
+    piece.lineBreaks === 0
+      ? 0
+      : countBufferLineBreaks(buffers, piece.buffer, piece.start + start, piece.start + end)
   const tail: Piece[] = []
   if (from === 0) {
     const hidden = slicePiece(piece, 0, to, piece.order, count(0, to), false)
@@ -451,11 +466,15 @@ const hidePieceRange = (
 
   context.changes.push(next.piece)
   for (const added of tail) context.changes.push(added)
-  return prependRun(tail, right, epoch)
+  const after = prependRun(tail, right, epoch)
+  if (!pending || from === 0) return after
+  return prependRun(placedPieces(buffers, pending, piece.order, tail[0]!.order), after, epoch)
 }
 
 // Delete in one descent: tombstone the visible range [from, to) in place,
-// cutting only the pieces its two ends fall inside.
+// cutting only the pieces its two ends fall inside. With `pending`, a
+// replacement: its text is placed where the range began, on the same pass.
+// `pending` travels down only the side that holds the range's first unit.
 export const hideVisibleRange = (
   node: PieceTreeNode | null,
   from: number,
@@ -463,44 +482,54 @@ export const hideVisibleRange = (
   buffers: PieceTableBuffers,
   context: EditContext,
   epoch: number,
+  pending: InsertContext | null = null,
+  lowerOrder: number | null = null,
   upperOrder: number | null = null,
 ): PieceTreeNode | null => {
   if (!node || from >= to) return node
-  if (from <= 0 && to >= node.subtreeVisibleLength) return hideTree(node, context.changes, epoch)
+  if (from <= 0 && to >= node.subtreeVisibleLength) {
+    const hidden = hideTree(node, context.changes, epoch)
+    if (!pending) return hidden
+    const upper = finite(getSubtreeMinOrder(node))
+    return prependRun(placedPieces(buffers, pending, lowerOrder, upper), hidden, epoch)
+  }
 
   const leftLen = getSubtreeVisibleLength(node.left)
   const nodeEnd = leftLen + getPieceVisibleLength(node.piece)
+  const order = node.piece.order
   const next = own(node, epoch)
   let left = next.left
   let right = next.right
   if (from < leftLen) {
-    left = hideVisibleRange(
-      left,
-      from,
-      Math.min(to, leftLen),
-      buffers,
-      context,
-      epoch,
-      node.piece.order,
-    )
+    const end = Math.min(to, leftLen)
+    left = hideVisibleRange(left, from, end, buffers, context, epoch, pending, lowerOrder, order)
   }
   if (to > nodeEnd) {
+    const below = from >= nodeEnd ? pending : null
+    const start = Math.max(from - nodeEnd, 0)
     right = hideVisibleRange(
       right,
-      Math.max(from - nodeEnd, 0),
+      start,
       to - nodeEnd,
       buffers,
       context,
       epoch,
+      below,
+      order,
       upperOrder,
     )
   }
 
   const cutFrom = Math.max(from, leftLen) - leftLen
   const cutTo = Math.min(to, nodeEnd) - leftLen
-  if (cutFrom < cutTo) {
-    right = hidePieceRange(next, cutFrom, cutTo, right, buffers, context, epoch, upperOrder)
+  if (cutFrom >= cutTo) return join(left, next, right, epoch)
+
+  const here = from >= leftLen ? pending : null
+  if (here && cutFrom === 0) {
+    const lower = left ? finite(getSubtreeMaxOrder(left)) : lowerOrder
+    left = appendRun(left, placedPieces(buffers, here, lower, order), epoch)
   }
+  right = hidePieceRange(next, cutFrom, cutTo, right, buffers, context, epoch, upperOrder, here)
   return join(left, next, right, epoch)
 }
 
@@ -719,20 +748,22 @@ export const visibleLengthBetweenOrders = (
   )
 }
 
+// `relabeled` maps each old piece to its relabelled copy, so the reverse
+// index can be relabelled in place of being rebuilt.
 export const normalizePieceOrders = (
   node: PieceTreeNode | null,
   nextOrder: { value: number },
   epoch = PERSISTENT_EPOCH,
+  relabeled: Map<Piece, Piece> | null = null,
 ): PieceTreeNode | null => {
   if (!node) return null
 
   const next = own(node, epoch)
-  next.left = normalizePieceOrders(next.left, nextOrder, epoch)
-  next.piece = {
-    ...next.piece,
-    order: nextOrder.value,
-  }
+  next.left = normalizePieceOrders(next.left, nextOrder, epoch, relabeled)
+  const piece = { ...next.piece, order: nextOrder.value }
+  relabeled?.set(next.piece, piece)
+  next.piece = piece
   nextOrder.value += PIECE_ORDER_STEP
-  next.right = normalizePieceOrders(next.right, nextOrder, epoch)
+  next.right = normalizePieceOrders(next.right, nextOrder, epoch, relabeled)
   return summarize(next)
 }

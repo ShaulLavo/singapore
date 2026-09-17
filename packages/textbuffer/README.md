@@ -1,6 +1,6 @@
 # Singapore Textbuffer
 
-Text storage for Singapore's browser editor. It uses a persistent AVL sequence tree, a persistent treap for the reverse index, and an append-only buffer log.
+Text storage for Singapore's browser editor. It uses two persistent AVL trees and an append-only buffer log.
 
 One tree keeps pieces in document order. The other finds them by their source-buffer coordinates. Each edit returns a new snapshot and shares unchanged data with older snapshots. Deleted pieces stay in the tree so anchors can still find them.
 
@@ -33,13 +33,13 @@ A snapshot holds two tree roots, a buffer version, the visible text length, and 
 ```mermaid
 flowchart TD
   S["Snapshot"] --> T["Sequence tree<br/>document order + visible-text summaries"]
-  S --> R["Reverse-index treap<br/>lookup by buffer and source offset"]
+  S --> R["Reverse-index tree<br/>lookup by buffer and source offset"]
   S --> B["Buffer version"]
   R -. "piece + order" .-> T
   T -. "buffer + start + length" .-> B
   B --> C["Append-only chunk log<br/>original text + filled append chunks"]
   B --> L["Cached newline indexes<br/>one Uint32Array per chunk"]
-  B --> M["Document metadata<br/>line ending, BOM, lineage, priority seed"]
+  B --> M["Document metadata<br/>line ending, BOM, lineage"]
 ```
 
 ### Pieces
@@ -70,7 +70,7 @@ Offset lookups use visible lengths to choose a branch. Line lookups use line-bre
 
 New pieces get order labels between their neighbors. For example, a piece between `1024` and `2048` can get `1536`. When the gap becomes too small, the engine relabels the sequence and rebuilds the reverse index. Anchors keep their buffer coordinates through this change.
 
-The sequence tree is an AVL tree: every node stores its height and sibling heights differ by at most one, so the height stays under `1.45 log2(P + 2)` for `P` pieces. The same input and edits always produce the same shape. `prioritySeed` now seeds only the reverse index.
+The sequence tree is an AVL tree: every node stores its height and sibling heights differ by at most one, so the height stays under `1.45 log2(P + 2)` for `P` pieces. The reverse index is an AVL tree too, with its own keyed insert. The same input and edits always produce the same shapes; there is no seed.
 
 See [`tree.ts`](src/tree.ts), [`join.ts`](src/join.ts), [`node.ts`](src/node.ts), and [`orders.ts`](src/orders.ts).
 
@@ -121,6 +121,8 @@ flowchart TD
 ```
 
 This example shows shared and copied nodes. The resulting shape depends on the edit and priorities.
+
+**One call, one pass:** every edit of a call writes with one epoch, the reverse index is written once at the end, and only the final snapshot exists. A replacement hides its range and places its text on the same descent.
 
 **Insert:** descend to the offset. Extend the newest append piece if it ends there. Otherwise fill or open chunks, assign orders, place the pieces at the landing, cutting its piece in two if the offset is inside it, and update the reverse index.
 

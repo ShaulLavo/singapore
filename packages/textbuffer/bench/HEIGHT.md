@@ -21,9 +21,8 @@ CSV, a Markdown summary, the generated edit traces, and source/build hashes.
 
 ## Runs
 
-The default run uses edit-trace seeds `20260916,7` and Singapore priority seeds `0,1,7,42`.
-Every priority seed replays the same edits. VS Code runs once per trace. Since E040 the seed shapes
-only the reverse index; the sequence tree is an AVL tree and is identical across seeds.
+The default run uses edit-trace seeds `20260916,7`. Both Singapore trees are AVL trees, so a trace
+has one shape; the priority-seed sweep went with the treaps. VS Code runs once per trace.
 
 The six shared edit workloads come from `fixtures.mjs`: typing, random insertions, random replacements,
 eight-cursor batches, mixed churn, and large paste/delete. Five additional traces exercise prepending,
@@ -33,7 +32,7 @@ standard sweep on `main` and manual dispatch; both upload the plots and raw JSON
 
 ```sh
 bun run bench:height -- --profile smoke
-bun run bench:height -- --stress-edits 50000 --every 500 --priority-seeds 0,1,2,3,7,42
+bun run bench:height -- --stress-edits 50000 --every 500
 bun run bench:height -- --workloads fixed-middle,hotspot-churn --trace-seeds 7
 bun run bench:height -- --engines singapore --out bench/results/height-singapore
 ```
@@ -63,8 +62,8 @@ for short traces that need every intermediate height. Peaks between checkpoints 
 Each workload and trace seed gets five plots: height over edits, height over stored pieces,
 height divided by `log2(P + 1)`, mean node depth, and piece/tombstone counts over edits.
 
-Lines show the median across priority seeds. Whiskers show the sampled minimum and maximum.
-The piece-count scatter shows all sampled seeds. Raw samples retain each seed and histogram.
+Lines show the median across runs of a trace. Whiskers show the sampled minimum and maximum.
+Raw samples retain each histogram.
 Height and piece-count plots help separate tree shape from retained history. Timing results remain
 in the existing benchmark reports.
 

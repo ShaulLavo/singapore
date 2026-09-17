@@ -20,8 +20,12 @@ candidate designs is recorded with measurements.
 
 ## Current code
 
-- [`reverseIndex.ts`](../packages/textbuffer/src/reverseIndex.ts): a second persistent treap keyed
-  by `(buffer, start)`, with keyed insert, copy-on-write rotations and merge-on-delete. Every
+- [`reverseIndex.ts`](../packages/textbuffer/src/reverseIndex.ts): a second persistent tree keyed
+  by `(buffer, start)`, an AVL tree since [E045](../docs/performance/e045-one-pass-edits.md), with
+  keyed insert-or-replace and copy-on-write rotations. E045 measured that balance did not change
+  its write cost, 20 node copies per insert in two unrelated paths, and that a keystroke's
+  rewrite of the largest key is its worst case; a slot outside the tree for the entry being
+  typed into belongs with option 2 below. Every
   sequence-tree change is mirrored as a list of remove and add records.
 - [`anchors.ts`](../packages/textbuffer/src/anchors.ts): resolution finds the entry covering the
   anchor's buffer offset, then locates that entry's order in the sequence tree. Deleted anchors

@@ -64,7 +64,6 @@ async function main() {
     options: {
       profile: { type: 'string', default: 'standard' },
       'trace-seeds': { type: 'string', default: '20260916,7' },
-      'priority-seeds': { type: 'string', default: '0,1,7,42' },
       every: { type: 'string', default: '250' },
       'stress-edits': { type: 'string' },
       engines: { type: 'string', default: 'singapore,vscode' },
@@ -75,7 +74,7 @@ async function main() {
   })
   if (values.help) {
     console.log('node bench/height.mjs [--profile smoke|standard] [--stress-edits 5000]')
-    console.log('  [--trace-seeds 20260916,7] [--priority-seeds 0,1,7,42] [--every 250]')
+    console.log('  [--trace-seeds 20260916,7] [--every 250]')
     console.log(
       '  [--engines singapore,vscode] [--workloads prepend,hotspot-churn] [--out directory]',
     )
@@ -83,7 +82,6 @@ async function main() {
   }
   assert(['smoke', 'standard'].includes(values.profile), 'Unknown profile')
   const traceSeeds = unsignedList(values['trace-seeds'])
-  const prioritySeeds = unsignedList(values['priority-seeds'])
   const every = positive(values.every, 1000000)
   const stressEdits = positive(
     values['stress-edits'] ?? (values.profile === 'smoke' ? '64' : '5000'),
@@ -137,7 +135,6 @@ async function main() {
     config: {
       profile: values.profile,
       traceSeeds,
-      prioritySeeds,
       every,
       stressEdits,
       engines,
@@ -150,8 +147,6 @@ async function main() {
       minimumHeight: 'ceil(log2(pieces + 1)); counting lower bound for a binary tree.',
       sampling:
         'Initial, final, powers of two, and every configured interval. Peaks between samples may be missed.',
-      prioritySweep:
-        'Each Singapore priority seed replays the same trace. VS Code runs once per trace.',
       timing: 'Separate structural replay; no latency or allocation measurements.',
     },
     provenance: {
@@ -175,15 +170,13 @@ async function main() {
     writeFileSync(path.join(directory, 'height.json'), JSON.stringify(result, null, 2) + '\n')
   for (const { seed, fixture } of fixtures) {
     for (const engine of engines) {
-      for (const prioritySeed of engine === 'singapore' ? prioritySeeds : [null]) {
-        const run = { workload: fixture.name, traceSeed: seed, engine, prioritySeed }
+      {
+        const run = { workload: fixture.name, traceSeed: seed, engine }
         let lastCheckpoint = null
         try {
           const buffer =
             engine === 'singapore'
-              ? adapters[engine].restore(
-                  api.createPieceTableSnapshot(fixture.initial, { prioritySeed }),
-                )
+              ? adapters[engine].restore(api.createPieceTableSnapshot(fixture.initial))
               : adapters[engine].create(fixture.initial)
           runHeightTrace(buffer, fixture, every, (sample) => {
             lastCheckpoint = sample.operation
@@ -198,9 +191,7 @@ async function main() {
             }
           })
           result.completedRuns.push(run)
-          console.log(
-            `${engine} / ${fixture.name} / trace ${seed} / priority ${prioritySeed ?? 'fixed'}: passed`,
-          )
+          console.log(`${engine} / ${fixture.name} / trace ${seed}: passed`)
         } catch (error) {
           result.failures.push({ ...run, lastCheckpoint, message: String(error.stack ?? error) })
           console.error(`${engine} / ${fixture.name}: ${error.message}`)
