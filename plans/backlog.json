@@ -626,9 +626,9 @@
     },
     {
       "id": "E039",
-      "file": "e039-reverse-index-cost.md",
+      "reference": "../docs/performance/e039-reverse-index-cost.md",
       "title": "Make reverse-index maintenance cheaper than the edit it follows",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P2",

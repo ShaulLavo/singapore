@@ -61,7 +61,7 @@ index 23.6%, buffer store and line index 18.6%, edit preparation 8.1%. Self:
 
 - The reverse index is a quarter of an insert and its keyed insert is the hottest self frame at
   18%. Three writes per insert, each a keyed treap descent with rotations and path copies. That
-  is [E039](../../plans/e039-reverse-index-cost.md), and the numbers here are its baseline.
+  is [E039](e039-reverse-index-cost.md), and the numbers here are its baseline.
 - The split and merges are the other half and their cost is the treap's height, twice the
   control's. That is [E040](e040-balanced-tree.md).
 - `firstLineBreakAtOrAfter` at 9% is the line-index binary search a split's left half still

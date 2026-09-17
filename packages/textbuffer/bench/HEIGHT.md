@@ -1,7 +1,7 @@
 # Tree height
 
-Replay edits and sample the Singapore sequence tree, Singapore reverse index, and pinned VS Code
-red-black tree. This runs separately from the timing and profiling workers.
+Replay edits and sample the Singapore sequence tree and the pinned VS Code red-black tree. The
+reverse index was sampled too until E039 made it a vector, which has no height to watch. This runs separately from the timing and profiling workers.
 
 From `packages/textbuffer`, after installing workspace dependencies:
 
@@ -21,7 +21,7 @@ CSV, a Markdown summary, the generated edit traces, and source/build hashes.
 
 ## Runs
 
-The default run uses edit-trace seeds `20260916,7`. Both Singapore trees are AVL trees, so a trace
+The default run uses edit-trace seeds `20260916,7`. The Singapore tree is an AVL tree, so a trace
 has one shape; the priority-seed sweep went with the treaps. VS Code runs once per trace.
 
 The six shared edit workloads come from `fixtures.mjs`: typing, random insertions, random replacements,

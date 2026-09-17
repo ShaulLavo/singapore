@@ -63,11 +63,6 @@ function nearestRankDepth(depthCounts, pieces, quantile) {
 
 // Read-only: the adapter exposes the live roots and nothing here writes to them.
 export function measureBuffer(buffer) {
-  if (buffer.snapshot) {
-    return {
-      sequence: measureTree(buffer.snapshot.root),
-      reverse: measureTree(buffer.snapshot.reverseIndexRoot),
-    }
-  }
-  return { sequence: measureTree(buffer.tree.root) }
+  // The reverse index is a vector since E039: it has no shape to sample.
+  return { sequence: measureTree(buffer.snapshot ? buffer.snapshot.root : buffer.tree.root) }
 }

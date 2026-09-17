@@ -10,8 +10,10 @@ import {
   type RealAnchor,
   resolveAnchor,
 } from '@singapore-editor/textbuffer'
-import { buildReverseIndex } from '@singapore-editor/textbuffer/internal/reverseIndex'
-import type { PieceTableReverseIndexNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
+import {
+  buildReverseIndex,
+  reverseIndexEntries,
+} from '@singapore-editor/textbuffer/internal/reverseIndex'
 
 type MemorySample = {
   heapUsedMb: number
@@ -82,23 +84,6 @@ const forceGc = (): boolean => {
 const formatMemory = (memory: MemorySample): string =>
   `heap ${memory.heapUsedMb.toFixed(2)} / ${memory.heapTotalMb.toFixed(2)} MiB, rss ${memory.rssMb.toFixed(2)} MiB`
 
-const countReverseIndexNodes = (root: PieceTableReverseIndexNode | null): number => {
-  let count = 0
-  const stack: PieceTableReverseIndexNode[] = []
-  if (root) stack.push(root)
-
-  while (stack.length > 0) {
-    const node = stack.pop()
-    if (!node) continue
-
-    count++
-    if (node.left) stack.push(node.left)
-    if (node.right) stack.push(node.right)
-  }
-
-  return count
-}
-
 const countPieces = (snapshot: PieceTableSnapshot): PieceCounts => {
   const counts: PieceCounts = { visible: 0, invisible: 0 }
 
@@ -144,7 +129,7 @@ const rebuildReverseIndex = (snapshot: PieceTableSnapshot) => {
 
   return {
     reverseIndexRebuildMs: performance.now() - start,
-    rebuiltReverseIndexNodes: countReverseIndexNodes(root),
+    rebuiltReverseIndexNodes: reverseIndexEntries(root).length,
   }
 }
 
@@ -184,7 +169,6 @@ const measure = (lineCount: number): Sample => {
   const forcedGcAvailable = forceGc()
   const memoryStart = readMemory()
   const { snapshot, buildMs } = buildSnapshot(lineCount)
-  if (!snapshot.reverseIndexRoot) throw new Error('expected snapshot-owned reverse index')
 
   forceGc()
   const memoryAfterBuild = readMemory()
@@ -208,7 +192,7 @@ const measure = (lineCount: number): Sample => {
     pieces: invisibleValidation.snapshot.pieceCount,
     visiblePieces: counts.visible,
     invisiblePieces: counts.invisible,
-    reverseIndexNodes: countReverseIndexNodes(invisibleValidation.snapshot.reverseIndexRoot),
+    reverseIndexNodes: reverseIndexEntries(invisibleValidation.snapshot.reverseIndex).length,
     rebuiltReverseIndexNodes: index.rebuiltReverseIndexNodes,
     anchors: anchors.length,
     textLength: invisibleValidation.snapshot.length,

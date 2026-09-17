@@ -1,4 +1,4 @@
-import type { Piece, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
+import type { Piece, PieceBufferId, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
 import type { EditContext, InsertContext, InsertProbe } from './internalTypes'
 import {
   appendChunksToBuffers,
@@ -24,6 +24,7 @@ import {
   getSubtreeMaxOrder,
   getSubtreeMinOrder,
   getSubtreeVisibleLength,
+  ORIGINAL_BUFFER,
   own,
   PERSISTENT_EPOCH,
   summarize,
@@ -116,7 +117,6 @@ const probeAtStart = (
   if (!tail) return null
 
   probe.outcome = 'coalesce'
-  probe.coalesced = tail
   const next = own(node, epoch)
   next.left = replacePieceEndingAt(next.left, offset, tail, epoch)
   return summarize(next)
@@ -141,7 +141,6 @@ const probeAtEnd = (
   if (!tail) return null
 
   probe.outcome = 'coalesce'
-  probe.coalesced = tail
   const next = own(node, epoch)
   next.piece = tail
   return summarize(next)
@@ -368,26 +367,19 @@ const insertAtLanding = (
   )
   const pieces = piecesForInsert(buffers, context, piece.order, rightPiece.order)
   next.piece = leftPiece
-  context.changes.push(leftPiece, rightPiece)
+  context.changes.push(rightPiece)
   for (const added of pieces) context.changes.push(added)
   const right = prependRun(pieces, prependRun([rightPiece], next.right, epoch), epoch)
   return join(next.left, next, right, epoch)
 }
 
-const hideTree = (
-  node: PieceTreeNode | null,
-  changes: Piece[],
-  epoch: number,
-): PieceTreeNode | null => {
+const hideTree = (node: PieceTreeNode | null, epoch: number): PieceTreeNode | null => {
   if (!node || node.subtreeVisibleLength === 0) return node
 
   const next = own(node, epoch)
-  next.left = hideTree(next.left, changes, epoch)
-  next.right = hideTree(next.right, changes, epoch)
-  if (next.piece.visible) {
-    next.piece = { ...next.piece, visible: false }
-    changes.push(next.piece)
-  }
+  next.left = hideTree(next.left, epoch)
+  next.right = hideTree(next.right, epoch)
+  if (next.piece.visible) next.piece = { ...next.piece, visible: false }
   return summarize(next)
 }
 
@@ -421,7 +413,6 @@ const hidePieceRange = (
   const length = piece.length
   if (from === 0 && to === length) {
     next.piece = { ...piece, visible: false }
-    context.changes.push(next.piece)
     return right
   }
 
@@ -464,7 +455,6 @@ const hidePieceRange = (
     }
   }
 
-  context.changes.push(next.piece)
   for (const added of tail) context.changes.push(added)
   const after = prependRun(tail, right, epoch)
   if (!pending || from === 0) return after
@@ -488,7 +478,7 @@ export const hideVisibleRange = (
 ): PieceTreeNode | null => {
   if (!node || from >= to) return node
   if (from <= 0 && to >= node.subtreeVisibleLength) {
-    const hidden = hideTree(node, context.changes, epoch)
+    const hidden = hideTree(node, epoch)
     if (!pending) return hidden
     const upper = finite(getSubtreeMinOrder(node))
     return prependRun(placedPieces(buffers, pending, lowerOrder, upper), hidden, epoch)
@@ -707,63 +697,152 @@ export const flattenNodes = (node: PieceTreeNode | null, acc: PieceTreeNode[]): 
   return acc
 }
 
-export const visiblePrefixBeforeOrder = (
-  node: PieceTreeNode | null,
+// The piece with this order and the visible length before it.
+export const findPieceByOrder = (
+  root: PieceTreeNode | null,
   order: number,
-  baseOffset = 0,
-): number | null => {
-  if (!node) return null
-
-  const leftLength = getSubtreeVisibleLength(node.left)
-  const nodeStart = baseOffset + leftLength
-
-  if (order === node.piece.order) return nodeStart
-  if (order < node.piece.order) return visiblePrefixBeforeOrder(node.left, order, baseOffset)
-
-  return visiblePrefixBeforeOrder(node.right, order, nodeStart + getPieceVisibleLength(node.piece))
-}
-
-export const visibleLengthBetweenOrders = (
-  node: PieceTreeNode | null,
-  lowExclusive: number,
-  highExclusive: number,
-): number => {
-  if (!node || lowExclusive >= highExclusive) return 0
-  if (getSubtreeMaxOrder(node) <= lowExclusive) return 0
-  if (getSubtreeMinOrder(node) >= highExclusive) return 0
-
-  if (getSubtreeMinOrder(node) > lowExclusive && getSubtreeMaxOrder(node) < highExclusive) {
-    return getSubtreeVisibleLength(node)
+): AnchorLocation | null => {
+  let node = root
+  let visibleStart = 0
+  while (node) {
+    if (order < node.piece.order) {
+      node = node.left
+      continue
+    }
+    visibleStart += getSubtreeVisibleLength(node.left)
+    if (order === node.piece.order) return { piece: node.piece, visibleStart }
+    visibleStart += getPieceVisibleLength(node.piece)
+    node = node.right
   }
-
-  const nodeLength =
-    node.piece.order > lowExclusive && node.piece.order < highExclusive
-      ? getPieceVisibleLength(node.piece)
-      : 0
-
-  return (
-    visibleLengthBetweenOrders(node.left, lowExclusive, highExclusive) +
-    nodeLength +
-    visibleLengthBetweenOrders(node.right, lowExclusive, highExclusive)
-  )
+  return null
 }
 
-// `relabeled` maps each old piece to its relabelled copy, so the reverse
-// index can be relabelled in place of being rebuilt.
+// The original buffer's piece holding `unit`. Its pieces are never moved or
+// dropped, so their lengths are a prefix sum over the buffer's own offsets.
+export const findOriginalPiece = (
+  root: PieceTreeNode | null,
+  unit: number,
+): AnchorLocation | null => {
+  let node = root
+  let visibleStart = 0
+  let remaining = unit
+  while (node) {
+    const before = node.left ? node.left.subtreeOriginalLength : 0
+    if (remaining < before) {
+      node = node.left
+      continue
+    }
+    visibleStart += getSubtreeVisibleLength(node.left)
+    const piece = node.piece
+    const held = piece.buffer === ORIGINAL_BUFFER ? piece.length : 0
+    if (remaining < before + held) return { piece, visibleStart }
+    visibleStart += getPieceVisibleLength(piece)
+    remaining -= before + held
+    node = node.right
+  }
+  return null
+}
+
+// A scan outward from a tombstone over pieces newer than `buffer`, stopping
+// at the first that is not. `blocked` says a whole subtree stopped it.
+type GapScan = { readonly buffer: number; length: number; blocked: boolean }
+
+const scanNewerFromRight = (node: PieceTreeNode | null, scan: GapScan): void => {
+  if (!node) return
+  if (node.subtreeMinBuffer > scan.buffer) {
+    scan.length += node.subtreeVisibleLength
+    return
+  }
+  scanNewerFromRight(node.right, scan)
+  if (scan.blocked) return
+  if (node.piece.buffer <= scan.buffer) {
+    scan.blocked = true
+    return
+  }
+  scan.length += getPieceVisibleLength(node.piece)
+  scanNewerFromRight(node.left, scan)
+}
+
+const scanNewerFromLeft = (node: PieceTreeNode | null, scan: GapScan): void => {
+  if (!node) return
+  if (node.subtreeMinBuffer > scan.buffer) {
+    scan.length += node.subtreeVisibleLength
+    return
+  }
+  scanNewerFromLeft(node.left, scan)
+  if (scan.blocked) return
+  if (node.piece.buffer <= scan.buffer) {
+    scan.blocked = true
+    return
+  }
+  scan.length += getPieceVisibleLength(node.piece)
+  scanNewerFromLeft(node.right, scan)
+}
+
+const scanNewerBefore = (node: PieceTreeNode | null, order: number, scan: GapScan): void => {
+  if (!node) return
+  if (order <= node.piece.order) return scanNewerBefore(node.left, order, scan)
+
+  scanNewerBefore(node.right, order, scan)
+  if (scan.blocked) return
+  if (node.piece.buffer <= scan.buffer) {
+    scan.blocked = true
+    return
+  }
+  scan.length += getPieceVisibleLength(node.piece)
+  scanNewerFromRight(node.left, scan)
+}
+
+const scanNewerAfter = (node: PieceTreeNode | null, order: number, scan: GapScan): void => {
+  if (!node) return
+  if (order >= node.piece.order) return scanNewerAfter(node.right, order, scan)
+
+  scanNewerAfter(node.left, order, scan)
+  if (scan.blocked) return
+  if (node.piece.buffer <= scan.buffer) {
+    scan.blocked = true
+    return
+  }
+  scan.length += getPieceVisibleLength(node.piece)
+  scanNewerFromLeft(node.right, scan)
+}
+
+// A deleted piece's gap reaches, on each side, to the nearest piece whose
+// buffer is no newer than its own: text that was there when it was inserted,
+// or another part of the same insert. Anything between arrived later, and
+// bias decides which side of it a deleted anchor takes. These are the visible
+// lengths of that later text before and after the piece with `order`.
+export const newerVisibleLengthBefore = (
+  root: PieceTreeNode | null,
+  order: number,
+  buffer: PieceBufferId,
+): number => {
+  const scan: GapScan = { buffer, length: 0, blocked: false }
+  scanNewerBefore(root, order, scan)
+  return scan.length
+}
+
+export const newerVisibleLengthAfter = (
+  root: PieceTreeNode | null,
+  order: number,
+  buffer: PieceBufferId,
+): number => {
+  const scan: GapScan = { buffer, length: 0, blocked: false }
+  scanNewerAfter(root, order, scan)
+  return scan.length
+}
+
 export const normalizePieceOrders = (
   node: PieceTreeNode | null,
   nextOrder: { value: number },
   epoch = PERSISTENT_EPOCH,
-  relabeled: Map<Piece, Piece> | null = null,
 ): PieceTreeNode | null => {
   if (!node) return null
 
   const next = own(node, epoch)
-  next.left = normalizePieceOrders(next.left, nextOrder, epoch, relabeled)
-  const piece = { ...next.piece, order: nextOrder.value }
-  relabeled?.set(next.piece, piece)
-  next.piece = piece
+  next.left = normalizePieceOrders(next.left, nextOrder, epoch)
+  next.piece = { ...next.piece, order: nextOrder.value }
   nextOrder.value += PIECE_ORDER_STEP
-  next.right = normalizePieceOrders(next.right, nextOrder, epoch, relabeled)
+  next.right = normalizePieceOrders(next.right, nextOrder, epoch)
   return summarize(next)
 }

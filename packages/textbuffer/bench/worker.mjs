@@ -14,14 +14,27 @@ function collect() {
   return process.memoryUsage()
 }
 
+function createAnchors(buffer, fixture) {
+  if (fixture.mode === 'anchors')
+    return fixture.anchorOffsets.map((offset, index) =>
+      buffer.anchor(offset, index % 2 ? 'right' : 'left'),
+    )
+  if (fixture.mode === 'anchor-density')
+    return fixture.anchors.map((anchor) => buffer.anchor(anchor.offset, anchor.bias))
+  return []
+}
+
+function resolveAll(buffer, anchors, checksum) {
+  for (const anchor of anchors) {
+    const resolved = buffer.resolve(anchor)
+    checksum = consume(resolved.offset, consume(resolved.liveness === 'live' ? 1 : 0, checksum))
+  }
+  return checksum
+}
+
 export function prepareState(factory, fixture) {
   const buffer = factory.create(fixture.initial)
-  const anchors =
-    fixture.mode === 'anchors'
-      ? fixture.anchorOffsets.map((offset, index) =>
-          buffer.anchor(offset, index % 2 ? 'right' : 'left'),
-        )
-      : []
+  const anchors = createAnchors(buffer, fixture)
   for (const operation of fixture.setup) applyOperation(buffer, operation)
   const root = fixture.mode === 'branches' ? buffer.retain() : null
   return { buffer, anchors, root }
@@ -66,6 +79,9 @@ export function runOperations(factory, fixture, context) {
       if (fixture.mode === 'anchors') {
         const resolved = buffer.resolve(context.anchors[operation.index])
         checksum = consume(resolved.offset, consume(resolved.liveness === 'live' ? 1 : 0, checksum))
+      } else if (fixture.mode === 'anchor-density') {
+        applyOperation(buffer, operation)
+        checksum = resolveAll(buffer, context.anchors, checksum)
       } else if (fixture.mode === 'branches') {
         checksum = editBranch(factory, context.root, operation.edit, checksum)
       } else {
@@ -113,6 +129,15 @@ export function validate(factory, fixture, result) {
       text,
       'restoring a branch must not mutate its ancestor',
     )
+  }
+  if (fixture.mode === 'anchor-density') {
+    // The digest covers every resolution after every edit against the string model.
+    assert.equal(result.checksum, fixture.expectedDigest, 'anchor density checksum')
+    result.anchors.forEach((anchor, index) => {
+      const expected = { offset: fixture.expectedOffsets[index], liveness: 'live' }
+      assert.deepEqual(result.buffer.resolve(anchor), expected, `anchor ${index}`)
+      assert.deepEqual(result.buffer.resolveLinear(anchor), expected, `linear anchor ${index}`)
+    })
   }
   if (fixture.mode === 'anchors') {
     // This is the library's independent linear traversal, not a second editor's semantics.

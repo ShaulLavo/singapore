@@ -30,9 +30,9 @@ describe('piece tree inspector', () => {
     expect(select.length).toBe(200)
     expect(dialog.getBoundingClientRect().height).toBeGreaterThan(0)
     expect(dialog.querySelector('textarea')?.value).not.toContain('text=')
-    const total = snapshot.root!.subtreeLength
+    const total = snapshot.root!.subtreeOriginalLength
     let reads = 0
-    Object.defineProperty(snapshot.root!, 'subtreeLength', {
+    Object.defineProperty(snapshot.root!, 'subtreeOriginalLength', {
       get: () => {
         reads++
         return total
@@ -44,9 +44,9 @@ describe('piece tree inspector', () => {
     expect(select.length).toBe(1)
     await page.getByRole('button', { name: 'Expand selected', exact: true }).click()
     expect(select.length).toBe(200)
-    await page
-      .getByRole('listbox', { name: 'Inspection nodes' })
-      .selectOptions(select.options[5]!.value)
+    // An inserted piece: original text has no entry in the reverse index.
+    const inserted = Array.from(select.options).find((option) => / 1:\d+ /.test(option.text))!
+    await page.getByRole('listbox', { name: 'Inspection nodes' }).selectOptions(inserted.value)
     const id = select.value
     expect(dialog.querySelector('textarea')?.value).toContain(id)
     await page.getByRole('button', { name: 'Find in other tree' }).click()

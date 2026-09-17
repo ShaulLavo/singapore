@@ -1,7 +1,7 @@
 import type { Piece, PieceTableSnapshot } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
 import { inspectionPieceFields, inspectionPieceKey } from './inspection'
-import { reverseHeight } from './reverseIndex'
+import { reverseIndexEntries } from './reverseIndex'
 
 export type PieceInspectionNode = {
   readonly id: string
@@ -113,12 +113,13 @@ export function createPieceTreeInspectionSession() {
             height: node.height,
             piece: Object.freeze({ ...node.piece }),
             values: Object.freeze({
-              subtreeLength: node.subtreeLength,
+              subtreeOriginalLength: node.subtreeOriginalLength,
               subtreeVisibleLength: node.subtreeVisibleLength,
               subtreePieces: node.subtreePieces,
               subtreeLineBreaks: node.subtreeLineBreaks,
               subtreeMinOrder: node.subtreeMinOrder,
               subtreeMaxOrder: node.subtreeMaxOrder,
+              subtreeMinBuffer: node.subtreeMinBuffer,
             }),
             excerpt: excerpt(snapshot, node.piece, length),
           }),
@@ -127,28 +128,28 @@ export function createPieceTreeInspectionSession() {
       () => {},
       () => {},
     )
-    walkInspectionTree(
-      snapshot.reverseIndexRoot,
-      ({ node, parent, edge, depth }) => {
-        nodes.push(
-          Object.freeze({
-            id: label(node),
-            parent: parent ? label(parent) : null,
-            edge,
-            depth,
-            tree: 'reverse',
-            left: node.left ? label(node.left) : null,
-            right: node.right ? label(node.right) : null,
-            height: reverseHeight(node),
-            piece: Object.freeze({ ...node.piece }),
-            values: Object.freeze({ buffer: node.buffer, start: node.start, order: node.order }),
-            excerpt: excerpt(snapshot, node.piece, length),
-          }),
-        )
-      },
-      () => {},
-      () => {},
-    )
+    // The index is a vector of entries, not a tree: one flat row per entry,
+    // carrying the piece its order leads to.
+    const byOrder = new Map(nodes.map((node) => [node.piece.order, node.piece]))
+    for (const entry of reverseIndexEntries(snapshot.reverseIndex)) {
+      const piece = byOrder.get(entry.order)
+      if (!piece) continue
+      nodes.push(
+        Object.freeze({
+          id: `reverse ${entry.buffer}/${entry.start}`,
+          parent: null,
+          edge: 'root',
+          depth: 0,
+          tree: 'reverse',
+          left: null,
+          right: null,
+          height: 1,
+          piece: Object.freeze({ ...piece }),
+          values: Object.freeze({ buffer: entry.buffer, start: entry.start, order: entry.order }),
+          excerpt: excerpt(snapshot, piece, length),
+        }),
+      )
+    }
     return Object.freeze({
       length: snapshot.length,
       pieceCount: snapshot.pieceCount,

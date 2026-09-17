@@ -9,12 +9,12 @@ import type { EditContext } from '@singapore-editor/textbuffer/internal/internal
 import { createNode, getSubtreeVisibleLength } from '@singapore-editor/textbuffer/internal/node'
 import {
   collectTextInRange,
+  findOriginalPiece,
+  findPieceByOrder,
   findVisiblePieceContainingOffset,
   flattenPieces,
   hideVisibleRange,
   normalizePieceOrders,
-  visibleLengthBetweenOrders,
-  visiblePrefixBeforeOrder,
 } from '@singapore-editor/textbuffer/internal/tree'
 
 describe('piece table tree', () => {
@@ -29,10 +29,9 @@ describe('piece table tree', () => {
     expect(getSubtreeVisibleLength(tree)).toBe(6)
     expect(chunks.join('')).toBe('bcde')
     expect(findVisiblePieceContainingOffset(tree, 3)?.piece).toEqual(piece)
-    expect(visiblePrefixBeforeOrder(tree, piece.order)).toBe(0)
-    expect(
-      visibleLengthBetweenOrders(tree, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY),
-    ).toBe(6)
+    expect(findPieceByOrder(tree, piece.order)).toEqual({ piece, visibleStart: 0 })
+    expect(findOriginalPiece(tree, 5)).toEqual({ piece, visibleStart: 0 })
+    expect(findOriginalPiece(tree, 6)).toBeNull()
   })
 
   it('cuts a piece in place when a range inside it is hidden', () => {
@@ -47,10 +46,9 @@ describe('piece table tree', () => {
       [2, false],
       [2, true],
     ])
-    // The first part lands on the original key and replaces that entry in
-    // place, so nothing is recorded for removal.
+    // The first part keeps the original key and order, so only the later
+    // parts are new to the reverse index.
     expect(context.changes.map((piece) => [piece.start, piece.length])).toEqual([
-      [0, 2],
       [2, 2],
       [4, 2],
     ])
@@ -65,7 +63,8 @@ describe('piece table tree', () => {
 
     expect(tree.piece.visible).toBe(true)
     expect(invisible?.piece.visible).toBe(false)
-    expect(context.changes).toHaveLength(1)
+    // A tombstone keeps its key and order: nothing for the reverse index.
+    expect(context.changes).toHaveLength(0)
     expect(normalized?.piece.order).toBe(PIECE_ORDER_STEP)
   })
 })

@@ -1,284 +1,394 @@
 import type {
+  AnchorBias,
   Piece,
   PieceBufferId,
-  PieceTableReverseIndexNode,
-  PieceTableTreeSnapshot,
+  PieceTableReverseBranch,
+  PieceTableReverseIndex,
+  PieceTableReverseSlot,
+  PieceTableReverseSplitNode,
+  PieceTableReverseTail,
+  PieceTreeNode,
 } from './pieceTableTypes'
-import { flattenNodes } from './tree'
-import { PERSISTENT_EPOCH } from './node'
+import { ORIGINAL_BUFFER } from './node'
 
-export const compareReverseKeys = (
-  leftBuffer: PieceBufferId,
-  leftStart: number,
-  rightBuffer: PieceBufferId,
-  rightStart: number,
-): number => {
-  if (leftBuffer !== rightBuffer) return leftBuffer - rightBuffer
-  return leftStart - rightStart
+const BITS = 4
+const WIDTH = 1 << BITS
+const MASK = WIDTH - 1
+
+type Leaf = readonly PieceTableReverseSlot[]
+
+// A literal, so the array holds tagged values from the start: `new Array`
+// would begin as small integers and be rewritten on its first order.
+const emptySlots = (): PieceTableReverseSlot[] => [
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+]
+
+// The one place an index is made, so every one has the same hidden class.
+const reverseIndexOf = (
+  count: number,
+  shift: number,
+  root: PieceTableReverseIndex['root'],
+  tail: PieceTableReverseTail,
+): PieceTableReverseIndex => ({ count, shift, root, tail })
+
+const createReverseIndex = (): PieceTableReverseIndex =>
+  reverseIndexOf(0, BITS, null, { slots: emptySlots(), used: 0 })
+
+// Where the tail begins. A full tail stays the tail until the next append.
+const tailOffset = (count: number): number => (count < WIDTH ? 0 : ((count - 1) >>> BITS) << BITS)
+
+const splitHeight = (node: PieceTableReverseSplitNode | null): number => (node ? node.height : 0)
+
+const splitNode = (
+  start: number,
+  order: number,
+  left: PieceTableReverseSplitNode | null,
+  right: PieceTableReverseSplitNode | null,
+): PieceTableReverseSplitNode => {
+  const leftHeight = splitHeight(left)
+  const rightHeight = splitHeight(right)
+  return {
+    start,
+    order,
+    height: (leftHeight > rightHeight ? leftHeight : rightHeight) + 1,
+    left,
+    right,
+  }
 }
 
-const cloneReverseIndexNode = (
-  node: PieceTableReverseIndexNode,
-  epoch: number,
-): PieceTableReverseIndexNode => ({
-  buffer: node.buffer,
-  start: node.start,
-  piece: node.piece,
-  order: node.order,
-  leftHeight: node.leftHeight,
-  rightHeight: node.rightHeight,
-  epoch,
-  left: node.left,
-  right: node.right,
-})
-
-const ownReverseIndexNode = (
-  node: PieceTableReverseIndexNode,
-  epoch: number,
-): PieceTableReverseIndexNode => (node.epoch === epoch ? node : cloneReverseIndexNode(node, epoch))
-
-// A node carries its children's heights rather than its own, so a rebalance
-// reads only nodes already on the insert's path. Reading a sibling for its
-// height would load a node the insert otherwise never touches, once a level.
-export const reverseHeight = (node: PieceTableReverseIndexNode | null): number => {
-  if (!node) return 0
-  return (node.leftHeight > node.rightHeight ? node.leftHeight : node.rightHeight) + 1
-}
-
-const createReverseIndexNode = (
-  piece: Piece,
-  epoch: number,
-  left: PieceTableReverseIndexNode | null = null,
-  right: PieceTableReverseIndexNode | null = null,
-): PieceTableReverseIndexNode => ({
-  buffer: piece.buffer,
-  start: piece.start,
-  piece,
-  order: piece.order,
-  leftHeight: reverseHeight(left),
-  rightHeight: reverseHeight(right),
-  epoch,
-  left,
-  right,
-})
-
-// Both rotations take an owned node and own the pivot they lift.
-const rotateReverseRight = (
-  node: PieceTableReverseIndexNode,
-  epoch: number,
-): PieceTableReverseIndexNode => {
-  const pivot = ownReverseIndexNode(node.left!, epoch)
-  node.left = pivot.right
-  node.leftHeight = pivot.rightHeight
-  pivot.right = node
-  pivot.rightHeight = reverseHeight(node)
-  return pivot
-}
-
-const rotateReverseLeft = (
-  node: PieceTableReverseIndexNode,
-  epoch: number,
-): PieceTableReverseIndexNode => {
-  const pivot = ownReverseIndexNode(node.right!, epoch)
-  node.right = pivot.left
-  node.rightHeight = pivot.leftHeight
-  pivot.left = node
-  pivot.leftHeight = reverseHeight(node)
-  return pivot
-}
-
-// AVL repair of an owned node one of whose subtrees grew by at most one level.
-const rebalanceReverse = (
-  node: PieceTableReverseIndexNode,
-  epoch: number,
-): PieceTableReverseIndexNode => {
-  const lean = node.leftHeight - node.rightHeight
+// AVL repair while rebuilding a node one of whose sides grew by at most one.
+const balancedSplitNode = (
+  start: number,
+  order: number,
+  left: PieceTableReverseSplitNode | null,
+  right: PieceTableReverseSplitNode | null,
+): PieceTableReverseSplitNode => {
+  const lean = splitHeight(left) - splitHeight(right)
   if (lean > 1) {
-    const left = node.left!
-    if (left.rightHeight > left.leftHeight) {
-      node.left = rotateReverseLeft(ownReverseIndexNode(left, epoch), epoch)
+    const pivot = left!
+    if (splitHeight(pivot.left) >= splitHeight(pivot.right)) {
+      return splitNode(
+        pivot.start,
+        pivot.order,
+        pivot.left,
+        splitNode(start, order, pivot.right, right),
+      )
     }
-    return rotateReverseRight(node, epoch)
+    const inner = pivot.right!
+    return splitNode(
+      inner.start,
+      inner.order,
+      splitNode(pivot.start, pivot.order, pivot.left, inner.left),
+      splitNode(start, order, inner.right, right),
+    )
   }
   if (lean < -1) {
-    const right = node.right!
-    if (right.leftHeight > right.rightHeight) {
-      node.right = rotateReverseRight(ownReverseIndexNode(right, epoch), epoch)
+    const pivot = right!
+    if (splitHeight(pivot.right) >= splitHeight(pivot.left)) {
+      return splitNode(
+        pivot.start,
+        pivot.order,
+        splitNode(start, order, left, pivot.left),
+        pivot.right,
+      )
     }
-    return rotateReverseLeft(node, epoch)
+    const inner = pivot.left!
+    return splitNode(
+      inner.start,
+      inner.order,
+      splitNode(start, order, left, inner.left),
+      splitNode(pivot.start, pivot.order, inner.right, pivot.right),
+    )
   }
-  return node
+  return splitNode(start, order, left, right)
 }
 
-const insertReverseIndexNode = (
-  root: PieceTableReverseIndexNode | null,
-  piece: Piece,
-  epoch: number,
-): PieceTableReverseIndexNode => {
-  if (!root) return createReverseIndexNode(piece, epoch)
-
-  const comparison = compareReverseKeys(piece.buffer, piece.start, root.buffer, root.start)
-  if (comparison === 0) {
-    const replaced = ownReverseIndexNode(root, epoch)
-    replaced.piece = piece
-    replaced.order = piece.order
-    return replaced
+const insertSplit = (
+  node: PieceTableReverseSplitNode | null,
+  start: number,
+  order: number,
+): PieceTableReverseSplitNode => {
+  if (!node) return splitNode(start, order, null, null)
+  if (start === node.start) return splitNode(start, order, node.left, node.right)
+  if (start < node.start) {
+    return balancedSplitNode(
+      node.start,
+      node.order,
+      insertSplit(node.left, start, order),
+      node.right,
+    )
   }
-
-  const next = ownReverseIndexNode(root, epoch)
-  if (comparison < 0) {
-    next.left = insertReverseIndexNode(next.left, piece, epoch)
-    next.leftHeight = reverseHeight(next.left)
-  } else {
-    next.right = insertReverseIndexNode(next.right, piece, epoch)
-    next.rightHeight = reverseHeight(next.right)
-  }
-  return rebalanceReverse(next, epoch)
+  return balancedSplitNode(node.start, node.order, node.left, insertSplit(node.right, start, order))
 }
 
-// Every entry is keyed by (buffer, start), and no edit ever moves a piece off
-// its key: a split's left half, a tombstone and a coalesced tail all keep it.
-// Writing is therefore insert-or-replace, and the index never deletes.
-export const applyReverseIndexChanges = (
-  root: PieceTableReverseIndexNode | null,
-  pieces: readonly Piece[],
-  epoch = PERSISTENT_EPOCH,
-): PieceTableReverseIndexNode | null => {
-  let next = root
+// A cut keeps the first part's key and order, so only later parts arrive
+// here, and a slot that held one order becomes that piece plus the new one.
+const slotWithPiece = (slot: PieceTableReverseSlot, piece: Piece): PieceTableReverseSlot => {
+  if (slot === undefined) return piece.order
+  const pieces = typeof slot === 'number' ? splitNode(0, slot, null, null) : slot
+  return insertSplit(pieces, piece.start, piece.order)
+}
 
-  for (const piece of pieces) {
-    if (piece.length === 0) continue
-    next = insertReverseIndexNode(next, piece, epoch)
+// The slot of inserted buffer `at + 1`.
+export const reverseIndexSlot = (
+  index: PieceTableReverseIndex,
+  at: number,
+): PieceTableReverseSlot => {
+  if (at < 0 || at >= index.count) return undefined
+  const offset = tailOffset(index.count)
+  if (at >= offset) return index.tail.slots[at - offset]
+
+  let node = index.root as PieceTableReverseBranch
+  for (let level = index.shift; level > BITS; level -= BITS) {
+    node = node[(at >>> level) & MASK] as PieceTableReverseBranch
   }
+  return (node[(at >>> BITS) & MASK] as Leaf)[at & MASK]
+}
 
+const privateTail = (index: PieceTableReverseIndex, length: number): PieceTableReverseSlot[] => {
+  const slots = emptySlots()
+  for (let at = 0; at < length; at += 1) slots[at] = index.tail.slots[at]
+  return slots
+}
+
+// Every copy of a vector node, so the counters see each one.
+const copyBranch = <Node extends readonly unknown[]>(node: Node): Node[number][] => node.slice()
+
+const pathTo = (level: number, leaf: Leaf): PieceTableReverseBranch | Leaf =>
+  level === 0 ? leaf : [pathTo(level - BITS, leaf)]
+
+const pushLeaf = (
+  parent: PieceTableReverseBranch,
+  level: number,
+  last: number,
+  leaf: Leaf,
+): PieceTableReverseBranch => {
+  const next = copyBranch(parent)
+  const at = (last >>> level) & MASK
+  const child = parent[at] as PieceTableReverseBranch | undefined
+  if (level === BITS) next[at] = leaf
+  else next[at] = child ? pushLeaf(child, level - BITS, last, leaf) : pathTo(level - BITS, leaf)
   return next
 }
 
-// Relabelling orders moves no key, so the index keeps its shape and only
-// swaps pieces. Returns undefined when an entry's piece is not in the map,
-// which sends the caller to a full rebuild.
-export const relabelReverseIndex = (
-  node: PieceTableReverseIndexNode | null,
-  relabeled: ReadonlyMap<Piece, Piece>,
-  epoch: number,
-): PieceTableReverseIndexNode | null | undefined => {
-  if (!node) return null
-  const piece = relabeled.get(node.piece)
-  if (!piece) return undefined
-  const left = relabelReverseIndex(node.left, relabeled, epoch)
-  if (left === undefined) return undefined
-  const right = relabelReverseIndex(node.right, relabeled, epoch)
-  if (right === undefined) return undefined
-
-  const next = ownReverseIndexNode(node, epoch)
-  next.piece = piece
-  next.order = piece.order
-  next.left = left
-  next.right = right
-  return next
-}
-
-const buildBalancedReverse = (
-  pieces: readonly Piece[],
-  from: number,
-  to: number,
-  epoch: number,
-): PieceTableReverseIndexNode | null => {
-  if (from >= to) return null
-  const middle = (from + to) >>> 1
-  return createReverseIndexNode(
-    pieces[middle]!,
-    epoch,
-    buildBalancedReverse(pieces, from, middle, epoch),
-    buildBalancedReverse(pieces, middle + 1, to, epoch),
+// The full tail becomes a leaf of the vector and `slot` starts the next tail.
+const appendPastFullTail = (
+  index: PieceTableReverseIndex,
+  slot: PieceTableReverseSlot,
+): PieceTableReverseIndex => {
+  const leaf = index.tail.slots
+  const slots = emptySlots()
+  slots[0] = slot
+  const tail = { slots, used: 1 }
+  const count = index.count + 1
+  const root = index.root as PieceTableReverseBranch | null
+  if (!root) return reverseIndexOf(count, BITS, [leaf], tail)
+  if (index.count >>> BITS > 1 << index.shift) {
+    return reverseIndexOf(count, index.shift + BITS, [root, pathTo(index.shift, leaf)], tail)
+  }
+  return reverseIndexOf(
+    count,
+    index.shift,
+    pushLeaf(root, index.shift, index.count - 1, leaf),
+    tail,
   )
 }
 
-export const buildReverseIndex = (
-  root: PieceTableTreeSnapshot['root'],
-  epoch = PERSISTENT_EPOCH,
-): PieceTableReverseIndexNode | null => {
-  const pieces = flattenNodes(root, [])
-    .map((node) => node.piece)
-    .filter((piece) => piece.length > 0)
-    .sort((left, right) => compareReverseKeys(left.buffer, left.start, right.buffer, right.start))
-  return buildBalancedReverse(pieces, 0, pieces.length, epoch)
+// The newest buffer always has the next id, so it is an append. The first
+// snapshot to append after its parent writes the shared tail's free slot and
+// copies nothing; a sibling branch that comes second takes a private tail.
+const appendSlot = (
+  index: PieceTableReverseIndex,
+  slot: PieceTableReverseSlot,
+): PieceTableReverseIndex => {
+  const length = index.count - tailOffset(index.count)
+  if (length === WIDTH) return appendPastFullTail(index, slot)
+
+  const tail =
+    index.tail.used === length ? index.tail : { slots: privateTail(index, length), used: length }
+  tail.slots[length] = slot
+  tail.used = length + 1
+  return reverseIndexOf(index.count + 1, index.shift, index.root, tail)
 }
 
-export const reversePredecessor = (
-  root: PieceTableReverseIndexNode | null,
-  buffer: PieceBufferId,
-  offset: number,
-  strict: boolean,
-): PieceTableReverseIndexNode | null => {
-  let node = root
-  let candidate: PieceTableReverseIndexNode | null = null
+const replaceInBranch = (
+  node: PieceTableReverseBranch,
+  level: number,
+  at: number,
+  slot: PieceTableReverseSlot,
+): PieceTableReverseBranch => {
+  const next = copyBranch(node)
+  const child = (at >>> level) & MASK
+  if (level > BITS) {
+    next[child] = replaceInBranch(node[child] as PieceTableReverseBranch, level - BITS, at, slot)
+    return next
+  }
+  const leaf = copyBranch(node[child] as Leaf)
+  leaf[at & MASK] = slot
+  next[child] = leaf
+  return next
+}
 
+// A filled slot is visible to older snapshots, so replacing one copies.
+const replaceSlot = (
+  index: PieceTableReverseIndex,
+  at: number,
+  slot: PieceTableReverseSlot,
+): PieceTableReverseIndex => {
+  const offset = tailOffset(index.count)
+  if (at >= offset) {
+    const length = index.count - offset
+    const slots = privateTail(index, length)
+    slots[at - offset] = slot
+    return reverseIndexOf(index.count, index.shift, index.root, { slots, used: length })
+  }
+  const root = replaceInBranch(index.root as PieceTableReverseBranch, index.shift, at, slot)
+  return reverseIndexOf(index.count, index.shift, root, index.tail)
+}
+
+const addPiece = (index: PieceTableReverseIndex, piece: Piece): PieceTableReverseIndex => {
+  const at = piece.buffer - 1
+  let next = index
+  while (next.count < at) next = appendSlot(next, undefined)
+  if (next.count === at) return appendSlot(next, piece.order)
+  return replaceSlot(next, at, slotWithPiece(reverseIndexSlot(next, at), piece))
+}
+
+// `pieces` are the ones an edit gave a new key: inserted text and the later
+// parts of a cut. A tombstone, a coalesced tail and a cut's first part keep
+// their key and order, and an entry holds nothing else, so they write nothing.
+export const applyReverseIndexChanges = (
+  index: PieceTableReverseIndex,
+  pieces: readonly Piece[],
+): PieceTableReverseIndex => {
+  let next = index
+  for (const piece of pieces) {
+    if (piece.buffer === ORIGINAL_BUFFER) continue
+    next = addPiece(next, piece)
+  }
+  return next
+}
+
+const balancedSplit = (
+  entries: readonly number[],
+  from: number,
+  to: number,
+): PieceTableReverseSplitNode | null => {
+  if (from >= to) return null
+  const middle = (from + to) >>> 1
+  return splitNode(
+    middle === 0 ? 0 : entries[middle * 2]!,
+    entries[middle * 2 + 1]!,
+    balancedSplit(entries, from, middle),
+    balancedSplit(entries, middle + 1, to),
+  )
+}
+
+// Start and order pairs per buffer. A buffer's pieces keep their buffer order
+// in the document, so walking the tree in order leaves each list sorted.
+const collectEntries = (node: PieceTreeNode | null, buffers: (number[] | undefined)[]): void => {
+  if (!node) return
+  collectEntries(node.left, buffers)
+  const piece = node.piece
+  if (piece.buffer !== ORIGINAL_BUFFER) {
+    const entries = (buffers[piece.buffer - 1] ??= [])
+    entries.push(piece.start, piece.order)
+  }
+  collectEntries(node.right, buffers)
+}
+
+export const buildReverseIndex = (root: PieceTreeNode | null): PieceTableReverseIndex => {
+  const buffers: (number[] | undefined)[] = []
+  collectEntries(root, buffers)
+
+  let index = createReverseIndex()
+  for (let at = 0; at < buffers.length; at += 1) {
+    const entries = buffers[at]
+    if (!entries) index = appendSlot(index, undefined)
+    else if (entries.length === 2) index = appendSlot(index, entries[1])
+    else index = appendSlot(index, balancedSplit(entries, 0, entries.length >>> 1)!)
+  }
+  return index
+}
+
+const orderOfPieceStartingAtOrBefore = (
+  pieces: PieceTableReverseSplitNode,
+  unit: number,
+): number => {
+  let node: PieceTableReverseSplitNode | null = pieces
+  let order = Number.NaN
   while (node) {
-    const comparison = compareReverseKeys(node.buffer, node.start, buffer, offset)
-    const accepts = strict ? comparison < 0 : comparison <= 0
-
-    if (accepts) {
-      candidate = node
+    if (node.start <= unit) {
+      order = node.order
       node = node.right
       continue
     }
-
     node = node.left
   }
+  return order
+}
 
-  if (candidate?.buffer === buffer) return candidate
-  return null
+// The unit an anchor holds on to: the one before it under left bias, which is
+// what puts an anchor on a cut into the piece ending there.
+export const anchoredUnit = (offset: number, bias: AnchorBias): number =>
+  bias === 'left' && offset > 0 ? offset - 1 : offset
+
+// Order of the inserted buffer's piece that holds `unit`, if the buffer is
+// indexed. The caller checks the piece it leads to: entries carry no lengths.
+export const lookupReverseIndex = (
+  index: PieceTableReverseIndex,
+  buffer: PieceBufferId,
+  unit: number,
+): number | undefined => {
+  const slot = reverseIndexSlot(index, buffer - 1)
+  if (slot === undefined || typeof slot === 'number') return slot
+  return orderOfPieceStartingAtOrBefore(slot, unit)
+}
+
+export type ReverseIndexEntry = {
+  readonly buffer: PieceBufferId
+  readonly start: number
+  readonly order: number
+}
+
+const collectSplitEntries = (
+  node: PieceTableReverseSplitNode | null,
+  buffer: PieceBufferId,
+  entries: ReverseIndexEntry[],
+): void => {
+  if (!node) return
+  collectSplitEntries(node.left, buffer, entries)
+  entries.push({ buffer, start: node.start, order: node.order })
+  collectSplitEntries(node.right, buffer, entries)
+}
+
+// Every entry in key order, for inspection. A buffer's first entry reads
+// start 0 whatever its piece's start is.
+export const reverseIndexEntries = (index: PieceTableReverseIndex): ReverseIndexEntry[] => {
+  const entries: ReverseIndexEntry[] = []
+  for (let at = 0; at < index.count; at += 1) {
+    const slot = reverseIndexSlot(index, at)
+    const buffer = (at + 1) as PieceBufferId
+    if (typeof slot === 'number') entries.push({ buffer, start: 0, order: slot })
+    else if (slot) collectSplitEntries(slot, buffer, entries)
+  }
+  return entries
 }
 
 export const coversAnchorOffset = (piece: Piece, offset: number): boolean =>
   offset >= piece.start && offset <= piece.start + piece.length
-
-export const lookupReverseIndex = (
-  snapshot: PieceTableTreeSnapshot,
-  anchor: { buffer: PieceBufferId; offset: number; bias: 'left' | 'right' },
-): PieceTableReverseIndexNode | null => {
-  const strict = anchor.bias === 'left' && anchor.offset > 0
-  const preferred = reversePredecessor(
-    snapshot.reverseIndexRoot,
-    anchor.buffer,
-    anchor.offset,
-    strict,
-  )
-
-  if (preferred && coversAnchorOffset(preferred.piece, anchor.offset)) return preferred
-
-  const fallback = reversePredecessor(
-    snapshot.reverseIndexRoot,
-    anchor.buffer,
-    anchor.offset,
-    false,
-  )
-  if (fallback && coversAnchorOffset(fallback.piece, anchor.offset)) return fallback
-
-  return null
-}
-
-export const reverseSuccessor = (
-  root: PieceTableReverseIndexNode | null,
-  buffer: PieceBufferId,
-  offset: number,
-): PieceTableReverseIndexNode | null => {
-  let node = root
-  let candidate: PieceTableReverseIndexNode | null = null
-
-  while (node) {
-    const comparison = compareReverseKeys(node.buffer, node.start, buffer, offset)
-
-    if (comparison >= 0) {
-      candidate = node
-      node = node.left
-      continue
-    }
-
-    node = node.right
-  }
-
-  if (candidate?.buffer === buffer) return candidate
-  return null
-}

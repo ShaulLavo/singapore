@@ -100,14 +100,6 @@ export function instrument(text, filename) {
         )
     }
     if (
-      owner === 'reverseIndex.insertReverseIndexNode' &&
-      ts.isReturnStatement(node) &&
-      node.expression &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'replaced'
-    )
-      add(node.getStart(source), counter(owner + '.replacementRecords'))
-    if (
       owner === 'pieceTreeBase.PieceTreeBase.getLineContent' &&
       ts.isIfStatement(node) &&
       node.expression.getText(source).includes('_lastVisitedLine.lineNumber')
@@ -128,9 +120,10 @@ const requiredCounters = {
   singapore: [
     'node.cloneNode.calls',
     'node.own.calls',
-    'reverseIndex.cloneReverseIndexNode.calls',
-    'reverseIndex.ownReverseIndexNode.calls',
-    'reverseIndex.insertReverseIndexNode.replacementRecords',
+    'reverseIndex.appendSlot.calls',
+    'reverseIndex.copyBranch.calls',
+    'reverseIndex.privateTail.calls',
+    'reverseIndex.splitNode.calls',
     'buffers.extendBufferLineIndex.calls',
     'buffers.extendBufferLineIndex.indexInputCodeUnits',
     'buffers.countLineBreaks.inputCodeUnits',

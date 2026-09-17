@@ -1,4 +1,7 @@
-import type { Piece, PieceTreeNode } from './pieceTableTypes'
+import type { Piece, PieceBufferId, PieceTreeNode } from './pieceTableTypes'
+
+// Chunk 0, the text the document was created from.
+export const ORIGINAL_BUFFER = 0 as PieceBufferId
 
 export const getSubtreeVisibleLength = (node: PieceTreeNode | null): number =>
   node ? node.subtreeVisibleLength : 0
@@ -30,18 +33,19 @@ const cloneNode = (node: PieceTreeNode, epoch: number): PieceTreeNode => ({
   right: node.right,
   height: node.height,
   epoch,
-  subtreeLength: node.subtreeLength,
+  subtreeOriginalLength: node.subtreeOriginalLength,
   subtreeVisibleLength: node.subtreeVisibleLength,
   subtreePieces: node.subtreePieces,
   subtreeLineBreaks: node.subtreeLineBreaks,
   subtreeMinOrder: node.subtreeMinOrder,
   subtreeMaxOrder: node.subtreeMaxOrder,
+  subtreeMinBuffer: node.subtreeMinBuffer,
 })
 
 export const own = (node: PieceTreeNode, epoch: number): PieceTreeNode =>
   node.epoch === epoch ? node : cloneNode(node, epoch)
 
-// One pass over the two children for the height and all six summaries. This
+// One pass over the two children for the height and all seven summaries. This
 // runs on every node an edit touches, so the children are read once each and
 // the bounds are compared inline rather than through Math.min.
 export const summarize = (node: PieceTreeNode): PieceTreeNode => {
@@ -49,37 +53,41 @@ export const summarize = (node: PieceTreeNode): PieceTreeNode => {
   const left = node.left
   const right = node.right
   let height = 0
-  let length = piece.length
+  let original = piece.buffer === ORIGINAL_BUFFER ? piece.length : 0
   let visible = piece.visible ? piece.length : 0
   let lineBreaks = piece.visible ? piece.lineBreaks : 0
   let pieces = 1
   let minOrder = piece.order
   let maxOrder = piece.order
+  let minBuffer: number = piece.buffer
   if (left) {
     height = left.height
-    length += left.subtreeLength
+    original += left.subtreeOriginalLength
     visible += left.subtreeVisibleLength
     lineBreaks += left.subtreeLineBreaks
     pieces += left.subtreePieces
     if (left.subtreeMinOrder < minOrder) minOrder = left.subtreeMinOrder
     if (left.subtreeMaxOrder > maxOrder) maxOrder = left.subtreeMaxOrder
+    if (left.subtreeMinBuffer < minBuffer) minBuffer = left.subtreeMinBuffer
   }
   if (right) {
     if (right.height > height) height = right.height
-    length += right.subtreeLength
+    original += right.subtreeOriginalLength
     visible += right.subtreeVisibleLength
     lineBreaks += right.subtreeLineBreaks
     pieces += right.subtreePieces
     if (right.subtreeMinOrder < minOrder) minOrder = right.subtreeMinOrder
     if (right.subtreeMaxOrder > maxOrder) maxOrder = right.subtreeMaxOrder
+    if (right.subtreeMinBuffer < minBuffer) minBuffer = right.subtreeMinBuffer
   }
   node.height = height + 1
-  node.subtreeLength = length
+  node.subtreeOriginalLength = original
   node.subtreeVisibleLength = visible
   node.subtreePieces = pieces
   node.subtreeLineBreaks = lineBreaks
   node.subtreeMinOrder = minOrder
   node.subtreeMaxOrder = maxOrder
+  node.subtreeMinBuffer = minBuffer
   return node
 }
 
@@ -95,10 +103,11 @@ export const createNode = (
     right,
     height: 1,
     epoch,
-    subtreeLength: 0,
+    subtreeOriginalLength: 0,
     subtreeVisibleLength: 0,
     subtreePieces: 0,
     subtreeLineBreaks: 0,
     subtreeMinOrder: 0,
     subtreeMaxOrder: 0,
+    subtreeMinBuffer: 0,
   })

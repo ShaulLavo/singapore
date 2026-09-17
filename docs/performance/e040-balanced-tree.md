@@ -133,7 +133,7 @@ index 27.9%, buffer store and line index 20.8%. Self: `insertReverseIndexNode` 1
 ## What remains
 
 - The reverse index is now the largest single cost of an insert at 28%, with the hottest self
-  frame and a treap 31 to 35 levels tall. [E039](../../plans/e039-reverse-index-cost.md) is next,
+  frame and a treap 31 to 35 levels tall. [E039](e039-reverse-index-cost.md) is next,
   and if it keeps a keyed tree the AVL `join` here applies to it directly.
 - `firstLineBreakAtOrAfter` at 10% is the line-index search a cut pays on chunk 0. Bounding it to
   the piece's own range is a small change.

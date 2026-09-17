@@ -77,7 +77,7 @@ trace. The reverse index was 31 to 35 as a treap.
   the newest buffer, so it copies two full paths whatever the shape, and the treap's mean depth
   was already close to the AVL's. Balance helped the readers: anchor resolution descends the
   index two or three times and is a fifth faster. The writers need
-  [E039](../../plans/e039-reverse-index-cost.md)'s redesign, and these numbers are its baseline.
+  [E039](e039-reverse-index-cost.md)'s redesign, and these numbers are its baseline.
 - **Typing pays for it.** A keystroke rewrites the entry of the piece it extends, which always
   has the largest key, and the largest key of an AVL tree sits at full depth where a treap often
   had it near the top. In steady state that is 0.179 ms against 0.138 ms for 1,500 keystrokes,

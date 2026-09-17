@@ -97,7 +97,7 @@ test('fixtures are repeatable and all edit boundaries respect UTF-16 pairs', () 
   }
 })
 
-test('all smoke traces check both indexes and leave retained snapshots intact', async () => {
+test('all smoke traces leave retained snapshots intact', async () => {
   const adapter = await loadAdapter('singapore')
   for (const fixture of makeHeightFixtures('smoke', 7, 64)) {
     {
@@ -107,7 +107,7 @@ test('all smoke traces check both indexes and leave retained snapshots intact', 
       runHeightTrace(buffer, fixture, 16, (sample) => samples.push(sample))
       assert.equal(samples.at(-1).operation, fixture.operations.length)
       assert.equal(adapter.retainedText(original), fixture.initial)
-      assert.equal(samples.at(-1).trees.sequence.pieces, samples.at(-1).trees.reverse.pieces)
+      assert.deepEqual(buffer.issues(), [])
     }
   }
 })
@@ -118,9 +118,9 @@ test('measurement preserves tree identities and contents', async () => {
   buffer.edit({ from: 1, to: 4, text: 'x' })
   const before = JSON.stringify(buffer.snapshot)
   const root = buffer.snapshot.root
-  const reverse = buffer.snapshot.reverseIndexRoot
+  const reverse = buffer.snapshot.reverseIndex
   measureBuffer(buffer)
   assert.equal(buffer.snapshot.root, root)
-  assert.equal(buffer.snapshot.reverseIndexRoot, reverse)
+  assert.equal(buffer.snapshot.reverseIndex, reverse)
   assert.equal(JSON.stringify(buffer.snapshot), before)
 })

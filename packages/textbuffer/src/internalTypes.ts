@@ -11,12 +11,11 @@ export type InsertProbe = {
   // of a landing with no right subtree is the nearest visible one of these.
   readonly leftTurns: PieceTreeNode[]
   outcome: 'insert' | 'coalesce' | 'retry'
-  coalesced: Piece | null
 }
 
-// Pieces whose reverse-index entry must be written after the edit. A cut's
-// left half keeps the original key, so writing it replaces the old entry in
-// place and no removal is ever needed.
+// Pieces the edit gave a new reverse-index key: inserted text and the later
+// parts of a cut. A cut's first part, a tombstone and a coalesced tail keep
+// their key and order, which is all an entry holds.
 export type EditContext = {
   changes: Piece[]
   normalizeOrders: boolean

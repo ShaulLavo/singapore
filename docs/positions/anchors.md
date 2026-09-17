@@ -60,7 +60,7 @@ Resolution produces `ResolvedAnchor`: `{ offset, liveness }`.
 
 - **Live:** exact visible position. Liveness = `live`.
 - **Deleted:** gap where text used to be. Liveness = `deleted`.
-- **Bias at gap:** Left = left edge, Right = right edge.
+- **Bias at gap:** Left = left edge, Right = right edge. The gap of a deleted piece reaches, on each side, to the nearest piece whose buffer is no newer than its own: another part of the same insert, or text that was there when it was inserted. Text between arrived later, so bias decides which side of it the anchor takes. Until E039 the edges were the nearest pieces of the same buffer only, and an insert deleted whole, which has none, resolved to the document's start or end.
 - **Replacement (delete + insert):** delete-first, then insert. Left-biased stays before new text; right-biased stays after.
 - **Boundary clamping:** clamps to 0 / document.length at document edges.
 - **Deterministic** for a given (anchor, snapshot) pair.
@@ -90,49 +90,39 @@ When `anchorAt(snapshot, offset, bias)` lands exactly between two visible pieces
 
 ---
 
-## Resolution Architecture (Locked)
+## Resolution Architecture
 
-Two persistent structures:
+Revised by [E039](../performance/e039-reverse-index-cost.md). The design locked here first was a second persistent BST keyed by `(buffer, piece.start)` whose entries pointed at pieces; its write cost was twice the sequence tree's. What replaced it:
 
-### 1. Persistent reverse index
+### 1. The sequence tree finds original text
 
-Persistent balanced BST keyed by piece interval start: `(buffer, piece.start)`. O(log m) predecessor search finds the piece interval covering an anchor's buffer position, including invisible pieces.
+The tree is enriched with `subtreeVisibleLength`, the prefix sum for document offsets, with `subtreeOriginalLength`, the same sum over the original buffer's pieces, and with `subtreeMinBuffer`. The original buffer's pieces tile it in document order, so an anchor into original text is found by one descent, with no index entry and no index write when original text is cut.
 
-Does NOT store document offsets. Answers only: "which piece interval contains this buffer position?"
+### 2. A persistent vector finds inserted text
 
-Persistent via structural sharing (path copying). Each edit produces a new root.
+Buffer ids are dense and the newest is always next, so inserted buffers are indexed by a persistent vector with a shared tail: a new buffer is an append that copies nothing on a linear history. A slot holds the order of the buffer's only piece, or a small tree of `start → order` once the buffer is cut. Entries hold no visibility and no length, so tombstoning and typing write nothing. The order leads to the piece by one descent of the sequence tree.
 
-### 2. Enriched persistent treap (prefix sums)
-
-Treap enriched with `subtreeVisibleLength` aggregates, maintained in the same aggregate function as `subtreeLength` (see `packages/textbuffer/src/pieceTable.ts`). For visible pieces it contributes `piece.length`; for invisible pieces it contributes `0`.
-
-Serves as both ordered piece container and prefix-sum structure. No Fenwick tree needed.
-
-**Why Fenwick rejected:** Flat arrays with no structural-sharing seam — incompatible with persistent snapshots. Also duplicates info already in the treap.
-
-### Bridging (locked: direct node reference)
-
-Reverse index stores direct reference to treap node. O(1) bridging. Safe because persistent nodes are immutable.
+**Why Fenwick rejected:** Flat arrays with no structural-sharing seam — incompatible with persistent snapshots. Also duplicates info already in the tree.
 
 ### Resolution flow
 
 1. If sentinel, return immediately.
-2. Reverse index lookup: find covering piece interval.
-3. Live visible piece: compute document offset via visible-length prefix sum.
-4. Invisible piece: return deleted liveness and apply bias to the nearest visible gap edge via visible-length prefix sums.
+2. Find the piece: by original offset for the original buffer, by the index's order otherwise. The same descent yields the visible length before it.
+3. Live visible piece: that prefix plus the offset within the piece.
+4. Invisible piece: return deleted liveness and move the prefix to the gap edge bias selects, skipping newer text by `subtreeMinBuffer`.
 
 ---
 
 ## Snapshot Consistency (Locked)
 
-Snapshot = `(treapRoot, reverseIndexRoot)` tuple. Both immutable. Undo/redo = O(1) root swap.
+Snapshot = `(root, reverseIndex)` tuple. Both immutable to their holder. Undo/redo = O(1) swap.
 
 | Structure      | Per-edit cost                      | Memory per delta |
 | -------------- | ---------------------------------- | ---------------- |
-| Enriched treap | O(log n) nodes (already happening) | ~64 bytes/node   |
-| Reverse index  | O(log m) nodes via path copying    | ~64 bytes/node   |
+| Sequence tree  | O(log n) nodes (already happening) | ~100 bytes/node  |
+| Reverse index  | One slot per new buffer; a short path per 16 buffers or per cut of inserted text | one slot |
 
-**GC safety:** Reverse index points to treap nodes reachable from the same snapshot's treap root. Dropping a snapshot drops both roots. **Invariant:** snapshots must be retained/discarded as complete tuples — never expose roots individually.
+**GC safety:** The reverse index holds orders, not nodes, and its tail is shared with newer snapshots of the same history. Dropping a snapshot drops its root and its view of the index. **Invariant:** snapshots must be retained/discarded as complete tuples — never expose roots individually.
 
 ### Comparing Anchors
 

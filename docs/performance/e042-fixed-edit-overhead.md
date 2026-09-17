@@ -64,7 +64,7 @@ remaining local tweak: the three walks are about a third of the insert profile b
 
 - [E040](e040-balanced-tree.md) lowers the cost of every walk by bounding
   height. Its payoff is bounded by the 55% the tree still takes, now that cloning is gone.
-- [E039](../../plans/e039-reverse-index-cost.md) owns the 20% in the reverse index. Its keyed
+- [E039](e039-reverse-index-cost.md) owns the 20% in the reverse index. Its keyed
   insert with a hashed priority per node is now the single hottest self frame.
 - A fused descent is not in either plan. It belongs in E040, which already rewrites the split,
   or in a small plan of its own that adds `splitAtVisibleOffsetWithContext` returning the

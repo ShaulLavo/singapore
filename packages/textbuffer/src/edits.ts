@@ -9,7 +9,7 @@ import type { EditContext, InsertContext } from './internalTypes'
 import { extendTailChunk } from './buffers'
 import { applyReverseIndexChanges } from './reverseIndex'
 import { ensureValidRange, isHighSurrogate, isLowSurrogate, splitsSurrogatePair } from './reads'
-import { createSnapshotWithIndex, editingEpoch } from './snapshot'
+import { createNormalizedSnapshot, createSnapshot, editingEpoch } from './snapshot'
 import { hideVisibleRange, insertAtVisibleOffset } from './tree'
 
 const compareEditsDescending = (left: PieceTableEdit, right: PieceTableEdit): number => {
@@ -179,20 +179,17 @@ const beginEdit = (snapshot: PieceTableTreeSnapshot): EditState => ({
   normalizeOrders: false,
 })
 
-// The index is written before any relabelling, which then carries it over.
-const finishEdit = (
-  snapshot: PieceTableTreeSnapshot,
-  state: EditState,
-  epoch: number,
-): PieceTableTreeSnapshot => {
-  const reverseIndexRoot = applyReverseIndexChanges(snapshot.reverseIndexRoot, state.changes, epoch)
-  return createSnapshotWithIndex(state.buffers, state.root, reverseIndexRoot, state.normalizeOrders)
+// A relabelling changes every order, so it rebuilds the index from the tree.
+const finishEdit = (snapshot: PieceTableTreeSnapshot, state: EditState): PieceTableTreeSnapshot => {
+  if (state.normalizeOrders) return createNormalizedSnapshot(state.buffers, state.root)
+  const reverseIndex = applyReverseIndexChanges(snapshot.reverseIndex, state.changes)
+  return createSnapshot(state.buffers, state.root, reverseIndex)
 }
 
 const insertContext = (state: EditState, text: string, snap: boolean): InsertContext => ({
   changes: state.changes,
   normalizeOrders: false,
-  probe: { text, snap, leftTurns: [], outcome: 'insert', coalesced: null },
+  probe: { text, snap, leftTurns: [], outcome: 'insert' },
   appendedBuffers: null,
 })
 
@@ -217,7 +214,6 @@ const insertText = (
     return
   }
   state.buffers = extendTailChunk(state.buffers, text)
-  state.changes.push(context.probe.coalesced!)
 }
 
 // One descent for both halves of a replacement: the range is hidden and the
@@ -258,7 +254,7 @@ export const insertIntoPieceTable = (
   const epoch = editingEpoch(snapshot)
   const state = beginEdit(snapshot)
   insertText(state, offset, text, offset > 0 && offset < snapshot.length, epoch)
-  return finishEdit(snapshot, state, epoch)
+  return finishEdit(snapshot, state)
 }
 
 export const deleteFromPieceTable = (
@@ -273,7 +269,7 @@ export const deleteFromPieceTable = (
   const epoch = editingEpoch(snapshot)
   const state = beginEdit(snapshot)
   replaceRange(state, snapped, epoch)
-  return finishEdit(snapshot, state, epoch)
+  return finishEdit(snapshot, state)
 }
 
 // Snapped once, against this snapshot: re-snapping per edit as the tree
@@ -304,5 +300,5 @@ export const applyBatchToPieceTable = (
   // one offset apply in the order given and the later one lands in front.
   const ordered = applied.length === 1 ? applied : applied.toSorted(compareEditsDescending)
   for (const edit of ordered) replaceRange(state, edit, epoch)
-  return finishEdit(snapshot, state, epoch)
+  return finishEdit(snapshot, state)
 }

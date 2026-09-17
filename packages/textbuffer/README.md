@@ -28,14 +28,14 @@ Keep a snapshot to keep that version of the document. Edit an older snapshot to 
 
 ## Storage
 
-A snapshot holds two tree roots, a buffer version, the visible text length, and the stored piece count.
+A snapshot holds the sequence tree's root, a reverse index, a buffer version, the visible text length, and the stored piece count.
 
 ```mermaid
 flowchart TD
   S["Snapshot"] --> T["Sequence tree<br/>document order + visible-text summaries"]
-  S --> R["Reverse-index tree<br/>lookup by buffer and source offset"]
+  S --> R["Reverse index<br/>inserted buffer id to piece orders"]
   S --> B["Buffer version"]
-  R -. "piece + order" .-> T
+  R -. "order" .-> T
   T -. "buffer + start + length" .-> B
   B --> C["Append-only chunk log<br/>original text + filled append chunks"]
   B --> L["Cached newline indexes<br/>one Uint32Array per chunk"]
@@ -58,19 +58,20 @@ See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
 
 Each node holds one piece and summaries of its subtree:
 
-| Field                                | Meaning                                       |
-| ------------------------------------ | --------------------------------------------- |
-| `subtreeLength`                      | Total slice length, including deleted pieces. |
-| `subtreeVisibleLength`               | Length of the visible text.                   |
-| `subtreePieces`                      | Number of stored pieces.                      |
-| `subtreeLineBreaks`                  | Number of visible line breaks.                |
-| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range.                    |
+| Field                                | Meaning                                                        |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `subtreeOriginalLength`              | Length of the original buffer's pieces, deleted ones included. |
+| `subtreeVisibleLength`               | Length of the visible text.                                    |
+| `subtreePieces`                      | Number of stored pieces.                                       |
+| `subtreeLineBreaks`                  | Number of visible line breaks.                                 |
+| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range.                                     |
+| `subtreeMinBuffer`                   | The oldest buffer id in the subtree.                           |
 
-Offset lookups use visible lengths to choose a branch. Line lookups use line-break counts. Order ranges let anchor resolution skip or sum whole subtrees.
+Offset lookups use visible lengths to choose a branch. Line lookups use line-break counts. Anchor resolution descends by order, by original length for an anchor in the original text, and by oldest buffer to find the edges of a deleted piece's gap.
 
 New pieces get order labels between their neighbors. For example, a piece between `1024` and `2048` can get `1536`. When the gap becomes too small, the engine relabels the sequence and rebuilds the reverse index. Anchors keep their buffer coordinates through this change.
 
-The sequence tree is an AVL tree: every node stores its height and sibling heights differ by at most one, so the height stays under `1.45 log2(P + 2)` for `P` pieces. The reverse index is an AVL tree too, with its own keyed insert. The same input and edits always produce the same shapes; there is no seed.
+The sequence tree is an AVL tree: every node stores its height and sibling heights differ by at most one, so the height stays under `1.45 log2(P + 2)` for `P` pieces. The same input and edits always produce the same shape; there is no seed.
 
 See [`tree.ts`](src/tree.ts), [`join.ts`](src/join.ts), [`node.ts`](src/node.ts), and [`orders.ts`](src/orders.ts).
 
@@ -82,11 +83,20 @@ The tree was a treap until [E040](../../docs/performance/e040-balanced-tree.md).
 
 ### The reverse index
 
-The second tree is keyed by **`(buffer, start)`**. Each entry holds a piece and its current order label.
+An anchor names a buffer and an offset in it. Resolving one means finding the piece that holds that offset, and then that piece's place in the document. Two facts make this cheap:
 
-Anchor resolution first finds the piece containing the anchor's buffer offset. It then uses the piece's order to find its visible position in the sequence tree. Bias decides which piece owns a shared boundary.
+- **A buffer's pieces keep their buffer order in the document.** Pieces are cut and hidden, never moved or dropped.
+- **Whatever sits between two pieces of one buffer is newer than they are.** It was inserted into that buffer's text, so its buffer id is larger.
 
-Edits update both trees together. A linear resolver serves as a test reference and handles indexed lookup misses.
+**The original buffer needs no index.** Its pieces tile the original text in document order, so `subtreeOriginalLength` is a prefix sum over original offsets. One descent finds the piece holding an original offset and the visible length before it. This is the buffer that random edits cut, so those cuts write nothing.
+
+**Inserted buffers go in a persistent vector keyed by buffer id.** Ids are dense and the newest is always the next one, so a new buffer is an append. The vector's tail is shared along a linear history: the first snapshot to append after its parent writes the tail's free slot in place and copies nothing, because older snapshots never read past their own count. A second branch from the same parent takes a private tail. Every 16 appends the full tail becomes a leaf, which copies one short path.
+
+A slot holds **the order of the buffer's only piece**, or a small AVL tree of `start → order` once the buffer has been cut. It holds nothing else. Visibility and length live on the piece in the sequence tree, where the descent by order finds them, so hiding a piece and typing onto the end of one change no entry. Only a new key writes: inserted text, and the later parts of a cut in an inserted buffer.
+
+A relabel changes every order, so the index is rebuilt from one walk of the tree. `resolveAnchorLinear` is the reference: it uses no index and no summaries, only the pieces in order. The inspector checks the two facts above, one entry per inserted piece, and each entry's order.
+
+[E039](../../docs/performance/e039-reverse-index-cost.md) records the measurements behind this. Until then the index was a second AVL tree keyed by `(buffer, start)` whose entries mirrored whole pieces. An insert copied 20 of its nodes against 10 in the sequence tree, and a keystroke rewrote its deepest entry. A per-buffer tree inside the vector, the design first planned, kept the original buffer's tree and was within 7% of that baseline on random edits. Deferring the writes to the first resolution was not built: an editor resolves its selections after every edit, so there would be nothing to batch.
 
 See [`reverseIndex.ts`](src/reverseIndex.ts) and [`anchors.ts`](src/anchors.ts).
 
@@ -124,9 +134,9 @@ This example shows shared and copied nodes. The resulting shape depends on the e
 
 **One call, one pass:** every edit of a call writes with one epoch, the reverse index is written once at the end, and only the final snapshot exists. A replacement hides its range and places its text on the same descent.
 
-**Insert:** descend to the offset. Extend the newest append piece if it ends there. Otherwise fill or open chunks, assign orders, place the pieces at the landing, cutting its piece in two if the offset is inside it, and update the reverse index.
+**Insert:** descend to the offset. Extend the newest append piece if it ends there. Otherwise fill or open chunks, assign orders, place the pieces at the landing, cutting its piece in two if the offset is inside it, and append the new buffers to the reverse index.
 
-**Delete:** descend over the range, mark the pieces inside it invisible in place, cut the pieces its two ends fall inside, and update their index entries.
+**Delete:** descend over the range, mark the pieces inside it invisible in place, and cut the pieces its two ends fall inside. Only a cut inside an inserted buffer touches the reverse index.
 
 **Batch edit:** validate disjoint ranges against the input snapshot, repair surrogate boundaries, then apply edits from right to left. `deleteFromPieceTable()` takes an offset and length. Batch edits and range reads use half-open ranges.
 
@@ -144,8 +154,8 @@ Deleting `b` from `abc` leaves this piece sequence:
 flowchart LR
   A["a<br/>original slice [0, 1)<br/>visible length: 1"] --> B["b: tombstone<br/>original slice [1, 2)<br/>visible length: 0"]
   B --> C["c<br/>original slice [2, 3)<br/>visible length: 1"]
-  H["Anchor in b<br/>original buffer + offset 1<br/>right bias"] -. "reverse-index lookup" .-> B
-  B -. "order + visible prefix" .-> P["offset: 1<br/>liveness: deleted"]
+  H["Anchor in b<br/>original buffer + offset 1<br/>right bias"] -. "descent by original offset" .-> B
+  B -. "visible prefix + gap edge" .-> P["offset: 1<br/>liveness: deleted"]
 ```
 
 The visible text is `ac`. The deleted piece still identifies `b`, but contributes zero visible length and zero visible line breaks.
@@ -172,7 +182,7 @@ resolveAnchor(replaced, right) // { offset: 3, liveness: 'deleted' }
 resolveAnchor(original, right) // { offset: 1, liveness: 'live' }
 ```
 
-The resolver uses neighboring source slices and visible lengths between their orders to handle intervening insertions. `Anchor.MIN` and `Anchor.MAX` always resolve to the document's ends.
+A deleted piece's gap reaches, on each side, to the nearest piece whose buffer is no newer than its own: another part of the same insert, or text that was already there when it was inserted. Everything between arrived later. A left-biased anchor resolves before that later text and a right-biased one after it, wherever the text landed among the tombstones. `Anchor.MIN` and `Anchor.MAX` always resolve to the document's ends.
 
 Use anchors within the document history that created them. Branches can reuse sequence-based buffer IDs. Cross-branch merging needs its own identity and merge rules.
 
@@ -243,7 +253,7 @@ Tree work depends on the number of stored pieces, including tombstones, and the 
 
 Deletion visits the affected pieces. Order-gap exhaustion relabels the tree and rebuilds the reverse index. A cold line index scans its source string. Tombstones and their text remain in the current snapshot even after older undo entries are dropped.
 
-The inspector checks buffer bounds, the store extent, order labels, heap priorities, subtree totals, newline indexes, and agreement between the two trees:
+The inspector checks buffer bounds, the store extent, order labels, balance, subtree totals, newline indexes, the order of each buffer's pieces, and agreement between the tree and the reverse index:
 
 ```ts
 import { createPieceTableSnapshot } from '@singapore-editor/textbuffer'

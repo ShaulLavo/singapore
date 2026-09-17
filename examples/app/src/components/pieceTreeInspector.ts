@@ -150,6 +150,7 @@ export function openPieceTreeInspector(
         node.piece.start === selected.piece.start,
     )
     if (!target) {
+      // Original text has no reverse entry: the piece tree itself finds it.
       details.value = 'No matching buffer/start entry in the other tree.'
       return
     }

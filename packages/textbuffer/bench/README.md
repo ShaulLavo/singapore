@@ -82,8 +82,8 @@ Original input is delivered as one string chunk to both constructors; streaming 
 
 ## Persistence, anchors and memory
 
-`persistent-history`, `branch-edits` and `anchor-resolution-after-churn` are Singapore-only lanes, never
-assigned a VS Code speed ratio. The branch lane applies one insert on each of 64 branches from the
+`persistent-history`, `branch-edits`, `anchor-resolution-after-churn` and `anchor-density` are
+Singapore-only lanes, never assigned a VS Code speed ratio. The branch lane applies one insert on each of 64 branches from the
 same churned root; every branch after the first forks the shared buffer log, which is the copy the
 `fork.copiedArraySlots` counter budgets. Microsoft's read snapshots are not persistent editable versions. The history lane
 retains up to 64 roots while executing the churn trace, verifies every retained text hash, and checks
@@ -91,6 +91,9 @@ restoring/editing an old branch after timing. Retaining a root is included; rest
 check, not a measured branch-edit benchmark. The anchor lane retains original anchors, applies churn,
 then times indexed resolution. Its reference is Singapore's separate linear traversal, explicitly not
 an independent reimplementation of all anchor semantics; fixed deletion/bias/restore cases add checks.
+The density lane is what decorations do: 500 anchors, all resolved after each of 300 edits. Its edits
+never delete the unit an anchor holds on to, so every anchor stays live and the plain-string model
+decides every offset; the digest of all 150,000 resolutions is checked against it.
 
 Every workload reports post-GC process memory deltas before oracle validation. The baseline is the
 warmed process with parsed fixtures but before constructing the measured buffer. The result includes

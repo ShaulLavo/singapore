@@ -104,31 +104,60 @@ export type PieceTreeNode = {
   right: PieceTreeNode | null
   height: number
   epoch: number
-  subtreeLength: number
+  // Length of the original buffer's pieces, tombstones included. They keep
+  // their buffer order in the document, so this is a prefix sum that finds the
+  // piece holding an original offset with no index at all.
+  subtreeOriginalLength: number
   subtreeVisibleLength: number
   subtreePieces: number
   subtreeLineBreaks: number
   subtreeMinOrder: number
   subtreeMaxOrder: number
+  // The oldest buffer in the subtree. A deleted anchor's gap ends at the
+  // nearest piece no newer than its own, and this finds that piece.
+  subtreeMinBuffer: number
 }
 
-export type PieceTableReverseIndexNode = {
-  buffer: PieceBufferId
-  start: number
-  piece: Piece
-  order: number
-  // The children's heights, kept here so a rebalance never reads a sibling.
-  leftHeight: number
-  rightHeight: number
-  epoch: number
-  left: PieceTableReverseIndexNode | null
-  right: PieceTableReverseIndexNode | null
+// The pieces of one inserted buffer that has been cut, keyed by start. The
+// first piece is keyed 0: it covers the buffer from wherever it begins.
+export type PieceTableReverseSplitNode = {
+  readonly start: number
+  readonly order: number
+  readonly height: number
+  readonly left: PieceTableReverseSplitNode | null
+  readonly right: PieceTableReverseSplitNode | null
+}
+
+// One inserted buffer's entry: the order of its only piece, or its pieces.
+export type PieceTableReverseSlot = number | PieceTableReverseSplitNode | undefined
+
+export type PieceTableReverseBranch = readonly (
+  | PieceTableReverseBranch
+  | readonly PieceTableReverseSlot[]
+)[]
+
+// Shared by every snapshot that appended to it in turn. A snapshot reads only
+// below its own count, so a newer one may fill the free slots in place.
+export type PieceTableReverseTail = {
+  readonly slots: PieceTableReverseSlot[]
+  used: number
+}
+
+// Buffer id to the order of its pieces, for inserted buffers: a persistent
+// vector, because ids are dense and the newest one is always appended. The
+// original buffer is not here; the sequence tree finds its pieces.
+export type PieceTableReverseIndex = {
+  // Inserted buffers indexed: ids 1 to count.
+  readonly count: number
+  readonly shift: number
+  readonly root: PieceTableReverseBranch | readonly PieceTableReverseSlot[] | null
+  readonly tail: PieceTableReverseTail
 }
 
 export type PieceTableTreeSnapshot = {
   readonly buffers: PieceTableBuffers
   readonly root: PieceTreeNode | null
-  readonly reverseIndexRoot: PieceTableReverseIndexNode | null
+  readonly reverseIndex: PieceTableReverseIndex
   readonly length: number
   readonly pieceCount: number
   // The lineage epoch this snapshot was created in. Equal to the current epoch

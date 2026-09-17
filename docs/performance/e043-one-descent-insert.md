@@ -82,7 +82,7 @@ Self: `insertReverseIndexNode` 13.4%, `splitByVisibleOffset` 11.6%, `merge` 8.4%
 
 An insert is one descent, one split-and-merge, and three reverse-index writes. The reverse index
 is now a quarter of the profile and its keyed insert is the hottest self frame; that is
-[E039](../../plans/e039-reverse-index-cost.md). The split and merges are the other half, and their
+[E039](e039-reverse-index-cost.md). The split and merges are the other half, and their
 cost is the treap's height; that is [E040](e040-balanced-tree.md), whose
 join-based split should keep the probe: the landing logic here is independent of how the tree
 balances. Deletes still descend for their two snaps and then split twice; folding the snaps into

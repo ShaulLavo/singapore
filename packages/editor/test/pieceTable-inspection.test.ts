@@ -14,7 +14,10 @@ import {
 import { createSnapshot } from '@singapore-editor/textbuffer/internal/snapshot'
 import { createNode } from '@singapore-editor/textbuffer/internal/node'
 import { normalizePieceOrders } from '@singapore-editor/textbuffer/internal/tree'
-import { buildReverseIndex } from '@singapore-editor/textbuffer/internal/reverseIndex'
+import {
+  buildReverseIndex,
+  reverseIndexSlot,
+} from '@singapore-editor/textbuffer/internal/reverseIndex'
 import type { PieceTreeNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
 function control(): PieceTableSnapshot {
@@ -30,7 +33,7 @@ function control(): PieceTableSnapshot {
     left,
     null,
   )
-  return { ...base, root, reverseIndexRoot: buildReverseIndex(root), length: 2, pieceCount: 2 }
+  return { ...base, root, reverseIndex: buildReverseIndex(root), length: 2, pieceCount: 2 }
 }
 
 function churn(count: number): PieceTableSnapshot {
@@ -57,26 +60,29 @@ describe('piece tree inspection', () => {
   it('checks hand-calculated visible and tombstone aggregates', () => {
     const snapshot = control()
     expect(snapshot.root).toMatchObject({
-      subtreeLength: 4,
+      subtreeOriginalLength: 4,
       subtreeVisibleLength: 2,
       subtreePieces: 2,
       subtreeLineBreaks: 1,
       subtreeMinOrder: 1,
       subtreeMaxOrder: 2,
+      subtreeMinBuffer: 0,
     })
+    // Both pieces are original text, which the reverse index does not hold.
     expect(validatePieceTreeInvariants(snapshot)).toEqual({
       issues: [],
-      counts: { nodes: 2, visible: 1, invisible: 1, reverseEntries: 2, lineIndexes: 1 },
+      counts: { nodes: 2, visible: 1, invisible: 1, reverseEntries: 0, lineIndexes: 1 },
     })
   })
 
   it.each([
-    'subtreeLength',
+    'subtreeOriginalLength',
     'subtreeVisibleLength',
     'subtreePieces',
     'subtreeLineBreaks',
     'subtreeMinOrder',
     'subtreeMaxOrder',
+    'subtreeMinBuffer',
   ] as const)('identifies a corrupt %s independently of child caches', (field) => {
     const snapshot = control()
     const expected = snapshot.root![field]
@@ -99,36 +105,51 @@ describe('piece tree inspection', () => {
     expect(issues[0]).toMatchObject({ field: 'subtreeVisibleLength', expected: 2, actual: 100 })
   })
 
-  it('detects missing reverse entries and semantic disagreement without requiring pointer equality', () => {
-    const snapshot = createPieceTableSnapshot('abc')
-    const reverse = snapshot.reverseIndexRoot!
-    reverse.piece = { ...reverse.piece }
-    expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
-    reverse.piece = { ...reverse.piece, visible: false }
-    expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
-      expect.objectContaining({
-        kind: 'reverse-index',
-        field: 'piece.visible',
-        expected: true,
-        actual: false,
-      }),
+  it('detects missing reverse entries and orders that disagree with the tree', () => {
+    const snapshot = insertIntoPieceTable(createPieceTableSnapshot('abc'), 1, 'X')
+    expect(validatePieceTreeInvariants(snapshot)).toMatchObject({
+      issues: [],
+      counts: { reverseEntries: 1 },
+    })
+    const unindexed = { ...snapshot, reverseIndex: createPieceTableSnapshot('').reverseIndex }
+    expect(validatePieceTreeInvariants(unindexed).issues).toContainEqual(
+      expect.objectContaining({ kind: 'reverse-index', field: 'reverseEntry [1,0]' }),
     )
+    const relabelled = normalizePieceOrders(snapshot.root, { value: 7 })
     expect(
-      validatePieceTreeInvariants({ ...snapshot, reverseIndexRoot: null }).issues,
-    ).toContainEqual(expect.objectContaining({ field: 'reverseEntry', actual: 'missing' }))
+      validatePieceTreeInvariants({ ...snapshot, reverseIndex: buildReverseIndex(relabelled) })
+        .issues,
+    ).toContainEqual(
+      expect.objectContaining({ kind: 'reverse-index', field: 'reverseEntry [1,0]', actual: 1031 }),
+    )
   })
 
-  it('reports reverse key ordering and missing buffers', () => {
+  it('reports pieces out of buffer order and missing buffers', () => {
     const snapshot = control()
-    const reverse = snapshot.reverseIndexRoot!
-    const child = reverse.left ?? reverse.right!
-    child.start = reverse.start
+    snapshot.root!.piece = { ...snapshot.root!.piece, start: 0 }
     expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
-      expect.objectContaining({ kind: 'ordering' }),
+      expect.objectContaining({ kind: 'ordering', field: 'piece.start', expected: 2, actual: 0 }),
     )
     const missing = { ...snapshot, buffers: { ...snapshot.buffers, chunks: new Map() } }
     expect(validatePieceTreeInvariants(missing).issues).toContainEqual(
       expect.objectContaining({ kind: 'buffer-bounds', field: 'piece.buffer' }),
+    )
+  })
+
+  it('reports an older piece between two pieces of a newer buffer', () => {
+    const typed = insertIntoPieceTable(createPieceTableSnapshot('abcdef'), 3, 'WXYZ')
+    const cut = insertIntoPieceTable(typed, 5, '-')
+    expect(validatePieceTreeInvariants(cut).issues).toEqual([])
+    // The piece that cut the insert claims the original buffer, which is older.
+    const middle = (node: PieceTreeNode | null): PieceTreeNode | null => {
+      if (!node) return null
+      if (node.piece.buffer === 2) return node
+      return middle(node.left) ?? middle(node.right)
+    }
+    const node = middle(cut.root)!
+    node.piece = { ...node.piece, buffer: cut.buffers.original }
+    expect(validatePieceTreeInvariants(cut).issues).toContainEqual(
+      expect.objectContaining({ kind: 'ordering', field: 'piece.buffer' }),
     )
   })
 
@@ -164,7 +185,7 @@ describe('piece tree inspection', () => {
     )
   })
 
-  it('checks the stored height and the balance rule in both trees', () => {
+  it('checks the stored height and the balance rule in the tree and the index', () => {
     const snapshot = control()
     expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
     snapshot.root!.height = 5
@@ -175,22 +196,23 @@ describe('piece tree inspection', () => {
     expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
       expect.objectContaining({ kind: 'balance', field: 'children' }),
     )
-    const reverseLabel = expect.stringMatching(/^n/)
-    snapshot.reverseIndexRoot!.leftHeight = 9
-    expect(
-      validatePieceTreeInvariants(snapshot).issues.filter((issue) => issue.actual === 9),
-    ).toEqual([
-      expect.objectContaining({ kind: 'balance', field: 'leftHeight', node: reverseLabel }),
-    ])
+    // A buffer cut twice keeps its pieces in a small tree inside the index.
+    let cut = insertIntoPieceTable(createPieceTableSnapshot('abc'), 1, 'WXYZ')
+    cut = insertIntoPieceTable(insertIntoPieceTable(cut, 2, '-'), 5, '-')
+    expect(validatePieceTreeInvariants(cut).issues).toEqual([])
+    const pieces = reverseIndexSlot(cut.reverseIndex, 0) as { height: number }
+    pieces.height = 9
+    expect(validatePieceTreeInvariants(cut).issues).toContainEqual(
+      expect.objectContaining({ kind: 'balance', node: 'reverse buffer 1', actual: 9 }),
+    )
   })
 
-  it('reports cycles in either tree, repeated children and deep corruption iteratively', () => {
+  it('reports cycles, repeated children and deep corruption iteratively', () => {
     const snapshot = control()
     snapshot.root!.right = snapshot.root
-    snapshot.reverseIndexRoot!.right = snapshot.reverseIndexRoot
     expect(
       validatePieceTreeInvariants(snapshot).issues.filter((issue) => issue.kind === 'cycle'),
-    ).toHaveLength(2)
+    ).toHaveLength(1)
     expect(() => formatPieceTree(snapshot)).not.toThrow()
     snapshot.root!.right = snapshot.root!.left
     expect(
@@ -199,7 +221,7 @@ describe('piece tree inspection', () => {
     let root: PieceTreeNode | null = null
     for (let i = 20000; i > 0; i--)
       root = createNode({ ...snapshot.root!.piece, order: i }, null, root)
-    const deep = { ...snapshot, root, reverseIndexRoot: null }
+    const deep = { ...snapshot, root }
     expect(() => validatePieceTreeInvariants(deep)).not.toThrow()
     expect(formatPieceTree(deep, { maxRows: 2 }).split('\n')).toHaveLength(4)
   })

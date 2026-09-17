@@ -1,30 +1,26 @@
 import type {
   Anchor as AnchorType,
   AnchorBias,
-  PieceTableReverseIndexNode,
+  Piece,
   PieceTableTreeSnapshot,
-  PieceTreeNode,
   RealAnchor,
   ResolvedAnchor,
 } from './pieceTableTypes'
 import { getBufferText } from './buffers'
 import { splitsSurrogatePair } from './reads'
-import {
-  coversAnchorOffset,
-  lookupReverseIndex,
-  reversePredecessor,
-  reverseSuccessor,
-} from './reverseIndex'
+import { anchoredUnit, coversAnchorOffset, lookupReverseIndex } from './reverseIndex'
 import {
   type AnchorLocation,
+  findOriginalPiece,
+  findPieceByOrder,
   findVisiblePieceContainingOffset,
   findVisiblePieceEndingAt,
   findVisiblePieceStartingAt,
   flattenNodes,
-  visibleLengthBetweenOrders,
-  visiblePrefixBeforeOrder,
+  newerVisibleLengthAfter,
+  newerVisibleLengthBefore,
 } from './tree'
-import { PERSISTENT_EPOCH } from './node'
+import { ORIGINAL_BUFFER } from './node'
 
 export const Anchor = {
   MIN: { kind: 'min' },
@@ -68,57 +64,26 @@ const findAnchorLocation = (
   return right ?? left
 }
 
-const deletedLeftEdgeOffset = (
-  snapshot: PieceTableTreeSnapshot,
-  entry: PieceTableReverseIndexNode,
-  prefix: number,
-): number => {
-  const previous = reversePredecessor(
-    snapshot.reverseIndexRoot,
-    entry.piece.buffer,
-    entry.piece.start,
-    true,
-  )
-  const lowOrder = previous?.order ?? Number.NEGATIVE_INFINITY
-  return prefix - visibleLengthBetweenOrders(snapshot.root, lowOrder, entry.order)
+const resolveAt = (anchor: RealAnchor, location: AnchorLocation, edge: number): ResolvedAnchor => {
+  const piece = location.piece
+  if (!piece.visible) return { offset: edge, liveness: 'deleted' }
+  return {
+    offset: location.visibleStart + Math.min(anchor.offset - piece.start, piece.length),
+    liveness: 'live',
+  }
 }
 
-const deletedRightEdgeOffset = (
-  snapshot: PieceTableTreeSnapshot,
-  entry: PieceTableReverseIndexNode,
-  prefix: number,
-): number => {
-  const next = reverseSuccessor(
-    snapshot.reverseIndexRoot,
-    entry.piece.buffer,
-    entry.piece.start + entry.piece.length,
-  )
-  const highOrder = next?.order ?? Number.POSITIVE_INFINITY
-  return prefix + visibleLengthBetweenOrders(snapshot.root, entry.order, highOrder)
-}
-
-const resolveAnchorAgainstEntry = (
+// Bias picks the side of whatever arrived in a deleted piece's gap since.
+const deletedEdge = (
   snapshot: PieceTableTreeSnapshot,
   anchor: RealAnchor,
-  entry: PieceTableReverseIndexNode,
-): ResolvedAnchor => {
-  const prefix = visiblePrefixBeforeOrder(snapshot.root, entry.order)
-  if (prefix === null) return { offset: 0, liveness: 'deleted' }
-
-  if (entry.piece.visible) {
-    return {
-      offset: prefix + Math.min(anchor.offset - entry.piece.start, entry.piece.length),
-      liveness: 'live',
-    }
+  location: AnchorLocation,
+): number => {
+  const { order, buffer } = location.piece
+  if (anchor.bias === 'left') {
+    return location.visibleStart - newerVisibleLengthBefore(snapshot.root, order, buffer)
   }
-
-  return {
-    offset:
-      anchor.bias === 'left'
-        ? deletedLeftEdgeOffset(snapshot, entry, prefix)
-        : deletedRightEdgeOffset(snapshot, entry, prefix),
-    liveness: 'deleted',
-  }
+  return location.visibleStart + newerVisibleLengthAfter(snapshot.root, order, buffer)
 }
 
 const resolveMissingAnchor = (
@@ -139,40 +104,55 @@ const resolveMissingAnchor = (
   return { offset: 0, liveness: 'deleted' }
 }
 
-const findLinearAnchorNode = (
+// The original buffer's pieces are found through the sequence tree alone; an
+// inserted buffer's through the index, which gives the order to descend by.
+const locateAnchor = (
   snapshot: PieceTableTreeSnapshot,
   anchor: RealAnchor,
-): PieceTreeNode | null => {
-  const nodes = flattenNodes(snapshot.root, [])
-  const candidates = nodes.filter((node) => {
-    if (node.piece.buffer !== anchor.buffer) return false
-    return coversAnchorOffset(node.piece, anchor.offset)
-  })
-
-  if (candidates.length === 0) return null
-
-  if (anchor.bias === 'left') {
-    return findLastNodeStartingBefore(candidates, anchor.offset) ?? candidates[0] ?? null
+): AnchorLocation | null => {
+  const unit = anchoredUnit(anchor.offset, anchor.bias)
+  if (anchor.buffer === ORIGINAL_BUFFER) {
+    // An anchor at the original text's end holds its last unit under either bias.
+    const total = snapshot.root ? snapshot.root.subtreeOriginalLength : 0
+    return total === 0 ? null : findOriginalPiece(snapshot.root, Math.min(unit, total - 1))
   }
 
-  return (
-    candidates.find((node) => node.piece.start === anchor.offset) ??
-    candidates.find((node) => node.piece.start <= anchor.offset) ??
-    candidates[0] ??
-    null
-  )
+  const order = lookupReverseIndex(snapshot.reverseIndex, anchor.buffer, unit)
+  return order === undefined ? null : findPieceByOrder(snapshot.root, order)
 }
 
-const findLastNodeStartingBefore = (
-  nodes: readonly PieceTreeNode[],
-  offset: number,
-): PieceTreeNode | null => {
-  for (let index = nodes.length - 1; index >= 0; index--) {
-    const node = nodes[index]
-    if (node && node.piece.start < offset) return node
-  }
+const holdsAnchor = (location: AnchorLocation | null, anchor: RealAnchor): boolean =>
+  location !== null &&
+  location.piece.buffer === anchor.buffer &&
+  coversAnchorOffset(location.piece, anchor.offset)
 
-  return null
+const findLinearAnchorIndex = (pieces: readonly Piece[], anchor: RealAnchor): number => {
+  const covers = (piece: Piece): boolean =>
+    piece.buffer === anchor.buffer && coversAnchorOffset(piece, anchor.offset)
+  const preferred =
+    anchor.bias === 'left'
+      ? pieces.findLastIndex((piece) => covers(piece) && piece.start < anchor.offset)
+      : pieces.findIndex((piece) => covers(piece) && piece.start === anchor.offset)
+  return preferred >= 0 ? preferred : pieces.findIndex(covers)
+}
+
+const visibleLength = (piece: Piece): number => (piece.visible ? piece.length : 0)
+
+// The gap rule of newerVisibleLengthBefore and After, read off a flat list.
+const linearDeletedEdge = (pieces: readonly Piece[], at: number, anchor: RealAnchor): number => {
+  const buffer = pieces[at]!.buffer
+  let edge = 0
+  for (let index = 0; index < at; index += 1) edge += visibleLength(pieces[index]!)
+  if (anchor.bias === 'left') {
+    for (let index = at - 1; index >= 0 && pieces[index]!.buffer > buffer; index -= 1) {
+      edge -= visibleLength(pieces[index]!)
+    }
+    return edge
+  }
+  for (let index = at + 1; index < pieces.length && pieces[index]!.buffer > buffer; index += 1) {
+    edge += visibleLength(pieces[index]!)
+  }
+  return edge
 }
 
 export const anchorAt = (
@@ -200,6 +180,7 @@ export const anchorBefore = (snapshot: PieceTableTreeSnapshot, offset: number): 
 export const anchorAfter = (snapshot: PieceTableTreeSnapshot, offset: number): RealAnchor =>
   anchorAt(snapshot, offset, 'right')
 
+// The reference: no index, no summaries, one pass over the pieces in order.
 export const resolveAnchorLinear = (
   snapshot: PieceTableTreeSnapshot,
   anchor: AnchorType,
@@ -207,20 +188,14 @@ export const resolveAnchorLinear = (
   if (anchor.kind === 'min') return { offset: 0, liveness: 'live' }
   if (anchor.kind === 'max') return { offset: snapshot.length, liveness: 'live' }
 
-  const pieceNode = findLinearAnchorNode(snapshot, anchor)
-  if (!pieceNode) return resolveMissingAnchor(snapshot, anchor)
+  const pieces = flattenNodes(snapshot.root, []).map((node) => node.piece)
+  const at = findLinearAnchorIndex(pieces, anchor)
+  if (at < 0) return resolveMissingAnchor(snapshot, anchor)
 
-  return resolveAnchorAgainstEntry(snapshot, anchor, {
-    buffer: pieceNode.piece.buffer,
-    start: pieceNode.piece.start,
-    piece: pieceNode.piece,
-    order: pieceNode.piece.order,
-    leftHeight: 0,
-    rightHeight: 0,
-    epoch: PERSISTENT_EPOCH,
-    left: null,
-    right: null,
-  })
+  let visibleStart = 0
+  for (let index = 0; index < at; index += 1) visibleStart += visibleLength(pieces[index]!)
+  const location = { piece: pieces[at]!, visibleStart }
+  return resolveAt(anchor, location, linearDeletedEdge(pieces, at, anchor))
 }
 
 export const resolveAnchor = (
@@ -230,10 +205,10 @@ export const resolveAnchor = (
   if (anchor.kind === 'min') return { offset: 0, liveness: 'live' }
   if (anchor.kind === 'max') return { offset: snapshot.length, liveness: 'live' }
 
-  const indexed = lookupReverseIndex(snapshot, anchor)
-  if (!indexed) return resolveAnchorLinear(snapshot, anchor)
-
-  return resolveAnchorAgainstEntry(snapshot, anchor, indexed)
+  const location = locateAnchor(snapshot, anchor)
+  if (!location || !holdsAnchor(location, anchor)) return resolveMissingAnchor(snapshot, anchor)
+  if (location.piece.visible) return resolveAt(anchor, location, 0)
+  return resolveAt(anchor, location, deletedEdge(snapshot, anchor, location))
 }
 
 export const compareAnchors = (

@@ -149,7 +149,7 @@ A deleted anchor whose tombstone has no same-buffer neighbour resolves to 0 with
 the document end with right bias, on the E037 build as much as here, because the edge rules fall
 back to infinite orders when no neighbour exists. Every deletion of a whole insert hits it, and
 the linear resolver shares the code, so no test sees it. It is unchanged by E038 and recorded in
-[E039](../../plans/e039-reverse-index-cost.md), which redesigns the neighbour lookup.
+[E039](e039-reverse-index-cost.md), which redesigns the neighbour lookup.
 
 ## Left for the successors
 
@@ -162,4 +162,4 @@ the linear resolver shares the code, so no test sees it. It is unchanged by E038
   log is internal to `buffers.ts` and every read goes through a view, so a generation swap is a
   new log plus new views, not a second copy path.
 - The reverse index still copies a path per write and now keys one small range per insert, not
-  per chunk. That is [E039](../../plans/e039-reverse-index-cost.md).
+  per chunk. That is [E039](e039-reverse-index-cost.md).

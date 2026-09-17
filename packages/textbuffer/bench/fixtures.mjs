@@ -8,6 +8,8 @@ export const profiles = {
     paste: 4096,
     pastes: 3,
     versions: 8,
+    densityAnchors: 32,
+    densityEdits: 24,
     samples: 1,
     warmups: 0,
   },
@@ -18,6 +20,8 @@ export const profiles = {
     paste: 262144,
     pastes: 16,
     versions: 64,
+    densityAnchors: 500,
+    densityEdits: 300,
     samples: 9,
     warmups: 2,
   },
@@ -202,6 +206,52 @@ function branchFixture(name, source, count, random) {
   }
 }
 
+// The unit a live anchor holds on to: the one before it under left bias, the
+// one after it under right bias. An edit that spares it moves the anchor by
+// plain string arithmetic, which is the whole oracle.
+const heldUnit = (anchor) => (anchor.bias === 'left' ? anchor.offset - 1 : anchor.offset)
+
+// Many live anchors, all resolved after every edit, as decorations are. Edits
+// never delete a held unit, so every anchor stays live and its offset is
+// decided by the string model alone, not by the library's gap rules.
+function anchorDensityFixture(name, initial, anchorCount, editCount, random) {
+  let text = initial
+  const tokens = ['x', '\n', 'hello ', '😀', 'שלום', 'e\u0301', '\t', '中']
+  const anchors = Array.from({ length: anchorCount }, (_, index) => ({
+    offset: safeBoundary(text, 1 + random(text.length - 2)),
+    bias: index % 2 ? 'right' : 'left',
+  }))
+  const live = anchors.map((anchor) => ({ ...anchor }))
+  const operations = []
+  let expectedDigest = 2166136261
+  for (let index = 0; index < editCount; index += 1) {
+    const from = safeBoundary(text, 1 + random(text.length - 2))
+    const end = safeBoundary(text, Math.min(text.length - 1, from + random(25)))
+    const spares = live.every((anchor) => heldUnit(anchor) < from || heldUnit(anchor) >= end)
+    const to = spares ? end : from
+    const inserted = to > from && random(3) === 0 ? '' : tokens[random(tokens.length)]
+    const operation = { kind: 'edit', from, to, text: inserted }
+    for (const anchor of live) {
+      if (heldUnit(anchor) >= to) anchor.offset += inserted.length - (to - from)
+      expectedDigest = consume(anchor.offset, consume(1, expectedDigest))
+    }
+    text = applyOracle(text, operation)
+    operations.push(operation)
+  }
+  return {
+    name,
+    mode: 'anchor-density',
+    category: 'singapore-only',
+    initial,
+    setup: [],
+    operations,
+    expected: text,
+    anchors,
+    expectedOffsets: live.map((anchor) => anchor.offset),
+    expectedDigest,
+  }
+}
+
 export function makeFixtures(profileName, seed = 20260916) {
   const config = profiles[profileName]
   if (!config) throw new Error(`Unknown profile: ${profileName}`)
@@ -281,5 +331,15 @@ export function makeFixtures(profileName, seed = 20260916) {
       index: index % anchorOffsets.length,
     })),
   })
+  // Last, so the fixtures above keep the random stream they always had.
+  result.push(
+    anchorDensityFixture(
+      'anchor-density',
+      initial,
+      config.densityAnchors,
+      config.densityEdits,
+      random,
+    ),
+  )
   return result
 }

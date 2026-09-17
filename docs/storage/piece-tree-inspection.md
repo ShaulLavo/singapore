@@ -34,12 +34,13 @@ For raw results `L` and `R` from the children and piece `p`, the equations are:
 
 | Field | Expected value |
 | --- | --- |
-| `subtreeLength` | `L.length + p.length + R.length` |
+| `subtreeOriginalLength` | `L.originalLength + (p.buffer is the original ? p.length : 0) + R.originalLength` |
 | `subtreeVisibleLength` | `L.visibleLength + (p.visible ? p.length : 0) + R.visibleLength` |
 | `subtreePieces` | `L.pieces + 1 + R.pieces` |
 | `subtreeLineBreaks` | `L.lineBreaks + (p.visible ? rawLFCount(p) : 0) + R.lineBreaks` |
 | `subtreeMinOrder` | minimum of the piece order and both raw child minima |
 | `subtreeMaxOrder` | maximum of the piece order and both raw child maxima |
+| `subtreeMinBuffer` | minimum of the piece buffer and both raw child minima |
 | snapshot `length` | root's raw visible length |
 | snapshot `pieceCount` | root's raw piece count |
 
@@ -48,14 +49,20 @@ maximum order. The checker scans LF characters directly in buffer ranges; it doe
 aggregate helpers or the buffer line-index cache. Invisible pieces still require valid bounds and
 raw line-break counts. Invalid ranges produce an issue before scanning.
 
-Every left order is strictly below its parent; every right order is strictly above. Both trees
-use a min-heap with finite priorities and child priorities greater than or equal to the parent.
-Merge chooses the right root on ties. Equal priorities are allowed on either edge because reverse
-insertion rotates only on a strict decrease.
+Every left order is strictly below its parent; every right order is strictly above. The tree is
+an AVL tree since E040: a node's stored height is one more than its taller child's, and sibling
+heights differ by at most one.
 
-Each positive-length piece has exactly one reverse entry keyed lexicographically by buffer ID,
-then numerically by starting offset. The entry's key, order, and every piece field must agree
-semantically with the main tree. Piece object equality is unnecessary.
+Anchor resolution relies on the document order of each buffer's pieces, so the checker reads it
+off the pieces sorted by order: a buffer's pieces appear in buffer order with no unit missing
+between them, the original buffer's start at 0, and no piece of an older buffer sits between two
+pieces of a newer one.
+
+Since [E039](../performance/e039-reverse-index-cost.md) the reverse index holds inserted buffers
+only. Each of their pieces has exactly one entry, keyed by buffer ID and by starting offset, or by
+0 for the buffer's first piece, and the entry's order must equal the piece's. The small tree a cut
+buffer's entries live in is checked for stored heights and balance. The inspector lists the
+entries as flat rows, each carrying the piece its order leads to.
 
 Line-index offsets must match LF positions in the index's own recorded text. `scannedLength`
 equals that text's length, and `count` equals its LF count. Only the first `count` typed-array slots
@@ -63,7 +70,7 @@ are meaningful. Shared caches can describe another branch or a newer snapshot, s
 text is not the reference for this check.
 
 The hand-checked test control uses buffer `a\nb\n`: visible `[0,2)` at order 1 is the left child of
-invisible `[2,4)` at order 2. The root totals are length 4, visible length 2, pieces 2, visible line
+invisible `[2,4)` at order 2. The root totals are original length 4, visible length 2, pieces 2, visible line
 breaks 1, minimum order 1, and maximum order 2.
 
 ## Demo controls

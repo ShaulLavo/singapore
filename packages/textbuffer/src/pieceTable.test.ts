@@ -453,18 +453,18 @@ describe('piece table', () => {
     expectSnapshotText(snapshot, 'ad')
     expect(pieces.some((piece) => !piece.visible)).toBe(true)
     expect(snapshot.root?.subtreeVisibleLength ?? 0).toBe(2)
-    expect(snapshot.root?.subtreeLength ?? 0).toBe(5)
+    expect(snapshot.root?.subtreeOriginalLength ?? 0).toBe(5)
     expect(snapshot.root?.subtreeLineBreaks ?? 0).toBe(0)
   })
 
-  test('stores reverse-index roots in produced snapshots', () => {
+  test('indexes inserted buffers only, and a deletion writes nothing', () => {
     const initial = createPieceTableSnapshot('abc')
     const inserted = insertIntoPieceTable(initial, 1, 'XX')
     const deleted = deleteFromPieceTable(inserted, 1, 2)
 
-    expect(initial.reverseIndexRoot).not.toBeNull()
-    expect(inserted.reverseIndexRoot).not.toBeNull()
-    expect(deleted.reverseIndexRoot).not.toBeNull()
+    expect(initial.reverseIndex.count).toBe(0)
+    expect(inserted.reverseIndex.count).toBe(1)
+    expect(deleted.reverseIndex).toBe(inserted.reverseIndex)
   })
 
   test('resolves sentinel anchors in every snapshot', () => {

@@ -153,7 +153,7 @@ Consumers: decoration rebase, display layer invalidation.
 
 Two stacks (undo, redo). Edit pushes current to undo, clears redo. Undo pushes to redo, pops undo.
 
-With anchor resolution: snapshot = `(treapRoot, reverseIndexRoot)` tuple. Switch = O(1) root swap. Memory-efficient via structural sharing.
+With anchor resolution: snapshot = `(root, reverseIndex)` tuple. Switch = O(1) swap. Memory-efficient via structural sharing.
 
 Phase 3 stores snapshots and selection state together in history entries. Undo and redo stacks are
 linked stacks so push/pop snapshot switching stays O(1). This keeps selection restoration explicit

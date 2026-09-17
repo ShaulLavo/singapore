@@ -1,13 +1,14 @@
 import type {
   Piece,
   PieceBufferLineIndex,
+  PieceTableReverseSplitNode,
   PieceTableSnapshot,
-  PieceTableReverseIndexNode,
   PieceTreeNode,
 } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
-import { reverseHeight } from './reverseIndex'
+import { reverseIndexEntries, reverseIndexSlot } from './reverseIndex'
 import { bufferStoreExtent } from './buffers'
+import { ORIGINAL_BUFFER } from './node'
 
 export type PieceTreeIssueKind =
   | 'cycle'
@@ -47,20 +48,22 @@ type Report = (
 ) => void
 type Totals = Pick<
   PieceTreeNode,
-  | 'subtreeLength'
+  | 'subtreeOriginalLength'
   | 'subtreeVisibleLength'
   | 'subtreePieces'
   | 'subtreeLineBreaks'
   | 'subtreeMinOrder'
   | 'subtreeMaxOrder'
+  | 'subtreeMinBuffer'
 >
 const empty: Totals = {
-  subtreeLength: 0,
+  subtreeOriginalLength: 0,
   subtreeVisibleLength: 0,
   subtreePieces: 0,
   subtreeLineBreaks: 0,
   subtreeMinOrder: Infinity,
   subtreeMaxOrder: -Infinity,
+  subtreeMinBuffer: Infinity,
 }
 export const inspectionPieceFields = [
   'buffer',
@@ -123,13 +126,17 @@ function checkTotals(
 ): Totals {
   const p = node.piece
   const result: Totals = {
-    subtreeLength: left.subtreeLength + p.length + right.subtreeLength,
+    subtreeOriginalLength:
+      left.subtreeOriginalLength +
+      (p.buffer === ORIGINAL_BUFFER ? p.length : 0) +
+      right.subtreeOriginalLength,
     subtreeVisibleLength:
       left.subtreeVisibleLength + (p.visible ? p.length : 0) + right.subtreeVisibleLength,
     subtreePieces: left.subtreePieces + 1 + right.subtreePieces,
     subtreeLineBreaks: left.subtreeLineBreaks + (p.visible ? breaks : 0) + right.subtreeLineBreaks,
     subtreeMinOrder: Math.min(left.subtreeMinOrder, p.order, right.subtreeMinOrder),
     subtreeMaxOrder: Math.max(left.subtreeMaxOrder, p.order, right.subtreeMaxOrder),
+    subtreeMinBuffer: Math.min(left.subtreeMinBuffer, p.buffer, right.subtreeMinBuffer),
   }
   for (const field of Object.keys(empty) as Array<keyof Totals>)
     report('aggregate', id, field, result[field], node[field])
@@ -150,13 +157,18 @@ function checkBalance(node: PieceTreeNode, id: string, report: Report): void {
   }
 }
 
-// The reverse index stores each child's height on the parent.
-function checkReverseBalance(node: PieceTableReverseIndexNode, id: string, report: Report): void {
-  report('balance', id, 'leftHeight', reverseHeight(node.left), node.leftHeight)
-  report('balance', id, 'rightHeight', reverseHeight(node.right), node.rightHeight)
-  if (Math.abs(node.leftHeight - node.rightHeight) > 1) {
-    report('balance', id, 'children', 'balanced subtrees', 'unbalanced')
-  }
+function checkSplitBalance(
+  node: PieceTableReverseSplitNode | null,
+  id: string,
+  report: Report,
+): number {
+  if (!node) return 0
+  const left = checkSplitBalance(node.left, id, report)
+  const right = checkSplitBalance(node.right, id, report)
+  report('balance', id, `height@${node.start}`, 1 + Math.max(left, right), node.height)
+  if (Math.abs(left - right) > 1)
+    report('balance', id, `children@${node.start}`, 'balanced subtrees', 'unbalanced')
+  return node.height
 }
 
 function checkLineIndex(index: PieceBufferLineIndex, id: string, report: Report): void {
@@ -197,28 +209,64 @@ function checkStoreExtent(snapshot: PieceTableSnapshot, report: Report): void {
   report('buffer-bounds', 'buffers', 'chunkWithinLimit', true, extent.overflowingChunk === null)
 }
 
-function reverseCompare(a: PieceTableReverseIndexNode, b: PieceTableReverseIndexNode): number {
-  if (a.buffer < b.buffer) return -1
-  if (a.buffer > b.buffer) return 1
-  return a.start - b.start
-}
-
-function checkReverseEntry(
-  node: PieceTableReverseIndexNode,
-  pieces: Map<string, PieceTreeNode>,
-  id: string,
+// What anchor resolution takes for granted about the document order: a
+// buffer's pieces appear in buffer order with nothing missing between them,
+// and whatever sits between two of them is newer than they are.
+function checkBufferOrder(
+  pieces: readonly PieceTreeNode[],
+  label: (node: PieceTreeNode) => string,
   report: Report,
 ): void {
-  const target = pieces.get(inspectionPieceKey(node))
-  report('reverse-index', id, 'buffer', node.piece.buffer, node.buffer)
-  report('reverse-index', id, 'start', node.piece.start, node.start)
-  report('reverse-index', id, 'order', node.piece.order, node.order)
-  if (!target) {
-    report('reverse-index', id, 'piece', 'matching tree piece', 'no tree piece')
-    return
+  const ends = new Map<number, number>()
+  const open: number[] = []
+  const closed = new Set<number>()
+  for (const node of pieces) {
+    const { buffer, start, length } = node.piece
+    const expected = ends.get(buffer) ?? (buffer === ORIGINAL_BUFFER ? 0 : start)
+    report('ordering', label(node), 'piece.start', expected, start)
+    ends.set(buffer, start + length)
+
+    while (open.length > 0 && open[open.length - 1]! > buffer) closed.add(open.pop()!)
+    if (closed.has(buffer))
+      report('ordering', label(node), 'piece.buffer', 'no older piece inside a buffer', buffer)
+    if (open[open.length - 1] !== buffer) open.push(buffer)
   }
-  for (const field of inspectionPieceFields)
-    report('reverse-index', id, `piece.${field}`, target.piece[field], node.piece[field])
+}
+
+// One entry per inserted piece, keyed by its start, or by 0 for a buffer's
+// first piece, and holding its order.
+function checkReverseIndex(
+  snapshot: PieceTableSnapshot,
+  pieces: readonly PieceTreeNode[],
+  label: (node: PieceTreeNode) => string,
+  report: Report,
+): number {
+  const entries = reverseIndexEntries(snapshot.reverseIndex)
+  const orders = new Map<string, number>()
+  for (const entry of entries) orders.set(inspectionPieceKey(entry), entry.order)
+  if (orders.size !== entries.length)
+    report('reverse-index', 'reverse', 'keys', 'unique buffer/start', 'duplicate')
+
+  const seen = new Set<number>()
+  let expected = 0
+  for (const node of pieces) {
+    const piece = node.piece
+    if (piece.buffer === ORIGINAL_BUFFER) continue
+    expected++
+    const key = inspectionPieceKey({
+      buffer: piece.buffer,
+      start: seen.has(piece.buffer) ? piece.start : 0,
+    })
+    seen.add(piece.buffer)
+    report('reverse-index', label(node), `reverseEntry ${key}`, piece.order, orders.get(key))
+  }
+  report('reverse-index', 'reverse', 'entries', expected, entries.length)
+
+  for (let at = 0; at < snapshot.reverseIndex.count; at++) {
+    const slot = reverseIndexSlot(snapshot.reverseIndex, at)
+    if (typeof slot === 'object') checkSplitBalance(slot, `reverse buffer ${at + 1}`, report)
+  }
+  return entries.length
 }
 
 export function validatePieceTreeInvariants(
@@ -233,11 +281,13 @@ export function validatePieceTreeInvariants(
   const totals = new Map<PieceTreeNode, Totals>()
   const breaks = new Map<PieceTreeNode, number>()
   const pieces = new Map<string, PieceTreeNode>()
+  const visited: PieceTreeNode[] = []
   const counts = { nodes: 0, visible: 0, invisible: 0, reverseEntries: 0, lineIndexes: 0 }
   walkInspectionTree(
     snapshot.root,
     ({ node }) => {
       counts.nodes++
+      visited.push(node)
       if (node.piece.visible) counts.visible++
       else counts.invisible++
       const id = label(node)
@@ -267,56 +317,10 @@ export function validatePieceTreeInvariants(
     report('snapshot', 'snapshot', 'length', rootTotals.subtreeVisibleLength, snapshot.length)
     report('snapshot', 'snapshot', 'pieceCount', rootTotals.subtreePieces, snapshot.pieceCount)
   }
-  const entries = new Set<string>()
-  const ranges = new Map<
-    PieceTableReverseIndexNode,
-    { min: PieceTableReverseIndexNode; max: PieceTableReverseIndexNode }
-  >()
-  walkInspectionTree(
-    snapshot.reverseIndexRoot,
-    ({ node }) => {
-      counts.reverseEntries++
-      const id = label(node)
-      checkReverseBalance(node, id, report)
-      checkReverseEntry(node, pieces, id, report)
-      const key = inspectionPieceKey(node)
-      if (entries.has(key)) report('reverse-index', id, 'key', 'unique buffer/start', key)
-      entries.add(key)
-    },
-    (node) => {
-      const left = node.left ? ranges.get(node.left) : undefined
-      const right = node.right ? ranges.get(node.right) : undefined
-      if (left && reverseCompare(left.max, node) >= 0)
-        report(
-          'ordering',
-          label(node),
-          'left.key',
-          `< ${inspectionPieceKey(node)}`,
-          inspectionPieceKey(left.max),
-        )
-      if (right && reverseCompare(right.min, node) <= 0)
-        report(
-          'ordering',
-          label(node),
-          'right.key',
-          `> ${inspectionPieceKey(node)}`,
-          inspectionPieceKey(right.min),
-        )
-      ranges.set(node, { min: left?.min ?? node, max: right?.max ?? node })
-    },
-    ({ node, parent, edge }, cycle) =>
-      report(
-        cycle ? 'cycle' : 'structure',
-        parent ? label(parent) : label(node),
-        edge,
-        'tree child',
-        label(node),
-      ),
-  )
-  for (const [key, node] of pieces) {
-    if (node.piece.length > 0 && !entries.has(key))
-      report('reverse-index', label(node), 'reverseEntry', key, 'missing')
-  }
+  // Document order is the order of the orders; a cyclic tree cannot be walked for it.
+  const ordered = visited.toSorted((a, b) => a.piece.order - b.piece.order)
+  checkBufferOrder(ordered, label, report)
+  counts.reverseEntries = checkReverseIndex(snapshot, ordered, label, report)
   for (const [chunk, index] of snapshot.buffers.lineIndexes) {
     counts.lineIndexes++
     checkLineIndex(index, `chunk ${chunk}`, report)

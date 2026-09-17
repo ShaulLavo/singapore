@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 
 LABELS = {
     ("singapore", "sequence"): "Singapore sequence",
-    ("singapore", "reverse"): "Singapore reverse index",
     ("vscode", "sequence"): "VS Code red-black",
 }
 

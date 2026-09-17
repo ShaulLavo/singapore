@@ -26,7 +26,7 @@ The editor's storage engine is a piece table on a persistent AVL tree (a treap u
 | Delete text range     | O(log n)     | Current implementation physically removes pieces; Phase 2 changes this to mark pieces invisible    |
 | Read text range       | O(log n + k) | Tree walk collecting piece slices                                                                  |
 | Snapshot isolation    | O(1)         | Structural sharing; old roots remain valid                                                         |
-| Document length       | O(1)         | Currently cached in `subtreeLength`; Phase 2 switches user-facing length to `subtreeVisibleLength` |
+| Document length       | O(1)         | Cached in the root's `subtreeVisibleLength`                                                        |
 | Piece count           | O(1)         | Cached in `subtreePieces` aggregate                                                                |
 
 ## The Piece
@@ -37,7 +37,7 @@ A piece's `(buffer, start)` pair serves as its insertion identity — no separat
 
 ## Aggregate Maintenance Pattern (Locked)
 
-All subtree aggregates (`subtreeLength`, `subtreePieces`, and future additions like `subtreeLineBreaks`, `subtreeVisibleLength`) are computed in a single function pattern. `createNode` delegates to aggregate computation; every site that reassigns children recomputes aggregates on the result. There is no separate update that mutates individual fields — partial aggregate updates are structurally impossible. Adding a new aggregate means adding it to the aggregate function and the `PieceTreeNode` type.
+All subtree aggregates (`subtreeVisibleLength`, `subtreePieces`, `subtreeLineBreaks`, `subtreeOriginalLength` and the rest) are computed in a single function pattern. `createNode` delegates to aggregate computation; every site that reassigns children recomputes aggregates on the result. There is no separate update that mutates individual fields — partial aggregate updates are structurally impossible. Adding a new aggregate means adding it to the aggregate function and the `PieceTreeNode` type.
 
 ## Enrichment Roadmap
 
