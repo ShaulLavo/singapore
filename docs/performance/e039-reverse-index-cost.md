@@ -73,6 +73,12 @@ E045 report. The 2-warmup columns are the bench itself: E045's are the figures i
 recorded on this machine the same day, E039's are this build. The 8-warmup columns are the E045
 head's build and this one interleaved by a throwaway driver.
 
+The ratios in the 8-warmup columns divide by the single control column, which is the 2-warmup
+control. The control warms up too, so those ratios flatter both builds: measured against its own
+8-warmup control, this build's typing is 0.97x, not 0.60x. The milliseconds and the E045 to E039
+comparison stand. The textbuffer [README](../../packages/textbuffer/README.md#current-results)
+holds the per-regime ratios for this commit.
+
 | Lane                          | Control | E045, 2 warmups | E039, 2 warmups | E045, 8 warmups | E039, 8 warmups |
 | ----------------------------- | ------: | --------------- | --------------- | --------------- | --------------- |
 | sequential-typing             |    0.61 | 0.46 (0.76x)    | 0.40 (0.66x)    | 0.43 (0.70x)    | 0.37 (0.60x)    |

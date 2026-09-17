@@ -295,3 +295,42 @@ bun run verify
 Run `bun run bench:check`, then `bun run bench -- --profile standard` from this directory. The [benchmark guide](bench/README.md) documents the pinned Microsoft control, the shared workloads, adapter costs, correctness checks, process isolation, retained-memory measurements and the result format. Results land in `bench/results/`.
 
 `bun run bench:profile` attributes cost with separate CPU, allocation, GC and structural-counter passes; see [`bench/PROFILING.md`](bench/PROFILING.md) and the [initial attribution](bench/ATTRIBUTION.md). `bun run bench:height` replays edit traces and samples both trees' shape; see [`bench/HEIGHT.md`](bench/HEIGHT.md). Persistence and anchors have Singapore-only lanes. This measures the standalone buffers on Node, not editor or browser rendering.
+
+### Current results
+
+Commit `0330aae` (E039), 2026-09-17, Node 26.7.0, V8 14.6, Intel Core i7-14700K, Linux. Standard profile: a 380,000 UTF-16 code unit document of 10,000 lines unless the row says otherwise, 9 samples per lane, each a fresh process, median over seeds `20260916`, `7` and `12345`.
+
+- **Time** is milliseconds for the whole workload, lower is better.
+- **Per operation** divides Singapore's time by the operation count, in microseconds unless marked.
+- **Ratio** is Singapore's time over the control's. Below 1 is faster than the control. The first ratio is the bench's default of 2 warmups; the second reruns both engines with 8, which is closer to a long session. The control warms up too, so each ratio uses the control from its own regime.
+
+The control is the pinned `vscode-textbuffer`. It mutates in place and has no snapshots, no anchors and no tombstones, so a ratio compares unequal feature sets.
+
+| Lane                         | Work per run                                                            | Control (ms) | Singapore (ms) | Per operation | Ratio | Ratio, 8 warmups |
+| ---------------------------- | ----------------------------------------------------------------------- | -----------: | -------------: | ------------: | ----: | ---------------: |
+| load-short-lines             | 1 load of 1,520,000 code units                                          |         3.77 |           2.13 |       2.13 ms | 0.57x |            0.78x |
+| load-long-line               | 1 load of 1,280,000 code units                                          |         2.83 |           1.06 |       1.06 ms | 0.38x |            0.84x |
+| sequential-typing            | 1,500 keystrokes                                                        |         0.61 |           0.40 |       0.27 µs | 0.66x |            0.97x |
+| typing-with-lookups          | 3,000 operations: 1,500 keystrokes, a caret lookup after each           |         0.95 |           0.62 |       0.21 µs | 0.65x |            0.77x |
+| random-insertions            | 1,500 inserts                                                           |         1.08 |           1.60 |       1.07 µs | 1.47x |            1.45x |
+| random-replacements          | 1,500 replacements                                                      |         1.39 |           3.23 |       2.15 µs | 2.31x |            1.87x |
+| eight-cursor-batches         | 187 batches of 8 edits                                                  |         1.17 |           1.97 |      10.51 µs | 1.68x |            1.70x |
+| mixed-edit-churn             | 1,500 mixed edits                                                       |         1.24 |           2.64 |       1.76 µs | 2.13x |            2.18x |
+| large-paste-delete           | 32 operations: 16 pastes of about 256,000 code units, each then deleted |        12.63 |           4.57 |     142.76 µs | 0.36x |            0.36x |
+| lines-sequential-after-churn | 3,000 line reads                                                        |         0.49 |           1.26 |       0.42 µs | 2.57x |            3.38x |
+| lines-random-after-churn     | 3,000 line reads                                                        |         0.76 |           1.92 |       0.64 µs | 2.51x |            2.88x |
+| ranges-after-churn           | 3,000 offset-range reads                                                |         3.08 |           1.31 |       0.44 µs | 0.43x |            0.42x |
+| offset-to-position           | 3,000 conversions                                                       |         1.62 |           1.24 |       0.41 µs | 0.77x |            1.50x |
+| position-to-offset           | 3,000 conversions                                                       |         0.42 |           1.10 |       0.37 µs | 2.64x |            3.29x |
+| full-read-after-churn        | 12 full reads                                                           |         1.30 |           2.13 |     177.56 µs | 1.64x |            1.46x |
+
+Lanes the control cannot run:
+
+| Lane                          | Work per run                                       | Singapore (ms) |                             Per operation | 8 warmups (ms) |
+| ----------------------------- | -------------------------------------------------- | -------------: | ----------------------------------------: | -------------: |
+| persistent-history            | 1,500 edits retaining up to 64 roots               |           2.86 |                                   1.91 µs |           2.44 |
+| branch-edits                  | 64 branches from one churned root, one insert each |           0.28 |                                   4.34 µs |           0.23 |
+| anchor-resolution-after-churn | 3,000 resolutions across 128 anchors               |           0.49 |                                   0.16 µs |           0.31 |
+| anchor-density                | 300 edits, all 500 anchors resolved after each     |          10.56 | 35.19 µs per edit and its 500 resolutions |          10.03 |
+
+Read lanes run after a 1,500-edit churn that leaves about twice as many pieces in Singapore's tree, because deleted text stays as tombstones. Line reads go through two line-start lookups and a range read; the control has a cached `getLineContent`. These are synthetic traces on one machine; rerun before quoting them elsewhere.

@@ -4,7 +4,7 @@ E045 is complete on 2026-09-17. An edit call now writes with one epoch, walks th
 edit and writes the reverse index once, a replacement hides its range and places its text on the
 same descent, and both trees are AVL. Replacements are 6% to 8% faster than the E040 head,
 multi-cursor batches 7% to 13%, anchor resolution 17% to 22%. Sequential typing is 7% slower,
-27 ns a keystroke, and stays at 0.76x the control. Raw reports are in
+27 ns a keystroke: 0.76x the control in the bench's default regime and 1.15x warmed up. Raw reports are in
 [`e045-evidence.tar.gz`](e045-evidence.tar.gz).
 
 Inspected baseline: the E040 head, `97555fa`, on branch `e045-one-pass-edits`.
@@ -44,19 +44,21 @@ Standard profile, 9 samples, three seeds, the E040 head in a worktree with the s
 interleaved per seed. The bench's replacement now goes through `applyBatchToPieceTable` with one
 edit, which is the call the editor makes; both trees were measured with that adapter. Two
 regimes, because the E038 and E043 reports found the default two warmups still inside the JIT
-transient: milliseconds per lane, median over seeds, ratio to the control.
+transient: milliseconds per lane, median over seeds, ratio to the control of the same regime.
+The control warms up too: an earlier version of this table divided every column by one pooled
+control and showed typing at 0.71x with 8 warmups, where it is 1.15x.
 
-| Lane                          | Control | E040, 2 warmups | E045, 2 warmups | E040, 8 warmups | E045, 8 warmups |
-| ----------------------------- | ------: | --------------- | --------------- | --------------- | --------------- |
-| sequential-typing             |    0.60 | 0.42 (0.70x)    | 0.46 (0.76x)    | 0.39 (0.65x)    | 0.42 (0.71x)    |
-| typing-with-lookups           |    0.91 | 0.63 (0.70x)    | 0.67 (0.73x)    | 0.61 (0.67x)    | 0.64 (0.71x)    |
-| random-insertions             |    1.06 | 2.38 (2.23x)    | 2.38 (2.23x)    | 2.00 (1.88x)    | 1.99 (1.87x)    |
-| random-replacements           |    1.35 | 3.97 (2.94x)    | 3.75 (2.77x)    | 3.56 (2.63x)    | 3.26 (2.41x)    |
-| eight-cursor-batches          |    1.14 | 2.85 (2.51x)    | 2.47 (2.17x)    | 2.47 (2.17x)    | 2.30 (2.02x)    |
-| mixed-edit-churn              |    1.14 | 3.82 (3.35x)    | 3.75 (3.29x)    | 3.18 (2.79x)    | 3.07 (2.70x)    |
-| persistent-history            |       — | 3.81            | 3.73            | 3.34            | 3.27            |
-| branch-edits                  |       — | 0.31            | 0.29            | 0.28            | 0.25            |
-| anchor-resolution-after-churn |       — | 0.81            | 0.67            | 0.65            | 0.51            |
+| Lane | Control, 2 warmups | E040, 2 warmups | E045, 2 warmups | Control, 8 warmups | E040, 8 warmups | E045, 8 warmups |
+| --- | ---: | --- | --- | ---: | --- | --- |
+| sequential-typing | 0.61 | 0.42 (0.70x) | 0.46 (0.76x) | 0.37 | 0.39 (1.06x) | 0.42 (1.15x) |
+| typing-with-lookups | 0.92 | 0.63 (0.69x) | 0.67 (0.72x) | 0.76 | 0.61 (0.80x) | 0.64 (0.85x) |
+| random-insertions | 1.08 | 2.38 (2.19x) | 2.38 (2.20x) | 0.97 | 2.00 (2.06x) | 1.99 (2.05x) |
+| random-replacements | 1.37 | 3.97 (2.90x) | 3.75 (2.74x) | 1.23 | 3.56 (2.89x) | 3.26 (2.64x) |
+| eight-cursor-batches | 1.18 | 2.85 (2.41x) | 2.47 (2.09x) | 1.04 | 2.47 (2.37x) | 2.30 (2.20x) |
+| mixed-edit-churn | 1.23 | 3.82 (3.12x) | 3.75 (3.06x) | 1.03 | 3.18 (3.08x) | 3.07 (2.98x) |
+| persistent-history | — | 3.81 | 3.73 | — | 3.34 | 3.27 |
+| branch-edits | — | 0.31 | 0.29 | — | 0.28 | 0.25 |
+| anchor-resolution-after-churn | — | 0.81 | 0.67 | — | 0.65 | 0.51 |
 
 Structural counters, standard profile, against the E040 budgets:
 
