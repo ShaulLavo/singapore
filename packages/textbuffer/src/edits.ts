@@ -1,14 +1,16 @@
 import type { PieceTableEdit, PieceTableTreeSnapshot, PieceTreeNode } from './pieceTableTypes'
-import type { InsertProbe, SplitContext } from './internalTypes'
+import type { InsertContext, InsertProbe, SplitContext } from './internalTypes'
+import { EDITS } from './bakeoff'
 import { appendChunksToBuffers, extendTailChunk } from './buffers'
 import { assignPieceOrders } from './orders'
 import { applyReverseIndexChanges } from './reverseIndex'
 import { ensureValidRange, isHighSurrogate, isLowSurrogate, splitsSurrogatePair } from './reads'
 import { createSnapshotWithIndex, editingEpoch } from './snapshot'
+import { getSubtreeMaxOrder, getSubtreeMinOrder } from './node'
 import {
   createTreeFromPieces,
-  getSubtreeMaxOrder,
-  getSubtreeMinOrder,
+  hideVisibleRange,
+  insertAtVisibleOffset,
   markTreeInvisible,
   merge,
   splitByVisibleOffset,
@@ -184,6 +186,7 @@ const insertTextAt = (
   snap: boolean,
 ): PieceTableTreeSnapshot => {
   const epoch = editingEpoch(snapshot)
+  if (EDITS === 'direct') return insertDirect(snapshot, from, text, snap, epoch)
   const probe: InsertProbe = { text, snap, leftTurns: [], outcome: 'split', coalesced: null }
   const context: SplitContext = { changes: [], normalizeOrders: false, probe }
   const { left, right } = splitByVisibleOffset(
@@ -206,6 +209,34 @@ const insertTextAt = (
   }
 
   return finishInsert(snapshot, left, right, text, context, epoch)
+}
+
+const insertDirect = (
+  snapshot: PieceTableTreeSnapshot,
+  from: number,
+  text: string,
+  snap: boolean,
+  epoch: number,
+): PieceTableTreeSnapshot => {
+  const probe: InsertProbe = { text, snap, leftTurns: [], outcome: 'split', coalesced: null }
+  const context: InsertContext = {
+    changes: [],
+    normalizeOrders: false,
+    probe,
+    appendedBuffers: null,
+  }
+  const root = insertAtVisibleOffset(snapshot.root, from, snapshot.buffers, context, epoch)
+  if (probe.outcome === 'retry') return insertDirect(snapshot, from - 1, text, false, epoch)
+
+  const coalesced = probe.outcome === 'coalesce'
+  const buffers = coalesced ? extendTailChunk(snapshot.buffers, text) : context.appendedBuffers!
+  const reverseIndexRoot = applyReverseIndexChanges(
+    snapshot.reverseIndexRoot,
+    coalesced ? [probe.coalesced!] : context.changes,
+    buffers.prioritySeed,
+    epoch,
+  )
+  return createSnapshotWithIndex(buffers, root, reverseIndexRoot, context.normalizeOrders)
 }
 
 const insertSplitAt = (
@@ -254,7 +285,7 @@ const finishInsert = (
   const rightOrder = right ? getSubtreeMinOrder(right) : null
   const appended = appendChunksToBuffers(snapshot.buffers, text)
   const ordered = assignPieceOrders(appended.pieces, leftOrder, rightOrder)
-  const insertionTree = createTreeFromPieces(ordered.pieces, appended.buffers.prioritySeed, epoch)
+  const insertionTree = createTreeFromPieces(ordered.pieces, epoch)
   const merged = merge(merge(left, insertionTree, epoch), right, epoch)
   for (const piece of ordered.pieces) context.changes.push(piece)
   const reverseIndexRoot = applyReverseIndexChanges(
@@ -292,6 +323,16 @@ const deleteRange = (
 
   const epoch = editingEpoch(snapshot)
   const context: SplitContext = { changes: [], normalizeOrders: false }
+  if (EDITS === 'direct') {
+    const root = hideVisibleRange(snapshot.root, from, to, snapshot.buffers, context, epoch)
+    const index = applyReverseIndexChanges(
+      snapshot.reverseIndexRoot,
+      context.changes,
+      snapshot.buffers.prioritySeed,
+      epoch,
+    )
+    return createSnapshotWithIndex(snapshot.buffers, root, index, context.normalizeOrders)
+  }
   const { left, right } = splitByVisibleOffset(
     snapshot.root,
     from,

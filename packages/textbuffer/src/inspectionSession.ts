@@ -10,7 +10,8 @@ export type PieceInspectionNode = {
   readonly tree: 'pieces' | 'reverse'
   readonly left: string | null
   readonly right: string | null
-  readonly priority: number
+  // Height in the sequence tree, heap priority in the reverse index.
+  readonly rank: number
   readonly piece: Piece
   readonly values: Readonly<Record<string, number | string>>
   readonly excerpt: string | null
@@ -109,7 +110,7 @@ export function createPieceTreeInspectionSession() {
             tree: 'pieces',
             left: node.left ? label(node.left) : null,
             right: node.right ? label(node.right) : null,
-            priority: node.priority,
+            rank: node.height,
             piece: Object.freeze({ ...node.piece }),
             values: Object.freeze({
               subtreeLength: node.subtreeLength,
@@ -138,7 +139,7 @@ export function createPieceTreeInspectionSession() {
             tree: 'reverse',
             left: node.left ? label(node.left) : null,
             right: node.right ? label(node.right) : null,
-            priority: node.priority,
+            rank: node.priority,
             piece: Object.freeze({ ...node.piece }),
             values: Object.freeze({ buffer: node.buffer, start: node.start, order: node.order }),
             excerpt: excerpt(snapshot, node.piece, length),

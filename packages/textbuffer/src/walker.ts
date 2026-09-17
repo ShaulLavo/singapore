@@ -1,6 +1,7 @@
 import type { PieceTreeNode, PieceTableTreeSnapshot } from './pieceTableTypes'
 import { bufferForPiece } from './buffers'
-import { collectTextInRange, getPieceVisibleLength, getSubtreeVisibleLength } from './tree'
+import { collectTextInRange } from './tree'
+import { getPieceVisibleLength, getSubtreeVisibleLength } from './node'
 
 // Stateful forward cursor over the visible text of an immutable snapshot.
 // Sequential reads are amortized O(1) per char; seek() is one O(log n) descent.

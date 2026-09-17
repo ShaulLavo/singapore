@@ -4,7 +4,8 @@ import type {
   PieceTableReverseIndexNode,
   PieceTableTreeSnapshot,
 } from './pieceTableTypes'
-import { flattenNodes, PERSISTENT_EPOCH } from './tree'
+import { flattenNodes } from './tree'
+import { PERSISTENT_EPOCH } from './node'
 import { priorityForReverseKey } from './priority'
 
 export const compareReverseKeys = (

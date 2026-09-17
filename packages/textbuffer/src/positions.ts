@@ -11,7 +11,7 @@ import {
   getPieceVisibleLineBreaks,
   getSubtreeLineBreaks,
   getSubtreeVisibleLength,
-} from './tree'
+} from './node'
 
 const countPiecePrefixLineBreaks = (
   buffers: PieceTableBuffers,

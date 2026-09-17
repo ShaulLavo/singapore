@@ -1,4 +1,4 @@
-import type { Piece, PieceTreeNode } from './pieceTableTypes'
+import type { Piece, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
 
 // An insert's split answers two questions on the way down so the insert
 // descends once: whether the offset splits a surrogate pair, in which case
@@ -23,4 +23,11 @@ export type SplitContext = {
   changes: Piece[]
   normalizeOrders: boolean
   probe?: InsertProbe
+}
+
+// A one-descent insert makes its pieces at the landing, so the buffers that
+// hold their text come back through the context.
+export type InsertContext = SplitContext & {
+  probe: InsertProbe
+  appendedBuffers: PieceTableBuffers | null
 }

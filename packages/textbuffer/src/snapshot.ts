@@ -6,9 +6,9 @@ import type {
 } from './pieceTableTypes'
 import { createInitialBuffers, createOriginalPiece, type PieceTableBufferOptions } from './buffers'
 import { buildReverseIndex } from './reverseIndex'
-import { createNode, getSubtreePieces, getSubtreeVisibleLength, normalizePieceOrders } from './tree'
+import { normalizePieceOrders } from './tree'
+import { createNode, getSubtreePieces, getSubtreeVisibleLength } from './node'
 import { PIECE_ORDER_STEP } from './orders'
-import { priorityForPiece } from './priority'
 import { DEFAULT_DOCUMENT_LINE_ENDING, normalizeDocumentText } from './lineEndings'
 
 export const createSnapshot = (
@@ -86,14 +86,6 @@ export const createPieceTableSnapshot = (
   })
   const originalPiece = createOriginalPiece(buffers)
   const epoch = buffers.lineage.epoch
-  const root = originalPiece
-    ? createNode(
-        originalPiece,
-        null,
-        null,
-        priorityForPiece(originalPiece, buffers.prioritySeed),
-        epoch,
-      )
-    : null
+  const root = originalPiece ? createNode(originalPiece, null, null, epoch) : null
   return createSnapshot(buffers, root, buildReverseIndex(root, buffers.prioritySeed, epoch))
 }

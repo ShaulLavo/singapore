@@ -103,7 +103,7 @@ export type PieceTreeNode = {
   piece: Piece
   left: PieceTreeNode | null
   right: PieceTreeNode | null
-  priority: number
+  height: number
   epoch: number
   subtreeLength: number
   subtreeVisibleLength: number

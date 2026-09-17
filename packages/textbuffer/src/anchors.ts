@@ -21,10 +21,10 @@ import {
   findVisiblePieceEndingAt,
   findVisiblePieceStartingAt,
   flattenNodes,
-  PERSISTENT_EPOCH,
   visibleLengthBetweenOrders,
   visiblePrefixBeforeOrder,
 } from './tree'
+import { PERSISTENT_EPOCH } from './node'
 
 export const Anchor = {
   MIN: { kind: 'min' },

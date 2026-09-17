@@ -1,11 +1,7 @@
 import type { Piece, PieceTableTreeSnapshot } from './pieceTableTypes'
 import { getBufferText } from './buffers'
-import {
-  collectTextInRange,
-  forEachTextInRange,
-  getPieceVisibleLength,
-  getSubtreeVisibleLength,
-} from './tree'
+import { collectTextInRange, forEachTextInRange } from './tree'
+import { getPieceVisibleLength, getSubtreeVisibleLength } from './node'
 import { createPieceTableWalker } from './walker'
 import { isHighSurrogate, isLowSurrogate } from './surrogates'
 

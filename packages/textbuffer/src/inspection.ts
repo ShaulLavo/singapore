@@ -6,6 +6,7 @@ import type {
   PieceTreeNode,
 } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
+import { balanceHolds } from './join'
 import { bufferStoreExtent } from './buffers'
 
 export type PieceTreeIssueKind =
@@ -16,6 +17,7 @@ export type PieceTreeIssueKind =
   | 'buffer-bounds'
   | 'line-breaks'
   | 'priority'
+  | 'balance'
   | 'snapshot'
   | 'reverse-index'
   | 'line-index'
@@ -139,6 +141,12 @@ function checkTotals(
   return result
 }
 
+function checkBalance(node: PieceTreeNode, id: string, report: Report): void {
+  const height = 1 + Math.max(node.left?.height ?? 0, node.right?.height ?? 0)
+  report('balance', id, 'height', height, node.height)
+  if (!balanceHolds(node)) report('balance', id, 'children', 'balanced subtrees', 'unbalanced')
+}
+
 function checkPriority(
   node: { priority: number; left: { priority: number } | null; right: { priority: number } | null },
   id: string,
@@ -237,7 +245,7 @@ export function validatePieceTreeInvariants(
       else counts.invisible++
       const id = label(node)
       breaks.set(node, checkPiece(snapshot, node, id, report))
-      checkPriority(node, id, report)
+      checkBalance(node, id, report)
       const key = inspectionPieceKey(node.piece)
       if (pieces.has(key)) report('structure', id, 'piece.key', 'unique buffer/start', key)
       pieces.set(key, node)
