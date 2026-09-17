@@ -62,7 +62,7 @@ measured at 25 against 14 for the control. The control does one descent. The str
 is one descent per edit that answers all three questions, and it is worth more than any
 remaining local tweak: the three walks are about a third of the insert profile between them.
 
-- [E040](../../plans/e040-balanced-persistent-tree.md) lowers the cost of every walk by bounding
+- [E040](e040-balanced-tree.md) lowers the cost of every walk by bounding
   height. Its payoff is bounded by the 55% the tree still takes, now that cloning is gone.
 - [E039](../../plans/e039-reverse-index-cost.md) owns the 20% in the reverse index. Its keyed
   insert with a hashed priority per node is now the single hottest self frame.

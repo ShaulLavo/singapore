@@ -644,9 +644,9 @@
     },
     {
       "id": "E040",
-      "file": "e040-balanced-persistent-tree.md",
-      "title": "Replace treap balancing with a join-based balanced tree",
-      "status": "Proposed",
+      "reference": "../docs/performance/e040-balanced-tree.md",
+      "title": "Balance the sequence tree and edit it in one descent",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
@@ -657,7 +657,7 @@
       "topics": [
         "Input latency as an enforced budget"
       ],
-      "baseline": "69dfef7425539165ec05a457bd6f0516fb6607fa"
+      "baseline": "55c4ceafb8b54ebaf5a61d5cd15c2ab63298824f"
     },
     {
       "id": "E041",

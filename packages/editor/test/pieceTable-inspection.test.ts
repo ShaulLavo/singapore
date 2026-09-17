@@ -12,7 +12,8 @@ import {
   type PieceTableSnapshot,
 } from '@singapore-editor/textbuffer'
 import { createSnapshot } from '@singapore-editor/textbuffer/internal/snapshot'
-import { createNode, merge, normalizePieceOrders } from '@singapore-editor/textbuffer/internal/tree'
+import { createNode } from '@singapore-editor/textbuffer/internal/node'
+import { normalizePieceOrders } from '@singapore-editor/textbuffer/internal/tree'
 import { buildReverseIndex } from '@singapore-editor/textbuffer/internal/reverseIndex'
 import type { PieceTreeNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 
@@ -23,13 +24,11 @@ function control(): PieceTableSnapshot {
     { buffer, start: 0, length: 2, order: 1, lineBreaks: 1, visible: true },
     null,
     null,
-    2,
   )
   const root = createNode(
     { buffer, start: 2, length: 2, order: 2, lineBreaks: 1, visible: false },
     left,
     null,
-    1,
   )
   return { ...base, root, reverseIndexRoot: buildReverseIndex(root), length: 2, pieceCount: 2 }
 }
@@ -165,16 +164,16 @@ describe('piece tree inspection', () => {
     )
   })
 
-  it('accepts priority ties and checks both heap edges', () => {
+  it('checks the stored height, the balance rule and the reverse index heap', () => {
     const snapshot = control()
-    snapshot.root!.left!.priority = 1
     expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
-    expect(
-      merge(snapshot.root!.left, createNode(snapshot.root!.piece, null, null, 1))?.piece.order,
-    ).toBe(2)
-    snapshot.root!.left!.priority = 0
+    snapshot.root!.height = 5
     expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
-      expect.objectContaining({ kind: 'priority', field: 'left.priority' }),
+      expect.objectContaining({ kind: 'balance', field: 'height', expected: 2, actual: 5 }),
+    )
+    snapshot.root!.left!.height = 3
+    expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
+      expect.objectContaining({ kind: 'balance', field: 'children' }),
     )
     snapshot.reverseIndexRoot!.priority = Infinity
     expect(validatePieceTreeInvariants(snapshot).issues).toContainEqual(
@@ -196,7 +195,7 @@ describe('piece tree inspection', () => {
     ).toBe(true)
     let root: PieceTreeNode | null = null
     for (let i = 20000; i > 0; i--)
-      root = createNode({ ...snapshot.root!.piece, order: i }, null, root, i)
+      root = createNode({ ...snapshot.root!.piece, order: i }, null, root)
     const deep = { ...snapshot, root, reverseIndexRoot: null }
     expect(() => validatePieceTreeInvariants(deep)).not.toThrow()
     expect(formatPieceTree(deep, { maxRows: 2 }).split('\n')).toHaveLength(4)

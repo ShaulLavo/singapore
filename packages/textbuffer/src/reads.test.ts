@@ -55,6 +55,14 @@ describe('surrogate probe', () => {
     expectProbeMatchesText(snapshot)
   })
 
+  // The log remembers one tail unit; a newer chunk must not answer for an older view.
+  test('reads an older view whose tail chunk is no longer the log tail', () => {
+    const snapshot = createPieceTableSnapshot('a\u{1F600}')
+    insertIntoPieceTable(snapshot, 0, 'x')
+    const text = materializePieceTableFullText(insertIntoPieceTable(snapshot, 2, 'y'))
+    expect(text).toBe('ay\u{1F600}')
+  })
+
   test('ignores a low half that follows a low half', () => {
     const snapshot = createPieceTableSnapshot(`${HIGH}${LOW}${HIGH}${LOW}`)
     expect(splitsSurrogatePair(snapshot, 2)).toBe(false)

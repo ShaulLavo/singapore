@@ -22,7 +22,8 @@ CSV, a Markdown summary, the generated edit traces, and source/build hashes.
 ## Runs
 
 The default run uses edit-trace seeds `20260916,7` and Singapore priority seeds `0,1,7,42`.
-Every priority seed replays the same edits. VS Code runs once per trace.
+Every priority seed replays the same edits. VS Code runs once per trace. Since E040 the seed shapes
+only the reverse index; the sequence tree is an AVL tree and is identical across seeds.
 
 The six shared edit workloads come from `fixtures.mjs`: typing, random insertions, random replacements,
 eight-cursor batches, mixed churn, and large paste/delete. Five additional traces exercise prepending,

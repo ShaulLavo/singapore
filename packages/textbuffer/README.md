@@ -1,10 +1,10 @@
 # Singapore Textbuffer
 
-Text storage for Singapore's browser editor. It uses two persistent treaps and an append-only buffer log.
+Text storage for Singapore's browser editor. It uses a persistent AVL sequence tree, a persistent treap for the reverse index, and an append-only buffer log.
 
 One tree keeps pieces in document order. The other finds them by their source-buffer coordinates. Each edit returns a new snapshot and shares unchanged data with older snapshots. Deleted pieces stay in the tree so anchors can still find them.
 
-[Storage](#storage) · [Tree choice](#why-a-treap) · [Edits](#edits-and-snapshots) · [Anchors](#anchors-and-tombstones) · [Text](#text-and-positions) · [Influences](#influences) · [Development](#development) · [Benchmarks](#benchmarks)
+[Storage](#storage) · [Tree choice](#why-an-avl-tree) · [Edits](#edits-and-snapshots) · [Anchors](#anchors-and-tombstones) · [Text](#text-and-positions) · [Influences](#influences) · [Development](#development) · [Benchmarks](#benchmarks)
 
 ## Usage
 
@@ -32,7 +32,7 @@ A snapshot holds two tree roots, a buffer version, the visible text length, and 
 
 ```mermaid
 flowchart TD
-  S["Snapshot"] --> T["Sequence treap<br/>document order + visible-text summaries"]
+  S["Snapshot"] --> T["Sequence tree<br/>document order + visible-text summaries"]
   S --> R["Reverse-index treap<br/>lookup by buffer and source offset"]
   S --> B["Buffer version"]
   R -. "piece + order" .-> T
@@ -70,17 +70,15 @@ Offset lookups use visible lengths to choose a branch. Line lookups use line-bre
 
 New pieces get order labels between their neighbors. For example, a piece between `1024` and `2048` can get `1536`. When the gap becomes too small, the engine relabels the sequence and rebuilds the reverse index. Anchors keep their buffer coordinates through this change.
 
-Node priorities come from a hash of piece metadata, the index kind, and `prioritySeed`, which defaults to `0`. The same input, edits, and seed produce the same tree shape. Copied nodes keep their priorities. Splitting a piece creates fresh priorities; the split path uses merging to repair the heap order when needed.
+The sequence tree is an AVL tree: every node stores its height and sibling heights differ by at most one, so the height stays under `1.45 log2(P + 2)` for `P` pieces. The same input and edits always produce the same shape. `prioritySeed` now seeds only the reverse index.
 
-See [`tree.ts`](src/tree.ts), [`orders.ts`](src/orders.ts), and [`priority.ts`](src/priority.ts).
+See [`tree.ts`](src/tree.ts), [`join.ts`](src/join.ts), [`node.ts`](src/node.ts), and [`orders.ts`](src/orders.ts).
 
-### Why a treap?
+### Why an AVL tree?
 
-We chose a treap because **split and merge fit our edits**. They also make path-copying and updating subtree totals straightforward. The sequence tree uses these operations; the reverse index uses keyed insertion, copy-on-write rotations, and merging on deletion.
+Deleted text stays in the tree as tombstones, so **the sequence tree only ever grows**. An edit therefore needs no split and no merge. An insert descends once, places its pieces beside or inside the landing piece, and rejoins each node on the way back up. A delete descends once, hides the range in place, and cuts only the two pieces its ends fall inside. Each rejoin is a `join` of two subtrees whose heights differ by at most two, which is a constant number of rotations. An edit path-copies one root-to-leaf path and nothing else.
 
-A red-black tree uses colors and rotations to guarantee `O(log P)` height for `P` pieces. Both tree types support persistent versions. A treap's expected logarithmic height depends on its priority distribution. Our seeded hashes make the structure reproducible, while worst-case height can reach `O(P)`.
-
-The tradeoff is simpler sequence-editing code in exchange for weaker worst-case balance guarantees. Text allocation, indexing, and retained history also affect performance.
+The tree was a treap until [E040](../../docs/performance/e040-balanced-tree.md). That measurement compared the treap, AVL and weight-balanced trees, each edited through split and join and through one descent. The balance rule barely mattered; a balanced tree driven through split and join was slower than the treap, and the one-descent edits were a quarter to a third faster under either rule. AVL was marginally ahead and its invariant is the simpler one to validate.
 
 ### The reverse index
 
@@ -124,9 +122,9 @@ flowchart TD
 
 This example shows shared and copied nodes. The resulting shape depends on the edit and priorities.
 
-**Insert:** try extending the newest append piece. Otherwise split at the offset, fill or open chunks, assign orders, merge the pieces, and update the reverse index.
+**Insert:** descend to the offset. Extend the newest append piece if it ends there. Otherwise fill or open chunks, assign orders, place the pieces at the landing, cutting its piece in two if the offset is inside it, and update the reverse index.
 
-**Delete:** split out the range, mark its pieces invisible, merge them back, and update their index entries.
+**Delete:** descend over the range, mark the pieces inside it invisible in place, cut the pieces its two ends fall inside, and update their index entries.
 
 **Batch edit:** validate disjoint ranges against the input snapshot, repair surrogate boundaries, then apply edits from right to left. `deleteFromPieceTable()` takes an offset and length. Batch edits and range reads use half-open ranges.
 

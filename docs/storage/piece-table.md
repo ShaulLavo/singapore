@@ -1,8 +1,8 @@
-# Storage Engine: Treap-Backed Piece Table
+# Storage Engine: Tree-Backed Piece Table
 
 ## Status: Implemented and Proven
 
-The editor's storage engine is a treap-backed piece table with persistent immutable snapshots via structural sharing. Each mutation returns a new snapshot; previous snapshots remain valid and unmodified.
+The editor's storage engine is a piece table on a persistent AVL tree (a treap until [E040](../performance/e040-balanced-tree.md)) with persistent immutable snapshots via structural sharing. Each mutation returns a new snapshot; previous snapshots remain valid and unmodified.
 
 **Implementation:** `packages/textbuffer/src/`
 **Types:** `packages/textbuffer/src/pieceTableTypes.ts`
@@ -10,7 +10,7 @@ The editor's storage engine is a treap-backed piece table with persistent immuta
 
 ## Locked Decisions
 
-- Treap-backed piece table as the storage engine
+- Piece table on a balanced persistent tree as the storage engine
 - Persistent (immutable-snapshot) data model for undo
 - Opaque buffer identity over an append-only, lineage-shared chunk log with per-snapshot extents
 - Buffer chunk storage is exposed as a read-only `get`/`keys`/iterator view at the type boundary; no debug-only accessor layer for now
@@ -22,7 +22,7 @@ The editor's storage engine is a treap-backed piece table with persistent immuta
 
 | Capability            | Complexity   | Notes                                                                                              |
 | --------------------- | ------------ | -------------------------------------------------------------------------------------------------- |
-| Insert text at offset | O(log n)     | Split treap at offset, merge with new node                                                         |
+| Insert text at offset | O(log n)     | One descent; the landing places the new node and each ancestor rejoins                             |
 | Delete text range     | O(log n)     | Current implementation physically removes pieces; Phase 2 changes this to mark pieces invisible    |
 | Read text range       | O(log n + k) | Tree walk collecting piece slices                                                                  |
 | Snapshot isolation    | O(1)         | Structural sharing; old roots remain valid                                                         |

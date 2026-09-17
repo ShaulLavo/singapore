@@ -11,7 +11,8 @@ import {
   createSnapshot,
   createSnapshotWithIndex,
 } from '@singapore-editor/textbuffer/internal/snapshot'
-import { createNode, flattenNodes } from '@singapore-editor/textbuffer/internal/tree'
+import { createNode } from '@singapore-editor/textbuffer/internal/node'
+import { flattenNodes } from '@singapore-editor/textbuffer/internal/tree'
 
 describe('piece table snapshots', () => {
   it('creates empty and non-empty initial snapshots', () => {

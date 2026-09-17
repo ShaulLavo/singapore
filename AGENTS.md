@@ -4,7 +4,7 @@ Instructions for AI coding agents working with this codebase.
 
 ## Project Overview
 
-Browser-based code editor targeting ultra-low latency typing (<1-2ms perceived). Treap-backed piece table with persistent immutable snapshots, CSS Highlight API rendering, and optional Tree-sitter syntax plugins.
+Browser-based code editor targeting ultra-low latency typing (<1-2ms perceived). Balanced-tree piece table with persistent immutable snapshots, CSS Highlight API rendering, and optional Tree-sitter syntax plugins.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 
 ### Storage
 
-- [Piece Table](docs/storage/piece-table.md) — Treap-backed piece table, buffers, snapshots, aggregate maintenance, enrichment roadmap, Phase 1 prerequisites (opaque BufferId, chunked append buffer)
+- [Piece Table](docs/storage/piece-table.md) — Tree-backed piece table, buffers, snapshots, aggregate maintenance, enrichment roadmap, Phase 1 prerequisites (opaque BufferId, chunked append buffer)
 
 ### Positions
 
@@ -48,7 +48,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 
 ### What's Implemented
 
-- **Piece table** — Treap with persistent snapshots, insert/delete/read, structural sharing
+- **Piece table** — Persistent AVL tree with snapshots, insert/delete/read, structural sharing
 - **CSS Highlight API renderer** — Token-based syntax highlighting via `Highlight` objects
 - **Anchors and selections** — Durable anchor resolution, selection sets, and snapshot-aware history helpers
 - **Tree-sitter syntax path** — Optional worker-backed parsing/query support and structural selection integration

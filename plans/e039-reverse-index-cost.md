@@ -110,6 +110,6 @@ every fixture, and the decision written down.
 
 Option 2 introduces laziness into a structure that is otherwise pure; pending state must live on
 the snapshot, never on shared buffers, or branches will observe each other's changes. Option 3
-changes every sequence-tree node, which collides with [E040](e040-balanced-persistent-tree.md) if
+changes every sequence-tree node, which collides with [E040](../docs/performance/e040-balanced-tree.md) if
 both are in flight; sequence E040 first if option 3 is reached. Stop if the ceiling in step 1 is
 under a fifth of edit time, and record that the reverse index is not the problem.

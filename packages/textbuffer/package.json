@@ -1,7 +1,7 @@
 {
   "name": "@singapore-editor/textbuffer",
   "version": "0.1.0",
-  "description": "Persistent treap-backed text buffer with snapshots, stable anchors, and line mapping",
+  "description": "Persistent balanced-tree text buffer with snapshots, stable anchors, and line mapping",
   "files": [
     "dist",
     "README.md"

@@ -1,5 +1,5 @@
 import type { Piece, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
-import type { InsertContext, InsertProbe, SplitContext } from './internalTypes'
+import type { EditContext, InsertContext, InsertProbe } from './internalTypes'
 import {
   appendChunksToBuffers,
   BUFFER_CHUNK_SIZE,
@@ -17,7 +17,7 @@ import {
   PIECE_ORDER_MIN_GAP,
   PIECE_ORDER_STEP,
 } from './orders'
-import { join, join2 } from './join'
+import { join } from './join'
 import {
   createNode,
   getPieceVisibleLength,
@@ -28,16 +28,6 @@ import {
   PERSISTENT_EPOCH,
   summarize,
 } from './node'
-
-export const merge = (
-  left: PieceTreeNode | null,
-  right: PieceTreeNode | null,
-  epoch = PERSISTENT_EPOCH,
-): PieceTreeNode | null => join2(left, right, epoch)
-
-type SplitResult = { left: PieceTreeNode | null; right: PieceTreeNode | null }
-
-const NO_SPLIT: SplitResult = { left: null, right: null }
 
 // The piece extended by the probe's text, or null when it cannot take it:
 // only the newest buffer's piece, ending at its chunk's end, with room left.
@@ -96,18 +86,7 @@ const successorUnit = (
   return -1
 }
 
-// A coalesce found below this node: the subtree came back as the new left.
-const rebuildAfterCoalesce = (
-  node: PieceTreeNode,
-  side: 'left' | 'right',
-  subtree: PieceTreeNode | null,
-  epoch: number,
-): SplitResult => {
-  const next = own(node, epoch)
-  next[side] = subtree
-  return { left: summarize(next), right: null }
-}
-
+// Each landing probe returns a finished subtree, or null to insert here.
 // Landing with the offset at this node's start (or on a tombstone): the piece
 // ending here, if any, is the rightmost visible one in the left subtree.
 const probeAtStart = (
@@ -116,7 +95,7 @@ const probeAtStart = (
   buffers: PieceTableBuffers,
   epoch: number,
   probe: InsertProbe,
-): SplitResult | null => {
+): PieceTreeNode | null => {
   const ending = findVisiblePieceEndingAt(node.left, offset)
   if (probe.snap && ending) {
     // The unit after first: the one before may be the tail's last unit.
@@ -129,7 +108,7 @@ const probeAtStart = (
       insertSplitsPair(lastUnitOf(ending.piece, buffers), after, probe)
     ) {
       probe.outcome = 'retry'
-      return NO_SPLIT
+      return node
     }
   }
 
@@ -138,8 +117,9 @@ const probeAtStart = (
 
   probe.outcome = 'coalesce'
   probe.coalesced = tail
-  const left = replacePieceEndingAt(node.left, offset, tail, epoch)
-  return rebuildAfterCoalesce(node, 'left', left, epoch)
+  const next = own(node, epoch)
+  next.left = replacePieceEndingAt(next.left, offset, tail, epoch)
+  return summarize(next)
 }
 
 // Landing with the offset at this node's end: this piece is the one ending here.
@@ -148,12 +128,12 @@ const probeAtEnd = (
   buffers: PieceTableBuffers,
   epoch: number,
   probe: InsertProbe,
-): SplitResult | null => {
+): PieceTreeNode | null => {
   if (probe.snap) {
     const after = successorUnit(node.right, buffers, probe)
     if (isLowSurrogate(after) && insertSplitsPair(lastUnitOf(node.piece, buffers), after, probe)) {
       probe.outcome = 'retry'
-      return NO_SPLIT
+      return node
     }
   }
 
@@ -164,7 +144,7 @@ const probeAtEnd = (
   probe.coalesced = tail
   const next = own(node, epoch)
   next.piece = tail
-  return { left: summarize(next), right: null }
+  return summarize(next)
 }
 
 // Landing strictly inside this piece: both units are in its chunk, and a
@@ -183,8 +163,8 @@ const probeInside = (
   return insertSplitsPair(before, after, probe) ? localOffset - 1 : localOffset
 }
 
-// What a landing's probe decided: a finished subtree (a coalesce, or null
-// with the outcome set to retry), or the offset to cut at.
+// What a landing's probe decided: a finished subtree (a coalesce, or the
+// node untouched with the outcome set to retry), or the offset to cut at.
 const probeLanding = (
   node: PieceTreeNode,
   offset: number,
@@ -193,7 +173,7 @@ const probeLanding = (
   buffers: PieceTableBuffers,
   epoch: number,
   probe: InsertProbe,
-): SplitResult | number => {
+): PieceTreeNode | number => {
   if (nodeLen === 0 || offset === leftLen) {
     const probed = probeAtStart(node, offset, buffers, epoch, probe)
     if (probed) return probed
@@ -211,7 +191,7 @@ const probeLanding = (
 // The right-hand piece of a cut, ordered between the piece it came from and
 // whatever follows it. The piece already knows its total line breaks, so one
 // count for the left half gives both.
-const orderAfter = (order: number, upper: number | null, context: SplitContext): number => {
+const orderAfter = (order: number, upper: number | null, context: EditContext): number => {
   const allocated = allocateOrderBetween(order, upper)
   context.normalizeOrders ||= allocated === null
   return allocated ?? order + PIECE_ORDER_MIN_GAP
@@ -232,98 +212,6 @@ const slicePiece = (
   lineBreaks,
   visible,
 })
-
-export const splitByVisibleOffset = (
-  node: PieceTreeNode | null,
-  offset: number,
-  buffers: PieceTableBuffers,
-  context: SplitContext,
-  epoch = PERSISTENT_EPOCH,
-  upperOrder: number | null = null,
-): SplitResult => {
-  if (!node) return { left: null, right: null }
-
-  const leftLen = getSubtreeVisibleLength(node.left)
-  const nodeLen = getPieceVisibleLength(node.piece)
-
-  // Ancestors are owned after the recursion, so a probe that ends in a
-  // coalesce or a retry below leaves the path above it untouched.
-  if (offset < leftLen) {
-    context.probe?.leftTurns.push(node)
-    const { left, right } = splitByVisibleOffset(
-      node.left,
-      offset,
-      buffers,
-      context,
-      epoch,
-      node.piece.order,
-    )
-    const outcome = context.probe?.outcome
-    if (outcome === 'retry') return NO_SPLIT
-    if (outcome === 'coalesce') return rebuildAfterCoalesce(node, 'left', left, epoch)
-
-    const next = own(node, epoch)
-    return { left, right: join(right, next, next.right, epoch) }
-  }
-
-  if (offset > leftLen + nodeLen) {
-    const { left, right } = splitByVisibleOffset(
-      node.right,
-      offset - leftLen - nodeLen,
-      buffers,
-      context,
-      epoch,
-      upperOrder,
-    )
-    const outcome = context.probe?.outcome
-    if (outcome === 'retry') return NO_SPLIT
-    if (outcome === 'coalesce') return rebuildAfterCoalesce(node, 'right', left, epoch)
-
-    const next = own(node, epoch)
-    return { left: join(next.left, next, left, epoch), right }
-  }
-
-  if (context.probe) {
-    const probed = probeLanding(node, offset, leftLen, nodeLen, buffers, epoch, context.probe)
-    if (typeof probed !== 'number') return probed
-    offset = probed
-  }
-
-  const next = own(node, epoch)
-  const leftTree = next.left
-  const rightTree = next.right
-
-  if (nodeLen === 0 || offset === leftLen + nodeLen) {
-    return { left: join(leftTree, next, null, epoch), right: rightTree }
-  }
-  if (offset === leftLen) return { left: leftTree, right: join(null, next, rightTree, epoch) }
-
-  const piece = next.piece
-  const localOffset = offset - leftLen
-  const upper = rightTree ? getSubtreeMinOrder(rightTree) : upperOrder
-  const leftLineBreaks = countBufferLineBreaks(
-    buffers,
-    piece.buffer,
-    piece.start,
-    piece.start + localOffset,
-  )
-  const leftPiece = slicePiece(piece, 0, localOffset, piece.order, leftLineBreaks, piece.visible)
-  const rightPiece = slicePiece(
-    piece,
-    localOffset,
-    nodeLen,
-    orderAfter(piece.order, upper, context),
-    piece.lineBreaks - leftLineBreaks,
-    piece.visible,
-  )
-  next.piece = leftPiece
-  context.changes.push(leftPiece, rightPiece)
-
-  return {
-    left: join(leftTree, next, null, epoch),
-    right: join(null, createNode(rightPiece, null, null, epoch), rightTree, epoch),
-  }
-}
 
 const appendRun = (
   tree: PieceTreeNode | null,
@@ -413,7 +301,7 @@ export const insertAtVisibleOffset = (
   }
 
   const probed = probeLanding(node, offset, leftLen, nodeLen, buffers, epoch, context.probe)
-  if (typeof probed !== 'number') return probed.left
+  if (typeof probed !== 'number') return probed
   return insertAtLanding(node, probed - leftLen, nodeLen, buffers, context, epoch, [
     lowerOrder,
     upperOrder,
@@ -512,7 +400,7 @@ const hidePieceRange = (
   to: number,
   right: PieceTreeNode | null,
   buffers: PieceTableBuffers,
-  context: SplitContext,
+  context: EditContext,
   epoch: number,
   upperOrder: number | null,
 ): PieceTreeNode | null => {
@@ -573,7 +461,7 @@ export const hideVisibleRange = (
   from: number,
   to: number,
   buffers: PieceTableBuffers,
-  context: SplitContext,
+  context: EditContext,
   epoch: number,
   upperOrder: number | null = null,
 ): PieceTreeNode | null => {
@@ -615,27 +503,6 @@ export const hideVisibleRange = (
   }
   return join(left, next, right, epoch)
 }
-
-const buildBalanced = (
-  pieces: readonly Piece[],
-  from: number,
-  to: number,
-  epoch: number,
-): PieceTreeNode | null => {
-  if (from >= to) return null
-  const middle = (from + to) >>> 1
-  return createNode(
-    pieces[middle]!,
-    buildBalanced(pieces, from, middle, epoch),
-    buildBalanced(pieces, middle + 1, to, epoch),
-    epoch,
-  )
-}
-
-export const createTreeFromPieces = (
-  pieces: readonly Piece[],
-  epoch = PERSISTENT_EPOCH,
-): PieceTreeNode | null => buildBalanced(pieces, 0, pieces.length, epoch)
 
 export const collectTextInRange = (
   node: PieceTreeNode | null,
@@ -809,25 +676,6 @@ export const flattenNodes = (node: PieceTreeNode | null, acc: PieceTreeNode[]): 
   acc.push(node)
   flattenNodes(node.right, acc)
   return acc
-}
-
-export const markTreeInvisible = (
-  node: PieceTreeNode | null,
-  changes: Piece[],
-  epoch = PERSISTENT_EPOCH,
-): PieceTreeNode | null => {
-  if (!node) return null
-
-  const next = own(node, epoch)
-  next.left = markTreeInvisible(next.left, changes, epoch)
-  next.right = markTreeInvisible(next.right, changes, epoch)
-  next.piece = {
-    ...next.piece,
-    visible: false,
-  }
-  changes.push(next.piece)
-
-  return summarize(next)
 }
 
 export const visiblePrefixBeforeOrder = (

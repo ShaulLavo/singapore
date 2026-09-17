@@ -1,5 +1,3 @@
-import type { Piece } from './pieceTableTypes'
-
 export const DEFAULT_PIECE_TABLE_PRIORITY_SEED = 0
 
 const HASH_BASIS = 0x811c9dc5 | 0
@@ -40,22 +38,7 @@ const avalanche = (hash: number): number => {
 }
 
 // A signed 32-bit integer: only the order between priorities matters, and an
-// integer compares as a Smi where a fraction would be a boxed double. The
-// hash covers what identifies a node in the sequence tree: (buffer, start)
-// is the insertion identity and the order places it. A split's left half
-// keeps all three and so keeps its parent's priority, which is the spot the
-// parent already held.
-export const priorityForPiece = (
-  piece: Piece,
-  seed = DEFAULT_PIECE_TABLE_PRIORITY_SEED,
-): number => {
-  let hash = mixNumber(HASH_BASIS, seed)
-  hash = mixWord(hash, piece.buffer)
-  hash = mixWord(hash, piece.start)
-  hash = mixNumber(hash, piece.order)
-  return avalanche(hash)
-}
-
+// integer compares as a Smi where a fraction would be a boxed double.
 // The reverse index is keyed by (buffer, start) and a rewrite on the same key
 // keeps its node's priority, so the key is all the priority ever depended on.
 export const priorityForReverseKey = (

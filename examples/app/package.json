@@ -17,11 +17,11 @@
   "dependencies": {
     "@singapore-editor/core": "workspace:*",
     "@singapore-editor/diff": "workspace:*",
-    "@singapore-editor/textbuffer": "workspace:*",
     "@singapore-editor/find": "workspace:*",
     "@singapore-editor/gutters": "workspace:*",
     "@singapore-editor/minimap": "workspace:*",
     "@singapore-editor/scope-lines": "workspace:*",
+    "@singapore-editor/textbuffer": "workspace:*",
     "@singapore-editor/tree-sitter-languages": "workspace:*",
     "@singapore-editor/typescript-lsp": "workspace:*"
   },

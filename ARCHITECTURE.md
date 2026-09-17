@@ -57,7 +57,7 @@
 
 ### 5.1 Document Engine (Locked)
 
-Treap-backed piece table with persistent immutable snapshots.
+Piece table on a persistent AVL tree with immutable snapshots.
 
 See: [Storage: Piece Table](docs/storage/piece-table.md) for full design.
 Implementation: `packages/textbuffer/src/`

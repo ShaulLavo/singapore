@@ -6,10 +6,8 @@ import {
   type PieceTableSnapshot,
   readPieceTableTextRange,
 } from '@singapore-editor/textbuffer'
-import {
-  forEachTextInRange,
-  getSubtreeLineBreaks,
-} from '@singapore-editor/textbuffer/internal/tree'
+import { getSubtreeLineBreaks } from '@singapore-editor/textbuffer/internal/node'
+import { forEachTextInRange } from '@singapore-editor/textbuffer/internal/tree'
 import { lineStartOffset } from '@singapore-editor/textbuffer/internal/positions'
 
 import {

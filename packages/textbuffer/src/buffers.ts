@@ -84,8 +84,9 @@ class PieceBufferChunkView implements PieceBufferChunks {
     const chunk = this.chunkOf(buffer)
     if (chunk === undefined) return -1
     const text = this.log.chunks[chunk]!
+    // An older view's tail is not the log's once a newer view opened a chunk.
     if (
-      chunk === this.size - 1 &&
+      chunk === this.log.chunks.length - 1 &&
       index === this.tailLength - 1 &&
       text.length === this.tailLength
     ) {

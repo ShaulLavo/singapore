@@ -1,20 +1,10 @@
-import type { PieceTableEdit, PieceTableTreeSnapshot, PieceTreeNode } from './pieceTableTypes'
-import type { InsertContext, InsertProbe, SplitContext } from './internalTypes'
-import { EDITS } from './bakeoff'
-import { appendChunksToBuffers, extendTailChunk } from './buffers'
-import { assignPieceOrders } from './orders'
+import type { PieceTableEdit, PieceTableTreeSnapshot } from './pieceTableTypes'
+import type { EditContext, InsertContext, InsertProbe } from './internalTypes'
+import { extendTailChunk } from './buffers'
 import { applyReverseIndexChanges } from './reverseIndex'
 import { ensureValidRange, isHighSurrogate, isLowSurrogate, splitsSurrogatePair } from './reads'
 import { createSnapshotWithIndex, editingEpoch } from './snapshot'
-import { getSubtreeMaxOrder, getSubtreeMinOrder } from './node'
-import {
-  createTreeFromPieces,
-  hideVisibleRange,
-  insertAtVisibleOffset,
-  markTreeInvisible,
-  merge,
-  splitByVisibleOffset,
-} from './tree'
+import { hideVisibleRange, insertAtVisibleOffset } from './tree'
 
 const compareEditsDescending = (left: PieceTableEdit, right: PieceTableEdit): number => {
   if (left.from !== right.from) return right.from - left.from
@@ -171,54 +161,22 @@ export const insertIntoPieceTable = (
     throw new RangeError('invalid offset')
   }
 
-  // The offset is snapped inside the split's descent; see InsertProbe. The
+  // The offset is snapped at the insert's landing; see InsertProbe. The
   // document's ends are never inside a pair, so those skip the probe's reads.
   return insertTextAt(snapshot, offset, text, offset > 0 && offset < snapshot.length)
 }
 
-// One descent. The split probes the landing for a surrogate pair and for a
-// piece the text can extend; a pair straddling two pieces asks for a retry
-// one unit left, which the caller already snapped so it cannot recur.
+// One descent. The landing probes for a surrogate pair and for a piece the
+// text can extend; a pair straddling two pieces asks for a retry one unit
+// left, which is already snapped so it cannot recur.
 const insertTextAt = (
   snapshot: PieceTableTreeSnapshot,
   from: number,
   text: string,
   snap: boolean,
+  epoch = editingEpoch(snapshot),
 ): PieceTableTreeSnapshot => {
-  const epoch = editingEpoch(snapshot)
-  if (EDITS === 'direct') return insertDirect(snapshot, from, text, snap, epoch)
-  const probe: InsertProbe = { text, snap, leftTurns: [], outcome: 'split', coalesced: null }
-  const context: SplitContext = { changes: [], normalizeOrders: false, probe }
-  const { left, right } = splitByVisibleOffset(
-    snapshot.root,
-    from,
-    snapshot.buffers,
-    context,
-    epoch,
-  )
-  if (probe.outcome === 'retry') return insertSplitAt(snapshot, from - 1, text, epoch)
-  if (probe.outcome === 'coalesce') {
-    const buffers = extendTailChunk(snapshot.buffers, text)
-    const reverseIndexRoot = applyReverseIndexChanges(
-      snapshot.reverseIndexRoot,
-      [probe.coalesced!],
-      buffers.prioritySeed,
-      epoch,
-    )
-    return createSnapshotWithIndex(buffers, left, reverseIndexRoot, false)
-  }
-
-  return finishInsert(snapshot, left, right, text, context, epoch)
-}
-
-const insertDirect = (
-  snapshot: PieceTableTreeSnapshot,
-  from: number,
-  text: string,
-  snap: boolean,
-  epoch: number,
-): PieceTableTreeSnapshot => {
-  const probe: InsertProbe = { text, snap, leftTurns: [], outcome: 'split', coalesced: null }
+  const probe: InsertProbe = { text, snap, leftTurns: [], outcome: 'insert', coalesced: null }
   const context: InsertContext = {
     changes: [],
     normalizeOrders: false,
@@ -226,7 +184,7 @@ const insertDirect = (
     appendedBuffers: null,
   }
   const root = insertAtVisibleOffset(snapshot.root, from, snapshot.buffers, context, epoch)
-  if (probe.outcome === 'retry') return insertDirect(snapshot, from - 1, text, false, epoch)
+  if (probe.outcome === 'retry') return insertTextAt(snapshot, from - 1, text, false, epoch)
 
   const coalesced = probe.outcome === 'coalesce'
   const buffers = coalesced ? extendTailChunk(snapshot.buffers, text) : context.appendedBuffers!
@@ -237,70 +195,6 @@ const insertDirect = (
     epoch,
   )
   return createSnapshotWithIndex(buffers, root, reverseIndexRoot, context.normalizeOrders)
-}
-
-const insertSplitAt = (
-  snapshot: PieceTableTreeSnapshot,
-  from: number,
-  text: string,
-  epoch: number,
-): PieceTableTreeSnapshot => {
-  const probe: InsertProbe = {
-    text,
-    snap: false,
-    leftTurns: [],
-    outcome: 'split',
-    coalesced: null,
-  }
-  const context: SplitContext = { changes: [], normalizeOrders: false, probe }
-  const { left, right } = splitByVisibleOffset(
-    snapshot.root,
-    from,
-    snapshot.buffers,
-    context,
-    epoch,
-  )
-  if (probe.outcome === 'coalesce') {
-    const buffers = extendTailChunk(snapshot.buffers, text)
-    const reverseIndexRoot = applyReverseIndexChanges(
-      snapshot.reverseIndexRoot,
-      [probe.coalesced!],
-      buffers.prioritySeed,
-      epoch,
-    )
-    return createSnapshotWithIndex(buffers, left, reverseIndexRoot, false)
-  }
-  return finishInsert(snapshot, left, right, text, context, epoch)
-}
-
-const finishInsert = (
-  snapshot: PieceTableTreeSnapshot,
-  left: PieceTreeNode | null,
-  right: PieceTreeNode | null,
-  text: string,
-  context: SplitContext,
-  epoch: number,
-): PieceTableTreeSnapshot => {
-  const leftOrder = left ? getSubtreeMaxOrder(left) : null
-  const rightOrder = right ? getSubtreeMinOrder(right) : null
-  const appended = appendChunksToBuffers(snapshot.buffers, text)
-  const ordered = assignPieceOrders(appended.pieces, leftOrder, rightOrder)
-  const insertionTree = createTreeFromPieces(ordered.pieces, epoch)
-  const merged = merge(merge(left, insertionTree, epoch), right, epoch)
-  for (const piece of ordered.pieces) context.changes.push(piece)
-  const reverseIndexRoot = applyReverseIndexChanges(
-    snapshot.reverseIndexRoot,
-    context.changes,
-    appended.buffers.prioritySeed,
-    epoch,
-  )
-
-  return createSnapshotWithIndex(
-    appended.buffers,
-    merged,
-    reverseIndexRoot,
-    context.normalizeOrders || ordered.normalizeOrders,
-  )
 }
 
 export const deleteFromPieceTable = (
@@ -322,45 +216,15 @@ const deleteRange = (
   if (to <= from) return snapshot
 
   const epoch = editingEpoch(snapshot)
-  const context: SplitContext = { changes: [], normalizeOrders: false }
-  if (EDITS === 'direct') {
-    const root = hideVisibleRange(snapshot.root, from, to, snapshot.buffers, context, epoch)
-    const index = applyReverseIndexChanges(
-      snapshot.reverseIndexRoot,
-      context.changes,
-      snapshot.buffers.prioritySeed,
-      epoch,
-    )
-    return createSnapshotWithIndex(snapshot.buffers, root, index, context.normalizeOrders)
-  }
-  const { left, right } = splitByVisibleOffset(
-    snapshot.root,
-    from,
-    snapshot.buffers,
-    context,
-    epoch,
-  )
-  const { left: deleted, right: tail } = splitByVisibleOffset(
-    right,
-    to - from,
-    snapshot.buffers,
-    context,
-    epoch,
-  )
-  const invisible = markTreeInvisible(deleted, context.changes, epoch)
-  const merged = merge(merge(left, invisible, epoch), tail, epoch)
+  const context: EditContext = { changes: [], normalizeOrders: false }
+  const root = hideVisibleRange(snapshot.root, from, to, snapshot.buffers, context, epoch)
   const reverseIndexRoot = applyReverseIndexChanges(
     snapshot.reverseIndexRoot,
     context.changes,
     snapshot.buffers.prioritySeed,
     epoch,
   )
-  return createSnapshotWithIndex(
-    snapshot.buffers,
-    merged,
-    reverseIndexRoot,
-    context.normalizeOrders,
-  )
+  return createSnapshotWithIndex(snapshot.buffers, root, reverseIndexRoot, context.normalizeOrders)
 }
 
 export const applyBatchToPieceTable = (

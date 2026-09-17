@@ -5,47 +5,23 @@ import {
   createOriginalPiece,
 } from '@singapore-editor/textbuffer/internal/buffers'
 import { PIECE_ORDER_STEP } from '@singapore-editor/textbuffer/internal/orders'
-import type { SplitContext } from '@singapore-editor/textbuffer/internal/internalTypes'
+import type { EditContext } from '@singapore-editor/textbuffer/internal/internalTypes'
+import { createNode, getSubtreeVisibleLength } from '@singapore-editor/textbuffer/internal/node'
 import {
   collectTextInRange,
-  createNode,
-  createTreeFromPieces,
   findVisiblePieceContainingOffset,
   flattenPieces,
-  getSubtreeVisibleLength,
-  markTreeInvisible,
+  hideVisibleRange,
   normalizePieceOrders,
-  splitByVisibleOffset,
   visibleLengthBetweenOrders,
   visiblePrefixBeforeOrder,
 } from '@singapore-editor/textbuffer/internal/tree'
 
 describe('piece table tree', () => {
-  it('assigns deterministic node priorities from piece identity and seed', () => {
-    const firstBuffers = createInitialBuffers('abc', { prioritySeed: 7 })
-    const secondBuffers = createInitialBuffers('abc', { prioritySeed: 7 })
-    const thirdBuffers = createInitialBuffers('abc', { prioritySeed: 8 })
-    const first = createTreeFromPieces(
-      [createOriginalPiece(firstBuffers)!],
-      firstBuffers.prioritySeed,
-    )
-    const second = createTreeFromPieces(
-      [createOriginalPiece(secondBuffers)!],
-      secondBuffers.prioritySeed,
-    )
-    const third = createTreeFromPieces(
-      [createOriginalPiece(thirdBuffers)!],
-      thirdBuffers.prioritySeed,
-    )
-
-    expect(first?.priority).toBe(second?.priority)
-    expect(first?.priority).not.toBe(third?.priority)
-  })
-
   it('builds trees, collects ranges, and finds visible pieces', () => {
     const buffers = createInitialBuffers('abcdef')
     const piece = createOriginalPiece(buffers)!
-    const tree = createTreeFromPieces([piece])
+    const tree = createNode(piece)
     const chunks: string[] = []
 
     collectTextInRange(tree, buffers, 1, 5, chunks)
@@ -59,32 +35,37 @@ describe('piece table tree', () => {
     ).toBe(6)
   })
 
-  it('splits pieces by visible offset and records reverse-index changes', () => {
+  it('cuts a piece in place when a range inside it is hidden', () => {
     const buffers = createInitialBuffers('abcdef')
     const tree = createNode(createOriginalPiece(buffers)!)
-    const context: SplitContext = { changes: [], normalizeOrders: false }
-    const { left, right } = splitByVisibleOffset(tree, 2, buffers, context)
+    const context: EditContext = { changes: [], normalizeOrders: false }
+    const hidden = hideVisibleRange(tree, 2, 4, buffers, context, Number.NaN)
 
-    expect(flattenPieces(left, []).map((piece) => piece.length)).toEqual([2])
-    expect(flattenPieces(right, []).map((piece) => piece.length)).toEqual([4])
-    // Both halves are written; the left one lands on the original key and
-    // replaces that entry in place, so nothing is recorded for removal.
+    expect(tree.piece.length).toBe(6)
+    expect(flattenPieces(hidden, []).map((piece) => [piece.length, piece.visible])).toEqual([
+      [2, true],
+      [2, false],
+      [2, true],
+    ])
+    // The first part lands on the original key and replaces that entry in
+    // place, so nothing is recorded for removal.
     expect(context.changes.map((piece) => [piece.start, piece.length])).toEqual([
       [0, 2],
-      [2, 4],
+      [2, 2],
+      [4, 2],
     ])
   })
 
-  it('marks trees invisible and normalizes orders without mutating the source tree', () => {
+  it('hides a whole tree and normalizes orders without mutating the source tree', () => {
     const buffers = createInitialBuffers('abc')
     const tree = createNode({ ...createOriginalPiece(buffers)!, order: 1 })
-    const changes: SplitContext['changes'] = []
-    const invisible = markTreeInvisible(tree, changes)
+    const context: EditContext = { changes: [], normalizeOrders: false }
+    const invisible = hideVisibleRange(tree, 0, 3, buffers, context, Number.NaN)
     const normalized = normalizePieceOrders(invisible, { value: PIECE_ORDER_STEP })
 
     expect(tree.piece.visible).toBe(true)
     expect(invisible?.piece.visible).toBe(false)
-    expect(changes).toHaveLength(1)
+    expect(context.changes).toHaveLength(1)
     expect(normalized?.piece.order).toBe(PIECE_ORDER_STEP)
   })
 })

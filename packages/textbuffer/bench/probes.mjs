@@ -126,8 +126,8 @@ export function instrument(text, filename) {
 
 const requiredCounters = {
   singapore: [
-    'tree.cloneNode.calls',
-    'tree.own.calls',
+    'node.cloneNode.calls',
+    'node.own.calls',
     'reverseIndex.cloneReverseIndexNode.calls',
     'reverseIndex.ownReverseIndexNode.calls',
     'reverseIndex.insertReverseIndexNode.replacementRecords',
@@ -155,6 +155,8 @@ export function prepareProbes(destination) {
   const selected = {
     singapore: [
       'tree',
+      'node',
+      'join',
       'reverseIndex',
       'buffers',
       'reads',
