@@ -41,6 +41,13 @@ export type ShikiWorkerEditRequest = ShikiWorkerDocumentOptions & {
   readonly edits?: readonly TextEdit[]
 }
 
+export type ShikiWorkerRecolorRequest = {
+  readonly type: 'recolor'
+  readonly runtimeSessionId: string
+  readonly theme: string
+  readonly themeRegistration: ShikiWorkerThemeRegistration
+}
+
 type ShikiWorkerDisposeDocumentRequest = {
   readonly type: 'disposeDocument'
   readonly runtimeSessionId: string
@@ -75,6 +82,7 @@ export type ShikiWorkerPreloadRequest = {
 export type ShikiWorkerRequestPayload =
   | ShikiWorkerOpenRequest
   | ShikiWorkerEditRequest
+  | ShikiWorkerRecolorRequest
   | ShikiWorkerDisposeDocumentRequest
   | ShikiWorkerRuntimeBarrierRequest
   | ShikiWorkerIdleFenceRequest

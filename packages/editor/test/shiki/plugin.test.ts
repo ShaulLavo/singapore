@@ -147,52 +147,6 @@ describe('createShikiHighlighterPlugin', () => {
     expect(workerOwner.dispose).not.toHaveBeenCalled()
   })
 
-  it('re-registers a fresh provider when the theme changes and honors unsubscribe', () => {
-    let listener: (() => void) | null = null
-    const unsubscribe = vi.fn()
-    const registrations: {
-      provider: EditorHighlighterProvider
-      disposed: boolean
-    }[] = []
-    const context: Partial<EditorPluginContext> = {
-      registerHighlighter: (provider) => {
-        const registration = { provider, disposed: false }
-        registrations.push(registration)
-        return {
-          dispose: () => {
-            registration.disposed = true
-          },
-        }
-      },
-    }
-
-    const disposables = toDisposables(
-      createShikiHighlighterPlugin(
-        pluginOptions({
-          onThemeChanged: (nextListener) => {
-            listener = nextListener
-            return unsubscribe
-          },
-        }),
-      ).activate(context as EditorPluginContext),
-    )
-
-    expect(registrations).toHaveLength(1)
-    expect(listener).not.toBeNull()
-
-    listener!()
-
-    expect(registrations).toHaveLength(2)
-    expect(registrations[0]!.disposed).toBe(true)
-    expect(registrations[1]!.disposed).toBe(false)
-    expect(registrations[1]!.provider).not.toBe(registrations[0]!.provider)
-
-    for (const disposable of disposables) disposable.dispose()
-
-    expect(unsubscribe).toHaveBeenCalledTimes(1)
-    expect(registrations[1]!.disposed).toBe(true)
-  })
-
   it('uses a provided worker owner for sessions without disposing it', () => {
     const sharedOwner = {
       canUseWorker: vi.fn(() => true),

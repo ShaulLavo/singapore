@@ -1,5 +1,6 @@
 import type { TextEdit } from '../tokens'
-import type { GrammarState, HighlighterGeneric, ThemedToken } from 'shiki/core'
+import type { HighlighterGeneric, ThemedToken } from 'shiki/core'
+import { createScopedLineTokenizer } from './scopedTokens'
 
 export interface TokenLineSnapshot {
   text: string
@@ -29,16 +30,22 @@ export interface LineTokens {
 export type TokenizeLineFn = (line: string, previousState: unknown) => LineTokens
 export type StatesEqualFn = (left: unknown, right: unknown) => boolean
 
-export interface CreateIncrementalTokenizerOptions {
+type TokenizerHighlighter = Pick<HighlighterGeneric<string, string>, 'getLanguage' | 'getTheme'>
+
+export interface CreateIncrementalTokenizerOptions<
+  Highlighter = HighlighterGeneric<string, string>,
+> {
   lang: string
   theme: string
   code?: string
-  highlighter: HighlighterGeneric<string, string>
+  highlighter: Highlighter
 }
 
-export interface CreateIncrementalTokenizerResult {
-  tokenizer: IncrementalTokenizer
-  highlighter: HighlighterGeneric<string, string>
+export interface CreateIncrementalTokenizerResult<
+  Highlighter = HighlighterGeneric<string, string>,
+> {
+  tokenizer: IncrementalTokenizer & { setTheme(theme: string): void }
+  highlighter: Highlighter
 }
 
 export interface IncrementalTokenizer {
@@ -66,29 +73,6 @@ function cloneSnapshot(lines: readonly LineState[]): TokenLineSnapshot[] {
     text: line.text,
     tokens: line.tokens.slice(),
   }))
-}
-
-function grammarStatesEqual(
-  left: GrammarState | undefined,
-  right: GrammarState | undefined,
-  theme: string,
-): boolean {
-  if (left === right) return true
-  if (!left || !right) return false
-  if (left.lang !== right.lang || left.theme !== right.theme) return false
-
-  const leftStack = left.getInternalStack(theme)
-  const rightStack = right.getInternalStack(theme)
-
-  if (leftStack && rightStack) return leftStack.equals(rightStack)
-  if (leftStack || rightStack) return false
-
-  const leftScopes = left.getScopes(theme) ?? []
-  const rightScopes = right.getScopes(theme) ?? []
-
-  if (leftScopes.length !== rightScopes.length) return false
-
-  return leftScopes.every((scope, index) => scope === rightScopes[index])
 }
 
 function tokenLinesEqual(left: readonly ThemedToken[], right: readonly ThemedToken[]): boolean {
@@ -387,57 +371,18 @@ function compareEditsDescending(left: TextEdit, right: TextEdit): number {
   return right.from - left.from || right.to - left.to
 }
 
-function isGrammarState(value: unknown): value is GrammarState {
-  return value instanceof Object && 'lang' in value
-}
-
-function createShikiLineFn(
-  highlighter: HighlighterGeneric<string, string>,
-  lang: string,
-  theme: string,
-): TokenizeLineFn {
-  return (line, previousState) => {
-    const grammarState = isGrammarState(previousState) ? previousState : undefined
-
-    const tokenLines = highlighter.codeToTokensBase(line, {
-      lang,
-      theme,
-      grammarState,
-      // Shiki defaults this to 500ms and textmate measures it on the wall clock, so a loaded
-      // machine gives a different answer than an idle one for the same line. On a bail it returns
-      // the whole line as one token and the incoming stack UNADVANCED — which here is worse than
-      // slow: the unadvanced state is what the next line is tokenized from and what the cache
-      // keeps, so one late line silently re-colours the rest of the document. A budget that has
-      // to be right about correctness cannot be read off the clock; 0 turns the guard off
-      // (`if (timeLimit !== 0)` in textmate's _tokenizeString).
-      tokenizeTimeLimit: 0,
-    })
-
-    return {
-      tokens: tokenLines[0] ?? [],
-      state: highlighter.getLastGrammarState(tokenLines),
-    }
-  }
-}
-
-function createShikiStatesEqualFn(theme: string): StatesEqualFn {
-  return (left, right) => {
-    const leftState = isGrammarState(left) ? left : undefined
-    const rightState = isGrammarState(right) ? right : undefined
-    return grammarStatesEqual(leftState, rightState, theme)
-  }
-}
-
-export async function createIncrementalTokenizer(
-  options: CreateIncrementalTokenizerOptions,
-): Promise<CreateIncrementalTokenizerResult> {
+export async function createIncrementalTokenizer<Highlighter extends TokenizerHighlighter>(
+  options: CreateIncrementalTokenizerOptions<Highlighter>,
+): Promise<CreateIncrementalTokenizerResult<Highlighter>> {
   const { highlighter } = options
 
-  const tokenizeLine = createShikiLineFn(highlighter, options.lang, options.theme)
-  const statesEqual = createShikiStatesEqualFn(options.theme)
+  const engine = createScopedLineTokenizer(highlighter, options.lang, options.theme)
 
   return {
-    tokenizer: new IncrementalShikiTokenizer(tokenizeLine, statesEqual, options.code),
+    tokenizer: Object.assign(
+      new IncrementalShikiTokenizer(engine.tokenize, engine.statesEqual, options.code),
+      { setTheme: engine.setTheme },
+    ),
     highlighter,
   }
 }

@@ -6,7 +6,7 @@ import {
   type LanguageRegistration,
   type ThemeRegistrationAny,
 } from 'shiki/core'
-import { createIncrementalTokenizer, type IncrementalTokenizer } from './tokenizer'
+import { createIncrementalTokenizer, type CreateIncrementalTokenizerResult } from './tokenizer'
 import { packTokenLines, snapshotToPackedEditorTokens } from './editor-tokens'
 import type { EditorTheme } from '../theme'
 import { packedEditorTokenTransfers } from '../syntax/packedTokens'
@@ -22,16 +22,17 @@ import type {
   ShikiWorkerTransportResult,
   ShikiWorkerThemeRegistration,
   ShikiWorkerThemeRequest,
+  ShikiWorkerRecolorRequest,
 } from './workerTypes'
 
 type DocumentState = {
   readonly documentId: string
   readonly runtimeSessionId: string
   readonly lang: string
-  readonly theme: string
-  readonly themeRegistration: ShikiWorkerThemeRegistration
+  theme: string
+  themeRegistration: ShikiWorkerThemeRegistration
   readonly highlighter: HighlighterGeneric<string, string>
-  readonly tokenizer: IncrementalTokenizer
+  readonly tokenizer: CreateIncrementalTokenizerResult['tokenizer']
 }
 
 const documents = new Map<string, DocumentState>()
@@ -71,6 +72,9 @@ const runRequest = (
   }
   if (payload.type === 'edit') {
     return runDocumentTask(payload.runtimeSessionId, () => editDocument(payload))
+  }
+  if (payload.type === 'recolor') {
+    return runDocumentTask(payload.runtimeSessionId, () => recolorDocument(payload))
   }
   if (payload.type === 'disposeDocument') {
     return runDocumentTask(payload.runtimeSessionId, () => {
@@ -180,6 +184,19 @@ const editDocument = async (
       existing.themeRegistration,
     ),
   }
+}
+
+const recolorDocument = async (
+  payload: ShikiWorkerRecolorRequest,
+): Promise<ShikiWorkerTransportResult | undefined> => {
+  const state = documents.get(payload.runtimeSessionId)
+  if (!state) return undefined
+
+  await state.highlighter.loadTheme(payload.themeRegistration as ThemeRegistrationAny)
+  state.tokenizer.setTheme(payload.theme)
+  state.theme = payload.theme
+  state.themeRegistration = payload.themeRegistration
+  return resultFromState(state)
 }
 
 const openRequestFromEdit = (payload: ShikiWorkerEditRequest, text: string) => ({

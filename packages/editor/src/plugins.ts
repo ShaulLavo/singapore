@@ -168,6 +168,7 @@ export type EditorHighlighterSessionOptions = {
 }
 
 export type EditorHighlighterSession = EditorDisposable & {
+  onDidChangeTheme?(listener: () => void): (() => void) | void
   refresh(snapshot: PieceTableSnapshot, fullText?: string): Promise<EditorHighlightResult>
   applyChange(change: DocumentSessionChange): Promise<EditorHighlightResult>
 }

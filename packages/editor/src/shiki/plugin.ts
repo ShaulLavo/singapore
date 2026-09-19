@@ -29,13 +29,7 @@ export type ShikiHighlighterPluginOptions = {
   readonly theme?: string | (() => string)
   readonly languages?: ShikiLanguageMap
   readonly preloadLanguages?: readonly string[]
-  /**
-   * Themes to name alongside the active one when a session is created. The
-   * worker cache-keys a highlighter on its theme set, so naming a stable set
-   * keeps theme swaps on one highlighter instead of building a new one each
-   * time. Resolved per session, so a host can widen the set once switching
-   * themes becomes likely rather than paying for it at every document open.
-   */
+  /** Additional themes to load in the background after a session opens. */
   readonly preloadThemes?: readonly string[] | (() => readonly string[])
   readonly onThemeChanged?: (listener: () => void) => (() => void) | void
   readonly workerOwner?: ShikiWorkerOwner
@@ -61,26 +55,7 @@ export function createShikiHighlighterPlugin(options: ShikiHighlighterPluginOpti
   return {
     name: 'shiki-highlighter',
     activate(context) {
-      let registration = context.registerHighlighter(createShikiHighlighterProvider(options))
-
-      const reloadProvider = (): void => {
-        registration.dispose()
-        registration = context.registerHighlighter(createShikiHighlighterProvider(options))
-      }
-      const unsubscribeTheme = options.onThemeChanged?.(reloadProvider)
-
-      return [
-        {
-          dispose: () => {
-            registration.dispose()
-          },
-        },
-        {
-          dispose: () => {
-            unsubscribeTheme?.()
-          },
-        },
-      ]
+      return context.registerHighlighter(createShikiHighlighterProvider(options))
     },
   }
 }
@@ -127,6 +102,16 @@ const createSession = (
     ...sessionOptions,
     lang,
     theme,
+    onDidChangeTheme: pluginOptions.onThemeChanged,
+    resolveTheme: (currentTheme) => {
+      const nextTheme = shikiThemeName(pluginOptions)
+      if (nextTheme === currentTheme) return null
+
+      return {
+        theme: nextTheme,
+        registrations: resolveDocumentRegistrations(null, nextTheme, pluginOptions, registrations),
+      }
+    },
     registrations: resolveDocumentRegistrations(lang, theme, pluginOptions, registrations),
     preloadRegistrations: () =>
       resolvePreloadRegistrations(lang, theme, pluginOptions, registrations),

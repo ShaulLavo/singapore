@@ -50,6 +50,8 @@ export type ShikiHighlighterSessionOptions = Omit<
   readonly theme: string
   readonly registrations: Promise<ShikiResolvedRegistrations> | ShikiResolvedRegistrations
   readonly preloadRegistrations?: ShikiPreloadRegistrationSource
+  readonly resolveTheme?: (currentTheme: string) => ShikiThemeOptions | null
+  readonly onDidChangeTheme?: (listener: () => void) => (() => void) | void
 }
 
 export type ShikiThemeOptions = {
@@ -349,20 +351,22 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   private readonly documentId: string
   private readonly runtimeSessionId: string
   private readonly lang: string
-  private readonly theme: string
-  private readonly registrations: Promise<ShikiResolvedRegistrations>
+  private theme: string
+  private registrations: Promise<ShikiResolvedRegistrations>
+  public readonly onDidChangeTheme: ShikiHighlighterSessionOptions['onDidChangeTheme']
   private readonly preloadRegistrations: ShikiPreloadRegistrationSource | null
   private snapshot: PieceTableSnapshot
   private textSnapshot: DocumentTextSnapshot
   // The whole document's tokens, kept packed so an edit answer only has to splice its lines in.
   private store: EditorTokenStore | null = null
+  private currentTheme: EditorTheme | null | undefined
   private preloadScheduled = false
   private opened = false
   private disposed = false
   private task: Promise<void> = Promise.resolve()
 
   public constructor(
-    options: ShikiHighlighterSessionOptions,
+    private readonly options: ShikiHighlighterSessionOptions,
     private readonly owner: ShikiWorkerOwner,
     private readonly trackTask: <T>(runtimeSessionId: string, task: Promise<T>) => Promise<T>,
   ) {
@@ -370,6 +374,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     this.runtimeSessionId = options.runtimeSessionId ?? createEditorRuntimeSessionId()
     this.lang = options.lang
     this.theme = options.theme
+    this.onDidChangeTheme = options.onDidChangeTheme
     this.registrations = Promise.resolve(options.registrations)
     this.preloadRegistrations = options.preloadRegistrations ?? null
     this.snapshot = options.snapshot
@@ -385,6 +390,11 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
     return this.enqueueRequest(async () => {
       if (this.disposed) return emptyHighlightResult()
+
+      await this.synchronizeTheme()
+      if (this.opened && pieceTableSnapshotsHaveSameText(this.snapshot, snapshot)) {
+        return { tokens: this.currentTokens(), theme: this.currentTheme }
+      }
 
       const textSnapshot = createDocumentTextSnapshot(snapshot, fullText)
       const documentText = textSnapshot.materializeFullText()
@@ -404,6 +414,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       this.opened = true
       this.disposed = false
       this.store = result?.tokensPacked ? EditorTokenStore.fromPacked(result.tokensPacked) : null
+      this.currentTheme = result?.theme
       return { tokens: this.currentTokens(), theme: result?.theme }
     })
   }
@@ -413,6 +424,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
     return this.enqueueRequest(async () => {
       if (this.disposed) return emptyHighlightResult()
+
+      await this.synchronizeTheme()
 
       const nextTextSnapshot = documentSessionChangeTextSnapshot(change)
       const payload = await this.editPayloadForChange(change, nextTextSnapshot)
@@ -459,7 +472,34 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     return result
   }
 
+  private async synchronizeTheme(): Promise<void> {
+    const next = this.options.resolveTheme?.(this.theme)
+    if (!next || next.theme === this.theme) return
+
+    const registrations = await next.registrations
+    if (this.disposed) return
+
+    if (!this.opened) {
+      this.theme = next.theme
+      this.registrations = Promise.resolve(registrations)
+      return
+    }
+
+    const result = await this.owner.request({
+      type: 'recolor',
+      runtimeSessionId: this.runtimeSessionId,
+      theme: next.theme,
+      themeRegistration: registrations.themeRegistration,
+    })
+    if (this.disposed) return
+
+    this.theme = next.theme
+    this.registrations = Promise.resolve(registrations)
+    this.adoptEditResult(result)
+  }
+
   private adoptEditResult(result: ShikiWorkerTransportResult | undefined): void {
+    if (result?.theme !== undefined) this.currentTheme = result.theme
     if (result?.tokensPacked) {
       this.store = EditorTokenStore.fromPacked(result.tokensPacked)
       return

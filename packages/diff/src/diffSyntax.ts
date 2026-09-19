@@ -2,7 +2,10 @@ import {
   createDocumentTextSnapshot,
   createPieceTableSnapshot,
 } from '@singapore-editor/core/document'
-import type { EditorHighlighterProvider } from '@singapore-editor/core/extensions'
+import type {
+  EditorHighlighterProvider,
+  EditorHighlighterSession,
+} from '@singapore-editor/core/extensions'
 import {
   createEmptySyntaxResult,
   createSyntaxLanguageConfiguration,
@@ -159,20 +162,46 @@ export class DiffSyntaxController {
       if (!session) continue
 
       sessions.push(session)
+      const source = {
+        lineStarts: document.lineStarts,
+        side: document.side,
+        tokens: toEditorTokenStore([]),
+      }
+      const unsubscribe = session.onDidChangeTheme?.(() => {
+        void this.recolorSource(file, session, source)
+      })
+      if (unsubscribe) sessions.push({ dispose: unsubscribe })
       const result = await session.refresh()
       if (!context.isCurrent()) {
         disposeMutableSessions(sessions)
         return null
       }
 
-      sources.push({
-        lineStarts: document.lineStarts,
-        side: document.side,
-        tokens: result.tokens,
-      })
+      source.tokens = toEditorTokenStore(result.tokens)
+      sources.push(source)
     }
 
     return sources
+  }
+
+  private async recolorSource(
+    file: DiffFile,
+    session: DiffSyntaxServiceSession,
+    source: { lineStarts: readonly number[]; side: DiffSyntaxSourceSide; tokens: EditorTokenStore },
+  ): Promise<void> {
+    try {
+      const result = await session.refresh()
+      source.tokens = toEditorTokenStore(result.tokens)
+      if (this.disposed || this.file !== file || !this.sessions.includes(session)) return
+
+      this.sources = this.sources.map((entry) =>
+        entry.side === source.side ? { ...source } : entry,
+      )
+      this.reproject()
+      this.options.onDidChangeTokens()
+    } catch {
+      // Keep the last colors if the worker fails; a subsequent change can retry.
+    }
   }
 
   private applySources(
@@ -257,6 +286,7 @@ type DiffSyntaxService = {
 }
 
 type DiffSyntaxServiceSession = {
+  onDidChangeTheme?: EditorHighlighterSession['onDidChangeTheme']
   refresh(): Promise<EditorSyntaxResult>
   dispose(): void
 }
@@ -311,15 +341,10 @@ function treeSitterDiffSyntaxSession(
 
 function tokenHighlighterDiffSyntaxSession(
   document: DiffSyntaxDocument,
-  session: {
-    refresh(
-      snapshot: EditorSyntaxServiceRequest['snapshot'],
-      fullText?: string,
-    ): Promise<{ readonly tokens: EditorTokenInput }>
-    dispose(): void
-  },
+  session: EditorHighlighterSession,
 ): DiffSyntaxServiceSession {
   return {
+    onDidChangeTheme: session.onDidChangeTheme,
     dispose: () => session.dispose(),
     refresh: async () => {
       const result = await session.refresh(document.request.snapshot, document.text)

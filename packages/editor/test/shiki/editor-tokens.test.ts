@@ -156,10 +156,10 @@ describe('shiki-to-editor integration', () => {
 
   it('tokenizes code through Shiki and produces valid EditorToken offsets', async () => {
     const code = 'const x = 1;\nconst y = 2;'
-    const highlighter = (await createHighlighter({
+    const highlighter = await createHighlighter({
       langs: ['typescript'],
       themes: ['github-dark'],
-    })) as unknown as Parameters<typeof createIncrementalTokenizer>[0]['highlighter']
+    })
     const { tokenizer } = await createIncrementalTokenizer({
       lang: 'typescript',
       theme: 'github-dark',

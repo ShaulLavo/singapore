@@ -367,6 +367,40 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
     )
   })
 
+  it('recolors existing diff sessions and releases theme subscriptions on close', async () => {
+    let color = 'red'
+    const listeners = new Set<() => void>()
+    const refresh = async () => ({
+      tokens: EditorTokenStore.fromTokens([{ start: 5, end: 8, style: { color } }]),
+    })
+    const createSession = vi.fn(() => ({
+      refresh,
+      applyChange: refresh,
+      dispose: vi.fn(),
+      onDidChangeTheme: (listener: () => void) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+    }))
+    const { plugin } = mountDiff({
+      file: typescriptDiff(),
+      syntaxBackend: { kind: 'highlighter', provider: { createSession } },
+      syntaxHighlight: true,
+    })
+    await flushUntil(() => plugin.getTokens().length > 0)
+    expect(plugin.getTokens()[0]?.style.color).toBe('red')
+    const sessions = createSession.mock.calls.length
+    color = 'blue'
+    for (const listener of listeners) listener()
+    await flushUntil(() => plugin.getTokens()[0]?.style.color === 'blue')
+    expect(plugin.getTokens().every((token) => token.style.color === 'blue')).toBe(true)
+    expect(createSession).toHaveBeenCalledTimes(sessions)
+    plugin.setFile(null)
+    expect(listeners.size).toBe(0)
+  })
+
   it('exposes projected tokens for the host to re-apply after setText', async () => {
     const { plugin } = mountDiff({
       file: typescriptDiff(),

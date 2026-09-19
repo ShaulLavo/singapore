@@ -187,6 +187,7 @@ export class EditorSyntaxController {
   private syntaxSession: EditorSyntaxSession | null = null
   private syntaxSessionIncludesCaptures = false
   private highlighterSession: EditorHighlighterSession | null = null
+  private unsubscribeHighlighterTheme: (() => void) | null = null
   private preparedSyntaxDisposer: (() => void) | null = null
   private preparedHighlighterDisposer: (() => void) | null = null
   private preparedInitialTokensInstalled = false
@@ -399,6 +400,7 @@ export class EditorSyntaxController {
         document.snapshot,
       )
     this.preparedHighlighterDisposer = prepared?.highlighter?.dispose ?? null
+    this.observeHighlighterTheme()
     this.syntaxSession = prepared?.structural?.session ?? this.createSyntaxSession(document)
     this.preparedSyntaxDisposer = prepared?.structural?.dispose ?? null
     this.skipNextStructuralRefresh =
@@ -727,6 +729,7 @@ export class EditorSyntaxController {
     )
     this.refreshHighlighterTheme()
     this.refreshHighlightTokens(this.options.getDocumentVersion(), null)
+    this.observeHighlighterTheme()
   }
 
   private createSyntaxSession(
@@ -756,6 +759,14 @@ export class EditorSyntaxController {
       })
     }
     return session
+  }
+
+  private observeHighlighterTheme(): void {
+    this.unsubscribeHighlighterTheme?.()
+    this.unsubscribeHighlighterTheme =
+      this.highlighterSession?.onDidChangeTheme?.(() => {
+        this.refreshHighlightTokens(this.options.getDocumentVersion(), null, { delayMs: 0 })
+      }) ?? null
   }
 
   private preparedStructuralConfiguration(
@@ -893,6 +904,7 @@ export class EditorSyntaxController {
       session.getSnapshot(),
     )
     this.refreshHighlightTokens(documentVersion, null)
+    this.observeHighlighterTheme()
   }
 
   private preparedResultStillCurrent(
@@ -995,6 +1007,8 @@ export class EditorSyntaxController {
   }
 
   private disposeHighlighterSession(): void {
+    this.unsubscribeHighlighterTheme?.()
+    this.unsubscribeHighlighterTheme = null
     this.highlightRequests.cancel()
     this.highlightDispatchPoint = null
     if (this.preparedHighlighterDisposer) this.preparedHighlighterDisposer()

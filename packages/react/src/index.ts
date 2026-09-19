@@ -995,12 +995,11 @@ function preparedDocumentIdentity(
 
 function preparedTagsKey(document: {
   readonly documentConfigurationTag?: readonly EditorPreparedTagValue[]
-  readonly highlighterConfigurationTag?: readonly EditorPreparedTagValue[]
   readonly structuralConfigurationTag?: readonly EditorPreparedTagValue[]
 }): string {
+  // Highlighter tags validate a prepared result at attachment; changing colors is not a new document.
   return JSON.stringify([
     document.documentConfigurationTag ?? [],
-    document.highlighterConfigurationTag ?? [],
     document.structuralConfigurationTag ?? [],
   ])
 }

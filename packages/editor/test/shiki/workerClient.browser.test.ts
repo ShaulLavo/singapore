@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createDocumentTextSnapshot,
   createPieceTableSnapshot,
@@ -55,6 +55,58 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
 
   afterEach(async () => {
     await workerOwner.dispose()
+  })
+
+  it('recolors the same worker document and keeps subsequent edits incremental', async () => {
+    const dark = await resolveRegistrations()
+    const lightTheme = (await import('@shikijs/themes/github-light')).default
+    const light = { ...dark, themeRegistration: { ...lightTheme, name: 'github-light' } }
+    let selected = { theme: 'github-dark', registrations: dark }
+    const text = 'const value = `hello ${42}`;'
+    const snapshot = createPieceTableSnapshot(text)
+    const session = workerOwner.createSession({
+      documentId: 'recolor.ts',
+      lang: 'typescript',
+      languageId: 'typescript',
+      snapshot,
+      fullText: text,
+      ...selected,
+      resolveTheme: () => selected,
+    })!
+    const requests = vi.spyOn(workerOwner, 'request')
+    const initial = (await session.refresh(snapshot)).tokens.toTokens()
+    selected = { theme: 'github-light', registrations: light }
+    const recolored = (await session.refresh(snapshot)).tokens.toTokens()
+    expect(recolored).not.toEqual(initial)
+    const editedText = text.replace('42', 'value')
+    const edited = await session.applyChange(
+      createChange(editedText, {
+        from: text.indexOf('42'),
+        to: text.indexOf('42') + 2,
+        text: 'value',
+      }),
+    )
+    expect(requests.mock.calls.map(([payload]) => payload.type)).toEqual([
+      'open',
+      'recolor',
+      'edit',
+    ])
+    const fresh = workerOwner.createSession({
+      documentId: 'fresh-light.ts',
+      lang: 'typescript',
+      languageId: 'typescript',
+      snapshot: createPieceTableSnapshot(editedText),
+      fullText: editedText,
+      ...selected,
+    })!
+    expect(edited.tokens.toTokens()).toEqual(
+      (await fresh.refresh(createPieceTableSnapshot(editedText))).tokens.toTokens(),
+    )
+    selected = { theme: 'github-dark', registrations: dark }
+    await session.refresh(createPieceTableSnapshot(editedText))
+    expect(requests.mock.calls.at(-1)?.[0].type).toBe('recolor')
+    session.dispose()
+    fresh.dispose()
   })
 
   it('tokenizes code through the real browser Worker', async () => {

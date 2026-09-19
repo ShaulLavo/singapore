@@ -1,14 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createHighlighter } from 'shiki'
 
 import { createIncrementalTokenizer as createCoreIncrementalTokenizer } from '../../src/shiki'
 
-type TestTokenizerOptions = Omit<
-  Parameters<typeof createCoreIncrementalTokenizer>[0],
-  'highlighter'
-> & {
-  highlighter?: Parameters<typeof createCoreIncrementalTokenizer>[0]['highlighter']
+type TestTokenizerOptions = {
+  lang: string
+  theme: string
+  code?: string
+  highlighter?: import('shiki/core').HighlighterGeneric<string, string>
 }
 
 async function createIncrementalTokenizer(options: TestTokenizerOptions) {
@@ -17,7 +17,7 @@ async function createIncrementalTokenizer(options: TestTokenizerOptions) {
     ((await createHighlighter({
       themes: [options.theme],
       langs: [options.lang],
-    })) as unknown as Parameters<typeof createCoreIncrementalTokenizer>[0]['highlighter'])
+    })) as unknown as import('shiki/core').HighlighterGeneric<string, string>)
 
   return createCoreIncrementalTokenizer({ ...options, highlighter })
 }
@@ -231,10 +231,11 @@ describe('IncrementalShikiTokenizer batches', () => {
     })
     highlighters.push(highlighter)
     let tokenizedLines = 0
-    const codeToTokensBase = highlighter.codeToTokensBase.bind(highlighter)
-    highlighter.codeToTokensBase = (...args) => {
+    const grammar = highlighter.getLanguage('typescript')
+    const tokenizeLine = grammar.tokenizeLine.bind(grammar)
+    grammar.tokenizeLine = (...args) => {
       tokenizedLines += 1
-      return codeToTokensBase(...args)
+      return tokenizeLine(...args)
     }
 
     const patches = tokenizer.applyEdits([
@@ -534,27 +535,19 @@ describe('grammar state stabilization', () => {
     // the next line and caches it — so a busy moment re-colours everything after it. This is the
     // bug that made the template-literal case above fail about once in forty runs of the full
     // suite, and never once on an idle machine.
-    const seen: Array<Record<string, unknown>> = []
     const real = await createHighlighter({ themes: ['github-dark'], langs: ['typescript'] })
-    const spy = {
-      ...real,
-      codeToTokensBase: (code: string, options: Record<string, unknown>) => {
-        seen.push(options)
-        return real.codeToTokensBase(code, options as never)
-      },
-    } as unknown as Parameters<typeof createIncrementalTokenizer>[0]['highlighter']
-
-    const { tokenizer } = await createIncrementalTokenizer({
+    const tokenize = vi.spyOn(real.getLanguage('typescript'), 'tokenizeLine')
+    const { tokenizer } = await createCoreIncrementalTokenizer({
       lang: 'typescript',
       theme: 'github-dark',
       code: 'const a = 1',
-      highlighter: spy,
+      highlighter: real,
     })
     tokenizer.update('const a = 1\nconst b = 2')
 
     highlighters.push(real)
 
-    expect(seen.length).toBeGreaterThan(0)
-    expect(seen.every((options) => options.tokenizeTimeLimit === 0)).toBe(true)
+    expect(tokenize.mock.calls.length).toBeGreaterThan(0)
+    expect(tokenize.mock.calls.every((args) => args[2] === 0)).toBe(true)
   })
 })

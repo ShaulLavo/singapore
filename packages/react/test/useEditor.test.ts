@@ -661,6 +661,29 @@ describe('useEditor', () => {
     mounted.dispose()
   })
 
+  it('keeps the attached document when the prepared highlighter theme tag changes', () => {
+    const buffer = createEditorTextBuffer('const value = 1')
+    const view = createEditorViewSession(buffer)
+    const document = {
+      buffer,
+      view,
+      text: buffer.materializeFullText(),
+      documentId: 'theme.ts',
+      languageId: 'typescript',
+    }
+    const mounted = mountReactEditor({
+      document: { ...document, highlighterConfigurationTag: ['dark'] },
+    })
+    const instance = mounted.controller.getEditor()
+    expect(instance).not.toBeNull()
+    if (!instance) return
+    const attach = vi.spyOn(instance, 'attachSession')
+    mounted.render({ document: { ...document, highlighterConfigurationTag: ['light'] } })
+    expect(attach).not.toHaveBeenCalled()
+    expect(mounted.controller.materializeFullText()).toBe('const value = 1')
+    mounted.dispose()
+  })
+
   it('restores live buffer view scroll position without a reactive scroll prop', () => {
     const buffer = createEditorTextBuffer('alpha')
     const view = createEditorViewSession(buffer)
