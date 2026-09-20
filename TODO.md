@@ -31,7 +31,7 @@ Scope ideas, smallest first:
 - `validatePieceTreeInvariants(snapshot)` — walk the tree and re-derive every cached field
   (subtree lengths, visible lengths, line breaks, min/max order), check in-order `order` is
   ascending, check the reverse index mirrors the tree. Usable as a property check in tests.
-- `debugPrintPieceTree(snapshot)` — text dump of tree shape with metadata.
+- `debugPrintPieceTree(snapshot)` — text dump of tree shape with piece metadata.
 - Visual layer on top: render snapshots side by side across undo history, highlight which nodes
   were path-copied by an edit. Would double as a teaching/marketing artifact for the editor.
 
@@ -154,16 +154,18 @@ Stepping stones (each independently justified):
 2. Epoch-based reclamation — already wanted for tombstone compaction; becomes the arena GC
    (workers advertise oldest held root; recycle nodes unreachable from anything older).
 3. SAB arena + atomic root publish — tier-2-only storage backend swap at the end.
-4. **Worker-parallel find-all (the payoff consumer).** Open the same immutable snapshot on N
-   workers, partition the document into line-aligned chunks, and stream results back while the
-   UI stays responsive. Follow Fred's model rather than parallelizing `String.indexOf` blindly.
-   Share only immutable text/source data; selections and UI remain per view. Reuse the current
-   incremental document transport so workers do not each receive another whole flat string.
-   Tier 1 works before shared storage exists; tier 2 can be measured as a later transport upgrade.
-   Preserve cross-chunk matches, cancellation, stable result ordering, and revision tags.
-   Merge results through a bounded queue, not an unbounded event stream or one huge final array.
-   Extend from single-buffer find to a workspace-owned file set only through Platform's existing
-   file and environment owners. Do not make the editor package read the filesystem.
+4. **Worker-parallel find-all (the payoff consumer).** Fred-style: chunk the document by line
+   ranges, fan the _same immutable snapshot_ out to N workers (tier 1: chunk mirrors kept in
+   sync via the now-existing `DocumentEditChain`; tier 2: read the SAB root directly), each worker searches its
+   chunks and streams matches back through a results queue so the UI renders matches + a
+   progress bar incrementally; cancellation via a shared flag/epoch workers poll between
+   chunks. Persistence makes this lock-free by construction — a worker can never observe a
+   mutation, only an older root. Fred details worth copying: the main/UI thread participates
+   in the search with roughly a 2x share of the work (it would otherwise idle waiting to
+   join), and per-worker timing is surfaced in its debug overlay (his numbers: ~23ms over a
+   20MB/636k-line file, debug build). Extends naturally from one buffer to cross-file find-all
+   over a chosen root directory. Single-threaded in-buffer find improvements are a separate
+   TODO ("Faster in-buffer find"); this item is strictly the parallel/multi-file tier.
 
 ## Undo history as a graph (never lose an edit state)
 
@@ -171,15 +173,18 @@ The fredbuf trick, condensed: with append-only text buffers and a path-copying (
 piece tree, every edit already produces a brand-new root while old roots stay valid forever —
 so keeping _all_ history is just not dropping old root pointers. fredbuf's undo entry is
 literally `{ tree root, edit offset }` (`fredbuf.h:21` in the local clone), i.e. "every edit is
-two pointers big"; Fred keeps the branching history in the editor layer above that.
+two pointers big"; Fred builds its branching history graph in the editor layer on top of the
+buffer's `commit_head()/head()/snap_to()` primitives, and undo/redo just swap which root is
+current.
 
 We already have every prerequisite: a persistent path-copying treap
 (`packages/textbuffer/src/tree.ts`), append-only buffers
 (`packages/textbuffer/src/buffers.ts`), O(1) snapshots, and
 `packages/editor/src/history.ts` storing `{ snapshot, selections, transaction }` per entry in
 persistent stacks, with typing-run coalescing (`amendEditorHistory` + `shouldAmendTypingRun` in
-`documentSession.ts`). The single flaw: `history.ts` is a linear undo/redo stack, and a new edit
-clears redo rather than preserving the alternate branch.
+`documentSession.ts`). The single flaw: `commitEditorHistory` (`history.ts`, the `redo: null`)
+discards the redo branch on every new commit — editing after an undo orphans the abandoned
+states, exactly the behavior Fred was built to escape.
 
 Change: replace the twin undo/redo stacks with a tree.
 `HistoryNode { snapshot, selections, transaction, parent, children[], createdAt }` plus a
@@ -348,7 +353,7 @@ the shallow always-on dashboard.
 
 ## Tree-sitter syntax tree inspector (with a Zed comparison step)
 
-Fred binds F11 to panel showing the live tree-sitter parse tree of the current buffer and
+Fred binds F11 to a panel showing the live tree-sitter parse tree of the current buffer and
 uses it to debug highlight queries. We have the parse infra (`packages/tree-sitter`, worker
 backend; `packages/editor/src/syntax`); the inspector is mostly UI:
 
