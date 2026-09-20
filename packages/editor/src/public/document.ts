@@ -48,6 +48,7 @@ export {
   subscribeDocumentMutationLeaseState,
 } from '../documentSession'
 export { createHistoryViewer, layoutHistoryGraph } from '../historyViewer'
+export type { EditorCollapsedRegion, EditorManualFold, EditorViewFoldState } from '../viewFolds'
 export type {
   HistoryComparison,
   HistoryComparisonSide,

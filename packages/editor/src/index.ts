@@ -423,3 +423,4 @@ export type {
   MergeConflictSide,
   TextOffsetRange,
 } from './editor'
+export type { EditorCollapsedRegion, EditorManualFold, EditorViewFoldState } from './viewFolds'

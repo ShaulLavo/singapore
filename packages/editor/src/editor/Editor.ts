@@ -19,6 +19,7 @@ import {
 import { EditorFallbackFoldController } from './fallbackFoldController'
 import type { IndentationFoldIndex } from './indentationFoldIndex'
 import { EditorFoldState } from './foldState'
+import { anchorManualFolds, resolveManualFolds, type EditorViewFoldState } from '../viewFolds'
 import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
 import type { EditorKeymapContext } from '../keymap/conditions'
@@ -510,6 +511,11 @@ export class Editor {
       this.view,
       () => this.session?.getSnapshot() ?? null,
       () => this.foldCommandLocations().map((location) => location.row),
+      (collapsedRegions) => {
+        const session = editorBufferSession(this.session)
+        if (!session || this.preparingDocument) return
+        session.view.setFoldState({ ...session.view.getFoldState(), collapsedRegions })
+      },
     )
     this.el = this.view.scrollElement
     this.view.setSuspiciousCharacters(
@@ -990,6 +996,7 @@ export class Editor {
   }
 
   private renderContent(text: string | TextSnapshot): void {
+    const savedFolds = editorBufferSession(this.session)?.view.getFoldState()
     this.fallbackFolds.reset()
     this.view.measureInitialViewport()
     const textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
@@ -1001,6 +1008,7 @@ export class Editor {
     this.setTokens(EditorTokenStore.empty())
     this.dropManualFolds()
     this.clearSyntaxFolds()
+    this.restoreViewFolds(savedFolds)
     this.applyRangeDecorations()
     this.notifyViewContributions('content', null)
     this.recordContentSet()
@@ -1886,6 +1894,7 @@ export class Editor {
     textSnapshot: TextSnapshot,
     prepared: EditorPreparedDocumentPayload,
   ): void {
+    const savedFolds = editorBufferSession(this.session)?.view.getFoldState()
     this.view.measureInitialViewport()
     this.document.setRenderedTextSnapshot(textSnapshot)
     this.recordDetachedTextChange(null)
@@ -1895,6 +1904,7 @@ export class Editor {
     this.syncInjectedTextRows()
     this.dropManualFolds()
     this.installPreparedFallbackFolds(prepared.fallbackFoldIndex)
+    this.restoreViewFolds(savedFolds)
     this.applyRangeDecorations()
     this.recordContentSet()
   }
@@ -4038,6 +4048,7 @@ export class Editor {
       carets[0],
     )
     this.manualFolds = this.manualFolds.concat(created)
+    this.persistManualFolds()
     this.syncFoldStateFromProjections()
     for (const fold of created) this.foldState.fold(fold)
 
@@ -4059,6 +4070,7 @@ export class Editor {
 
     const removedCount = this.manualFolds.length - kept.length
     this.manualFolds = kept
+    this.persistManualFolds()
     this.syncFoldStateFromProjections()
 
     this.notifyViewContributions('layout', null)
@@ -4073,6 +4085,24 @@ export class Editor {
   /** Text this editor did not arrive at one edit at a time is text those regions no longer describe. */
   private dropManualFolds(): void {
     this.manualFolds = []
+  }
+
+  private persistManualFolds(): void {
+    const session = editorBufferSession(this.session)
+    if (!session) return
+    session.view.setFoldState({
+      ...session.view.getFoldState(),
+      manualFolds: anchorManualFolds(session.getSnapshot(), this.manualFolds),
+    })
+  }
+
+  private restoreViewFolds(state: EditorViewFoldState | undefined): void {
+    const session = editorBufferSession(this.session)
+    if (!session || !state) return
+    session.view.setFoldState(state)
+    this.manualFolds = resolveManualFolds(session.getSnapshot(), state.manualFolds)
+    this.foldState.restore(state.collapsedRegions)
+    this.foldState.setFoldProjections(this.foldProjections(), this.fallbackFolds.index)
   }
 
   private foldCommandLocations(): readonly FoldCommandLocation[] {

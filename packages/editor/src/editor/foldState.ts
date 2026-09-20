@@ -3,7 +3,6 @@ import {
   anchorAfter,
   anchorBefore,
   offsetToPoint,
-  type PieceTableAnchor,
   type PieceTableSnapshot,
   resolveAnchor,
 } from '@singapore-editor/textbuffer'
@@ -18,6 +17,7 @@ import { EMPTY_FOLD_MARKERS, foldMarkerFromRange, foldRangeKey, foldRangesEqual 
 import { collapsedFoldsHidingRow, foldSpanHidesRow } from './foldOperations'
 import type { IndentationFoldIndex } from './indentationFoldIndex'
 import type { FoldMarkerSource } from '../virtualization/foldMarkerSource'
+import type { EditorCollapsedRegion } from '../viewFolds'
 
 type FoldView = Pick<VirtualizedTextView, 'setFoldState' | 'setIndexedFoldState'>
 type FoldDisplayProjection = EditorDisplayProjection<'folds'>
@@ -28,11 +28,7 @@ type FoldDisplayProjection = EditorDisplayProjection<'folds'>
  * collapsed. Recording offsets instead would lose the collapse on the next parse, because every
  * edit anywhere earlier in the document renumbers them.
  */
-type CollapsedRegion = {
-  readonly start: PieceTableAnchor
-  readonly end: PieceTableAnchor
-  readonly rowSpan: number
-}
+type CollapsedRegion = EditorCollapsedRegion
 
 type ResolvedCollapsedRegion = {
   readonly region: CollapsedRegion
@@ -80,6 +76,7 @@ export class EditorFoldState {
     view: FoldView,
     getSnapshot: () => PieceTableSnapshot | null,
     getCaretRows: () => readonly number[],
+    private readonly onCollapsedRegionsChange?: (regions: readonly CollapsedRegion[]) => void,
   ) {
     this.view = view
     this.getSnapshot = getSnapshot
@@ -121,6 +118,11 @@ export class EditorFoldState {
     this.collapsedRegions = []
     this.collapsedRegionsByFoldKey = new Map()
     this.view.setFoldState(EMPTY_FOLD_MARKERS, null)
+  }
+
+  public restore(regions: readonly CollapsedRegion[]): void {
+    this.collapsedRegions = regions.slice()
+    this.adoptFolds(this.projectedFolds)
   }
 
   public toggle(marker: VirtualizedFoldMarker): boolean {
@@ -250,6 +252,8 @@ export class EditorFoldState {
   }
 
   private syncFoldView(): void {
+    // Session state can seed another view; its array must outlive this renderer's next fold.
+    this.onCollapsedRegionsChange?.(this.collapsedRegions.slice())
     const snapshot = this.getSnapshot()
     if (!snapshot || (this.projectedFolds.length === 0 && !this.indexedFolds?.count)) {
       this.view.setFoldState(EMPTY_FOLD_MARKERS, null)

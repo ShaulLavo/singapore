@@ -32,6 +32,7 @@ import {
   type HistoryNodeId,
 } from './history'
 import type { TextEdit } from './tokens'
+import type { EditorViewFoldState } from './viewFolds'
 export type { HistoryNodeId } from './history'
 import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
@@ -265,6 +266,8 @@ export type EditorViewSession = {
   acceptBufferSelections(selections: SelectionSet<PieceTableAnchor>): void
   getScrollPosition(): EditorViewScrollPosition | undefined
   setScrollPosition(scrollPosition: EditorViewScrollPosition | undefined): void
+  getFoldState(): EditorViewFoldState
+  setFoldState(state: EditorViewFoldState): void
   getMetadata(key: string): EditorViewMetadataValue | undefined
   setMetadata(key: string, value: EditorViewMetadataValue | undefined): void
 }
@@ -1661,6 +1664,7 @@ class PieceTableEditorViewSession implements EditorViewSession {
   private readonly metadata = new Map<string, EditorViewMetadataValue>()
   private readonly buffer: EditorTextBuffer
   private scrollPosition: EditorViewScrollPosition | undefined
+  private foldState: EditorViewFoldState = { collapsedRegions: [], manualFolds: [] }
   private selections: SelectionSet<PieceTableAnchor>
 
   public constructor(buffer: EditorTextBuffer, viewId: string) {
@@ -1740,6 +1744,14 @@ class PieceTableEditorViewSession implements EditorViewSession {
 
   public getMetadata(key: string): EditorViewMetadataValue | undefined {
     return this.metadata.get(key)
+  }
+
+  public getFoldState(): EditorViewFoldState {
+    return this.foldState
+  }
+
+  public setFoldState(state: EditorViewFoldState): void {
+    this.foldState = state
   }
 
   public setMetadata(key: string, value: EditorViewMetadataValue | undefined): void {
