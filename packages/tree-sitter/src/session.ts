@@ -71,6 +71,10 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
   private result: EditorSyntaxResult
   private currentFoldingSupport: EditorSyntaxFoldingSupport
   private languageRegistrationPromise: Promise<boolean> | null = null
+  private readonly pendingLanguages = new Map<
+    string,
+    Promise<readonly TreeSitterLanguageDescriptor[]>
+  >()
   private disposed = false
 
   public constructor(options: TreeSitterSyntaxSessionOptions) {
@@ -112,7 +116,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     // be disposed while it is awaited. Parsing then would register a worker
     // document nothing ever frees: dispose already ran, and its
     // disposeDocument silently no-ops while the worker does not exist yet.
-    if (this.disposed) return this.result
+    if (this.disposed || !this.isCurrentSnapshotVersion(snapshotVersion)) return this.result
 
     const parsePayload = {
       documentId: this.documentId,
@@ -123,11 +127,21 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
       includeCaptures: this.includeCaptures,
       snapshot,
     }
-    const result = await this.backend.parse(
+    let result = await this.backend.parse(
       this.syntaxMode === 'range'
         ? { ...parsePayload, resultMode: 'parseOnly' }
         : { ...parsePayload, resultMode: 'full' },
     )
+
+    for (let depth = 0; depth < 8 && result?.missingLanguages?.length; depth += 1) {
+      if (!(await this.registerMissingLanguages(result.missingLanguages, snapshotVersion))) break
+      if (this.disposed || !this.isCurrentSnapshotVersion(snapshotVersion)) return this.result
+      result = await this.backend.parse(
+        this.syntaxMode === 'range'
+          ? { ...parsePayload, resultMode: 'parseOnly' }
+          : { ...parsePayload, resultMode: 'full' },
+      )
+    }
 
     return this.updateFromTreeSitterResult(result, snapshotVersion, textSnapshot, snapshot)
   }
@@ -247,6 +261,14 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
         return this.reparseAfterIncrementalFailure(payload.snapshot)
       }
 
+      if (
+        await this.registerMissingLanguages(result.missingLanguages ?? [], payload.snapshotVersion)
+      ) {
+        if (this.disposed || !this.isCurrentSnapshotVersion(payload.snapshotVersion))
+          return this.result
+        return this.refresh(payload.snapshot)
+      }
+
       return this.updateFromTreeSitterResult(
         result,
         payload.snapshotVersion,
@@ -296,36 +318,55 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     }
     this.currentFoldingSupport = descriptor.foldQuerySource?.trim() ? 'supported' : 'unsupported'
 
-    await this.backend.registerLanguages(await this.withInjectedLanguages(descriptor))
+    const descriptors = await this.withInjectedLanguages(descriptor)
+    if (this.disposed) return false
+    await this.backend.registerLanguages(descriptors)
     return true
   }
 
-  /**
-   * The worker parses an injection with the runtime for that language, and it has no way to ask for
-   * one it was never sent — an unregistered injection language degrades to a missing layer, which is
-   * how markdown lost every inline construct (`markdown_inline` is an injection, not a file type).
-   * So the languages an injection query names outright travel with the document's own descriptor.
-   * Injections whose language is a capture, like a fenced code block's info string, stay dynamic and
-   * cannot be resolved here.
-   */
+  private async registerMissingLanguages(
+    languageIds: readonly string[],
+    version: number,
+  ): Promise<boolean> {
+    let loaded = false
+    for (const id of new Set(languageIds)) {
+      if (this.disposed || !this.isCurrentSnapshotVersion(version)) return false
+      let pending = this.pendingLanguages.get(id)
+      if (!pending) {
+        pending = this.resolveLanguageDependencies(id)
+        this.pendingLanguages.set(id, pending)
+      }
+      const descriptors = await pending
+      if (this.disposed || !this.isCurrentSnapshotVersion(version)) return false
+      if (descriptors.length === 0) continue
+      await this.backend.registerLanguages(descriptors)
+      loaded = true
+    }
+    return loaded
+  }
+
+  private async resolveLanguageDependencies(
+    id: string,
+  ): Promise<readonly TreeSitterLanguageDescriptor[]> {
+    const descriptor = await this.languageResolver?.resolveTreeSitterLanguage(id)
+    if (!descriptor || this.disposed) return []
+    return this.withInjectedLanguages(descriptor)
+  }
+
   private async withInjectedLanguages(
     descriptor: TreeSitterLanguageDescriptor,
   ): Promise<readonly TreeSitterLanguageDescriptor[]> {
     const descriptors = [descriptor]
     const seen = new Set([descriptor.id])
-
-    // Injections nest — markdown injects markdown_inline, which injects html — so the worklist
-    // grows as it is walked.
     for (let index = 0; index < descriptors.length; index += 1) {
-      for (const languageId of injectedLanguageIds(descriptors[index]?.injectionQuerySource)) {
-        if (seen.has(languageId)) continue
-        seen.add(languageId)
-
-        const injected = await this.languageResolver?.resolveTreeSitterLanguage(languageId)
+      const dependencies = descriptors[index]?.injectionDependencies ?? []
+      for (const id of dependencies) {
+        if (seen.has(id) || this.disposed) continue
+        seen.add(id)
+        const injected = await this.languageResolver?.resolveTreeSitterLanguage(id)
         if (injected) descriptors.push(injected)
       }
     }
-
     return descriptors
   }
 
@@ -384,6 +425,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
   ): EditorSyntaxResult {
     if (this.disposed) return this.result
     if (!result) return this.result
+    if (result.snapshotVersion !== this.snapshotVersion) return this.result
     if (result.snapshotVersion !== this.parsedSnapshotVersion) return this.result
     if (!sameSyntaxRange(result.range, range)) return this.result
 
@@ -521,21 +563,6 @@ export const createTextDiffEdit = (previousText: string, nextText: string): Text
     to: previousEnd,
     text: nextText.slice(start, nextEnd),
   }
-}
-
-/**
- * Language ids an injection query names as a literal, as in
- * `((inline) @injection.content (#set! injection.language "markdown_inline"))`. A query that reads
- * its language out of the source instead — a fenced code block's info string — names nothing here.
- */
-const INJECTION_LANGUAGE_PATTERN = /injection\.language"?\s+"([^"]+)"/g
-
-const injectedLanguageIds = (injectionQuerySource: string | undefined): readonly string[] => {
-  if (!injectionQuerySource) return []
-
-  return [...injectionQuerySource.matchAll(INJECTION_LANGUAGE_PATTERN)].map(
-    (match) => match[1] ?? '',
-  )
 }
 
 const createSyntaxTextEdits = (

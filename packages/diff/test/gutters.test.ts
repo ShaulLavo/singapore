@@ -24,7 +24,7 @@ describe('diff gutters', () => {
   it('reserves separate gutters for stacked old/new line numbers', () => {
     const rows = [lineRow({ oldLineNumber: 999, newLineNumber: 1001 })]
 
-    expect(diffGutterWidth('stacked', diffGutterDigits(rows), 1, 8)).toBe(80)
+    expect(diffGutterWidth('stacked', diffGutterDigits(rows), 1, 8)).toBe(84)
   })
 
   it('formats stacked old/new line numbers as separate lane labels', () => {
@@ -42,7 +42,7 @@ describe('diff gutters', () => {
   it('reserves width from sparse source line numbers', () => {
     const rows = [lineRow({ newLineNumber: 12345 })]
 
-    expect(diffGutterWidth('new', diffGutterDigits(rows), 1, 8)).toBe(58)
+    expect(diffGutterWidth('new', diffGutterDigits(rows), 1, 8)).toBe(60)
   })
 
   it('tones only the side a change belongs to (§3.3, trap 2)', () => {

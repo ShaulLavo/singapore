@@ -16,7 +16,7 @@
 [
   (link_title)
   (indented_code_block)
-  (fenced_code_block)
+  (info_string)
 ] @text.literal
 
 (fenced_code_block_delimiter) @punctuation.delimiter

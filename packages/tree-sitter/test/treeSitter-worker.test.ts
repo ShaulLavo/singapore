@@ -423,6 +423,7 @@ describe('parse document reuse', () => {
       source: { length, chunks: [] },
       layers: [{ tree: { delete: () => deleted.push('root') } }],
       degraded: [],
+      missingLanguages: [],
       size: length,
       lastUsed: 0,
     }) as unknown as WorkerParsedDocument
@@ -438,38 +439,60 @@ describe('parse document reuse', () => {
   const sourceOfLength = (length: number): WorkerSource =>
     ({ length, chunks: [] }) as unknown as WorkerSource
 
-  it('reuses the cached document for an identical document version', () => {
+  it('reuses the cached document for an identical document version', async () => {
     const runtimeSessionId = 'runtime-reuse'
     const deleted: string[] = []
     const document = fakeParsedDocument(10, deleted)
     replaceCachedDocument(runtimeSessionId, document)
 
-    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(10))).toBe(
-      document,
-    )
+    expect(
+      await reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(10), {
+        startedAt: 0,
+        budgetMs: Infinity,
+        flag: null,
+      }),
+    ).toBe(document)
     expect(deleted).toEqual([])
     disposeDocument(runtimeSessionId)
   })
 
-  it('drops the same-version snapshot before reparsing when content length differs', () => {
+  it('drops the same-version snapshot before reparsing when content length differs', async () => {
     const runtimeSessionId = 'runtime-length-mismatch'
     const deleted: string[] = []
     replaceCachedDocument(runtimeSessionId, fakeParsedDocument(10, deleted))
 
-    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(12))).toBeNull()
+    expect(
+      await reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(12), {
+        startedAt: 0,
+        budgetMs: Infinity,
+        flag: null,
+      }),
+    ).toBeNull()
     expect(deleted).toEqual(['root'])
-    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(12))).toBeNull()
+    expect(
+      await reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(12), {
+        startedAt: 0,
+        budgetMs: Infinity,
+        flag: null,
+      }),
+    ).toBeNull()
     expect(deleted).toEqual(['root'])
     disposeDocument(runtimeSessionId)
   })
 
-  it('does not reuse across snapshot versions', () => {
+  it('does not reuse across snapshot versions', async () => {
     const runtimeSessionId = 'runtime-version-mismatch'
     const deleted: string[] = []
     const document = fakeParsedDocument(10, deleted)
     replaceCachedDocument(runtimeSessionId, document)
 
-    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 2), sourceOfLength(10))).toBeNull()
+    expect(
+      await reusableParsedDocument(parseRequest(runtimeSessionId, 2), sourceOfLength(10), {
+        startedAt: 0,
+        budgetMs: Infinity,
+        flag: null,
+      }),
+    ).toBeNull()
     expect(deleted).toEqual([])
     disposeDocument(runtimeSessionId)
   })

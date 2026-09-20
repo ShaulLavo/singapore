@@ -40,29 +40,6 @@
 (required_parameter (identifier) @variable.parameter)
 (optional_parameter (identifier) @variable.parameter)
 
-; Declaration Keywords (let, const, var, function, class, etc.)
-; These should stand out as they define structure
-
-[
-  "const"
-  "let"
-  "var"
-  "function"
-  "class"
-] @keyword.declaration
-
-; Import/Export Keywords
-; These are module-level and should be visually grouped
-; Note: "type" after "import" is handled specially below
-
-[
-  "import"
-  "export"
-  "from"
-  "as"
-  "default"
-] @keyword.import
-
 ; "import type" - the type keyword should match import color
 (import_statement
   "type" @keyword.import)
@@ -86,27 +63,3 @@
   "extends"
   "typeof"
 ] @keyword
-
-; Control Flow Keywords
-
-[
-  "if"
-  "else"
-  "switch"
-  "case"
-  "break"
-  "continue"
-  "return"
-  "throw"
-  "try"
-  "catch"
-  "finally"
-  "for"
-  "while"
-  "do"
-  "in"
-  "of"
-  "await"
-  "async"
-  "yield"
-] @keyword.control

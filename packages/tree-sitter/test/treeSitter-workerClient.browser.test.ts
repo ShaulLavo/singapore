@@ -123,7 +123,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
       documentId,
       runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
-      languageId: 'typescript',
+      languageId: 'tsx',
       snapshot,
     })
 
@@ -131,25 +131,25 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
       startIndex: text.indexOf('StrictMode'),
       endIndex: text.indexOf('StrictMode') + 'StrictMode'.length,
       captureName: 'constructor',
-      languageId: 'typescript',
+      languageId: 'tsx',
     })
     expect(parsed?.captures).toContainEqual({
       startIndex: text.indexOf('QueryClientProvider'),
       endIndex: text.indexOf('QueryClientProvider') + 'QueryClientProvider'.length,
       captureName: 'constructor',
-      languageId: 'typescript',
+      languageId: 'tsx',
     })
     expect(parsed?.folds).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           endLine: 5,
-          languageId: 'typescript',
+          languageId: 'tsx',
           startLine: 1,
           type: 'jsx_element',
         }),
         expect.objectContaining({
           endLine: 4,
-          languageId: 'typescript',
+          languageId: 'tsx',
           startLine: 2,
           type: 'jsx_element',
         }),

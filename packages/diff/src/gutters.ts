@@ -22,8 +22,10 @@ export type DiffGutterLayout = {
   readonly width: number
 }
 
-const MIN_LINE_NUMBER_DIGITS = 2
-const GUTTER_NUMBER_RESERVED_WIDTH = 6
+/* Both match the plain line gutter (`DEFAULT_LINE_GUTTER_MIN_COLUMNS`, `LINE_GUTTER_PADDING_PX`),
+   so a diff number sits at the same inset from the pane edge as an editor number. */
+const MIN_LINE_NUMBER_DIGITS = 3
+const GUTTER_NUMBER_RESERVED_WIDTH = 8
 const GUTTER_INDICATOR_WIDTH = 12
 
 /**

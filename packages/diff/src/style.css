@@ -140,6 +140,13 @@
   white-space: pre;
 }
 
+/* The number lanes carry the plain gutter's left inset; the indicator lane is a fixed 12px track
+   that a left pad would squeeze. */
+.editor-diff-gutter-lane-old,
+.editor-diff-gutter-lane-new {
+  padding-left: 2px;
+}
+
 /*
  * Per-lane tones, not per-row: in stacked mode a single addition row leaves the old lane at
  * foreground and turns the new lane green, which a row-level class cannot express (§3.3, trap 2).

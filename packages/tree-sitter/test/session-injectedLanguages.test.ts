@@ -71,8 +71,109 @@ function descriptor(id: string, injectionQuerySource?: string): TreeSitterLangua
   return {
     id,
     aliases: [id],
+    injectionDependencies: { markdown: ['markdown_inline'], markdown_inline: ['html'] }[id] ?? [],
     extensions: [],
     wasmUrl: `${id}.wasm`,
     ...(injectionQuerySource ? { injectionQuerySource } : {}),
   }
 }
+
+it('does not register or parse a delayed injection after disposal', async () => {
+  let release!: (descriptor: TreeSitterLanguageDescriptor) => void
+  let requested!: () => void
+  const requestedPromise = new Promise<void>((resolve) => {
+    requested = resolve
+  })
+  const delayed = new Promise<TreeSitterLanguageDescriptor>((resolve) => {
+    release = resolve
+  })
+  const registered: string[][] = []
+  let parses = 0
+  const backend: TreeSitterBackend = {
+    ...recordingBackend(registered),
+    parse: async (payload) => {
+      parses += 1
+      return {
+        documentId: payload.documentId,
+        languageId: payload.languageId,
+        snapshotVersion: payload.snapshotVersion,
+        status: 'parsed',
+        changedRanges: [],
+        missingLanguages: ['astro', 'astro'],
+        timings: [],
+      }
+    },
+  }
+  const snapshot = createPieceTableSnapshot('```astro\n<Card />\n```')
+  const session = new TreeSitterSyntaxSession({
+    documentId: 'delayed',
+    languageId: 'markdown',
+    snapshot,
+    backend,
+    syntaxMode: 'range',
+    languageResolver: {
+      resolveTreeSitterLanguage: async (id) => {
+        if (id !== 'astro') return descriptor(id)
+        requested()
+        return delayed
+      },
+    },
+  })
+  const refresh = session.refresh(snapshot)
+  await requestedPromise
+  session.dispose()
+  release(descriptor('astro'))
+  await refresh
+  expect(parses).toBe(1)
+  expect(registered).toEqual([['markdown', 'markdown_inline', 'html']])
+})
+
+it('shares a delayed language load with the newer document version', async () => {
+  let release!: (descriptor: TreeSitterLanguageDescriptor) => void
+  let requested!: () => void
+  const requestedPromise = new Promise<void>((resolve) => {
+    requested = resolve
+  })
+  const delayed = new Promise<TreeSitterLanguageDescriptor>((resolve) => {
+    release = resolve
+  })
+  const registered: string[][] = []
+  let loads = 0
+  const backend: TreeSitterBackend = {
+    ...recordingBackend(registered),
+    parse: async (payload) => ({
+      documentId: payload.documentId,
+      languageId: payload.languageId,
+      snapshotVersion: payload.snapshotVersion,
+      status: 'parsed',
+      changedRanges: [],
+      missingLanguages: registered.some((ids) => ids.includes('astro')) ? [] : ['astro'],
+      timings: [],
+    }),
+  }
+  const snapshot = createPieceTableSnapshot('```astro\n<Card />\n```')
+  const session = new TreeSitterSyntaxSession({
+    documentId: 'delayed',
+    languageId: 'markdown',
+    snapshot,
+    backend,
+    syntaxMode: 'range',
+    languageResolver: {
+      resolveTreeSitterLanguage: async (id) => {
+        if (id !== 'astro') return descriptor(id)
+        loads += 1
+        requested()
+        return delayed
+      },
+    },
+  })
+  const first = session.refresh(snapshot)
+  await requestedPromise
+  const second = session.refresh(createPieceTableSnapshot('```astro\n<NewCard />\n```'))
+  release(descriptor('astro'))
+  await Promise.all([first, second])
+  expect(loads).toBe(1)
+  expect(session.getResult().projection.snapshot.version).toBe(2)
+  expect(registered).toEqual([['markdown', 'markdown_inline', 'html'], ['astro']])
+  session.dispose()
+})

@@ -760,6 +760,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     })
 
     const firstRefresh = session.refresh(createPieceTableSnapshot('const a = 1;'), 'const a = 1;')
+    await Promise.resolve()
     const secondRefresh = session.refresh(createPieceTableSnapshot('const b = 2;'), 'const b = 2;')
     await Promise.resolve()
 

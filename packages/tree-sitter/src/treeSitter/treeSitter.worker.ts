@@ -79,6 +79,7 @@ type ParsedDocument = {
   readonly source: TreeSitterPieceTableInput
   readonly layers: readonly ParsedLayer[]
   readonly degraded: readonly TreeSitterDegradedState[]
+  readonly missingLanguages: readonly string[]
   readonly size: number
   lastUsed: number
 }
@@ -92,6 +93,8 @@ type CancellationContext = {
   readonly startedAt: number
   readonly budgetMs: number
   readonly flag: Int32Array | null
+  readonly measurements?: Map<string, number>
+  readonly counts?: Map<string, number>
 }
 
 type FlattenedDocument = Pick<
@@ -133,7 +136,8 @@ const OPEN_BRACKETS = new Set(Object.keys(BRACKET_PAIRS))
 const CLOSE_BRACKETS = new Set(Object.values(BRACKET_PAIRS))
 const MAX_RETAINED_SNAPSHOTS = 6
 const MAX_RETAINED_SOURCE_UNITS = 8_000_000
-const MAX_INJECTION_DEPTH = 2
+const MAX_INJECTION_DEPTH = 8
+const MAX_INJECTION_LAYERS = 256
 const PARSE_BUDGET_MS = 20_000
 const QUERY_BUDGET_MS = 20_000
 
@@ -266,15 +270,16 @@ const parseDocument = async (
     )
     const parseStart = nowMs()
     const parsedDocument =
-      reusableParsedDocument(request, source) ??
+      (await reusableParsedDocument(request, source, context)) ??
       (await parseFullDocument(request, runtime, source, context))
     const parseMs = nowMs() - parseStart
     if (request.resultMode === 'parseOnly') {
       return parseAckResult(
         request,
         [],
-        [{ name: 'treeSitter.parse', durationMs: parseMs }],
+        [{ name: 'treeSitter.parse', durationMs: parseMs }, ...phaseTimings(context)],
         parsedDocument.degraded,
+        parsedDocument.missingLanguages,
       )
     }
 
@@ -294,6 +299,8 @@ const parseDocument = async (
       documentId: request.documentId,
       snapshotVersion: request.snapshotVersion,
       languageId: request.languageId,
+      statistics: resultStatistics(parsedDocument, result, context),
+      missingLanguages: parsedDocument.missingLanguages,
       captures: result.captures,
       folds: result.folds,
       brackets: result.brackets,
@@ -303,6 +310,7 @@ const parseDocument = async (
       tokens: result.tokens,
       tokensPacked: result.tokensPacked,
       timings: [
+        ...phaseTimings(context),
         { name: 'treeSitter.parse', durationMs: parseMs },
         { name: 'treeSitter.query', durationMs: queryMs },
       ],
@@ -314,22 +322,50 @@ const parseDocument = async (
 // check guards against upstream bugs). Reparsing it would briefly hold two
 // full trees for one document — the dev StrictMode double-mount OOM'd the
 // worker WASM on a 48MB file exactly that way.
-const reusableParsedDocument = (
+const reusableParsedDocument = async (
   request: TreeSitterParseRequest,
   source: TreeSitterPieceTableInput,
-): ParsedDocument | null => {
+  context: CancellationContext,
+): Promise<ParsedDocument | null> => {
   const cached = cachedDocumentForVersion(
     request.runtimeSessionId,
     request.languageId,
     request.snapshotVersion,
   )
   if (!cached) return null
-  if (cached.size === source.length) return cached
+  if (cached.size === source.length) {
+    if (!cached.missingLanguages.some((id) => resolveRegisteredLanguageAlias(id))) return cached
+    return reloadInjections(request, cached, context)
+  }
 
   // Same version with different content is stale state; free the old tree
   // before reparsing so peak memory stays at one tree per document.
   dropCachedDocument(request.runtimeSessionId, cached)
   return null
+}
+
+const reloadInjections = async (
+  request: TreeSitterParseRequest,
+  cached: ParsedDocument,
+  context: CancellationContext,
+): Promise<ParsedDocument> => {
+  const root = cached.layers[0]!
+  const document = await parseParsedDocument({
+    documentId: request.documentId,
+    snapshotVersion: request.snapshotVersion,
+    languageId: request.languageId,
+    source: cached.source,
+    rootLayer: { ...root, tree: root.tree.copy() },
+    context,
+    oldDocument: cached,
+    inputEdits: [],
+    injectionRanges: null,
+    degraded: [],
+  })
+  assertNotCancelled(context)
+  assertRuntimeSessionActive(request.runtimeSessionId)
+  replaceCachedDocument(request.runtimeSessionId, document)
+  return document
 }
 
 const dropCachedDocument = (documentId: string, snapshot: ParsedDocument): void => {
@@ -350,7 +386,7 @@ const parseFullDocument = async (
   context: CancellationContext,
 ): Promise<ParsedDocument> => {
   const rootLayer = runWorkerPhase('parse root', () =>
-    parseRootLayer(runtime, source, null, context),
+    measurePhase(context, 'parseRoot', () => parseRootLayer(runtime, source, null, context)),
   )
   const degraded: TreeSitterDegradedState[] = []
   const parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
@@ -398,12 +434,15 @@ const editDocument = async (
     )
     const parseStart = nowMs()
     const rootLayer = runWorkerPhase('parse root', () =>
-      parseRootLayer(runtime, source, reusableTree, context),
+      measurePhase(context, 'parseRoot', () =>
+        parseRootLayer(runtime, source, reusableTree, context),
+      ),
     )
     const changedRanges = runWorkerPhase('changed ranges', () =>
       treeChangedRanges(reusableTree, rootLayer.tree),
     )
-    const injectionRanges = injectionRangesForEdits(changedRanges, request.edits, source.length)
+    // Delimiter edits can invalidate descendants outside the edited range.
+    const injectionRanges = [{ startIndex: 0, endIndex: source.length }]
     const degraded: TreeSitterDegradedState[] = []
     const parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
       parseParsedDocument({
@@ -429,10 +468,12 @@ const editDocument = async (
         request,
         changedRanges,
         [
+          ...phaseTimings(context),
           { name: 'treeSitter.edit', durationMs: editMs },
           { name: 'treeSitter.parse', durationMs: parseMs },
         ],
         degraded,
+        parsedDocument.missingLanguages,
       )
     }
 
@@ -452,6 +493,8 @@ const editDocument = async (
       documentId: request.documentId,
       snapshotVersion: request.snapshotVersion,
       languageId: request.languageId,
+      statistics: resultStatistics(parsedDocument, result, context),
+      missingLanguages: parsedDocument.missingLanguages,
       captures: result.captures,
       folds: result.folds,
       brackets: result.brackets,
@@ -461,6 +504,7 @@ const editDocument = async (
       tokens: result.tokens,
       tokensPacked: result.tokensPacked,
       timings: [
+        ...phaseTimings(context),
         { name: 'treeSitter.edit', durationMs: editMs },
         { name: 'treeSitter.parse', durationMs: parseMs },
         { name: 'treeSitter.query', durationMs: queryMs },
@@ -515,7 +559,11 @@ const queryDocumentRangeWithContext = async (
     degraded: result.degraded,
     tokens: result.tokens,
     tokensPacked: result.tokensPacked,
-    timings: [{ name: 'treeSitter.queryRange', durationMs: nowMs() - queryStart }],
+    statistics: resultStatistics(cached, result, context, range),
+    timings: [
+      { name: 'treeSitter.queryRange', durationMs: nowMs() - queryStart },
+      ...phaseTimings(context),
+    ],
   }
 }
 
@@ -545,11 +593,13 @@ const parseAckResult = (
   changedRanges: readonly TreeSitterSyntaxRange[],
   timings: TreeSitterParseAckResult['timings'],
   degraded: readonly TreeSitterDegradedState[] = [],
+  missingLanguages: readonly string[] = [],
 ): TreeSitterParseAckResult => ({
   documentId: request.documentId,
   snapshotVersion: request.snapshotVersion,
   languageId: request.languageId,
   status: 'parsed',
+  missingLanguages,
   changedRanges,
   degraded,
   timings,
@@ -560,45 +610,55 @@ const treeChangedRanges = (oldTree: Tree, newTree: Tree): TreeSitterSyntaxRange[
     .getChangedRanges(newTree)
     .map((range) => ({ startIndex: range.startIndex, endIndex: range.endIndex }))
 
-const injectionRangesForEdits = (
-  changedRanges: readonly TreeSitterSyntaxRange[],
-  edits: TreeSitterEditRequest['edits'],
-  documentLength: number,
-): TreeSitterSyntaxRange[] => {
-  const ranges = [...changedRanges]
-  const sortedEdits = edits.toSorted((left, right) => left.from - right.from || left.to - right.to)
-  let offset = 0
-
-  for (const edit of sortedEdits) {
-    const startIndex = edit.from + offset
-    const endIndex = startIndex + edit.text.length
-    const range = nonEmptyEditRange(startIndex, endIndex, documentLength)
-    if (range) ranges.push(range)
-    offset += edit.text.length - (edit.to - edit.from)
-  }
-
-  return ranges
-}
-
-const nonEmptyEditRange = (
-  startIndex: number,
-  endIndex: number,
-  documentLength: number,
-): TreeSitterSyntaxRange | null => {
-  if (endIndex > startIndex) return { startIndex, endIndex }
-  if (documentLength === 0) return null
-  if (startIndex < documentLength) return { startIndex, endIndex: startIndex + 1 }
-  return { startIndex: documentLength - 1, endIndex: documentLength }
-}
-
 const createCancellationContext = (
   cancellationBuffer: SharedArrayBuffer | undefined,
   budgetMs: number,
 ): CancellationContext => ({
   startedAt: nowMs(),
   budgetMs,
+  measurements: new Map(),
+  counts: new Map(),
   flag: cancellationBuffer ? new Int32Array(cancellationBuffer) : null,
 })
+
+const incrementCount = (context: CancellationContext, name: string, value: number): void => {
+  context.counts?.set(name, (context.counts.get(name) ?? 0) + value)
+}
+
+const resultStatistics = (
+  document: ParsedDocument,
+  result: FlattenedDocument,
+  context: CancellationContext,
+  range?: TreeSitterSyntaxRange,
+): Readonly<Record<string, number>> => ({
+  layers: document.layers.length,
+  rawCaptures: context.counts?.get('rawCaptures') ?? 0,
+  uniqueCaptures: context.counts?.get('uniqueCaptures') ?? 0,
+  duplicateCaptures:
+    (context.counts?.get('rawCaptures') ?? 0) - (context.counts?.get('uniqueCaptures') ?? 0),
+  tokens: result.tokensPacked?.starts.length ?? 0,
+  transferredTokenBytes:
+    (result.tokensPacked?.starts.byteLength ?? 0) +
+    (result.tokensPacked?.ends.byteLength ?? 0) +
+    (result.tokensPacked?.styleIds.byteLength ?? 0),
+  rangeStart: range?.startIndex ?? 0,
+  rangeEnd: range?.endIndex ?? document.size,
+})
+
+const measurePhase = <T>(context: CancellationContext, name: string, run: () => T): T => {
+  const start = nowMs()
+  try {
+    return run()
+  } finally {
+    context.measurements?.set(name, (context.measurements.get(name) ?? 0) + nowMs() - start)
+  }
+}
+
+const phaseTimings = (context: CancellationContext): TreeSitterParseResult['timings'] =>
+  [...(context.measurements ?? [])].map(([name, durationMs]) => ({
+    name: `treeSitter.${name}`,
+    durationMs,
+  }))
 
 const runWorkerPhase = <T>(phase: string, run: () => T): T => {
   try {
@@ -710,6 +770,7 @@ type ReusableLayer = {
 
 type ParseInjectionContext = ParseParsedDocumentOptions & {
   readonly reusableLayers: ReusableLayer[]
+  readonly missingLanguages: Set<string>
   readonly reservedLayerIds: Set<string>
 }
 
@@ -741,13 +802,14 @@ const parseParsedDocument = async (
   const context: ParseInjectionContext = {
     ...options,
     reusableLayers,
+    missingLanguages: new Set(),
     reservedLayerIds: reservedLayerIds(options.rootLayer, reusableLayers),
   }
 
   try {
     const parsedLayers: ParsedLayer[] = []
     await appendInjectionLayers(parsedLayers, options.rootLayer, context)
-    await appendCarriedLayers(parsedLayers, context)
+    if (options.injectionRanges) await appendCarriedLayers(parsedLayers, context)
     const layers = orderParsedLayers(options.rootLayer, parsedLayers)
 
     return {
@@ -756,6 +818,7 @@ const parseParsedDocument = async (
       source: options.source,
       layers,
       degraded: options.degraded,
+      missingLanguages: [...context.missingLanguages],
       size: options.source.length,
       lastUsed: nextUse++,
     }
@@ -817,10 +880,19 @@ const appendInjectionLayers = async (
     'find injections',
     [] as InjectionPlan[],
     options.degraded,
-    () => findInjections(parent, runtime, options.source, options.context, options.injectionRanges),
+    () =>
+      measurePhase(options.context, 'injectionDiscovery', () =>
+        findInjections(parent, runtime, options.source, options.context, options.injectionRanges),
+      ),
   )
 
   for (const plan of plans) {
+    if (layers.length >= MAX_INJECTION_LAYERS) break
+    if (isNonProgressingInjection(plan, parent, layers, options.rootLayer)) continue
+    if (!languageDescriptors.has(plan.languageId)) {
+      options.missingLanguages.add(plan.languageId)
+      continue
+    }
     try {
       const layer = await parseInjectionLayer(plan, options)
       layers.push(layer)
@@ -837,6 +909,32 @@ const appendInjectionLayers = async (
   }
 }
 
+const isNonProgressingInjection = (
+  plan: InjectionPlan,
+  parent: ParsedLayer,
+  layers: readonly ParsedLayer[],
+  root: ParsedLayer,
+): boolean => {
+  let ancestor: ParsedLayer | undefined = parent
+  while (ancestor) {
+    if (ancestor.languageId === plan.languageId && rangesEqual(ancestor.ranges, plan.ranges))
+      return true
+    const parentId: string | null = ancestor.parentId
+    ancestor = parentId === root.id ? root : layers.find((layer) => layer.id === parentId)
+  }
+  return false
+}
+
+const rangesEqual = (
+  left: readonly TreeSitterRange[],
+  right: readonly TreeSitterRange[],
+): boolean =>
+  left.length === right.length &&
+  left.every(
+    (range, index) =>
+      range.startIndex === right[index]?.startIndex && range.endIndex === right[index]?.endIndex,
+  )
+
 const parseInjectionLayer = async (
   plan: InjectionPlan,
   options: ParseInjectionContext,
@@ -847,12 +945,14 @@ const parseInjectionLayer = async (
   const oldTree = reusable?.layer.tree ?? null
 
   try {
-    const tree = parseInjectedSource(
-      runtime.parser,
-      options.source,
-      resolvedPlan.ranges,
-      oldTree,
-      options.context,
+    const tree = measurePhase(options.context, 'parseInjection', () =>
+      parseInjectedSource(
+        runtime.parser,
+        options.source,
+        resolvedPlan.ranges,
+        oldTree,
+        options.context,
+      ),
     )
     return { ...resolvedPlan, tree }
   } finally {
@@ -1273,23 +1373,36 @@ const collectCaptures = (
   const captures: TreeSitterCapture[] = []
   const seen = new Set<string>()
   if (range) {
-    const queryCaptures = query.captures(rootNode, queryOptions(context, range))
+    const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
+      query.captures(rootNode, queryOptions(context, range)),
+    )
+    incrementCount(context, 'rawCaptures', queryCaptures.length)
+    const normalizeStart = nowMs()
     assertNotCancelled(context)
 
     for (const capture of queryCaptures) {
       collectCapture(capture, captures, seen, runtime.descriptor.id, range)
     }
 
+    context.measurements?.set(
+      'captureNormalization',
+      (context.measurements.get('captureNormalization') ?? 0) + nowMs() - normalizeStart,
+    )
+    incrementCount(context, 'uniqueCaptures', captures.length)
     return captures
   }
 
-  const matches = query.matches(rootNode, queryOptions(context, range))
+  const matches = measurePhase(context, 'highlightQueryAndPredicates', () =>
+    query.matches(rootNode, queryOptions(context, range)),
+  )
   assertNotCancelled(context)
 
   for (const match of matches) {
+    incrementCount(context, 'rawCaptures', match.captures.length)
     collectMatchCaptures(match.captures, captures, seen, runtime.descriptor.id, range)
   }
 
+  incrementCount(context, 'uniqueCaptures', captures.length)
   return captures
 }
 
@@ -1306,7 +1419,9 @@ const collectFolds = (
 
   const folds: FoldRange[] = []
   const seen = new Set<string>()
-  const matches = query.matches(rootNode, queryOptions(context, range))
+  const matches = measurePhase(context, 'foldQueryAndPredicates', () =>
+    query.matches(rootNode, queryOptions(context, range)),
+  )
   assertNotCancelled(context)
 
   for (const match of matches) {
@@ -1388,6 +1503,7 @@ const languageIdForInjectionMatch = (
   const setLanguage = propertyValue(match.setProperties, ['injection.language', 'language'])
   const languageId = resolveRegisteredLanguageAlias(setLanguage)
   if (languageId) return languageId
+  if (setLanguage?.trim()) return setLanguage.trim().toLowerCase()
 
   const languageCapture = match.captures.find(isInjectionLanguageCapture)
   if (!languageCapture) return null
@@ -1397,7 +1513,7 @@ const languageIdForInjectionMatch = (
     languageCapture.node.startIndex,
     languageCapture.node.endIndex,
   )
-  return resolveRegisteredLanguageAlias(languageName)
+  return resolveRegisteredLanguageAlias(languageName) ?? (languageName.trim().toLowerCase() || null)
 }
 
 const rangesForInjectionMatch = (match: ReturnType<Query['matches']>[number]): TreeSitterRange[] =>
@@ -1471,6 +1587,17 @@ const parseInjectedSource = (
   throw new Error('Tree-sitter injection parse returned no tree')
 }
 
+const packHighlights = (
+  captures: readonly TreeSitterCapture[],
+  includeHighlights: boolean,
+  context: CancellationContext,
+): PackedEditorTokens => {
+  const tokens = measurePhase(context, 'overlapResolution', () =>
+    includeHighlights ? treeSitterCapturesToEditorTokens(captures) : [],
+  )
+  return measurePhase(context, 'packing', () => packEditorTokens(tokens))
+}
+
 const flattenDocument = async (
   document: ParsedDocument,
   context: CancellationContext,
@@ -1485,7 +1612,7 @@ const flattenDocument = async (
     await flattenLayer(layer, result, queryContext, includeHighlights || includeCaptures)
   }
 
-  const captures = sortCaptures(result.captures)
+  const captures = measurePhase(context, 'captureSorting', () => sortCaptures(result.captures))
   return {
     captures: includeCaptures ? captures : [],
     folds: sortFolds(result.folds),
@@ -1493,9 +1620,7 @@ const flattenDocument = async (
     errors: sortErrors(result.errors),
     injections: sortInjections(result.injections),
     degraded: result.degraded,
-    tokensPacked: packEditorTokens(
-      includeHighlights ? treeSitterCapturesToEditorTokens(captures) : [],
-    ),
+    tokensPacked: packHighlights(captures, includeHighlights, context),
   }
 }
 
@@ -1513,7 +1638,7 @@ const flattenDocumentRange = async (
     await flattenLayerRange(layer, result, context, options)
   }
 
-  const captures = sortCaptures(result.captures)
+  const captures = measurePhase(context, 'captureSorting', () => sortCaptures(result.captures))
   return {
     captures: options.includeCaptures ? captures : [],
     folds: sortFolds(result.folds),
@@ -1521,9 +1646,7 @@ const flattenDocumentRange = async (
     errors: sortErrors(result.errors),
     injections: sortInjections(result.injections),
     degraded: result.degraded,
-    tokensPacked: packEditorTokens(
-      options.includeHighlights ? treeSitterCapturesToEditorTokens(captures) : [],
-    ),
+    tokensPacked: packHighlights(captures, options.includeHighlights, context),
   }
 }
 
@@ -1543,7 +1666,7 @@ const flattenLayer = async (
     'collect diagnostics',
     emptyTreeData(),
     result.degraded,
-    () => collectTreeData(layer.tree),
+    () => measurePhase(context, 'structuralWalk', () => collectTreeData(layer.tree)),
   )
   if (withCaptures) {
     appendItems(
@@ -1575,7 +1698,7 @@ const flattenLayerRange = async (
     'collect range diagnostics',
     emptyTreeData(),
     result.degraded,
-    () => collectTreeData(layer.tree, options.range),
+    () => measurePhase(context, 'structuralWalk', () => collectTreeData(layer.tree, options.range)),
   )
   if (options.includeHighlights || options.includeCaptures) {
     appendItems(

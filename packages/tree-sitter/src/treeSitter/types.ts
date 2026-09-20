@@ -78,6 +78,8 @@ export type TreeSitterParseResult = {
   readonly degraded?: readonly TreeSitterDegradedState[]
   readonly tokens?: readonly EditorToken[]
   readonly tokensPacked?: PackedEditorTokens
+  readonly statistics?: Readonly<Record<string, number>>
+  readonly missingLanguages?: readonly string[]
   readonly timings: readonly TreeSitterTimingMeasurement[]
 }
 
@@ -93,6 +95,8 @@ export type TreeSitterParseAckResult = {
   readonly status: 'parsed'
   readonly changedRanges: readonly TreeSitterSyntaxRange[]
   readonly degraded?: readonly TreeSitterDegradedState[]
+  readonly statistics?: Readonly<Record<string, number>>
+  readonly missingLanguages?: readonly string[]
   readonly timings: readonly TreeSitterTimingMeasurement[]
 }
 

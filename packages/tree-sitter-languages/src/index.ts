@@ -8,7 +8,7 @@ import type {
   TreeSitterLanguagePluginOptions,
 } from '@singapore-editor/tree-sitter'
 
-const EMPTY_QUERY = ''
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from './catalog.generated'
 
 export type JavaScriptTreeSitterLanguageOptions = TreeSitterLanguagePluginOptions & {
   readonly jsx?: boolean
@@ -22,50 +22,20 @@ export const JAVASCRIPT_TREE_SITTER_LANGUAGE = createJavaScriptContribution(fals
 
 export const TYPESCRIPT_TREE_SITTER_LANGUAGE = createTypeScriptContribution(false)
 
-export const HTML_TREE_SITTER_LANGUAGE = {
-  id: 'html',
-  extensions: ['.htm', '.html'],
-  aliases: ['html'],
-  load: loadHtmlAssets,
-} satisfies TreeSitterLanguageContribution
+export { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from './catalog.generated'
+export { TREE_SITTER_LANGUAGE_METADATA } from './metadata'
 
-export const CSS_TREE_SITTER_LANGUAGE = {
-  id: 'css',
-  extensions: ['.css'],
-  aliases: ['css'],
-  load: loadCssAssets,
-} satisfies TreeSitterLanguageContribution
+export const TSX_TREE_SITTER_LANGUAGE = contribution('tsx')
+export const HTML_TREE_SITTER_LANGUAGE = contribution('html')
+export const CSS_TREE_SITTER_LANGUAGE = contribution('css')
+export const JSON_TREE_SITTER_LANGUAGE = contribution('json')
+export const MARKDOWN_TREE_SITTER_LANGUAGE = contribution('markdown')
+export const MARKDOWN_INLINE_TREE_SITTER_LANGUAGE = contribution('markdown_inline')
+export const ASTRO_TREE_SITTER_LANGUAGE = contribution('astro')
 
-export const JSON_TREE_SITTER_LANGUAGE = {
-  id: 'json',
-  extensions: ['.json'],
-  aliases: ['json'],
-  load: loadJsonAssets,
-} satisfies TreeSitterLanguageContribution
-
-export const MARKDOWN_TREE_SITTER_LANGUAGE = {
-  id: 'markdown',
-  extensions: ['.md', '.markdown'],
-  aliases: ['markdown', 'md', 'gfm'],
-  load: loadMarkdownAssets,
-} satisfies TreeSitterLanguageContribution
-
-export const MARKDOWN_INLINE_TREE_SITTER_LANGUAGE = {
-  id: 'markdown_inline',
-  extensions: [],
-  aliases: ['markdown_inline'],
-  load: loadMarkdownInlineAssets,
-} satisfies TreeSitterLanguageContribution
-
-export const TREE_SITTER_LANGUAGE_CONTRIBUTIONS = [
-  createJavaScriptContribution(true),
-  createTypeScriptContribution(true),
-  HTML_TREE_SITTER_LANGUAGE,
-  CSS_TREE_SITTER_LANGUAGE,
-  JSON_TREE_SITTER_LANGUAGE,
-  MARKDOWN_TREE_SITTER_LANGUAGE,
-  MARKDOWN_INLINE_TREE_SITTER_LANGUAGE,
-] satisfies readonly TreeSitterLanguageContribution[]
+function contribution(id: string): TreeSitterLanguageContribution {
+  return TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((language) => language.id === id)!
+}
 
 export function javaScript(options: JavaScriptTreeSitterLanguageOptions = {}): EditorPlugin {
   const { jsx = false, ...pluginOptions } = options
@@ -122,16 +92,18 @@ function createJavaScriptContribution(jsx: boolean): TreeSitterLanguageContribut
   return {
     id: 'javascript',
     extensions: jsx ? ['.cjs', '.js', '.jsx', '.mjs'] : ['.cjs', '.js', '.mjs'],
-    aliases: jsx ? ['javascript', 'js', 'jsx', 'node', 'react'] : ['javascript', 'js', 'node'],
+    aliases: jsx ? ['javascript', 'js', 'jsx', 'node'] : ['javascript', 'js', 'node'],
+    injectionDependencies: ['regex', 'jsdoc'],
     load: () => loadJavaScriptAssets(jsx),
   }
 }
 
 function createTypeScriptContribution(tsx: boolean): TreeSitterLanguageContribution {
   return {
-    id: 'typescript',
-    extensions: tsx ? ['.cts', '.mts', '.ts', '.tsx'] : ['.cts', '.mts', '.ts'],
-    aliases: tsx ? ['typescript', 'ts', 'tsx', 'react'] : ['typescript', 'ts'],
+    id: tsx ? 'tsx' : 'typescript',
+    extensions: tsx ? ['.tsx'] : ['.cts', '.mts', '.ts'],
+    aliases: tsx ? ['tsx', 'typescriptreact'] : ['typescript', 'ts'],
+    injectionDependencies: ['regex', 'jsdoc'],
     load: () => loadTypeScriptAssets(tsx),
   }
 }
@@ -141,7 +113,7 @@ async function loadJavaScriptAssets(jsx: boolean): Promise<TreeSitterLanguageAss
     loadDefault(import('tree-sitter-javascript/tree-sitter-javascript.wasm?url')),
     loadDefault(import('./queries/javascript-highlights.scm?raw')),
     loadDefault(import('./queries/javascript-folds.scm?raw')),
-    loadDefault(import('tree-sitter-javascript/queries/injections.scm?raw')),
+    loadDefault(import('./queries/javascript-injections.scm?raw')),
   ])
   if (!jsx) return { wasmUrl, highlightQuerySource, foldQuerySource, injectionQuerySource }
 
@@ -175,7 +147,7 @@ async function loadTypeScriptAssets(tsx: boolean): Promise<TreeSitterLanguageAss
     loadDefault(import('./queries/javascript-highlights.scm?raw')),
     loadDefault(import('./queries/typescript-folds.scm?raw')),
     loadDefault(import('./queries/javascript-folds.scm?raw')),
-    loadDefault(import('tree-sitter-javascript/queries/injections.scm?raw')),
+    loadDefault(import('./queries/javascript-injections.scm?raw')),
   ])
   const highlightQuerySource = await typeScriptHighlightQuerySource(tsx, [
     tsHighlightQuerySource,
@@ -213,51 +185,6 @@ async function typeScriptFoldQuerySource(
 
   const jsxFoldQuerySource = await loadDefault(import('./queries/jsx-folds.scm?raw'))
   return [...sources, jsxFoldQuerySource].join('\n')
-}
-
-async function loadHtmlAssets(): Promise<TreeSitterLanguageAssets> {
-  return {
-    wasmUrl: await loadDefault(import('tree-sitter-html/tree-sitter-html.wasm?url')),
-    highlightQuerySource: await loadDefault(import('tree-sitter-html/queries/highlights.scm?raw')),
-    foldQuerySource: '(element) @fold\n(script_element) @fold\n(style_element) @fold',
-    injectionQuerySource: await loadDefault(import('tree-sitter-html/queries/injections.scm?raw')),
-  }
-}
-
-async function loadCssAssets(): Promise<TreeSitterLanguageAssets> {
-  return {
-    wasmUrl: await loadDefault(import('tree-sitter-css/tree-sitter-css.wasm?url')),
-    highlightQuerySource: await loadDefault(import('tree-sitter-css/queries/highlights.scm?raw')),
-    foldQuerySource: '(block) @fold\n(rule_set) @fold',
-    injectionQuerySource: EMPTY_QUERY,
-  }
-}
-
-async function loadJsonAssets(): Promise<TreeSitterLanguageAssets> {
-  return {
-    wasmUrl: await loadDefault(import('tree-sitter-json/tree-sitter-json.wasm?url')),
-    highlightQuerySource: await loadDefault(import('tree-sitter-json/queries/highlights.scm?raw')),
-    foldQuerySource: '(object) @fold\n(array) @fold',
-    injectionQuerySource: EMPTY_QUERY,
-  }
-}
-
-async function loadMarkdownAssets(): Promise<TreeSitterLanguageAssets> {
-  return {
-    wasmUrl: await loadDefault(import('./grammars/tree-sitter-markdown.wasm?url')),
-    highlightQuerySource: await loadDefault(import('./queries/markdown-highlights.scm?raw')),
-    foldQuerySource: await loadDefault(import('./queries/markdown-folds.scm?raw')),
-    injectionQuerySource: await loadDefault(import('./queries/markdown-injections.scm?raw')),
-  }
-}
-
-async function loadMarkdownInlineAssets(): Promise<TreeSitterLanguageAssets> {
-  return {
-    wasmUrl: await loadDefault(import('./grammars/tree-sitter-markdown-inline.wasm?url')),
-    highlightQuerySource: await loadDefault(import('./queries/markdown-inline-highlights.scm?raw')),
-    foldQuerySource: EMPTY_QUERY,
-    injectionQuerySource: await loadDefault(import('./queries/markdown-inline-injections.scm?raw')),
-  }
 }
 
 async function loadDefault(module: Promise<{ readonly default: string }>): Promise<string> {

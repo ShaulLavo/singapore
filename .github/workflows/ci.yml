@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Check native language catalog
+        run: bun run --cwd packages/tree-sitter-languages languages:generate -- --check
+
       - name: Typecheck
         run: bun run typecheck
 

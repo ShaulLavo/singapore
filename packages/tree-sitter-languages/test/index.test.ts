@@ -23,11 +23,26 @@ describe('Tree-sitter language contributions', () => {
     expect(TREE_SITTER_LANGUAGE_CONTRIBUTIONS.map((contribution) => contribution.id)).toEqual([
       'javascript',
       'typescript',
+      'tsx',
       'html',
       'css',
       'json',
       'markdown',
       'markdown_inline',
+      'astro',
+      'python',
+      'shellscript',
+      'rust',
+      'go',
+      'yaml',
+      'toml',
+      'c',
+      'cpp',
+      'csharp',
+      'java',
+      'php',
+      'lua',
+      'svelte',
     ])
     expect(TREE_SITTER_LANGUAGE_CONTRIBUTIONS.every((contribution) => 'load' in contribution)).toBe(
       true,
@@ -77,7 +92,7 @@ describe('Tree-sitter language contributions', () => {
         loadAssets(JAVASCRIPT_TREE_SITTER_LANGUAGE),
         loadAssets(TYPESCRIPT_TREE_SITTER_LANGUAGE),
         loadAssets(requiredContribution('javascript')),
-        loadAssets(requiredContribution('typescript')),
+        loadAssets(requiredContribution('tsx')),
       ])
 
     expect(javascriptAssets.foldQuerySource).not.toContain('jsx_element')

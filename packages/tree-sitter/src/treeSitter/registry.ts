@@ -11,6 +11,8 @@ type TreeSitterLanguageContributionMetadata = {
   readonly id: TreeSitterLanguageId
   readonly extensions?: readonly string[]
   readonly aliases?: readonly string[]
+  readonly filenames?: readonly string[]
+  readonly injectionDependencies?: readonly string[]
 }
 
 type TreeSitterInlineLanguageContribution = TreeSitterLanguageContributionMetadata &
@@ -186,6 +188,8 @@ const createTreeSitterLanguageDescriptor = (
   id: normalizeLanguageId(contribution.id),
   extensions: uniqueItems((contribution.extensions ?? []).map(normalizeExtension)),
   aliases: uniqueItems((contribution.aliases ?? []).map(normalizeAlias)),
+  filenames: contribution.filenames ?? [],
+  injectionDependencies: contribution.injectionDependencies ?? [],
   wasmUrl: normalizeWasmUrl(assets.wasmUrl, contribution.id),
   highlightQuerySource: assets.highlightQuerySource,
   foldQuerySource: assets.foldQuerySource,

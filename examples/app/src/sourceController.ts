@@ -301,5 +301,5 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.mjs': 'javascript',
   '.mts': 'typescript',
   '.ts': 'typescript',
-  '.tsx': 'typescript',
+  '.tsx': 'tsx',
 }
