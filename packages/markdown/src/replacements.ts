@@ -14,9 +14,7 @@ export function markdownInlineReplacements(
   text: string,
   captures: readonly EditorSyntaxCapture[],
 ): readonly InlineReplacementSpec[] {
-  const sorted = captures
-    .filter((capture) => capture.endIndex > capture.startIndex)
-    .toSorted((left, right) => left.startIndex - right.startIndex || right.endIndex - left.endIndex)
+  const sorted = previewCaptures(captures)
 
   const index = createCaptureIndex(sorted)
   const specs: InlineReplacementSpec[] = []
@@ -24,6 +22,24 @@ export function markdownInlineReplacements(
   appendBlockMarkerReplacements(specs, text, sorted)
   appendLinkReplacements(specs, sorted, index)
   return specs
+}
+
+function previewCaptures(captures: readonly EditorSyntaxCapture[]): readonly EditorSyntaxCapture[] {
+  const sorted = captures.toSorted(
+    (left, right) => left.startIndex - right.startIndex || right.endIndex - left.endIndex,
+  )
+  const result: EditorSyntaxCapture[] = []
+  let fenceEnd = -1
+  for (const capture of sorted) {
+    if (capture.startIndex < fenceEnd) continue
+    // The retained fence-content capture bounds injected code, which must stay source text.
+    if (capture.captureName === 'none') {
+      fenceEnd = capture.endIndex
+      continue
+    }
+    if (capture.endIndex > capture.startIndex) result.push(capture)
+  }
+  return result
 }
 
 type CaptureIndex = {

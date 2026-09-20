@@ -4,7 +4,10 @@ import { createDocumentSession, createPieceTableSnapshot } from '@singapore-edit
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterSyntaxSession } from '../src/session'
+import { markdownInlineReplacements } from '../../markdown/src/replacements'
 import { NATIVE_FIXTURES } from '../../tree-sitter-languages/test/fixtures/native'
+import { MDX_CATEGORIES, MDX_FIXTURE } from '../../tree-sitter-languages/test/fixtures/mdx'
+import { SQL_CATEGORIES, SQL_FIXTURE } from '../../tree-sitter-languages/test/fixtures/sql'
 import {
   TREE_SITTER_LANGUAGE_CONTRIBUTIONS,
   TREE_SITTER_LANGUAGE_METADATA,
@@ -213,6 +216,165 @@ browserTest.each(NATIVE_FIXTURES)(
     }
   },
 )
+
+browserTest.each(['full', 'range'] as const)(
+  'paints SQL fences lazily and matches fresh output after syntax edits in %s mode',
+  async (syntaxMode) => {
+    const backend = new TreeSitterWorkerClient()
+    const loads: string[] = []
+    const languageResolver = registry(loads)
+    let text =
+      '# SQL\r\n\r\n```sql\r\n' + SQL_FIXTURE.replaceAll('\n', '\r\n') + '```\r\nAfter.\r\n'
+    const document = createDocumentSession(text)
+    text = document.getTextSnapshot().materializeFullText()
+    const options = { languageId: 'markdown', languageResolver, backend, syntaxMode }
+    const session = new TreeSitterSyntaxSession({
+      ...options,
+      documentId: 'sql.md',
+      snapshot: document.getSnapshot(),
+    })
+    try {
+      const initial = await session.refresh(document.getSnapshot())
+      const result =
+        syntaxMode === 'full'
+          ? initial
+          : await session.queryRange({ startIndex: 0, endIndex: text.length })
+      expect(result.degraded).toBeNull()
+      expect(new Set(loads)).toEqual(new Set([...requiredLanguages('markdown'), 'sql']))
+      assertPaint(result, text, SQL_CATEGORIES)
+      for (const [before, after] of [
+        ['42', "'42'"],
+        ['🪐', '🌍🌏'],
+        ["'hello'", "'hello"],
+        ["'hello", "'hello'"],
+        ['JOIN', 'LEFT JOIN'],
+        ['```sql', '```plain'],
+        ['```plain', '```sql'],
+        ['```sql', 'sql'],
+      ]) {
+        const from = text.indexOf(before!)
+        expect(from).toBeGreaterThanOrEqual(0)
+        const change = document.applyEdits([{ from, to: from + before!.length, text: after! }])
+        text = text.slice(0, from) + after! + text.slice(from + before!.length)
+        const updated = await session.applyChange(change)
+        const actual =
+          syntaxMode === 'full'
+            ? updated
+            : await session.queryRange({ startIndex: 0, endIndex: text.length })
+        await assertFreshSyntax(options, change.snapshot, actual, text.length)
+      }
+      expect(loads.length).toBe(new Set(loads).size)
+    } finally {
+      session.dispose()
+      await backend.dispose()
+    }
+  },
+)
+
+browserTest.each([
+  { syntaxMode: 'full', languageId: 'mdx' },
+  { syntaxMode: 'range', languageId: 'mdx' },
+  { syntaxMode: 'full', languageId: 'markdown' },
+  { syntaxMode: 'range', languageId: 'markdown' },
+] as const)(
+  'paints MDX and nested SQL fences lazily and matches fresh output after syntax edits in $languageId / $syntaxMode mode',
+  async ({ syntaxMode, languageId }) => {
+    const backend = new TreeSitterWorkerClient()
+    const loads: string[] = []
+    const languageResolver = registry(loads)
+    const source = languageId === 'mdx' ? MDX_FIXTURE : '~~~mdx\n' + MDX_FIXTURE + '~~~\n'
+    let text = source.replaceAll('\n', '\r\n')
+    const document = createDocumentSession(text)
+    text = document.getTextSnapshot().materializeFullText()
+    const options = { languageId, languageResolver, backend, syntaxMode }
+    const session = new TreeSitterSyntaxSession({
+      ...options,
+      documentId: 'mixed.mdx',
+      snapshot: document.getSnapshot(),
+    })
+    try {
+      const initial = await session.refresh(document.getSnapshot())
+      const result =
+        syntaxMode === 'full'
+          ? initial
+          : await session.queryRange({ startIndex: 0, endIndex: text.length })
+      expect(result.degraded).toBeNull()
+      expect(new Set(loads)).toEqual(new Set([...requiredLanguages('mdx'), 'sql']))
+      assertPaint(result, text, MDX_CATEGORIES)
+      if (languageId === 'markdown') {
+        expect(markdownInlineReplacements(text, result.captures)).toEqual([])
+      }
+      for (const [before, after] of [
+        ['{title}', '{title.toUpperCase()}'],
+        ['<Badge', '<Label'],
+        ['{user.name}', 'user.name}'],
+        ['user.name}', '{user.name}'],
+        ['<Label', 'Label'],
+        ['Label', '<Label'],
+        ['42', "'42'"],
+        ['🪐', '🌍🌏'],
+        ["'hello'", "'hello"],
+        ["'hello", "'hello'"],
+        ['```sql', '```plain'],
+        ['```plain', '```sql'],
+        ['```sql', 'sql'],
+      ]) {
+        const from = text.indexOf(before!)
+        expect(from).toBeGreaterThanOrEqual(0)
+        const change = document.applyEdits([{ from, to: from + before!.length, text: after! }])
+        text = text.slice(0, from) + after! + text.slice(from + before!.length)
+        const updated = await session.applyChange(change)
+        const actual =
+          syntaxMode === 'full'
+            ? updated
+            : await session.queryRange({ startIndex: 0, endIndex: text.length })
+        await assertFreshSyntax(options, change.snapshot, actual, text.length)
+      }
+      expect(loads.length).toBe(new Set(loads).size)
+    } finally {
+      session.dispose()
+      await backend.dispose()
+    }
+  },
+)
+
+function assertPaint(
+  result: EditorSyntaxResult,
+  text: string,
+  categories: readonly (readonly [string, string])[],
+) {
+  const tokens = tokenValues(result)
+  for (const [value, category] of categories) {
+    const start = text.indexOf(value)
+    const token = tokens.find((token) => token.start <= start && token.end >= start + value.length)
+    expect(token?.style, value).toEqual(styleForTreeSitterCapture(category))
+  }
+}
+
+async function assertFreshSyntax(
+  options: Pick<
+    ConstructorParameters<typeof TreeSitterSyntaxSession>[0],
+    'languageId' | 'languageResolver' | 'backend' | 'syntaxMode'
+  >,
+  snapshot: ReturnType<typeof createPieceTableSnapshot>,
+  actual: EditorSyntaxResult,
+  length: number,
+) {
+  const fresh = new TreeSitterSyntaxSession({ ...options, documentId: 'fresh-syntax', snapshot })
+  try {
+    const initial = await fresh.refresh(snapshot)
+    const expected =
+      options.syntaxMode === 'full'
+        ? initial
+        : await fresh.queryRange({ startIndex: 0, endIndex: length })
+    expect(actual.captures).toEqual(expected.captures)
+    expect(tokenValues(actual)).toEqual(tokenValues(expected))
+    expect(actual.injections).toEqual(expected.injections)
+    expect(actual.folds).toEqual(expected.folds)
+  } finally {
+    fresh.dispose()
+  }
+}
 
 browserTest('reports unsupported style preprocessors without treating them as CSS', async () => {
   const backend = new TreeSitterWorkerClient()

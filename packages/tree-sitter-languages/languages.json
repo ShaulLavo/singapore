@@ -457,6 +457,46 @@
         "detection": "verified",
         "folds": "partial"
       }
+    },
+    {
+      "id": "sql",
+      "extensions": [".sql"],
+      "filenames": [],
+      "aliases": [],
+      "wasm": "./grammars/tree-sitter-sql.wasm",
+      "queries": {
+        "highlights": ["./queries/sql-highlights.scm"],
+        "folds": [],
+        "injections": []
+      },
+      "injectionDependencies": [],
+      "source": "sql",
+      "capabilities": {
+        "highlighting": "partial",
+        "injections": "none",
+        "detection": "verified",
+        "folds": "none"
+      }
+    },
+    {
+      "id": "mdx",
+      "extensions": [".mdx"],
+      "filenames": [],
+      "aliases": [],
+      "wasm": "./grammars/tree-sitter-mdx.wasm",
+      "queries": {
+        "highlights": ["./queries/mdx-highlights.scm"],
+        "folds": [],
+        "injections": ["./queries/mdx-injections.scm"]
+      },
+      "injectionDependencies": ["markdown_inline", "markdown"],
+      "source": "mdx",
+      "capabilities": {
+        "highlighting": "partial",
+        "injections": "partial",
+        "detection": "verified",
+        "folds": "none"
+      }
     }
   ],
   "sources": {
@@ -682,6 +722,20 @@
       "queryRevision": "be7f2e7db1fc19f0852265ec60923fc058380739",
       "integrity": "sha512-HqhbQ6Q4wMMGe2akVpcoVbhAoSO3Wf5/n0JYIP/9XGlF6kG46lU0II3MNVZANpBk8O90vM9OEKyD/EGrECvxbA==",
       "tarball": "https://registry.npmjs.org/tree-sitter-svelte/-/tree-sitter-svelte-0.11.0.tgz"
+    },
+    "sql": {
+      "repository": "https://github.com/DerekStride/tree-sitter-sql",
+      "revision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
+      "queryRevision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
+      "license": "MIT",
+      "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+    },
+    "mdx": {
+      "repository": "https://github.com/srazzak/tree-sitter-mdx",
+      "revision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
+      "queryRevision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
+      "license": "MIT",
+      "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
     }
   },
   "captureMappings": {
@@ -700,7 +754,8 @@
     "preproc": "keyword",
     "error": "tag.error",
     "text.strike": "text.literal",
-    "text.underline": "text.reference"
+    "text.underline": "text.reference",
+    "storageclass": "keyword.storage"
   },
   "transparentCaptures": {
     "none": "Retain raw Markdown fence captures without painting a parent style over injections.",

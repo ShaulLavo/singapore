@@ -43,6 +43,8 @@ describe('Tree-sitter language contributions', () => {
       'php',
       'lua',
       'svelte',
+      'sql',
+      'mdx',
     ])
     expect(TREE_SITTER_LANGUAGE_CONTRIBUTIONS.every((contribution) => 'load' in contribution)).toBe(
       true,

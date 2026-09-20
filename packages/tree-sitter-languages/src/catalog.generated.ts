@@ -487,6 +487,45 @@ export const TREE_SITTER_LANGUAGE_CONTRIBUTIONS: readonly TreeSitterLanguageCont
       }
     },
   },
+  {
+    id: 'sql',
+    extensions: ['.sql'],
+    filenames: [],
+    aliases: [],
+    injectionDependencies: [],
+    async load() {
+      const assets = await Promise.all([
+        import('./grammars/tree-sitter-sql.wasm?url').then((module) => module.default),
+        import('./queries/sql-highlights.scm?raw').then((module) => module.default),
+      ])
+      return {
+        wasmUrl: assets[0]!,
+        highlightQuerySource: mapQueryCaptures([assets[1]!].join('\n'), captureMappings),
+        foldQuerySource: mapQueryCaptures([].join('\n'), captureMappings),
+        injectionQuerySource: mapQueryCaptures([].join('\n'), captureMappings),
+      }
+    },
+  },
+  {
+    id: 'mdx',
+    extensions: ['.mdx'],
+    filenames: [],
+    aliases: [],
+    injectionDependencies: ['markdown_inline', 'markdown'],
+    async load() {
+      const assets = await Promise.all([
+        import('./grammars/tree-sitter-mdx.wasm?url').then((module) => module.default),
+        import('./queries/mdx-highlights.scm?raw').then((module) => module.default),
+        import('./queries/mdx-injections.scm?raw').then((module) => module.default),
+      ])
+      return {
+        wasmUrl: assets[0]!,
+        highlightQuerySource: mapQueryCaptures([assets[1]!].join('\n'), captureMappings),
+        foldQuerySource: mapQueryCaptures([].join('\n'), captureMappings),
+        injectionQuerySource: mapQueryCaptures([assets[2]!].join('\n'), captureMappings),
+      }
+    },
+  },
 ]
 const captureMappings: Readonly<Record<string, string>> = {
   escape: 'string.escape',
@@ -505,4 +544,5 @@ const captureMappings: Readonly<Record<string, string>> = {
   error: 'tag.error',
   'text.strike': 'text.literal',
   'text.underline': 'text.reference',
+  storageclass: 'keyword.storage',
 }

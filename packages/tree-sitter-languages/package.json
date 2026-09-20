@@ -34,7 +34,9 @@
     "format:check": "oxfmt --check .",
     "languages:generate": "node scripts/generate.mjs",
     "languages:verify": "node scripts/generate.mjs --check && vitest run",
-    "languages:build": "node scripts/build-grammars.mjs"
+    "languages:build": "node scripts/build-grammars.mjs",
+    "languages:build:sql": "node scripts/build-sql.mjs",
+    "languages:build:mdx": "node scripts/build-mdx.mjs"
   },
   "dependencies": {
     "@singapore-editor/tree-sitter": "workspace:*",

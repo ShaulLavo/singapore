@@ -286,4 +286,30 @@ export const TREE_SITTER_LANGUAGE_METADATA = [
       folds: 'partial',
     },
   },
+  {
+    id: 'sql',
+    extensions: ['.sql'],
+    filenames: [],
+    aliases: [],
+    injectionDependencies: [],
+    capabilities: {
+      highlighting: 'partial',
+      injections: 'none',
+      detection: 'verified',
+      folds: 'none',
+    },
+  },
+  {
+    id: 'mdx',
+    extensions: ['.mdx'],
+    filenames: [],
+    aliases: [],
+    injectionDependencies: ['markdown_inline', 'markdown'],
+    capabilities: {
+      highlighting: 'partial',
+      injections: 'partial',
+      detection: 'verified',
+      folds: 'none',
+    },
+  },
 ] as const

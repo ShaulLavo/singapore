@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "manifestHash": "a56b03c08983fa01255a4542cb9e5beba2199a0097fbd40b8b63a72c327f4e1f",
+  "manifestHash": "fcf0320e4c534c738bed8f63137db49b1182416bc5532ad47b49e8cae75a6e47",
   "languages": [
     {
       "id": "javascript",
@@ -2075,6 +2075,82 @@
         {
           "kind": "injections",
           "sha256": "51a5bfb755d3a2745cebd4648c4c2ca7917a8905362f3f979b5c07af25e303b4"
+        }
+      ]
+    },
+    {
+      "id": "sql",
+      "parserABI": 15,
+      "source": {
+        "repository": "https://github.com/DerekStride/tree-sitter-sql",
+        "revision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
+        "queryRevision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
+        "license": "MIT",
+        "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+      },
+      "sourceFiles": [],
+      "files": [
+        {
+          "file": "./grammars/tree-sitter-sql.wasm",
+          "sha256": "5bd67016608428ae79dcd98f1c18f43e14a0c35004f6f62e6fbb2d5ed0eb26fb"
+        },
+        {
+          "file": "./queries/sql-highlights.scm",
+          "sha256": "e0780d48190be2ece884abf551da50d8011a946e7e3fb39ee48fbe5a28f158ab"
+        }
+      ],
+      "queries": [
+        {
+          "kind": "highlights",
+          "sha256": "14dcaae604bd913d763be1d942085179f8406d1c99ae12df19137d784ebd76ec"
+        },
+        {
+          "kind": "folds",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "kind": "injections",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "id": "mdx",
+      "parserABI": 15,
+      "source": {
+        "repository": "https://github.com/srazzak/tree-sitter-mdx",
+        "revision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
+        "queryRevision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
+        "license": "MIT",
+        "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+      },
+      "sourceFiles": [],
+      "files": [
+        {
+          "file": "./grammars/tree-sitter-mdx.wasm",
+          "sha256": "eea3d77bced02c509458e105d0f1352ea2c5f01c0cbefcb5273e5b2a75f7eb29"
+        },
+        {
+          "file": "./queries/mdx-highlights.scm",
+          "sha256": "9d4be8b024b6a299d52ed27f55b74fe27b8f8729d6246aac075d13d587cf990f"
+        },
+        {
+          "file": "./queries/mdx-injections.scm",
+          "sha256": "a4163733d72938a4bf97f43c72d88032c26e303e7416d337ddb968c4283583dc"
+        }
+      ],
+      "queries": [
+        {
+          "kind": "highlights",
+          "sha256": "9d4be8b024b6a299d52ed27f55b74fe27b8f8729d6246aac075d13d587cf990f"
+        },
+        {
+          "kind": "folds",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "kind": "injections",
+          "sha256": "a4163733d72938a4bf97f43c72d88032c26e303e7416d337ddb968c4283583dc"
         }
       ]
     }

@@ -1,4 +1,7 @@
+import { SQL_FIXTURE } from './sql'
+
 export const NATIVE_FIXTURES = [
+  { id: 'sql', text: SQL_FIXTURE, captures: ['keyword', 'number', 'string', 'comment'] },
   {
     id: 'javascript',
     text: 'const greet = (name) => `Hi ${name}`; // 🪐\n',
