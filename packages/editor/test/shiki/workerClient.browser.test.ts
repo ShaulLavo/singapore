@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  applyBatchToPieceTable,
   createDocumentTextSnapshot,
   createPieceTableSnapshot,
   type DocumentSessionChange,
+  type PieceTableSnapshot,
 } from '../../src'
 
 import {
@@ -195,6 +197,131 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     session!.dispose()
   })
 
+  it('catches up and changes history branches without reading or sending whole text', async () => {
+    const original = 'const value = "😀";\nconst other = 2;'
+    const initial = createPieceTableSnapshot(original)
+    const session = workerOwner.createSession({
+      documentId: 'catch-up.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+      snapshot: initial,
+      fullText: original,
+    })!
+    await session.refresh(initial, original)
+    const requests = vi.spyOn(workerOwner, 'request')
+    const intermediate = applyBatchToPieceTable(initial, [{ from: 6, to: 11, text: 'answer' }])
+    const next = applyBatchToPieceTable(intermediate, [{ from: 12, to: 12, text: 'X' }])
+    const changedText = 'const answerX = "😀";\nconst other = 2;'
+    const skipped = changeWithoutFullRead(next, [{ from: 12, to: 12, text: 'X' }])
+    const caughtUp = await session.applyChange(skipped)
+    const restored = await session.applyChange(changeWithoutFullRead(initial, []))
+    const unchanged = await session.applyChange(changeWithoutFullRead(initial, []))
+    expect(requests.mock.calls.map(([payload]) => payload)).toMatchObject([
+      { type: 'edit', text: undefined, edits: [{ from: 6, to: 11, text: 'answerX' }] },
+      { type: 'edit', text: undefined, edits: [{ from: 6, to: 13, text: 'value' }] },
+      { type: 'edit', text: undefined, edits: [] },
+    ])
+    expect(caughtUp.tokens.toTokens()).toEqual(await fullTokens(changedText))
+    expect(restored.tokens.toTokens()).toEqual(await fullTokens(original))
+    expect(unchanged.tokens.toTokens()).toEqual(restored.tokens.toTokens())
+    session.dispose()
+  })
+
+  it('opens from the latest snapshot when a change arrives before refresh', async () => {
+    const text = 'const value = 1;'
+    const nextText = 'const answer = 1;'
+    const session = workerOwner.createSession({
+      documentId: 'unopened.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+      snapshot: createPieceTableSnapshot(text),
+      fullText: text,
+    })!
+    const result = await session.applyChange(createChange(nextText))
+    expect(result.tokens.toTokens()).toEqual(await fullTokens(nextText))
+    session.dispose()
+  })
+
+  it.each(['refresh', 'change'] as const)(
+    'reopens after a worker generation changes during %s',
+    async (operation) => {
+      const workers: Worker[] = []
+      workerOwner = createShikiWorkerOwner({
+        workerFactory: () => {
+          const worker = new Worker(new URL('../../src/shiki/shiki.worker.ts', import.meta.url), {
+            type: 'module',
+          })
+          workers.push(worker)
+          return worker
+        },
+      })
+      const text = 'const value = 1;'
+      const initial = createPieceTableSnapshot(text)
+      const registrations = await resolveRegistrations()
+      const session = workerOwner.createSession({
+        documentId: 'restart.ts',
+        languageId: 'typescript',
+        lang: 'typescript',
+        theme: 'github-dark',
+        registrations,
+        snapshot: initial,
+        fullText: text,
+      })!
+      await session.refresh(initial, text)
+      workers[0]!.dispatchEvent(new ErrorEvent('error', { message: 'controlled worker loss' }))
+      // Another consumer can restart the owner before this session next runs.
+      await workerOwner.loadTheme({ theme: 'github-dark', registrations })
+      const requests = vi.spyOn(workerOwner, 'request')
+      const result =
+        operation === 'refresh'
+          ? await session.refresh(initial)
+          : await session.applyChange(createChange(text))
+      expect(requests.mock.calls[0]?.[0]).toMatchObject({ type: 'open', text })
+      expect(result.tokens.toTokens()).toEqual(await fullTokens(text))
+      session.dispose()
+    },
+  )
+
+  it('queues catch-up behind a slow request and drops work after disposal', async () => {
+    const text = 'const value = 1;'
+    const initial = createPieceTableSnapshot(text)
+    const session = workerOwner.createSession({
+      documentId: 'queued.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+      snapshot: initial,
+      fullText: text,
+    })!
+    await session.refresh(initial, text)
+    const firstEdit = { from: 6, to: 11, text: 'answer' }
+    const firstSnapshot = applyBatchToPieceTable(initial, [firstEdit])
+    const request = workerOwner.request.bind(workerOwner)
+    let release: () => void = () => expect.unreachable('Gate was not initialized')
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const requests = vi.spyOn(workerOwner, 'request').mockImplementationOnce(async (payload) => {
+      await gate
+      return request(payload)
+    })
+    const first = session.applyChange(changeWithoutFullRead(firstSnapshot, [firstEdit]))
+    const next = session.applyChange(changeWithoutFullRead(initial, []))
+    await vi.waitFor(() => expect(requests).toHaveBeenCalledTimes(1))
+    release()
+    await first
+    expect((await next).tokens.toTokens()).toEqual(await fullTokens(text))
+    session.dispose()
+    expect(
+      (await session.applyChange(changeWithoutFullRead(firstSnapshot, []))).tokens.length,
+    ).toBe(0)
+  })
+
   it('applies a multi-edit change as one batch of incremental edits', async () => {
     const initialText = 'const a = 1;\nconst b = 2;'
     const nextText = 'const answer = 1;\nconst basis = 2;'
@@ -308,6 +435,17 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     second!.dispose()
   })
 })
+
+function changeWithoutFullRead(
+  snapshot: PieceTableSnapshot,
+  edits: DocumentSessionChange['edits'],
+): DocumentSessionChange {
+  const textSnapshot = createDocumentTextSnapshot(snapshot)
+  vi.spyOn(textSnapshot, 'materializeFullText').mockImplementation(() =>
+    expect.unreachable('Unexpected full-document read'),
+  )
+  return { ...createChange(''), snapshot, textSnapshot, edits }
+}
 
 async function resolveRegistrations(): Promise<ShikiResolvedRegistrations> {
   const [language, theme] = await Promise.all([

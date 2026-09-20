@@ -41,6 +41,8 @@
       "dependencies": {
         "@singapore-editor/core": "workspace:*",
         "@singapore-editor/find": "workspace:*",
+        "@singapore-editor/lsp": "workspace:*",
+        "@singapore-editor/minimap": "workspace:*",
         "@singapore-editor/tree-sitter": "workspace:*",
         "@singapore-editor/tree-sitter-languages": "workspace:*",
         "evlog": "^2.29.0",
@@ -379,7 +381,7 @@
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
         "oxfmt": "0.54.0",
         "oxlint": "1.69.0",
-        "tree-sitter-cli": "^0.26.13",
+        "tree-sitter-cli": "0.26.13",
         "typescript": "~6.0.3",
         "vitest": "^4.1.11",
         "web-tree-sitter": "^0.26.13",

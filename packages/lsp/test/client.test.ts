@@ -64,6 +64,7 @@ type TestDocument = {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('LspClient', () => {
@@ -338,6 +339,8 @@ describe('LspClient', () => {
   })
 
   it('sends snapshot incremental changes without materializing the next full text', async () => {
+    const record = vi.fn()
+    vi.stubGlobal('__EDITOR_PERFORMANCE_DIAGNOSTICS__', record)
     const { client, transport } = await initializedClient({ textDocumentSync: 2 })
 
     const document = openTestDocument(client.workspace, {
@@ -355,6 +358,12 @@ describe('LspClient', () => {
 
     const didChange = transport.lastMessage()
     expect(didChangeTextDocument(didChange)).toEqual({ uri: 'file:///repo/a.ts', version: 1 })
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'lsp.contentChanges.path',
+        detail: expect.objectContaining({ path: 'snapshot-incremental' }),
+      }),
+    )
     expect(didChangeContentChanges(didChange)).toEqual([
       {
         range: {
@@ -367,6 +376,8 @@ describe('LspClient', () => {
   })
 
   it('materializes snapshot text when the server requests full sync', async () => {
+    const record = vi.fn()
+    vi.stubGlobal('__EDITOR_PERFORMANCE_DIAGNOSTICS__', record)
     const { client, transport } = await initializedClient({ textDocumentSync: 1 })
 
     const document = openTestDocument(client.workspace, {
@@ -379,6 +390,12 @@ describe('LspClient', () => {
     const didChange = transport.lastMessage()
     expect(didChangeTextDocument(didChange)).toEqual({ uri: 'file:///repo/a.ts', version: 1 })
     expect(didChangeContentChanges(didChange)).toEqual([{ text: 'abcX' }])
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'lsp.createContentChanges',
+        detail: expect.objectContaining({ syncMode: 'full', snapshot: true }),
+      }),
+    )
   })
 
   it('skips document sync notifications when the server does not opt in', async () => {

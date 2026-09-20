@@ -2,6 +2,7 @@ import { documentSessionChangeTextSnapshot, type DocumentSessionChange } from '.
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from '../documentTextSnapshot'
 import {
   applyBatchToPieceTable,
+  diffPieceTableSnapshots,
   type PieceTableSnapshot,
   pieceTableSnapshotsHaveSameText,
 } from '@singapore-editor/textbuffer'
@@ -356,12 +357,12 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   public readonly onDidChangeTheme: ShikiHighlighterSessionOptions['onDidChangeTheme']
   private readonly preloadRegistrations: ShikiPreloadRegistrationSource | null
   private snapshot: PieceTableSnapshot
-  private textSnapshot: DocumentTextSnapshot
   // The whole document's tokens, kept packed so an edit answer only has to splice its lines in.
   private store: EditorTokenStore | null = null
   private currentTheme: EditorTheme | null | undefined
   private preloadScheduled = false
   private opened = false
+  private workerGeneration = 0
   private disposed = false
   private task: Promise<void> = Promise.resolve()
 
@@ -378,8 +379,6 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     this.registrations = Promise.resolve(options.registrations)
     this.preloadRegistrations = options.preloadRegistrations ?? null
     this.snapshot = options.snapshot
-    this.textSnapshot =
-      options.textSnapshot ?? createDocumentTextSnapshot(options.snapshot, options.fullText)
   }
 
   public async refresh(
@@ -410,8 +409,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
       this.schedulePreload()
       this.snapshot = snapshot
-      this.textSnapshot = textSnapshot
       this.opened = true
+      this.workerGeneration = this.owner.inspect().workerGeneration
       this.disposed = false
       this.store = result?.tokensPacked ? EditorTokenStore.fromPacked(result.tokensPacked) : null
       this.currentTheme = result?.theme
@@ -436,8 +435,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
       this.schedulePreload()
       this.snapshot = change.snapshot
-      this.textSnapshot = nextTextSnapshot
       this.opened = true
+      this.workerGeneration = this.owner.inspect().workerGeneration
       this.disposed = false
       this.adoptEditResult(result)
       return { tokens: this.currentTokens(), theme: result?.theme }
@@ -473,6 +472,10 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   }
 
   private async synchronizeTheme(): Promise<void> {
+    const worker = this.owner.inspect()
+    if (worker.lifecycle !== 'ready' || worker.workerGeneration !== this.workerGeneration) {
+      this.opened = false
+    }
     const next = this.options.resolveTheme?.(this.theme)
     if (!next || next.theme === this.theme) return
 
@@ -527,12 +530,20 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       }
     }
 
-    const text = nextTextSnapshot.materializeFullText()
-    const fallbackEdit = createTextDiffEdit(this.textSnapshot.materializeFullText(), text)
+    if (!this.opened) {
+      return {
+        type: 'open',
+        ...(await this.documentOptions()),
+        text: nextTextSnapshot.materializeFullText(),
+      }
+    }
+
+    const fallbackEdit = diffPieceTableSnapshots(this.snapshot, change.snapshot)
     return {
       type: 'edit',
-      ...(await this.documentOptions(text)),
-      edits: fallbackEdit ? [fallbackEdit] : undefined,
+      ...(await this.documentOptions()),
+      // Absent edits would send the worker's entire token store back for a no-op.
+      edits: fallbackEdit ? [fallbackEdit] : [],
     }
   }
 
@@ -562,31 +573,6 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
 function emptyHighlightResult(): EditorHighlightResult {
   return { tokens: EditorTokenStore.empty() }
-}
-
-export const createTextDiffEdit = (previousText: string, nextText: string) => {
-  if (previousText === nextText) return null
-
-  let start = 0
-  const maxPrefixLength = Math.min(previousText.length, nextText.length)
-  while (start < maxPrefixLength && previousText[start] === nextText[start]) start += 1
-
-  let previousEnd = previousText.length
-  let nextEnd = nextText.length
-  while (
-    previousEnd > start &&
-    nextEnd > start &&
-    previousText[previousEnd - 1] === nextText[nextEnd - 1]
-  ) {
-    previousEnd -= 1
-    nextEnd -= 1
-  }
-
-  return {
-    from: start,
-    to: previousEnd,
-    text: nextText.slice(start, nextEnd),
-  }
 }
 
 const incrementalEditsForChange = (

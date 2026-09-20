@@ -25,6 +25,8 @@
   "dependencies": {
     "@singapore-editor/core": "workspace:*",
     "@singapore-editor/find": "workspace:*",
+    "@singapore-editor/lsp": "workspace:*",
+    "@singapore-editor/minimap": "workspace:*",
     "@singapore-editor/tree-sitter": "workspace:*",
     "@singapore-editor/tree-sitter-languages": "workspace:*",
     "evlog": "^2.29.0"

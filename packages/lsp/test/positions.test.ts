@@ -1,5 +1,5 @@
 import { arrayLspLineStarts } from '../src/workspace'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createLspContentChanges,
@@ -15,6 +15,36 @@ import {
 } from '../src/index.ts'
 
 describe('LSP position helpers', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    { path: 'full-sync', options: { incremental: false } },
+    { path: 'missing-edits', options: { incremental: true } },
+    {
+      path: 'invalid-edits',
+      options: { incremental: true, edits: [{ from: 9, to: 9, text: 'd' }] },
+    },
+    {
+      path: 'length-mismatch',
+      options: { incremental: true, edits: [{ from: 3, to: 3, text: 'de' }] },
+    },
+  ])('reports $path and serializes the authoritative next snapshot', ({ path, options }) => {
+    const record = vi.fn()
+    vi.stubGlobal('__EDITOR_PERFORMANCE_DIAGNOSTICS__', record)
+    const next = materializingSnapshotDocument('abcd')
+    const materialize = vi.spyOn(next.textSnapshot, 'materializeFullText')
+    expect(createLspContentChangesInSnapshot(snapshotDocument('abc'), next, options)).toEqual([
+      { text: 'abcd' },
+    ])
+    expect(materialize).toHaveBeenCalledTimes(1)
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'lsp.contentChanges.path',
+        detail: expect.objectContaining({ path }),
+      }),
+    )
+  })
+
   it('converts offsets and positions in empty text', () => {
     expect(offsetToLspPosition('', 0)).toEqual({ line: 0, character: 0 })
     expect(lspPositionToOffset('', { line: 10, character: 5 })).toBe(0)
