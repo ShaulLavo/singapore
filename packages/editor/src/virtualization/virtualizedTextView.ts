@@ -419,7 +419,13 @@ export class VirtualizedTextView {
       (snapshot) => {
         this.renderSnapshot(snapshot)
       },
-      { readInitialScrollPosition: false, onScroll: options.onViewportScroll },
+      {
+        readInitialScrollPosition: false,
+        onScroll: () => {
+          this.synchronizeScrollPaint(virtualizer.getViewportSnapshot())
+          options.onViewportScroll?.()
+        },
+      },
     )
     this.disposeForegroundHighlightRestore = subscribeToForegroundHighlightRestore(this.view)
     rebuildStyleRules(this.view)
@@ -525,6 +531,7 @@ export class VirtualizedTextView {
     this.view.viewport.setDocumentWidth(paint.scrollWidth)
     this.view.viewport.setDocumentHeight(paint.scrollHeight, 0)
     this.view.viewport.setViewportSize(paint.viewportWidth, paint.viewportHeight)
+    this.view.viewport.setScrollPosition(paint.scrollLeft, paint.scrollTop)
     this.scrollElement.style.setProperty('--editor-gutter-width', `${paint.gutterWidth}px`)
     const release = paintProvisionalRows(this.view, paint)
     if (!release) {
@@ -1308,6 +1315,7 @@ export class VirtualizedTextView {
     }
 
     const view = this.view
+    this.synchronizeScrollPaint(snapshot)
     this.view.viewport.setViewportSize(snapshot.viewportWidth, snapshot.viewportHeight)
     const visible = snapshot.viewportHeight > 0
     if (visible) {
@@ -1346,6 +1354,13 @@ export class VirtualizedTextView {
     renderSelectionHighlight(view)
     view.onViewportChange?.()
     this.flushPendingReveal()
+  }
+
+  private synchronizeScrollPaint(
+    snapshot: Pick<FixedRowVirtualizerSnapshot, 'scrollLeft' | 'nativeScrollTop'>,
+  ): void {
+    if (this.view.provisional || this.atomicRenderDepth > 0 || this.applyingEdit) return
+    this.view.viewport.setScrollPosition(snapshot.scrollLeft, snapshot.nativeScrollTop)
   }
 
   private flushPendingReveal(): void {

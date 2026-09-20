@@ -1,6 +1,7 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { commands } from 'vitest/browser'
 import { VirtualizedTextView } from '../src/virtualization'
+import { ScrollViewport } from '../src/virtualization/scrollViewport'
 import { Editor } from '../src/editor/Editor'
 import { createEditorBufferSession, createEditorTextBuffer } from '../src/public/document'
 import type { EditorViewContributionContext } from '../src/plugins'
@@ -13,6 +14,50 @@ declare module 'vitest/browser' {
     proofViewportScreenshot: (hostId: string) => Promise<string>
   }
 }
+
+it('does not remeasure an unchanged fractional viewport after CSS rounds its size', () => {
+  const scroll = document.createElement('div')
+  const viewport = new ScrollViewport(scroll)
+  viewport.setViewportSize(400.123456, 180.123456)
+  const measure = vi.spyOn(window, 'getComputedStyle')
+  try {
+    viewport.setViewportSize(400.123456, 180.123456)
+    expect(measure).not.toHaveBeenCalled()
+    viewport.setViewportSize(401.123456, 180.123456)
+    expect(measure).toHaveBeenCalledOnce()
+  } finally {
+    measure.mockRestore()
+  }
+})
+
+it('holds the complete painted viewport until rows for a native scroll jump are ready', async () => {
+  const host = document.createElement('div')
+  host.style.cssText = 'display:flex;width:400px;height:180px'
+  document.body.append(host)
+  const view = new VirtualizedTextView(host, { rowHeight: 20, overscan: 0 })
+  view.setText(
+    Array.from({ length: 500 }, (_, row) => `${row}: ${'abcdefghij '.repeat(50)}`).join('\n'),
+  )
+
+  try {
+    await expect.poll(() => view.getState().mountedRows.length).toBeGreaterThan(0)
+    const first = host.querySelector('.editor-virtualized-row')!
+    const before = first.getBoundingClientRect()
+    view.scrollElement.scrollTo(650, 1600)
+    const pending = first.getBoundingClientRect()
+    expect(pending.top).toBe(before.top)
+    expect(pending.left).toBe(before.left)
+    await expect.poll(() => view.getState().scrollTop).toBe(1600)
+    const row = host.querySelector('[data-editor-virtual-row="80"]')!
+    expect(row.getBoundingClientRect().top).toBe(before.top)
+    expect(row.getBoundingClientRect().left).toBe(before.left - 650)
+    view.scrollElement.scrollTop = 1601
+    await expect.poll(() => row.getBoundingClientRect().top).toBe(before.top - 1)
+  } finally {
+    view.dispose()
+    host.remove()
+  }
+})
 
 it('clips every document paint layer before either rail through native scrolling and visibility changes', async () => {
   const host = document.createElement('div')

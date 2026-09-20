@@ -35,6 +35,8 @@ export default defineConfig({
           browser: {
             enabled: true,
             headless: true,
+            // Fit the preview without scaling so pixel checks compare the actual paint.
+            viewport: { width: 800, height: 600 },
             fileParallelism: false,
             provider: playwright(),
             commands: {

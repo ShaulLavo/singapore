@@ -499,10 +499,12 @@ function scrollBoxMatchesViewport(
   box: MinimapScrollBox,
   viewport: EditorViewportSnapshot,
 ): boolean {
-  // The view reports the element's own offset box, so a size change shows up here exactly.
-  // Its client height subtracts padding, so it only stands in when no border box is reported.
+  // ResizeObserver retains fractional pixels; offsetWidth/Height round them to integers.
   if (viewport.borderBoxWidth !== undefined && viewport.borderBoxHeight !== undefined) {
-    return viewport.borderBoxWidth === box.width && viewport.borderBoxHeight === box.height
+    return (
+      Math.round(viewport.borderBoxWidth) === box.width &&
+      Math.round(viewport.borderBoxHeight) === box.height
+    )
   }
   return viewport.clientHeight <= 0 || viewport.clientHeight === box.clientHeight
 }

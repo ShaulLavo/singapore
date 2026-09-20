@@ -208,12 +208,13 @@ describe('createMinimapPlugin', () => {
     }
   })
 
-  it('reads the scroll box from the DOM only when a layout could have changed it', () => {
+  it.each([0, 0.25])('reuses scroll geometry with a %s px fractional border box', (fraction) => {
     const restoreRuntime = installMinimapRuntime()
     const computedStyle = vi.spyOn(window, 'getComputedStyle')
     try {
       const providers = activateMinimap()
-      const testContext = context(snapshot({ clientWidth: 80, clientHeight: 20 }))
+      const dimensions = { borderBoxWidth: 80 + fraction, borderBoxHeight: 20 + fraction }
+      const testContext = context(snapshot({ clientWidth: 80, clientHeight: 20, ...dimensions }))
       defineScrollBox(testContext.scrollElement, {
         offsetWidth: 80,
         offsetHeight: 20,
@@ -224,7 +225,7 @@ describe('createMinimapPlugin', () => {
       computedStyle.mockClear()
 
       for (let frame = 0; frame < 6; frame += 1) {
-        contribution?.update(snapshot({ scrollTop: frame * 20 }), 'viewport')
+        contribution?.update(snapshot({ scrollTop: frame * 20, ...dimensions }), 'viewport')
       }
       expect(computedStyle).not.toHaveBeenCalled()
 

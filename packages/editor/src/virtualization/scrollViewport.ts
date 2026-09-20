@@ -8,7 +8,10 @@ export class ScrollViewport {
   public readonly gutterSpacer: HTMLDivElement
   private readonly extent: HTMLDivElement
   private readonly frame: HTMLDivElement
-  private readonly layers: readonly ScrollLayer[]
+  private readonly layers: readonly [ScrollLayer, ScrollLayer]
+  // CSS serializes fractional sizes with less precision than ResizeObserver reports.
+  private viewportWidth = -1
+  private viewportHeight = -1
 
   public constructor(private readonly scrollElement: HTMLDivElement) {
     const document = scrollElement.ownerDocument
@@ -44,9 +47,13 @@ export class ScrollViewport {
   }
 
   public setViewportSize(width: number, height: number): void {
-    const nextWidth = `${Math.max(0, width)}px`
-    const nextHeight = `${Math.max(0, height)}px`
-    if (this.frame.style.width === nextWidth && this.frame.style.height === nextHeight) return
+    width = Math.max(0, width)
+    height = Math.max(0, height)
+    if (this.viewportWidth === width && this.viewportHeight === height) return
+    this.viewportWidth = width
+    this.viewportHeight = height
+    const nextWidth = `${width}px`
+    const nextHeight = `${height}px`
 
     this.synchronizeOrigin()
     this.frame.style.width = nextWidth
@@ -65,6 +72,15 @@ export class ScrollViewport {
     for (const layer of this.layers) layer.spacer.style.width = value
   }
 
+  public setScrollPosition(left: number, top: number): void {
+    const textTransform = `translate(${-left}px, ${-top}px)`
+    const gutterTransform = `translateY(${-top}px)`
+    if (this.layers[0].content.style.transform !== textTransform)
+      this.layers[0].content.style.transform = textTransform
+    if (this.layers[1].content.style.transform !== gutterTransform)
+      this.layers[1].content.style.transform = gutterTransform
+  }
+
   public setDocumentHeight(height: number, offsetY: number): void {
     const value = `${height}px`
     const transform = offsetY === 0 ? '' : `translateY(${offsetY}px)`
@@ -78,10 +94,8 @@ export class ScrollViewport {
 
   private synchronizeOrigin(): void {
     const padding = scrollElementPadding(this.scrollElement)
-    for (const layer of this.layers) {
-      layer.content.style.left = `${padding.left}px`
-      layer.content.style.top = `${padding.top}px`
-    }
+    this.frame.style.left = `${padding.left}px`
+    this.frame.style.top = `${padding.top}px`
   }
 }
 
