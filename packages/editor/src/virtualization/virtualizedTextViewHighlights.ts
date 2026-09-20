@@ -1323,7 +1323,7 @@ export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
 
   const rules: string[] = []
   for (const group of view.rangeHighlightGroups.values()) {
-    const rule = rangeHighlightRule(group.name, group.style)
+    const rule = rangeHighlightRule(view.highlightScope, group.name, group.style)
     if (rule) rules.push(rule)
   }
 
@@ -1348,14 +1348,19 @@ function syncStyleElementConnection(view: VirtualizedTextViewInternal, rules: st
   view.scrollElement.ownerDocument.head.appendChild(view.styleEl)
 }
 
-function rangeHighlightRule(name: string, style: VirtualizedTextHighlightStyle): string | null {
+function rangeHighlightRule(
+  scope: string,
+  name: string,
+  style: VirtualizedTextHighlightStyle,
+): string | null {
   const declarations = []
   if (style.backgroundColor) declarations.push(`background-color: ${style.backgroundColor};`)
   if (style.color) declarations.push(`color: ${style.color};`)
   if (style.textDecoration) declarations.push(`text-decoration: ${style.textDecoration};`)
   if (declarations.length === 0) return null
 
-  return `::highlight(${name}) { ${declarations.join(' ')} }`
+  // Mounting one excerpt must not invalidate highlights in every other editor.
+  return `[data-editor-highlight-scope="${scope}"] .editor-virtualized-row::highlight(${name}) { ${declarations.join(' ')} }`
 }
 
 function mixRangeHighlightChunkSignature(

@@ -72,7 +72,7 @@ describe('normalizeTokenStyle', () => {
 describe('buildHighlightRule', () => {
   it('builds a CSS rule with color', () => {
     expect(buildHighlightRule('tok-0', { color: '#f00' })).toBe(
-      '::highlight(tok-0) { color: #f00; }',
+      '.editor-virtualized-row::highlight(tok-0) { color: #f00; }',
     )
   })
 
@@ -83,7 +83,7 @@ describe('buildHighlightRule', () => {
       textDecoration: 'underline',
     })
     expect(rule).toBe(
-      '::highlight(tok-1) { color: #fff; background-color: #000; text-decoration: underline; }',
+      '.editor-virtualized-row::highlight(tok-1) { color: #fff; background-color: #000; text-decoration: underline; }',
     )
   })
 
@@ -93,9 +93,9 @@ describe('buildHighlightRule', () => {
   it('emits no font declarations, because a highlight cannot apply them', () => {
     expect(
       buildHighlightRule('tok-3', { color: '#fff', fontStyle: 'italic', fontWeight: 700 }),
-    ).toBe('::highlight(tok-3) { color: #fff; }')
+    ).toBe('.editor-virtualized-row::highlight(tok-3) { color: #fff; }')
     expect(buildHighlightRule('tok-4', { fontStyle: 'italic', fontWeight: 700 })).toBe(
-      '::highlight(tok-4) {  }',
+      '.editor-virtualized-row::highlight(tok-4) {  }',
     )
   })
 
@@ -112,7 +112,9 @@ describe('buildHighlightRule', () => {
   })
 
   it('skips falsy properties', () => {
-    expect(buildHighlightRule('tok-2', { color: '' })).toBe('::highlight(tok-2) {  }')
+    expect(buildHighlightRule('tok-2', { color: '' })).toBe(
+      '.editor-virtualized-row::highlight(tok-2) {  }',
+    )
   })
 })
 

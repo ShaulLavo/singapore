@@ -83,6 +83,7 @@ export interface VirtualizedTextViewInternal {
   readonly caretElement: HTMLDivElement
   readonly secondaryCaretElements: HTMLDivElement[]
   readonly styleEl: HTMLStyleElement
+  readonly highlightScope: string
   readonly virtualizer: FixedRowVirtualizer
   scrollMode: VirtualizedTextViewScrollMode
   readonly rowPositioning: VirtualizedTextViewRowPositioning

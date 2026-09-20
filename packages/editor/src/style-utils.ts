@@ -57,7 +57,8 @@ export function buildHighlightRule(name: string, style: EditorTokenStyle): strin
   for (const { key, cssProperty } of HIGHLIGHT_DECLARATIONS) {
     if (style[key]) declarations.push(`${cssProperty}: ${style[key]};`)
   }
-  return `::highlight(${name}) { ${declarations.join(' ')} }`
+  // A universal highlight selector recalculates pseudo styles across the entire page.
+  return `.editor-virtualized-row::highlight(${name}) { ${declarations.join(' ')} }`
 }
 
 type SharedStyleEntry = {

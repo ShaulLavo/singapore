@@ -189,6 +189,7 @@ type BidiVisualOrientationCache = {
 }
 
 const bidiExtremalBoundaryCaches = new WeakMap<HTMLElement, BidiExtremalBoundaryCache>()
+let nextHighlightScope = 0
 const bidiVisualOrientationCaches = new WeakMap<HTMLElement, BidiVisualOrientationCache>()
 const BIDI_WINDOWED_VISUAL_MOVE_MIN_TEXT_LENGTH = 64
 const BIDI_VISUAL_MOVE_EPSILON = 0.9
@@ -288,6 +289,8 @@ export class VirtualizedTextView {
 
     const styleEl = container.ownerDocument.createElement('style')
     const scrollElement = createScrollElement(container, options.className)
+    const highlightScope = `editor-highlight-${nextHighlightScope++}`
+    scrollElement.setAttribute('data-editor-highlight-scope', highlightScope)
     const textMetrics = options.textMetrics ?? null
     const measuredMetrics = textMetrics ?? measureBrowserTextMetrics(scrollElement)
     const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null
@@ -339,6 +342,7 @@ export class VirtualizedTextView {
       caretElement,
       secondaryCaretElements: [],
       styleEl,
+      highlightScope,
       rangeHighlightRuleVersion: 0,
       // Behind the live version, so the first rebuild always writes.
       renderedRangeHighlightRuleVersion: -1,
