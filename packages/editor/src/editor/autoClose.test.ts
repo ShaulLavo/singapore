@@ -37,10 +37,14 @@ describe('autoClosingPairForOpen', () => {
     expect(autoClosingPairForOpen('markdown', '(')).not.toBeNull()
   })
 
-  it('closes brackets but not quotes for an unknown or absent language', () => {
+  // An unfamiliar language closes what a familiar one closes; an apostrophe in prose is kept by
+  // shouldAutoClose's word-character rule rather than by leaving quotes out of the set.
+  it('closes every pair for an unknown or absent language', () => {
     expect(autoClosingPairForOpen('cobol', '(')?.close).toBe(')')
     expect(autoClosingPairForOpen(null, '{')?.close).toBe('}')
-    expect(autoClosingPairForOpen('cobol', '"')).toBeNull()
+    expect(autoClosingPairForOpen('cobol', '"')?.close).toBe('"')
+    expect(autoClosingPairForOpen(null, "'")?.close).toBe("'")
+    expect(autoClosingPairForOpen('cobol', '`')?.close).toBe('`')
   })
 
   it('closes pairs in the catalog languages beyond the JavaScript family', () => {

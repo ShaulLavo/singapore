@@ -1,16 +1,10 @@
 import {
+  DEFAULT_AUTO_CLOSING_PAIRS,
   editorLanguageConfiguration,
   type EditorAutoClosingPair,
   type EditorBlockCommentTokens,
   type EditorLanguageConfiguration,
 } from './languageConfiguration'
-
-/** A language with no rules still has brackets; its quotes are left alone, as they may be prose. */
-const UNKNOWN_LANGUAGE_PAIRS: readonly EditorAutoClosingPair[] = [
-  { close: ')', open: '(' },
-  { close: ']', open: '[' },
-  { close: '}', open: '{' },
-]
 
 /**
  * Characters a pair may be auto-closed *before*: whitespace and the closers of
@@ -27,7 +21,7 @@ const NEUTRAL_CHARACTERS = '0123456789abcdefghijklmnopqrstuvwxyz'
 function autoClosingPairsForLanguage(
   languageId: string | null | undefined,
 ): readonly EditorAutoClosingPair[] {
-  return editorLanguageConfiguration(languageId)?.autoClosingPairs ?? UNKNOWN_LANGUAGE_PAIRS
+  return editorLanguageConfiguration(languageId)?.autoClosingPairs ?? DEFAULT_AUTO_CLOSING_PAIRS
 }
 
 export function autoClosingPairForOpen(
@@ -169,7 +163,7 @@ function literalDelimiters(configuration: EditorLanguageConfiguration | null): L
   return {
     block: block && block.open.length > 0 && block.close.length > 0 ? block : null,
     line: line && line.length > 0 ? line : null,
-    quotes: (configuration?.autoClosingPairs ?? [])
+    quotes: (configuration?.autoClosingPairs ?? DEFAULT_AUTO_CLOSING_PAIRS)
       .filter((pair) => pair.quote === true && pair.open.length > 0)
       .map((pair) => pair.open),
   }

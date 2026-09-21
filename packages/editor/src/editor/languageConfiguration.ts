@@ -162,6 +162,13 @@ const CODE_PAIRS: readonly EditorAutoClosingPair[] = [
   { close: '`', open: '`', quote: true },
 ]
 
+/**
+ * What a language with no entry in the catalog closes: everything. Narrowing it to brackets bought
+ * nothing — `shouldAutoClose` already refuses a quote after a word character, which is the case the
+ * narrowing existed for, and it keeps an unfamiliar language behaving like a familiar one.
+ */
+export const DEFAULT_AUTO_CLOSING_PAIRS: readonly EditorAutoClosingPair[] = CODE_PAIRS
+
 /** Markdown and plain prose: brackets still help, but apostrophes are punctuation, not delimiters. */
 const PROSE_PAIRS: readonly EditorAutoClosingPair[] = [
   { close: ')', open: '(' },
