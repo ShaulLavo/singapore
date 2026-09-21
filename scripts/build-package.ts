@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -52,7 +53,7 @@ function entriesFromExports(exportsField: PackageManifest['exports']): Record<st
   for (const [exportPath, target] of Object.entries(exportsField)) {
     const source = sourceTarget(target)
     if (!source) continue
-    if (!source.endsWith('.ts')) continue
+    if (!source.endsWith('.ts') && !source.endsWith('.tsx')) continue
 
     entries[entryName(exportPath, source)] = path.resolve(packageDir, source)
   }
@@ -69,13 +70,17 @@ function sourceTargetFromRuntimeTarget(target: string | null): string | null {
   if (target.startsWith('./src/')) return target
   if (!target.startsWith('./dist/')) return target
 
-  return target.replace(/^\.\/dist\//, './src/').replace(/\.js$/, '.ts')
+  const source = target.replace(/^\.\/dist\//, './src/')
+  if (!source.endsWith('.js')) return source
+
+  const base = source.slice(0, -3)
+  return existsSync(path.resolve(packageDir, `${base}.ts`)) ? `${base}.ts` : `${base}.tsx`
 }
 
 function entryName(exportPath: string, source: string): string {
   if (exportPath === '.') return 'index'
 
-  const sourceName = source.replace(/^\.\/src\//, '').replace(/\.ts$/, '')
+  const sourceName = source.replace(/^\.\/src\//, '').replace(/\.tsx?$/, '')
   return sourceName.replaceAll(path.sep, '/')
 }
 
@@ -261,6 +266,8 @@ function declarationTsconfig(): string {
         declaration: true,
         declarationMap: true,
         emitDeclarationOnly: true,
+        // Packages with `.tsx` sources; the root config omits it because most have none.
+        jsx: 'react-jsx',
         noEmit: false,
         outDir: distRoot,
         rootDir: sourceRoot,

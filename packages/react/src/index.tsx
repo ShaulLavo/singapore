@@ -40,11 +40,11 @@ import type {
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
 import {
-  createElement,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   useSyncExternalStore,
   type CSSProperties,
   type ReactElement,
@@ -207,13 +207,9 @@ const selectUpdateKind = (
 ): EditorViewContributionUpdateKind | null => snapshot.updateKind
 
 export function useEditor(options: ReactEditorOptions = {}): ReactEditorController {
-  const controllerRef = useRef<ReactEditorControllerImplementation | null>(null)
+  // Lazy state, not a lazily filled ref: render reads it, and refs are off-limits in render.
+  const [controller] = useState(() => new ReactEditorControllerImplementation(options))
 
-  if (!controllerRef.current) {
-    controllerRef.current = new ReactEditorControllerImplementation(options)
-  }
-
-  const controller = controllerRef.current
   controller.setOptions(options)
   useControlledOptionSync(controller, options)
   useEffect(() => {
@@ -235,7 +231,7 @@ export function EditorHost({ controller, className, style }: EditorHostProps): R
     return () => internalController(controller).scheduleReactDispose()
   }, [controller])
 
-  return createElement('div', { ref: hostRef, className, style })
+  return <div ref={hostRef} className={className} style={style} />
 }
 
 export function useEditorSelector<T>(
@@ -244,13 +240,9 @@ export function useEditorSelector<T>(
   isEqual: ReactEditorSelectorEquality<T> = Object.is,
 ): T {
   const store = internalController(controller).store
-  const subscriptionRef = useRef<ReactEditorSelectorSubscription<T> | null>(null)
+  // Lazy state, not a lazily filled ref: render reads it, and refs are off-limits in render.
+  const [subscription] = useState(() => store.createSubscription(selector, isEqual))
 
-  if (!subscriptionRef.current) {
-    subscriptionRef.current = store.createSubscription(selector, isEqual)
-  }
-
-  const subscription = subscriptionRef.current
   store.refreshSubscription(subscription, selector, isEqual)
 
   const subscribe = useCallback(
