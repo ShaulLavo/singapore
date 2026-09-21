@@ -606,9 +606,9 @@
     },
     {
       "id": "E048",
-      "file": "e048-minimap-document-space.md",
+      "reference": "../docs/display/e048-minimap-document-space.md",
       "title": "The minimap maps display rows to document lines, not the other way round",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

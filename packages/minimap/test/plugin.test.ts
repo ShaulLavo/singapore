@@ -1,3 +1,4 @@
+import { documentRow } from './visibleRows'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { describe, expect, it, vi } from 'vitest'
 import type {
@@ -424,6 +425,12 @@ describe('createMinimapPlugin', () => {
           scrollHeight: 500,
         }),
       )
+      const current = {
+        ...testContext.getSnapshot(),
+        lineCount: 100,
+        visibleRows: [documentRow(10, 0), documentRow(11, 20)],
+      }
+      testContext.getSnapshot = () => current
       const contribution = registration?.createContribution(testContext)
       const root = testContext.container.querySelector<HTMLElement>('.editor-minimap')
       const slider = testContext.container.querySelector<HTMLElement>('.editor-minimap-slider')
@@ -436,6 +443,8 @@ describe('createMinimapPlugin', () => {
       defineElementRect(slider!, { height: 20, width: 20 })
       installPointerCapture(slider!)
 
+      dispatchPointer(root!, 'pointerdown', { clientY: 12.204081632653061 })
+      expect(testContext.revealLine).not.toHaveBeenCalled()
       dispatchPointer(slider!, 'pointerdown', { clientY: 10 })
       dispatchPointer(slider!.ownerDocument, 'pointermove', { clientY: 50 })
 
@@ -444,13 +453,13 @@ describe('createMinimapPlugin', () => {
 
       animationFrames.flush()
 
-      expect(testContext.scrollElement.scrollTop).toBe(200)
+      expect(testContext.revealLine).toHaveBeenLastCalledWith(50)
       expect(testContext.setScrollTop).not.toHaveBeenCalled()
 
       dispatchPointer(slider!.ownerDocument, 'pointermove', { clientY: 60 })
       dispatchPointer(slider!.ownerDocument, 'pointerup', { clientY: 60 })
 
-      expect(testContext.scrollElement.scrollTop).toBe(250)
+      expect(testContext.revealLine).toHaveBeenLastCalledWith(61)
       expect(animationFrames.pendingCount()).toBe(0)
 
       contribution?.dispose()
@@ -503,7 +512,7 @@ describe('createMinimapPlugin', () => {
       contribution?.update(current, 'document')
       dispatchPointer(root!, 'pointerdown', { clientY: 50 })
 
-      expect(testContext.revealLine).toHaveBeenCalledWith(20)
+      expect(testContext.revealLine).toHaveBeenCalledWith(25)
       expect(testContext.reserveOverlayWidth).toHaveBeenCalled()
       contribution?.dispose()
     } finally {
@@ -527,7 +536,7 @@ describe('createMinimapPlugin', () => {
         postedRequests().findLast((request) => request.type === 'updateViewport'),
       ).toMatchObject({
         type: 'updateViewport',
-        viewport: { scrollTop: 15, visibleStart: 0, visibleEnd: 6 },
+        viewport: { scrollTop: 15, visibleStart: 0, visibleEnd: 0 },
       })
       expect(snapshots).not.toHaveBeenCalled()
       expect(measurements).not.toHaveBeenCalled()

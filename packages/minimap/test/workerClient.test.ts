@@ -1,3 +1,4 @@
+import { documentRow } from './visibleRows'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createStringTextSnapshot,
@@ -639,7 +640,7 @@ describe('MinimapWorkerClient', () => {
 
       const requests = worker.postMessage.mock.calls.map((call) => call[0])
       expect(requests.some((request) => request.type === 'updateTokenRange')).toBe(true)
-      expect(host.slider.style.transform).not.toBe('translate3d(0, 0px, 0)')
+      expect(host.slider.style.transform).toBe('translate3d(0, 0px, 0)')
     } finally {
       client.dispose()
       host.root.remove()
@@ -668,13 +669,13 @@ describe('MinimapWorkerClient', () => {
       client.update(
         snapshot(
           { scrollTop: 120, visibleRange: { start: 6, end: 18 } },
-          { fullText: 'line 1x\nline 2\nline 3' },
+          { fullText: 'line 1x\nline 2\nline 3', visibleRows: [documentRow(2, 120)] },
         ),
         'content',
         documentEdit(edit, 'line 1x\nline 2\nline 3'),
       )
 
-      expect(host.slider.style.transform).toBe('translate3d(0, 32px, 0)')
+      expect(host.slider.style.transform).toBe('translate3d(0, 4px, 0)')
       runtime.flushFrames()
       expect(worker.postMessage).not.toHaveBeenCalled()
 
@@ -1490,7 +1491,7 @@ function setElementBox(
 
 function snapshot(
   viewport: Partial<EditorViewSnapshot['viewport']> = {},
-  overrides: Partial<Pick<EditorViewSnapshot, 'contentWidth' | 'fullText'>> & {
+  overrides: Partial<Pick<EditorViewSnapshot, 'contentWidth' | 'fullText' | 'visibleRows'>> & {
     readonly tokens?: EditorTokenInput
   } = {},
 ): EditorViewSnapshot {
@@ -1524,7 +1525,7 @@ function snapshot(
     gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 4,
     foldMarkers: [],
-    visibleRows: [],
+    visibleRows: overrides.visibleRows ?? [],
     viewport: {
       scrollTop: 0,
       scrollRow: (viewport.scrollTop ?? 0) / 20,

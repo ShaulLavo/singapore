@@ -993,12 +993,15 @@ export class VirtualizedTextView {
     return this.view.viewport.reservedOverlayWidth(side)
   }
 
+  /** Scroll a zero-based document line to the top through the display projection. */
   public scrollToRow(row: number): void {
+    const lines = this.getLineStartsView()
+    const offset = lines.at(Math.max(0, Math.min(lines.length - 1, Math.floor(row)))) ?? 0
     if (this.view.provisional) {
-      this.pendingReveal = { offset: lineStartOffset(this.view, row), block: 'nearest' }
+      this.pendingReveal = { offset, block: 'nearest' }
       return
     }
-    scrollToRow(this.view, row)
+    scrollToRow(this.view, rowForOffset(this.view, offset))
   }
 
   public revealOffset(offset: number, block: RevealBlock = 'nearest'): void {

@@ -1,3 +1,4 @@
+import { computeFrameLayout, computeRenderLayout, visibleDocumentLineRange } from './layout'
 import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import type { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { createError } from '@singapore-editor/core/logging/evlog'
@@ -221,8 +222,6 @@ export class MinimapWorkerClient {
   private pendingRender = false
   private activeRenderToken = 0
   private renderInFlight = false
-  private latestSliderHeight = 0
-  private latestSliderNeeded = false
   private latestBaseStyles: MinimapBaseStyles | null = null
   private latestBaseStylesSignature = ''
   private latestLayoutSignature = ''
@@ -281,7 +280,7 @@ export class MinimapWorkerClient {
 
     const update = createPendingUpdate(snapshot, kind, change, previousSnapshot)
     this.latestViewport = snapshot.viewport
-    this.applyImmediateViewport(snapshot, snapshot.viewport.scrollTop)
+    this.applyImmediateViewport()
     this.queueUpdate(update)
   }
 
@@ -297,7 +296,7 @@ export class MinimapWorkerClient {
     if (this.disposed) return
 
     this.latestViewport = viewport
-    this.applyImmediateViewport(this.latestSnapshot, viewport.scrollTop)
+    this.applyImmediateViewport()
     const next = this.viewport(this.latestSnapshot)
     if (sameViewport(this.postedViewport, next)) return
 
@@ -306,10 +305,23 @@ export class MinimapWorkerClient {
     this.requestRender()
   }
 
-  public previewScrollTop(snapshot: EditorViewSnapshot, scrollTop: number): void {
-    if (this.disposed) return
-
-    this.applyImmediateViewport(snapshot, scrollTop)
+  public frameLayout() {
+    const viewport = this.viewport(this.latestSnapshot)
+    const metrics = this.metrics(this.latestSnapshot)
+    const renderLayout = computeRenderLayout({
+      minimap: this.options,
+      metrics,
+      viewport,
+      lineCount: this.latestSnapshot.lineCount,
+    })
+    return computeFrameLayout({
+      renderLayout,
+      metrics,
+      viewport,
+      lineCount: this.latestSnapshot.lineCount,
+      realLineCount: this.latestSnapshot.lineCount,
+      previous: null,
+    })
   }
 
   public setExternalDecorations(decorations: readonly EditorMinimapDecoration[]): void {
@@ -620,17 +632,12 @@ export class MinimapWorkerClient {
     this.renderInFlight = false
   }
 
-  private applyImmediateViewport(snapshot: EditorViewSnapshot, scrollTop: number): void {
-    const slider = immediateSlider(
-      this.viewport(snapshot),
-      scrollTop,
-      this.latestSliderHeight,
-      this.latestSliderNeeded,
-    )
-    setStyleValue(this.host.slider, 'display', slider.needed ? 'block' : 'none')
-    setStyleValue(this.host.slider, 'transform', `translate3d(0, ${slider.top}px, 0)`)
-    setStyleValue(this.host.slider, 'height', `${slider.height}px`)
-    setStyleValue(this.host.sliderHorizontal, 'height', `${slider.height}px`)
+  private applyImmediateViewport(): void {
+    const frame = this.frameLayout()
+    setStyleValue(this.host.slider, 'display', frame.sliderNeeded ? 'block' : 'none')
+    setStyleValue(this.host.slider, 'transform', `translate3d(0, ${frame.sliderTop}px, 0)`)
+    setStyleValue(this.host.slider, 'height', `${frame.sliderHeight}px`)
+    setStyleValue(this.host.sliderHorizontal, 'height', `${frame.sliderHeight}px`)
     setClassName(
       this.host.shadow,
       shadowVisible(this.latestViewport)
@@ -726,6 +733,7 @@ export class MinimapWorkerClient {
     const fallbackScrollWidth =
       snapshotViewport.scrollWidth > 0 ? 0 : this.host.colorScope.scrollWidth
 
+    const range = visibleDocumentLineRange(snapshot, snapshotViewport)
     return {
       scrollTop: snapshotViewport.scrollTop,
       scrollRow: snapshotViewport.scrollRow,
@@ -736,8 +744,8 @@ export class MinimapWorkerClient {
       clientWidth,
       minimapHeight: this.minimapHeight(snapshot),
       reservedWidth: Math.max(0, this.reservedLane()),
-      visibleStart: snapshotViewport.visibleRange.start,
-      visibleEnd: snapshotViewport.visibleRange.end,
+      visibleStart: range.start,
+      visibleEnd: range.end,
     }
   }
 
@@ -807,7 +815,7 @@ export class MinimapWorkerClient {
       if (this.renderInFlight) return
       if (this.pendingRender) this.requestRender()
 
-      this.applyRenderedResponse(response)
+      this.applyImmediateViewport()
       return
     }
   }
@@ -819,14 +827,6 @@ export class MinimapWorkerClient {
     setStyleValue(this.host.sliderHorizontal, 'width', `${canvasWidth}px`)
     setStyleValue(this.host.mainCanvas, 'height', `${canvasHeight}px`)
     setStyleValue(this.host.decorationsCanvas, 'height', `${canvasHeight}px`)
-  }
-
-  private applyRenderedResponse(
-    response: Extract<MinimapWorkerResponse, { type: 'rendered' }>,
-  ): void {
-    this.latestSliderHeight = response.sliderHeight
-    this.latestSliderNeeded = response.sliderNeeded
-    this.applyImmediateViewport(this.latestSnapshot, this.latestViewport.scrollTop)
   }
 
   private handleWorkerError = (error: Error): void => {
@@ -1480,29 +1480,6 @@ function incrementalTextEdits(
 
   const sorted = change.edits.toSorted(compareTextEdits)
   return sequentialTextEdits(sorted)
-}
-
-function immediateSlider(
-  viewport: MinimapViewport,
-  scrollTop: number,
-  sliderHeight: number,
-  sliderNeeded: boolean,
-): {
-  readonly needed: boolean
-  readonly top: number
-  readonly height: number
-} {
-  const scrollable = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-  const trackHeight = Math.max(1, viewport.minimapHeight)
-  const height = Math.max(0, sliderHeight)
-  const maxTop = Math.max(0, trackHeight - height)
-  const top = scrollable > 0 ? (clamp(scrollTop, 0, scrollable) / scrollable) * maxTop : 0
-
-  return { needed: sliderNeeded && maxTop > 0, top, height }
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value))
 }
 
 function sameViewport(previous: MinimapViewport | null, next: MinimapViewport): boolean {
