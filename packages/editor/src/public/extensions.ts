@@ -35,6 +35,14 @@ export type {
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '../editor/findFeature'
 export type { EditorFindFeature } from '../editor/findFeature'
 export {
+  EDITOR_SNIPPET_TOKENS_FEATURE,
+  EDITOR_SNIPPET_TOKENS_FEATURE_ID,
+} from '../editor/snippetTokensFeature'
+export type {
+  EditorSnippetTokenSource,
+  EditorSnippetTokensFeature,
+} from '../editor/snippetTokensFeature'
+export {
   editorLanguageConfiguration,
   registerEditorLanguageConfiguration,
 } from '../editor/languageConfiguration'

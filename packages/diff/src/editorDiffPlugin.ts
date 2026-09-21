@@ -6,11 +6,13 @@ import type {
   EditorInjectedTextRow,
   EditorPlugin,
   EditorPluginContext,
+  EditorSnippetTokenSource,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
+import { EDITOR_SNIPPET_TOKENS_FEATURE } from '@singapore-editor/core/extensions'
 import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type { EditorToken } from '@singapore-editor/core/syntax'
 import { createDiffGutterContribution } from './diffGutter'
@@ -428,9 +430,13 @@ class DiffPluginRuntime {
         this.documentModeStatus = status
       },
       detach: (disposed) => {
+        lentSyntax?.dispose()
         if (this.view === disposed) this.view = null
       },
     })
+    const lentSyntax = context
+      .getFeature?.(EDITOR_SNIPPET_TOKENS_FEATURE)
+      ?.addSource(snippetTokenSource(this.options.syntaxBackend))
     this.view = contribution
     if (this.lastGutterLayout) contribution.applyGutterLayout(this.lastGutterLayout)
     return contribution
@@ -570,6 +576,7 @@ type DiffViewOptions = {
 class DiffViewContribution implements EditorViewContribution {
   private snapshot: EditorViewSnapshot | null = null
   private lastHighlightRows: readonly DiffRenderRow[] | null = null
+  private lastHighlightTextVersion = -1
 
   constructor(
     private readonly context: EditorViewContributionContext,
@@ -650,9 +657,13 @@ class DiffViewContribution implements EditorViewContribution {
    */
   private applyInlineHighlights(): void {
     const rows = this.options.getRows()
-    if (rows === this.lastHighlightRows) return
+    const textVersion = this.snapshot?.textVersion ?? -1
+    // Rows alone cannot key this: the view clamps ranges to the text it holds when they are set,
+    // and the host pushes the new text only after the rows notification that first lands here.
+    if (rows === this.lastHighlightRows && textVersion === this.lastHighlightTextVersion) return
 
     this.lastHighlightRows = rows
+    this.lastHighlightTextVersion = textVersion
     try {
       this.context.setRangeHighlight?.(
         this.options.highlightName,
@@ -784,4 +795,9 @@ function injectedDiffRow(row: EditorGutterRowContext): DiffRenderRow | null {
   const metadata = row.metadata
   if (!metadata || typeof metadata !== 'object') return null
   return 'type' in metadata && 'text' in metadata ? (metadata as DiffRenderRow) : null
+}
+
+function snippetTokenSource(backend: DiffSyntaxBackend | undefined): EditorSnippetTokenSource {
+  if (backend?.kind === 'highlighter') return { highlighter: backend.provider }
+  return { syntax: backend?.provider }
 }

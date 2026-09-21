@@ -82,6 +82,7 @@ import {
 import { EditorDocumentController } from './documentController'
 import { removeArrayItem, type SessionChangeOptions } from './editorUtils'
 import { EDITOR_FIND_FEATURE, type EditorFindFeature } from './findFeature'
+import { createSnippetTokensFeature, EDITOR_SNIPPET_TOKENS_FEATURE } from './snippetTokensFeature'
 import {
   foldCandidateAtLocation,
   foldRangesOutsideSpans,
@@ -479,6 +480,14 @@ export class Editor {
     this.announcer = new EditorAnnouncer(container)
     this.configuredTheme = options.theme ?? null
     this.pluginHost = new EditorPluginHost(options.plugins)
+    this.editorFeatures.set(
+      EDITOR_SNIPPET_TOKENS_FEATURE,
+      createSnippetTokensFeature(this.pluginHost),
+    )
+    this.editorFeatureTokensById.set(
+      EDITOR_SNIPPET_TOKENS_FEATURE.id,
+      EDITOR_SNIPPET_TOKENS_FEATURE,
+    )
     // Into the same channel a plugin registers into, so what ships and what a host adds are asked
     // in one order rather than one of them being a fallback the other cannot get in front of.
     registerBuiltInPasteHandlers(this.languageFeatures)

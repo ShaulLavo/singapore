@@ -1,6 +1,7 @@
 import type { EditorTheme } from '@singapore-editor/core/rendering'
 
 import { createAnchoredSurface, type AnchoredSurfacePlacement } from './anchoredSurface'
+import type { TooltipCodeTokenizer } from './codeTokens'
 import { renderTooltipMarkdown } from './markdownTooltip'
 import { HOVER_COLORS, HOVER_THEME_VARIABLES } from './styles'
 
@@ -105,6 +106,7 @@ export type TooltipOptions = {
   readonly reentryElement: HTMLElement
   readonly markdownCodeBackground?: boolean
   readonly classNamespace?: string
+  readonly codeTokenizer?: TooltipCodeTokenizer | null
   onDidHide?(): void
   onRequestEditorFocus?(): void
 }
@@ -202,6 +204,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
       loading: showOptions.loading ?? false,
       markdownCodeBackground: options.markdownCodeBackground ?? false,
       classNamespace,
+      codeTokenizer: options.codeTokenizer ?? null,
     })
     surface.place(showOptions.anchor, placement)
     restoreTooltipScroll(tooltip, scrollState)
@@ -372,6 +375,7 @@ type TooltipContent = {
   readonly loading: boolean
   readonly markdownCodeBackground: boolean
   readonly classNamespace: string
+  readonly codeTokenizer: TooltipCodeTokenizer | null
 }
 
 function renderTooltip(element: HTMLDivElement, content: TooltipContent): void {
@@ -438,6 +442,7 @@ function hoverPart(
     renderTooltipMarkdown(document, markdown, content.theme, {
       codeBackground: content.markdownCodeBackground,
       classNamespace: content.classNamespace,
+      codeTokenizer: content.codeTokenizer,
     }),
   )
   const button = createCopyButton(document, plainHoverText(markdown), content.classNamespace)

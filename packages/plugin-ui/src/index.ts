@@ -7,6 +7,7 @@ export {
   type AnchoredSurfaceOptions,
   type AnchoredSurfacePlacement,
 } from './anchoredSurface'
+export { createTooltipCodeTokenizer, type TooltipCodeTokenizer } from './codeTokens'
 export {
   normalizeTooltipMarkdown,
   renderTooltipMarkdown,

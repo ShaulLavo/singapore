@@ -5,7 +5,10 @@ import type {
 } from '@singapore-editor/core/extensions'
 import type { EditorTheme } from '@singapore-editor/core/rendering'
 
+import { EDITOR_SNIPPET_TOKENS_FEATURE } from '@singapore-editor/core/extensions'
+
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
+import { createTooltipCodeTokenizer } from './codeTokens'
 import type {
   EditorHoverParticipant,
   HoverAnchor,
@@ -79,6 +82,8 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   let nextOperationId = 0
   let theme: EditorTheme | null = context.getSnapshot().theme ?? null
   let disposed = false
+  const snippetTokens = context.getFeature?.(EDITOR_SNIPPET_TOKENS_FEATURE) ?? null
+  const codeTokenizer = snippetTokens ? createTooltipCodeTokenizer(snippetTokens) : null
 
   const tooltip: TooltipController = createTooltipController({
     document: ownerDocument,
@@ -86,6 +91,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     reentryElement: element,
     markdownCodeBackground: options.markdownCodeBackground,
     classNamespace: options.classNamespace,
+    codeTokenizer,
     onDidHide: () => cancelOperation(),
     onRequestEditorFocus: () => context.focusEditor(),
   })
@@ -275,7 +281,9 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
 
   return {
     update: (snapshot, kind) => {
-      theme = snapshot.theme ?? null
+      const nextTheme = snapshot.theme ?? null
+      if (nextTheme !== theme) codeTokenizer?.clear()
+      theme = nextTheme
       if (shouldHideOnUpdate(kind)) hide()
     },
     showAtOffset: (offset, showOptions = {}) => {
