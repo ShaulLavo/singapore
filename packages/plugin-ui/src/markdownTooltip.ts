@@ -105,11 +105,27 @@ const TYPESCRIPT_KEYWORDS = new Set([
 const TYPESCRIPT_TOKEN_PATTERN =
   /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b0x[\da-fA-F]+\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*\b|[{}()[\].,;:?<>!=+\-*/%&|^~]+/g
 
-const parseProcessor = unified().use(remarkParse).use(remarkGfm)
-const stringifyProcessor = unified().use(remarkParse).use(remarkGfm).use(remarkStringify)
+// Built on first use, not at import: a host that never shows a markdown hover
+// should not pay for two unified pipelines while it boots.
+const createMarkdownParser = () => unified().use(remarkParse).use(remarkGfm)
+const createMarkdownStringifier = () =>
+  unified().use(remarkParse).use(remarkGfm).use(remarkStringify)
+
+let parseProcessor: ReturnType<typeof createMarkdownParser> | null = null
+let stringifyProcessor: ReturnType<typeof createMarkdownStringifier> | null = null
+
+function markdownParser() {
+  parseProcessor ??= createMarkdownParser()
+  return parseProcessor
+}
+
+function markdownStringifier() {
+  stringifyProcessor ??= createMarkdownStringifier()
+  return stringifyProcessor
+}
 
 export function normalizeTooltipMarkdown(markdown: string): string {
-  return String(stringifyProcessor.processSync(markdown))
+  return String(markdownStringifier().processSync(markdown))
 }
 
 export function renderTooltipMarkdown(
@@ -127,7 +143,7 @@ export function renderTooltipMarkdown(
     display: 'block',
   })
 
-  const tree = parseProcessor.parse(markdown) as MarkdownNode
+  const tree = markdownParser().parse(markdown) as MarkdownNode
   appendChildren(root, document, tree.children ?? [], context)
   return root
 }

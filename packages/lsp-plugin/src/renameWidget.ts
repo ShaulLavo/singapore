@@ -1,4 +1,4 @@
-import { createAnchoredSurface } from '@singapore-editor/plugin-ui'
+import { createAnchoredSurface } from '@singapore-editor/plugin-ui/anchored-surface'
 
 export type RenameWidgetOptions = {
   readonly document: Document

@@ -1,5 +1,5 @@
 import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
-import { identifierRangeAtOffset, type OffsetRange } from '@singapore-editor/plugin-ui'
+import { type OffsetRange, identifierRangeAtOffset } from '@singapore-editor/plugin-ui/offset-range'
 import type { EditorSetSelectionOptions } from '@singapore-editor/core/editor'
 import type * as lsp from 'vscode-languageserver-protocol'
 

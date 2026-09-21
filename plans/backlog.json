@@ -90,15 +90,15 @@
     },
     {
       "id": "E008",
-      "file": "e008-in-buffer-search.md",
       "title": "Search document ranges with bounded work and exact results",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
       "effort": "L",
       "dependsOn": ["E001"],
-      "topics": ["Faster in-buffer find (single-threaded)"]
+      "topics": ["Faster in-buffer find (single-threaded)"],
+      "reference": "../docs/performance/e008-in-buffer-search.md"
     },
     {
       "id": "E009",

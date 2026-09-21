@@ -48,6 +48,12 @@ export {
   subscribeDocumentMutationLeaseState,
 } from '../documentSession'
 export { createHistoryViewer, layoutHistoryGraph } from '../historyViewer'
+export { SERIALIZED_EDITOR_HISTORY_VERSION } from '../historySerialization'
+export type {
+  SerializedEditorHistory,
+  SerializedEditorHistoryNode,
+  SerializedEditorHistorySelection,
+} from '../historySerialization'
 export type { EditorCollapsedRegion, EditorManualFold, EditorViewFoldState } from '../viewFolds'
 export type {
   HistoryComparison,

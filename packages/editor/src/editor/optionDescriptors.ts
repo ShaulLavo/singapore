@@ -335,6 +335,7 @@ function selectionsEqual(
 
 function validateRevealBlock(input: unknown): EditorControlledSelection['revealBlock'] {
   if (input === 'nearest' || input === 'center' || input === 'end') return input
+  if (input === 'center-if-outside') return input
   return undefined
 }
 

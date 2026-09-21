@@ -6,7 +6,6 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core'
-import type { DocumentSessionChange } from '@singapore-editor/core'
 import { offsetToLspPosition } from '@singapore-editor/lsp'
 
 import type { ActiveDocument } from './pluginTypes'
@@ -14,14 +13,14 @@ import type { LanguageServerFeatureRouter } from './serverSet'
 import {
   formatSignatureHelp,
   nextSignatureIndex,
-  signatureHelpTriggerFromChange,
+  signatureHelpTriggerFromTypedText,
   type SignatureHelpDisplay,
 } from './signatureHelp'
+import { anchoredSurfaceFollowsUpdate } from '@singapore-editor/plugin-ui/anchored-surface'
 import {
-  anchoredSurfaceFollowsUpdate,
-  createTooltipController,
   type TooltipController,
-} from '@singapore-editor/plugin-ui'
+  createTooltipController,
+} from '@singapore-editor/plugin-ui/tooltip'
 
 export type SignatureHelpControllerOptions = {
   readonly context: EditorViewContributionContext
@@ -60,23 +59,18 @@ export class SignatureHelpController {
     this.context.scrollElement.addEventListener('keydown', this.handleKeyDown, { capture: true })
   }
 
-  public update(
-    snapshot: EditorViewSnapshot,
-    kind: EditorViewContributionUpdateKind,
-    change: DocumentSessionChange | null,
-  ): void {
+  public update(snapshot: EditorViewSnapshot, kind: EditorViewContributionUpdateKind): void {
     this.currentTheme = snapshot.theme ?? null
     if (kind === 'document' || kind === 'clear') {
       this.hide()
       return
     }
-    if (anchoredSurfaceFollowsUpdate(kind)) {
-      this.reanchor()
-      return
-    }
-    if (kind !== 'content') return
+    if (anchoredSurfaceFollowsUpdate(kind)) this.reanchor()
+  }
 
-    const trigger = signatureHelpTriggerFromChange(change)
+  /** The keystroke, not the edit it caused; see signatureHelpTriggerFromTypedText. */
+  public handleTypedText(text: string): void {
+    const trigger = signatureHelpTriggerFromTypedText(text)
     if (!trigger) return
     if (trigger.kind === 'close') {
       this.hide()

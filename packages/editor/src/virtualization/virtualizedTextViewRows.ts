@@ -68,7 +68,7 @@ import type {
   VirtualizedCaretPosition,
   VirtualizedCaretPositions,
 } from './virtualizedTextViewTypes'
-import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
+import type { RevealBlock, VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
 import {
   type RowInlineMapping,
   offsetForLocalIndex,
@@ -2842,6 +2842,32 @@ export function scrollOffsetIntoView(
   view.scrollElement.scrollTop = scrollTop
   view.scrollElement.scrollLeft = scrollLeft
   syncVirtualizerMetricsFromScrollElement(view)
+}
+
+/** The block a reveal acts on, once a conditional one has looked at the viewport. */
+export function settledRevealBlock(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  block: RevealBlock,
+  affinity?: SelectionAffinity,
+): 'nearest' | 'center' | 'end' {
+  if (block !== 'center-if-outside') return block
+  // On screen already: 'nearest' still scrolls sideways to a column out of view.
+  return offsetRowIsInsideViewport(view, offset, affinity) ? 'nearest' : 'center'
+}
+
+/** Whether the row holding the offset is wholly on screen, top to bottom. */
+function offsetRowIsInsideViewport(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity?: SelectionAffinity,
+): boolean {
+  const snapshot = view.virtualizer.getSnapshot()
+  const top = rowTop(view, rowForOptionalAffinity(view, offset, affinity))
+  return (
+    top >= snapshot.scrollTop &&
+    top + getRowHeight(view) <= snapshot.scrollTop + snapshot.viewportHeight
+  )
 }
 
 export function scrollOffsetToViewportBlock(

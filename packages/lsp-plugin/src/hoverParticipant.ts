@@ -3,7 +3,11 @@ import {
   offsetToLspPositionInSnapshot,
   type LspRequestOptions,
 } from '@singapore-editor/lsp'
-import type { EditorHoverParticipant, HoverPart, HoverRequest } from '@singapore-editor/plugin-ui'
+import type {
+  EditorHoverParticipant,
+  HoverPart,
+  HoverRequest,
+} from '@singapore-editor/plugin-ui/hover-participant'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { diagnosticNotes, type OpenLocation } from './diagnosticNotes'

@@ -459,7 +459,11 @@ function lspNavigationBindings(): readonly EditorKeyBinding[] {
 function lspEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   const autoFix = platform === 'mac' ? { mod: true, alt: true } : { alt: true, shift: true }
 
-  return [{ chord: [key('.', autoFix)], command: 'editor.action.autoFix' }]
+  return [
+    { chord: [key('.', autoFix)], command: 'editor.action.autoFix' },
+    { chord: [key('F', { alt: true, shift: true })], command: 'editor.action.formatDocument' },
+    { chord: [key('F', { mod: true, shift: true })], command: 'editor.action.formatDocument' },
+  ]
 }
 
 function inlineSuggestBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {

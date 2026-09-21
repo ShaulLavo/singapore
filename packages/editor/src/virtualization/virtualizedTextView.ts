@@ -138,6 +138,7 @@ import {
   rowsKey,
   scrollOffsetIntoView,
   scrollOffsetToViewportBlock,
+  settledRevealBlock,
   scrollToRow,
   spacerWidth,
   textOffsetFromDomBoundary,
@@ -973,19 +974,20 @@ export class VirtualizedTextView {
     this.reveal(offset, block, affinity)
   }
 
-  private reveal(offset: number, block: RevealBlock, affinity?: SelectionAffinity): void {
+  private reveal(offset: number, requested: RevealBlock, affinity?: SelectionAffinity): void {
     if (this.view.provisional) {
-      this.pendingReveal = { offset, block, affinity }
+      this.pendingReveal = { offset, block: requested, affinity }
       return
     }
     const view = this.view
     this.pendingReveal = null
     // Initial navigation can arrive before ResizeObserver measures the viewport.
-    if (block !== 'nearest' && view.virtualizer.getSnapshot().viewportHeight === 0) {
-      this.pendingReveal = { offset, block, affinity }
+    if (requested !== 'nearest' && view.virtualizer.getSnapshot().viewportHeight === 0) {
+      this.pendingReveal = { offset, block: requested, affinity }
       return
     }
 
+    const block = settledRevealBlock(view, offset, requested, affinity)
     if (block !== 'nearest') {
       scrollOffsetToViewportBlock(view, offset, block, affinity)
       ensureOffsetMounted(view, offset, affinity)

@@ -24,6 +24,8 @@
   "scripts": {
     "build": "bun ../../scripts/build-package.ts",
     "test": "vitest run",
+    "bench:search": "bun bench/search.ts",
+    "bench:matchers": "bun bench/matchers.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt --write .",

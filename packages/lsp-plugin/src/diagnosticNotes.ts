@@ -1,4 +1,4 @@
-import type { TooltipNote, TooltipNoteLink } from '@singapore-editor/plugin-ui'
+import type { TooltipNote, TooltipNoteLink } from '@singapore-editor/plugin-ui/tooltip'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { documentUriToFileName } from './paths'

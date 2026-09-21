@@ -5,6 +5,13 @@ import {
   type EditorLanguageConfiguration,
 } from './languageConfiguration'
 
+/** A language with no rules still has brackets; its quotes are left alone, as they may be prose. */
+const UNKNOWN_LANGUAGE_PAIRS: readonly EditorAutoClosingPair[] = [
+  { close: ')', open: '(' },
+  { close: ']', open: '[' },
+  { close: '}', open: '{' },
+]
+
 /**
  * Characters a pair may be auto-closed *before*: whitespace and the closers of
  * other pairs, so typing a quote mid-word does not wrap the rest of the word.
@@ -20,7 +27,7 @@ const NEUTRAL_CHARACTERS = '0123456789abcdefghijklmnopqrstuvwxyz'
 function autoClosingPairsForLanguage(
   languageId: string | null | undefined,
 ): readonly EditorAutoClosingPair[] {
-  return editorLanguageConfiguration(languageId)?.autoClosingPairs ?? []
+  return editorLanguageConfiguration(languageId)?.autoClosingPairs ?? UNKNOWN_LANGUAGE_PAIRS
 }
 
 export function autoClosingPairForOpen(

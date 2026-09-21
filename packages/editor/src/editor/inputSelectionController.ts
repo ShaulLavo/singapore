@@ -182,6 +182,13 @@ export type InputSelectionControllerOptions = {
     kind: EditorViewContributionUpdateKind,
     change?: DocumentSessionChange | null,
   ): void
+  /**
+   * The character the user typed, after the edit it caused has been applied. A contribution that
+   * acts on a keystroke has to read it here: the edit cannot stand in for it. Auto-closing turns a
+   * typed `(` into a two-character `()`, and typing over the closer it inserted changes no text at
+   * all, so the document change neither says what was pressed nor always happens.
+   */
+  onDidType(text: string): void
 }
 
 // A run of occurrence presses owns its search settings, so that widening one to whole words never
@@ -349,7 +356,11 @@ export class InputSelectionController {
    * Wrapping takes every selection at once; auto-closing takes a single collapsed caret, and several
    * carets fall through to plain insertion.
    */
+  /** Set by {@link applyTypedText}, delivered by {@link applyChange} once the edit has landed. */
+  private pendingTypedText: string | null = null
+
   private applyTypedText(session: DocumentSession, text: string): DocumentSessionChange {
+    this.pendingTypedText = text
     // The keydown fallback turns Enter into '\n', so it arrives here rather than as a
     // beforeinput line break; both routes must indent identically.
     if (text === '\n') return this.applyLineBreak(session, text)
@@ -1597,6 +1608,11 @@ export class InputSelectionController {
       totalStart,
       selectionRevealOptions(change, revealOptions),
     )
+
+    // After the edit, so a listener that asks for the document sees the typed character in it.
+    const typed = this.pendingTypedText
+    this.pendingTypedText = null
+    if (typed !== null) this.options.onDidType(typed)
   }
 
   clearSelectionHighlight(): void {

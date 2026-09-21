@@ -3,11 +3,8 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
-import {
-  anchoredSurfaceFollowsUpdate,
-  hoverTargetRange,
-  type OffsetRange,
-} from '@singapore-editor/plugin-ui'
+import { anchoredSurfaceFollowsUpdate } from '@singapore-editor/plugin-ui/anchored-surface'
+import { type OffsetRange, hoverTargetRange } from '@singapore-editor/plugin-ui/offset-range'
 
 import {
   navigateToTarget,

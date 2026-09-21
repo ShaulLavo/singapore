@@ -35,6 +35,11 @@
       "import": "./dist/hoverPlugin.js",
       "default": "./dist/hoverPlugin.js"
     },
+    "./hover-registry": {
+      "types": "./dist/hoverRegistry.d.ts",
+      "import": "./dist/hoverRegistry.js",
+      "default": "./dist/hoverRegistry.js"
+    },
     "./hover-token": {
       "types": "./dist/hoverToken.d.ts",
       "import": "./dist/hoverToken.js",

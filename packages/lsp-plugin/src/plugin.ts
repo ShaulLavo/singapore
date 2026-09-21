@@ -21,12 +21,12 @@ import {
 } from './completion'
 import {
   anchoredSurfaceFollowsUpdate,
-  EDITOR_HOVER_PARTICIPANT,
-  hoverControllerFor,
   isInsideEditorPopup,
-} from '@singapore-editor/plugin-ui'
+} from '@singapore-editor/plugin-ui/anchored-surface'
+import { EDITOR_HOVER_PARTICIPANT } from '@singapore-editor/plugin-ui/hover-participant'
+import { hoverControllerFor } from '@singapore-editor/plugin-ui/hover-registry'
 import { CodeActionController } from './codeActions'
-import type { OffsetRange } from '@singapore-editor/plugin-ui'
+import type { OffsetRange } from '@singapore-editor/plugin-ui/offset-range'
 import { CompletionController } from './completionController'
 import {
   createLanguageServerCompletionSource,
@@ -37,7 +37,11 @@ import { activeDocumentForSnapshot, DocumentSync } from './documentSync'
 import { FormatOnTypeController } from './formatOnType'
 import { DefinitionLinkController } from './definitionLinkController'
 import { createLanguageServerHoverParticipant } from './hoverParticipant'
-import { SignatureHelpController } from './signatureHelpController'
+import type {
+  SignatureHelpController,
+  SignatureHelpControllerOptions,
+} from './signatureHelpController'
+import { signatureHelpTriggerFromTypedText } from './signatureHelp'
 import { DocumentHighlightController } from './documentHighlightController'
 import {
   SemanticTokenLayerOwner,
@@ -405,7 +409,15 @@ class LanguageServerContribution implements EditorViewContribution {
   private readonly completion: CompletionController
   private readonly definitionLink: DefinitionLinkController
   private readonly hoverParticipantRegistration: EditorDisposable | null
-  private readonly signatureHelp: SignatureHelpController
+  /**
+   * Loaded on the first `(` or `,` typed, not at boot. The surface it shares with the hover carries
+   * a Markdown renderer and its parser, which an editor that never opens an argument list has no
+   * reason to download.
+   */
+  private readonly signatureHelpOptions: SignatureHelpControllerOptions
+  private signatureHelp: SignatureHelpController | null = null
+  private signatureHelpLoad: Promise<SignatureHelpController> | null = null
+  private readonly typedTextRegistration: EditorDisposable | null
   private readonly documentHighlights: DocumentHighlightController
   private readonly codeActions: CodeActionController
   /** Absent rather than idle when switched off, so nothing watches the typing at all. */
@@ -498,14 +510,15 @@ class LanguageServerContribution implements EditorViewContribution {
           onRequestError: (error) => this.handleRequestError(error),
         }),
       ) ?? null
-    this.signatureHelp = new SignatureHelpController({
+    this.typedTextRegistration = context.onDidType?.((text) => this.handleTypedText(text)) ?? null
+    this.signatureHelpOptions = {
       router: this.servers,
       context,
       getActiveDocument: () => this.activeDocument(),
       onRequestError: (error) => this.handleRequestError(error),
       onRequestSuccess: () => options.onInteractiveReady?.(),
       tooltipClassNamespace: options.hoverDefinition.tooltipClassNamespace,
-    })
+    }
     this.documentHighlights = new DocumentHighlightController({
       router: this.servers,
       context,
@@ -546,7 +559,7 @@ class LanguageServerContribution implements EditorViewContribution {
       lane.pullDiagnostics?.synchronize()
     }
     this.completion.update(snapshot, kind, change ?? null)
-    this.signatureHelp.update(snapshot, kind, change ?? null)
+    this.signatureHelp?.update(snapshot, kind)
     this.documentHighlights.update(snapshot, kind)
     this.codeActions.update(kind)
     this.formatOnType?.update(snapshot, kind, change ?? null)
@@ -569,7 +582,9 @@ class LanguageServerContribution implements EditorViewContribution {
     this.diagnostics.clear()
     this.completionSources.dispose()
     this.completion.dispose()
-    this.signatureHelp.dispose()
+    this.typedTextRegistration?.dispose()
+    // Disposing twice is a no-op, so a load still in flight is safe to settle into.
+    void this.signatureHelpLoad?.then((controller) => controller.dispose())
     this.documentHighlights.dispose()
     this.codeActions.dispose()
     this.formatOnType?.dispose()
@@ -717,6 +732,32 @@ class LanguageServerContribution implements EditorViewContribution {
     lane.sync.sync(snapshot, null)
     lane.pullDiagnostics?.synchronize()
     this.syncSemanticTokens(snapshot, 'document')
+  }
+
+  /**
+   * Nothing is on screen before the controller exists, so `)` closes a signature that was never
+   * shown and loads nothing. An opening `(` or a `,` is the first keystroke that needs it.
+   */
+  private handleTypedText(text: string): void {
+    if (this.signatureHelp) {
+      this.signatureHelp.handleTypedText(text)
+      return
+    }
+
+    const trigger = signatureHelpTriggerFromTypedText(text)
+    if (!trigger || trigger.kind === 'close') return
+
+    void this.loadSignatureHelp().then((controller) => controller.handleTypedText(text))
+  }
+
+  private loadSignatureHelp(): Promise<SignatureHelpController> {
+    this.signatureHelpLoad ??= import('./signatureHelpController').then((module) => {
+      const controller = new module.SignatureHelpController(this.signatureHelpOptions)
+      this.signatureHelp = controller
+      if (this.disposed) controller.dispose()
+      return controller
+    })
+    return this.signatureHelpLoad
   }
 
   private syncSemanticTokens(

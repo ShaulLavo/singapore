@@ -1,6 +1,7 @@
 export {
   anchoredSurfaceFollowsUpdate,
   createAnchoredSurface,
+  isInsideEditorPopup,
   type AnchoredSurface,
   type AnchoredSurfaceAlignment,
   type AnchoredSurfaceOptions,
@@ -40,12 +41,8 @@ export {
   type HoverPart,
   type HoverRequest,
 } from './hoverParticipant'
-export {
-  createHoverPlugin,
-  hoverControllerFor,
-  isInsideEditorPopup,
-  type HoverPluginOptions,
-} from './hoverPlugin'
+export { createHoverPlugin, type HoverPluginOptions } from './hoverPlugin'
+export { hoverControllerFor } from './hoverRegistry'
 export {
   hoverTargetRange,
   identifierRangeAtOffset,

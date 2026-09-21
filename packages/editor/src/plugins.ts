@@ -530,6 +530,13 @@ export type EditorViewContributionContext = {
   hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
   requestViewUpdate(): void
+  /**
+   * The character the user typed, after its edit has landed. A contribution that acts on a
+   * keystroke reads it here rather than deducing it from the change: auto-closing turns a typed
+   * `(` into a two-character `()`, and typing over the closer it inserted changes no text at all.
+   * Optional so a hand-written context keeps compiling.
+   */
+  onDidType?(listener: (text: string) => void): EditorDisposable
   getFeature?<T>(token: EditorCapabilityToken<T>): T | null
   /**
    * The sources registered for a language feature, best first. The language is the caller's to name

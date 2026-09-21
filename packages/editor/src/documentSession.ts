@@ -34,6 +34,11 @@ import {
 import type { TextEdit } from './tokens'
 import type { EditorViewFoldState } from './viewFolds'
 export type { HistoryNodeId } from './history'
+import {
+  restoreDocumentHistory,
+  serializeDocumentHistory,
+  type SerializedEditorHistory,
+} from './historySerialization'
 import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
 import {
@@ -243,6 +248,13 @@ export type EditorTextBuffer = {
   preferHistoryBranch(id: HistoryNodeId): boolean
   /** Forgets every state but the current one. The text does not change; only where undo can go. */
   clearHistory(sourceView?: EditorViewSession | null): DocumentSessionChange
+  /** The history as plain data, or null when there is nothing but the current state. */
+  serializeHistory(): SerializedEditorHistory | null
+  /**
+   * Adopts a serialized history whose current state is this buffer's text. Only a buffer
+   * with no history of its own accepts one; the caller vouches that the text matches.
+   */
+  restoreHistory(data: SerializedEditorHistory): boolean
 }
 
 export type EditorViewSession = {
@@ -951,6 +963,25 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const change = appendTiming(this.createChange('checkout', []), 'session.clearHistory', start)
     this.emitChange(change, sourceView?.viewId)
     return change
+  }
+
+  public serializeHistory(): SerializedEditorHistory | null {
+    if (this.history.nodes.size === 1) return null
+    return serializeDocumentHistory(this.history)
+  }
+
+  public restoreHistory(data: SerializedEditorHistory): boolean {
+    if (this.mutationLease || this.currentBarrier || this.history.nodes.size !== 1) return false
+    const restored = restoreDocumentHistory(data, this.history.current, {
+      retainedStates: this.retainedHistoryStates,
+    })
+    if (!restored) return false
+
+    this.history = restored
+    this.typingRun = null
+    // No text moved; an empty checkout tells every view that undo and redo arrived.
+    this.emitChange(this.createChange('checkout', []), null, 'external')
+    return true
   }
 
   public preferHistoryBranch(id: HistoryNodeId): boolean {

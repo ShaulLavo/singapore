@@ -37,9 +37,16 @@ describe('autoClosingPairForOpen', () => {
     expect(autoClosingPairForOpen('markdown', '(')).not.toBeNull()
   })
 
-  it('has no pairs for an unknown or absent language', () => {
-    expect(autoClosingPairForOpen('cobol', '(')).toBeNull()
-    expect(autoClosingPairForOpen(null, '(')).toBeNull()
+  it('closes brackets but not quotes for an unknown or absent language', () => {
+    expect(autoClosingPairForOpen('cobol', '(')?.close).toBe(')')
+    expect(autoClosingPairForOpen(null, '{')?.close).toBe('}')
+    expect(autoClosingPairForOpen('cobol', '"')).toBeNull()
+  })
+
+  it('closes pairs in the catalog languages beyond the JavaScript family', () => {
+    expect(autoClosingPairForOpen('astro', '(')?.close).toBe(')')
+    expect(autoClosingPairForOpen('go', '`')?.close).toBe('`')
+    expect(autoClosingPairForOpen('rust', "'")).toBeNull()
   })
 })
 

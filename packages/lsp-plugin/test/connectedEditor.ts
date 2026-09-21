@@ -97,6 +97,8 @@ export type ConnectedEditor = {
   answerHover(hover: lsp.Hover | null): void
   answerDefinition(definition: readonly lsp.Location[]): void
   answerSignatureHelp(help: lsp.SignatureHelp | null): void
+  /** Waits for a request a lazily loaded controller only sends once its module has landed. */
+  awaitRequest(method: string): Promise<void>
   answerCodeAction(actions: readonly (lsp.Command | lsp.CodeAction)[] | null): void
   answerCodeActionResolve(action: lsp.CodeAction): void
   answerRename(edit: unknown): void
@@ -171,12 +173,19 @@ export async function connectedEditor(
     snippetSessions,
     workspaceEditRequests,
   )
+  // The editor reports the keystroke separately from the edit it caused, because auto-closing and
+  // typing over a closer both make the edit a poor stand-in for it.
+  const typedTextListeners = new Set<(text: string) => void>()
   const context = viewContributionContext({
     element,
     getSnapshot: () => snapshot,
     getRangeClientRect: () => anchorRect,
     getFeature: (token) => features.get(token) ?? null,
     focusEditor,
+    onDidType: (listener) => {
+      typedTextListeners.add(listener)
+      return () => typedTextListeners.delete(listener)
+    },
   })
   // The hover is the host's, so the harness installs it the way an application would.
   const hover = activateHoverPlugin(commands).createContribution(context)
@@ -216,6 +225,14 @@ export async function connectedEditor(
   })
   await flushPromises()
 
+  const awaitRequest = async (method: string): Promise<void> => {
+    for (let turn = 0; turn < 100; turn++) {
+      if (transport.sent.map(jsonMessage).some((sent) => sent.method === method)) return
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    throw new Error(`no ${method} request after waiting`)
+  }
+
   const answer = (method: string, result: unknown): void => {
     const request = transport.sent.map(jsonMessage).findLast((sent) => sent.method === method)
     if (!request) throw new Error(`missing request ${method}`)
@@ -245,6 +262,7 @@ export async function connectedEditor(
     type: (character) => {
       const at = caretOffsetOf(snapshot)
       applyChange({ from: at, to: at, text: character }, at + character.length)
+      for (const listener of [...typedTextListeners]) listener(character)
     },
     backspace: () => {
       const at = caretOffsetOf(snapshot)
@@ -302,6 +320,7 @@ export async function connectedEditor(
     answerHover: (hover) => answer('textDocument/hover', hover),
     answerDefinition: (definition) => answer('textDocument/definition', definition),
     answerSignatureHelp: (help) => answer('textDocument/signatureHelp', help),
+    awaitRequest,
     answerCodeAction: (actions) => answer('textDocument/codeAction', actions),
     answerCodeActionResolve: (action) => answer('codeAction/resolve', action),
     answerRename: (edit) => answer('textDocument/rename', edit),
@@ -507,9 +526,11 @@ function viewContributionContext(options: {
   getRangeClientRect(): DOMRect
   getFeature(token: unknown): unknown
   focusEditor(): void
+  onDidType(listener: (text: string) => void): () => void
 }): EditorViewContributionContext {
   return {
     ...providerRegistry(),
+    onDidType: (listener) => ({ dispose: options.onDidType(listener) }),
     container: options.element,
     scrollElement: options.element,
     contentElement: options.element,

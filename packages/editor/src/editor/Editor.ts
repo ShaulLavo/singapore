@@ -608,6 +608,7 @@ export class Editor {
       runInOperation: (run) => this.runInOperation(run),
       applySessionChange: (change, totalName, totalStart, options) =>
         this.applySessionChange(change, totalName, totalStart, options),
+      onDidType: (text) => this.notifyTyped(text),
       notifyChangeWithTiming: (change) => this.notifyChangeWithTiming(change),
       notifyViewContributions: (kind, change) => this.notifyViewContributions(kind, change),
     })
@@ -2777,6 +2778,7 @@ export class Editor {
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
       requestViewUpdate: () => this.notifyViewContributions('layout', null),
+      onDidType: (listener) => this.addTypedTextListener(listener),
       getFeature: (key) => this.getFeature(key),
       getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
       registerProvider: (token, selector, provider) =>
@@ -3183,6 +3185,17 @@ export class Editor {
       }),
       { paintPending: true },
     )
+  }
+
+  private readonly typedTextListeners = new Set<(text: string) => void>()
+
+  private addTypedTextListener(listener: (text: string) => void): EditorDisposable {
+    this.typedTextListeners.add(listener)
+    return disposableOnce(() => this.typedTextListeners.delete(listener))
+  }
+
+  private notifyTyped(text: string): void {
+    for (const listener of [...this.typedTextListeners]) listener(text)
   }
 
   private notifyViewContributions(
