@@ -1,6 +1,6 @@
 # Editor backlog
 
-46 stable entries cover all 23 topics in the original [wishlist](../TODO.md).
+51 stable entries cover all 24 topics in the original [wishlist](../TODO.md).
 Executable plans include source evidence, scope, delivery steps, and acceptance checks.
 Completed entries link to permanent implementation references and measured results.
 The original inspected Editor baseline is `9abb944f3a2b8d6516953fdec75e8df5e1a94811` (2026-09-05).
@@ -12,8 +12,8 @@ E036 was inspected at `5f68ce6ae086bea10d9708ed56580e173d4dfee2` (2026-09-14).
 E041 was inspected at `b6a265a786b08c61318a3e02b666f17cb7ef50fc` (2026-09-16), after E038 landed.
 Recheck source before execution; these dates record planning, not feature completion.
 
-There are **39 Editor-owned entries, 6 requiring both repositories, and 1 Platform-owned entry**.
-By deliverable, there are **32 implementation entries, 12 research entries, and 2 design entries**.
+There are **42 Editor-owned entries, 8 requiring both repositories, and 1 Platform-owned entry**.
+By deliverable, there are **36 implementation entries, 12 research entries, and 3 design entries**.
 Editor ownership describes where the work lands; dependencies can still include shared work.
 [Platform's roadmap](../../platform/PLAN.md) remains the execution scheduler.
 [E002](../docs/performance/input-latency.md) is complete, with a verified local latency gate.
@@ -234,6 +234,20 @@ that passes over the path, not height, were the tree's cost.
 | ------------------------------------------------------------------------------- | -------------- | -------- | -------- | ---- | ----- |
 | [E030 — Offer a flat file view under a chosen root](e030-flat-file-explorer.md) | Implementation | Platform | P2       | M    | —     |
 
+## Workaround removal
+
+Proposed 2026-09-21 from a read-only audit, after the diff line-comment fix. Items each plan marks
+as verified were confirmed in source; the rest are audit findings its first step re-checks.
+Platform's halves are [plans 130 to 133](../../platform/plans/README.md).
+
+| Plan                                                                                                              | Kind           | Owner      | Priority | Size | Needs                                       |
+| ----------------------------------------------------------------------------------------------------------------- | -------------- | ---------- | -------- | ---- | ------------------------------------------- |
+| [E047 — One answer to "what is under this point"](e047-point-and-row-queries.md)                                  | Implementation | Cross-repo | P1       | M    | —                                           |
+| [E048 — The minimap maps display rows to document lines, not the other way round](e048-minimap-document-space.md) | Implementation | Editor     | P1       | M    | —                                           |
+| [E049 — A miss is an error, not a default](e049-no-silent-misses.md)                                              | Implementation | Editor     | P1       | M    | [E033](e033-explicit-full-text-boundary.md) |
+| [E050 — Things every host must remember become things the API does](e050-host-obligations-into-api.md)            | Design         | Cross-repo | P2       | L    | [E047](e047-point-and-row-queries.md)       |
+| [E051 — Every fast path is pinned to the slow path it stands in for](e051-fast-path-equivalence.md)               | Implementation | Editor     | P1       | M    | —                                           |
+
 ## Original wishlist coverage
 
 Every original second-level heading appears below. A topic can map to several independently
@@ -264,6 +278,7 @@ verifiable plans. This table preserves the source wording; current behavior is r
 | Compact blank lines (display-time)                                | [E022](e022-compact-blank-lines.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Hot/cold data structure vocabulary                                | [E029](e029-runtime-and-serialized-data.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Packed tokens end to end (drop the per-edit unpack)               | [E035](../docs/performance/e035-packed-token-store.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Workaround audit: ask the owner, do not model it                  | [E047](e047-point-and-row-queries.md), [E048](e048-minimap-document-space.md), [E049](e049-no-silent-misses.md), [E050](e050-host-obligations-into-api.md), [E051](e051-fast-path-equivalence.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ## Maintaining the backlog
 

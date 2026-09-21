@@ -573,3 +573,20 @@ Acceptance: an edit in a 500,000-line document allocates no token objects outsid
 and the input-latency gate's paste and undo groups do not regress. The Shiki worker, splice, and
 browser tests from the same-day change stay as they are; they already assert a spliced answer
 equals a fresh full tokenization.
+
+## Workaround audit: ask the owner, do not model it
+
+Added 2026-09-21. Platform's diff line-comment layer found the clicked row by reading
+`data-editor-virtual-row` off the editor's DOM, treated that display-row index as a buffer row, and
+the diff package carried a runtime guard only to warn when the assumption broke. One small API
+(`diffRowAtEvent`) replaced all of it. A read-only audit of the plugins and the core the same day
+found the shape again:
+
+- a plugin or host reverse-engineering the core's DOM or row geometry instead of asking;
+- a display row used where a document line is meant (the minimap);
+- a miss answered with a quiet default instead of an error;
+- obligations every host must remember (`setTokens` after each `setText`, listener order, CSS
+  overrides) where the API should do the work;
+- fast paths with no test pinning them to the slow path they replace.
+
+Each is a backlog entry (E047 to E051). Platform's halves are Platform plans 130 to 133.

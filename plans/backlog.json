@@ -590,6 +590,71 @@
       "dependsOn": ["E039", "E045"],
       "topics": ["Input latency as an enforced budget"],
       "baseline": "7cafb67f0d441fe50cbdb19d59da9375422a438f"
+    },
+    {
+      "id": "E047",
+      "file": "e047-point-and-row-queries.md",
+      "title": "One answer to \"what is under this point\"",
+      "status": "Proposed",
+      "owner": "Cross-repo",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": [],
+      "topics": ["Workaround audit: ask the owner, do not model it"],
+      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
+    },
+    {
+      "id": "E048",
+      "file": "e048-minimap-document-space.md",
+      "title": "The minimap maps display rows to document lines, not the other way round",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": [],
+      "topics": ["Workaround audit: ask the owner, do not model it"],
+      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
+    },
+    {
+      "id": "E049",
+      "file": "e049-no-silent-misses.md",
+      "title": "A miss is an error, not a default",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": ["E033"],
+      "topics": ["Workaround audit: ask the owner, do not model it"],
+      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
+    },
+    {
+      "id": "E050",
+      "file": "e050-host-obligations-into-api.md",
+      "title": "Things every host must remember become things the API does",
+      "status": "Proposed",
+      "owner": "Cross-repo",
+      "kind": "Design",
+      "priority": "P2",
+      "effort": "L",
+      "dependsOn": ["E047"],
+      "topics": ["Workaround audit: ask the owner, do not model it"],
+      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
+    },
+    {
+      "id": "E051",
+      "file": "e051-fast-path-equivalence.md",
+      "title": "Every fast path is pinned to the slow path it stands in for",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": [],
+      "topics": ["Workaround audit: ask the owner, do not model it"],
+      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
     }
   ]
 }
