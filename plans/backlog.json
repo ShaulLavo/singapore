@@ -647,7 +647,7 @@
       "id": "E051",
       "file": "e051-fast-path-equivalence.md",
       "title": "Every fast path is pinned to the slow path it stands in for",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

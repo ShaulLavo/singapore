@@ -79,6 +79,13 @@ export class DisplayProjection {
     this.root = buildSpan(this.context, 0, input.textSnapshot.lineCount)
   }
 
+  get supportsIncrementalRowPatch(): boolean {
+    const { foldMap, inlineMap, injectedTextRows, wrapColumn } = this.config
+    return (
+      foldMap === null && inlineMap === null && injectedTextRows.length === 0 && wrapColumn === null
+    )
+  }
+
   get rowCount(): number {
     return this.root?.rows ?? 0
   }

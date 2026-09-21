@@ -183,6 +183,36 @@ describe('createScopeLinesPlugin', () => {
     }
   })
 
+  it.each([true, false])(
+    'timer fallback defers and rechecks geometry committed=%s',
+    (committed) => {
+      vi.useFakeTimers()
+      vi.stubGlobal('requestAnimationFrame', undefined)
+      const testContext = context(snapshot())
+      const contribution =
+        registeredProvider(createScopeLinesPlugin())?.createContribution(testContext)
+      const latest = snapshot({ textVersion: 2, foldMarkers: [] })
+      try {
+        contribution?.update(latest, 'content')
+        expect(testContext.scrollElement.querySelectorAll('.editor-scope-line')).toHaveLength(2)
+        testContext.getSnapshot = () => snapshot({ geometryCommitted: committed })
+        vi.runAllTimers()
+        expect(testContext.scrollElement.querySelectorAll('.editor-scope-line')).toHaveLength(
+          committed ? 0 : 2,
+        )
+        expect(testContext.requestViewUpdate).toHaveBeenCalledTimes(committed ? 1 : 0)
+        contribution?.update(latest, 'content')
+        contribution?.dispose()
+        vi.runAllTimers()
+        expect(testContext.requestViewUpdate).toHaveBeenCalledTimes(committed ? 1 : 0)
+      } finally {
+        contribution?.dispose()
+        vi.useRealTimers()
+        vi.unstubAllGlobals()
+      }
+    },
+  )
+
   it('omits guide segments with no visible width or height', () => {
     const registration = registeredProvider(createScopeLinesPlugin())
     const viewSnapshot = snapshot()
@@ -390,6 +420,11 @@ describe('createScopeLinesPlugin', () => {
   })
 
   it('keeps scope line nodes when content edits leave guide geometry unchanged', () => {
+    const frames: FrameRequestCallback[] = []
+    const request = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
     const registration = registeredProvider(createScopeLinesPlugin())
     const testContext = context(
       snapshot({
@@ -414,11 +449,15 @@ describe('createScopeLinesPlugin', () => {
       'content',
     )
 
+    frames.shift()?.(0)
+    expect(testContext.requestViewUpdate).toHaveBeenCalledOnce()
+    request.mockRestore()
     const nextLines = [
       ...testContext.scrollElement.querySelectorAll<HTMLElement>('.editor-scope-line'),
     ]
     expect(nextLines[0]).toBe(originalLines[0])
     expect(nextLines[1]).toBe(originalLines[1])
+    contribution?.dispose()
   })
 
   it('renders only the nearest cursor scope in current mode', () => {

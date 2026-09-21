@@ -305,8 +305,7 @@ export function sameLineEditPatch(
   view: VirtualizedTextViewInternal,
   edit: TextEdit,
 ): SameLineEditPatch | null {
-  if (view.model.foldMap) return null
-  if (view.wrapEnabled || hasModelRowProjections(view)) return null
+  if (!view.model.projection.supportsIncrementalRowPatch) return null
   if (edit.from < 0 || edit.to < edit.from || edit.to > view.model.textLength) return null
   if (edit.text.includes('\n')) return null
 
@@ -324,8 +323,7 @@ export function multiLineEditPatch(
   view: VirtualizedTextViewInternal,
   edit: TextEdit,
 ): MultiLineEditPatch | null {
-  if (view.model.foldMap) return null
-  if (view.wrapEnabled || hasModelRowProjections(view)) return null
+  if (!view.model.projection.supportsIncrementalRowPatch) return null
   const patch = sourceEditPatch(view, edit)
   if (!patch) return null
   if (patch.insertedLineBreaks === 0 && patch.startRow === patch.endRow) return null
@@ -396,8 +394,4 @@ function fixedRowForOffset(view: VirtualizedTextViewInternal, offset: number): n
   if (offset < rowBottom) return row
 
   return Math.min(row + 1, visibleLineCount(view) - 1)
-}
-
-function hasModelRowProjections(view: VirtualizedTextViewInternal): boolean {
-  return view.model.inlineMap !== null || view.model.injectedTextRows.length > 0
 }

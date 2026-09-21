@@ -22,6 +22,8 @@ const highlights = new Map<string, Highlight>()
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(120)
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(600)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(120)
   vi.stubGlobal('Highlight', class extends Set<Range> {})
   setHighlightRegistry({
     set: (name, value) => highlights.set(name, value),
@@ -72,6 +74,8 @@ test('content-dependent overlay reservations do not reject bootstrap paint', () 
   const saved = original.editor.captureSnapshot()
   expect(saved).not.toBeNull()
   if (!saved) return
+  // The fixture sizes this editor through scroll metrics alone, so its outer box is the viewport.
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(474)
   const restored = mount(
     { documentKey: 'file-a', snapshot: saved.paint, plugins: [overlay(120)] },
     474,
@@ -389,6 +393,47 @@ test('ancestor typography changes withdraw saved geometry without a resize event
   expect(restored.host.textContent).not.toContain('saved paint')
 })
 
+test('a face still loading at mount does not reject paint saved under the loaded face', () => {
+  const saved = capture('saved paint')
+  const restored = mount({
+    documentKey: 'file-a',
+    snapshot: saved.paint,
+    textMetrics: { rowHeight: 20, characterWidth: 7.8 },
+  })
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  expect(restored.host.textContent).toContain('saved paint')
+})
+
+test('a scrollbar that arrives with content does not reject the paint saved beside it', () => {
+  const saved = capture('saved paint')
+  // The empty editor has no scrollbar yet, so its viewport is wider than the saved one.
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(606)
+  const restored = mount({ documentKey: 'file-a', snapshot: saved.paint })
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+})
+
+test('a resized editor still rejects paint saved at another size', () => {
+  const saved = capture('saved paint')
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(640)
+  const restored = mount({ documentKey: 'file-a', snapshot: saved.paint })
+  expect(restored.editor.getPresentationState()).toBe('empty')
+})
+
+test('fonts still loading block capture but not the saved paint', () => {
+  const saved = capture('saved paint')
+  // happy-dom has no FontFaceSet; the editor only reads its status.
+  Object.defineProperty(document, 'fonts', { configurable: true, value: { status: 'loading' } })
+  try {
+    const restored = mount({ documentKey: 'file-a', snapshot: saved.paint })
+    expect(restored.editor.getPresentationState()).toBe('provisional')
+    const live = mount({ documentKey: 'file-b' })
+    live.editor.openDocument({ documentId: 'file-b', text: 'live text' })
+    expect(live.editor.captureSnapshot()).toBeNull()
+  } finally {
+    Reflect.deleteProperty(document, 'fonts')
+  }
+})
+
 test('explicit navigation requested before the file arrives takes priority over saved scroll', () => {
   const text = Array.from({ length: 80 }, (_, index) => `line ${index}`).join('\n')
   const saved = capture(text)
@@ -547,13 +592,13 @@ test('synthetic document attachment preserves the provisional visible scroll', (
 })
 
 test('selection paint survives provisionally without seeding document selection authority', () => {
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    if (this.classList.contains('editor-virtualized-selection-range'))
-      return new DOMRect(40, 10, 30, 19)
-    return new DOMRect(0, 0, 600, 120)
-  })
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+    function (this: HTMLElement) {
+      if (this.classList.contains('editor-virtualized-selection-range'))
+        return new DOMRect(40, 10, 30, 19)
+      return new DOMRect(0, 0, 600, 120)
+    },
+  )
   const original = mount({ documentKey: 'file-a' })
   original.editor.setText('selected text', { documentMode: 'static', languageId: null })
   original.editor.setSelection(0, 8)

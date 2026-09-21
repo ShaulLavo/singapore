@@ -43,3 +43,5 @@ export type {
 export type { AnchorSelection, SelectionAffinity, SelectionSet } from './selections'
 export type { PieceTableAnchor } from '@singapore-editor/textbuffer'
 export type { VirtualizedTextViewState } from './virtualization'
+
+export { scheduleFrame, type ScheduledFrame } from './editor/scheduleFrame'

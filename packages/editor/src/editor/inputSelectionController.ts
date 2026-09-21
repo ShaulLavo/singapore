@@ -1,3 +1,4 @@
+import { scheduleFrame, type ScheduledFrame } from './scheduleFrame'
 import type {
   DocumentSession,
   DocumentSessionChange,
@@ -72,11 +73,9 @@ import {
 } from './input'
 import {
   NO_MOUSE_SELECTION_AUTO_SCROLL,
-  cancelFrame,
   mouseSelectionAutoScrollDelta,
   mouseSelectionEnds,
   mouseTextMove,
-  requestFrame,
   type MouseSelectionAnchor,
   type MouseSelectionAutoScrollDelta,
   type MouseSelectionDrag,
@@ -266,7 +265,7 @@ export class InputSelectionController {
   private mouseTextMoveDrag: MouseTextMoveDrag | null = null
   private mouseSelectionAnchor: MouseSelectionAnchor | null = null
   private columnSelection: ColumnSelectionRun | null = null
-  private mouseSelectionAutoScrollFrame = 0
+  private mouseSelectionAutoScrollFrame: ScheduledFrame | null = null
   private inputState: EditorInputState = createEditorInputState()
   private nativeInputHandlersInstalled = false
   // What the editor last wrote into the hidden input, which is the other half of every diff: an
@@ -2421,20 +2420,20 @@ export class InputSelectionController {
   }
 
   private scheduleMouseSelectionAutoScroll(): void {
-    if (this.mouseSelectionAutoScrollFrame !== 0) return
+    if (this.mouseSelectionAutoScrollFrame !== null) return
 
-    this.mouseSelectionAutoScrollFrame = requestFrame(() => {
-      this.mouseSelectionAutoScrollFrame = 0
+    this.mouseSelectionAutoScrollFrame = scheduleFrame(() => {
+      this.mouseSelectionAutoScrollFrame = null
       if (!this.mouseSelectionDrag) return
       this.updateMouseSelectionAutoScroll()
     })
   }
 
   private stopMouseSelectionAutoScroll(): void {
-    if (this.mouseSelectionAutoScrollFrame === 0) return
+    if (this.mouseSelectionAutoScrollFrame === null) return
 
-    cancelFrame(this.mouseSelectionAutoScrollFrame)
-    this.mouseSelectionAutoScrollFrame = 0
+    this.mouseSelectionAutoScrollFrame.cancel()
+    this.mouseSelectionAutoScrollFrame = null
   }
 
   private selectFullDocument(event: MouseEvent, timingName: string): void {

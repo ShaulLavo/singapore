@@ -17,6 +17,7 @@ By deliverable, there are **36 implementation entries, 12 research entries, and 
 Editor ownership describes where the work lands; dependencies can still include shared work.
 [Platform's roadmap](../../platform/PLAN.md) remains the execution scheduler.
 [E002](../docs/performance/input-latency.md) is complete, with a verified local latency gate.
+[E051](e051-fast-path-equivalence.md) is complete, with seeded fast-path equivalence and scheduling checks.
 [E031](../docs/performance/e031-projection.md) is complete, with indexed display projection and measured before/after results.
 [E032](../docs/performance/e032-edit-batches.md) is complete, with incremental batches, preserved projections, and shared-view ordering checks.
 [E003](../docs/performance/first-paint.md),

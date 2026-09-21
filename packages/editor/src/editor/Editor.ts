@@ -807,29 +807,27 @@ export class Editor {
     this.view.measureInitialViewport()
     const appearance = this.paintAppearance()
     if (paint.appearance !== appearance) {
-      this.recordSnapshotAdmission('appearance', {
-        savedAppearance: paint.appearance,
-        appearance,
-      })
+      // The appearance strings hold font and theme settings: the log names what differs, and
+      // only the performance mark keeps the values.
+      this.recordSnapshotAdmission(
+        'appearance',
+        { differs: appearanceDifference(paint.appearance, appearance) },
+        { savedAppearance: paint.appearance, appearance },
+      )
       return
     }
+    // The outer box, not the viewport: an empty editor has no scrollbar yet, so its viewport is
+    // wider than the one the paint was saved under, by exactly the scrollbar.
     const state = this.view.getState()
     if (
-      Math.abs(
-        paint.viewportWidth +
-          paint.reservedLeft +
-          paint.reservedRight -
-          state.viewportWidth -
-          this.view.reservedOverlayWidth('left') -
-          this.view.reservedOverlayWidth('right'),
-      ) > 1 ||
-      Math.abs(paint.viewportHeight - state.viewportHeight) > 1
+      Math.abs(paint.boxWidth - state.borderBoxWidth) > 1 ||
+      Math.abs(paint.boxHeight - state.borderBoxHeight) > 1
     ) {
       this.recordSnapshotAdmission('viewport', {
-        savedWidth: paint.viewportWidth,
-        savedHeight: paint.viewportHeight,
-        width: state.viewportWidth,
-        height: state.viewportHeight,
+        savedWidth: paint.boxWidth,
+        savedHeight: paint.boxHeight,
+        width: state.borderBoxWidth,
+        height: state.borderBoxHeight,
       })
       return
     }
@@ -849,7 +847,7 @@ export class Editor {
     if (this.disposed || !this.session || this.view.isProvisional || this.preparingDocument)
       return null
     if (!this.syntax.renderDataReady || !this.presentationReady) return null
-    const appearance = this.paintAppearance()
+    const appearance = this.paintAppearance('refuse')
     if (appearance === null) return null
     const snapshot = this.viewContributions.captureSnapshot().toVisibleSnapshot()
     if (!snapshot || snapshot.viewport.clientWidth <= 0 || snapshot.viewport.clientHeight <= 0)
@@ -892,11 +890,13 @@ export class Editor {
     }
   }
 
-  private paintAppearance(): string | null {
+  // A pending face blocks capture, which would save fallback geometry. It must not block showing
+  // a paint: the saved one was taken under the loaded face, the very thing still arriving.
+  private paintAppearance(pendingFonts: 'refuse' | 'allow' = 'allow'): string | null {
     const window = this.el.ownerDocument.defaultView
     if (!window) return null
     const fonts = this.el.ownerDocument.fonts
-    if (fonts && fonts.status !== 'loaded') return null
+    if (pendingFonts === 'refuse' && fonts && fonts.status !== 'loaded') return null
     const style = window.getComputedStyle(this.el)
     const state = this.view.getState()
     const layers = this.viewContributions.paintConfiguration()
@@ -917,7 +917,9 @@ export class Editor {
       ],
       devicePixelRatio: window.devicePixelRatio,
       theme: this.resolvedTheme(),
-      metrics: state.metrics,
+      // Row height only. With the font stack equal, a different cell width means a face is still
+      // loading, and that must not veto the paint the loaded face is about to match.
+      rowHeight: state.metrics.rowHeight,
       wrap: state.wrapActive,
       tabSize: state.tabSize,
       native: this.view.paintConfiguration(),
@@ -1014,8 +1016,8 @@ export class Editor {
     if (!paint || this.preparingDocument || this.committingPresentation) return false
     const state = this.view.getState()
     const matches =
-      Math.abs(state.viewportWidth - paint.viewportWidth) <= 1 &&
-      Math.abs(state.viewportHeight - paint.viewportHeight) <= 1 &&
+      Math.abs(state.borderBoxWidth - paint.boxWidth) <= 1 &&
+      Math.abs(state.borderBoxHeight - paint.boxHeight) <= 1 &&
       this.paintAppearance() === paint.appearance
     if (matches) return false
     this.withdrawSnapshot()
@@ -1025,6 +1027,7 @@ export class Editor {
   private recordSnapshotAdmission(
     reason: string,
     fields: Readonly<Record<string, unknown>> = {},
+    markOnly: Readonly<Record<string, unknown>> = {},
   ): void {
     const detail = {
       reason,
@@ -1034,13 +1037,16 @@ export class Editor {
       hasSession: this.session !== null,
       ...fields,
     }
+    // Once per offered snapshot, so info: a rejected one is otherwise invisible after the fact.
     this.log({
       action: 'editor.snapshot.admission',
-      level: 'debug',
+      level: 'info',
       snapshot: detail,
     })
     recordEditorPerformanceDiagnostic('editor.snapshot.admission', detail)
-    this.el.ownerDocument.defaultView?.performance.mark('editor.snapshot.admission', { detail })
+    this.el.ownerDocument.defaultView?.performance.mark('editor.snapshot.admission', {
+      detail: { ...detail, ...markOnly },
+    })
   }
 
   private recordPresentation(name: string): void {
@@ -4555,4 +4561,16 @@ function isTextSessionChange(change: DocumentSessionChange): boolean {
     change.kind === 'redo' ||
     change.kind === 'checkout'
   )
+}
+
+function appearanceDifference(saved: string, live: string | null): readonly string[] {
+  if (live === null) return ['unavailable']
+  try {
+    const before: Record<string, unknown> = JSON.parse(saved)
+    const after: Record<string, unknown> = JSON.parse(live)
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+    return [...keys].filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+  } catch {
+    return ['unreadable']
+  }
 }

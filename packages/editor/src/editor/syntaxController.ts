@@ -191,8 +191,8 @@ export class EditorSyntaxController {
   private preparedSyntaxDisposer: (() => void) | null = null
   private preparedHighlighterDisposer: (() => void) | null = null
   private preparedInitialTokensInstalled = false
-  private skipNextStructuralRefresh = false
-  private skipNextHighlighterRefresh = false
+  private preparedStructuralContentVersion: number | null = null
+  private preparedHighlighterContentVersion: number | null = null
   private highlightDispatchPoint: DocumentSyncPoint | null = null
   private structuralDispatchPoint: DocumentSyncPoint | null = null
   private providerHighlighterTheme: EditorTheme | null = null
@@ -403,10 +403,10 @@ export class EditorSyntaxController {
     this.observeHighlighterTheme()
     this.syntaxSession = prepared?.structural?.session ?? this.createSyntaxSession(document)
     this.preparedSyntaxDisposer = prepared?.structural?.dispose ?? null
-    this.skipNextStructuralRefresh =
-      prepared?.structural !== null && prepared?.structural !== undefined
-    this.skipNextHighlighterRefresh =
-      prepared?.highlighter !== null && prepared?.highlighter !== undefined
+    this.preparedStructuralContentVersion = prepared?.structural ? this.syntaxContentVersion : null
+    this.preparedHighlighterContentVersion = prepared?.highlighter
+      ? this.syntaxContentVersion
+      : null
     if (prepared?.structural) {
       this.syntaxSessionIncludesCaptures = prepared.structural.configuration.includeCaptures
     }
@@ -611,10 +611,12 @@ export class EditorSyntaxController {
         range: options.range ?? null,
       },
     })
-    if (this.skipNextStructuralRefresh) this.skipNextStructuralRefresh = false
-    else this.refreshStructuralSyntax(documentVersion, change, options)
-    if (this.skipNextHighlighterRefresh) this.skipNextHighlighterRefresh = false
-    else this.refreshHighlightTokens(documentVersion, change, options)
+    if (this.syntaxContentVersion !== this.preparedStructuralContentVersion) {
+      this.refreshStructuralSyntax(documentVersion, change, options)
+    }
+    if (this.syntaxContentVersion !== this.preparedHighlighterContentVersion) {
+      this.refreshHighlightTokens(documentVersion, change, options)
+    }
   }
 
   projectCacheForChange(change: DocumentSessionChange): void {
@@ -952,7 +954,7 @@ export class EditorSyntaxController {
     if (this.preparedSyntaxDisposer) this.preparedSyntaxDisposer()
     else this.syntaxSession?.dispose()
     this.preparedSyntaxDisposer = null
-    this.skipNextStructuralRefresh = false
+    this.preparedStructuralContentVersion = null
     this.syntaxSession = null
     this.structuralDispatchPoint = null
     this.syntaxSessionIncludesCaptures = false
@@ -1014,7 +1016,7 @@ export class EditorSyntaxController {
     if (this.preparedHighlighterDisposer) this.preparedHighlighterDisposer()
     else this.highlighterSession?.dispose()
     this.preparedHighlighterDisposer = null
-    this.skipNextHighlighterRefresh = false
+    this.preparedHighlighterContentVersion = null
     this.highlighterSession = null
     this.setHighlighterTheme(null)
   }

@@ -484,7 +484,7 @@ function rowUpdateState(
   updatePass: RowUpdatePass,
 ): RowUpdateState {
   const displayRow = view.model.projection.getRow(index)
-  const bufferRow = bufferRowForDisplayRow(view, index)
+  const bufferRow = bufferRowForVirtualRow(view, index)
   const primaryText = isDocumentTextDisplayRow(displayRow) && displayRow.sourceStartColumn === 0
 
   return {
@@ -535,12 +535,6 @@ function mountedRowUpdateState(
     lineCount: updatePass.lineCount,
     toggleFold: updatePass.toggleFold,
   }
-}
-
-function bufferRowForDisplayRow(view: VirtualizedTextViewInternal, index: number): number {
-  const displayRow = view.model.projection.getRow(index)
-  if (displayRow?.kind === 'text') return displayRow.bufferRow
-  return bufferRowForVirtualRow(view, index)
 }
 
 function inlineRowForDisplayRow(row: DisplayRow | undefined): InlineRow | undefined {
@@ -864,7 +858,7 @@ function setRenderedDirectRowText(
   const simple = isSimpleRowText(content)
   const maxTextNodeLength = simple ? Number.POSITIVE_INFINITY : bidiTextNodeLength(view, content)
   const rendered = simple
-    ? createSplitTextChunkParts(row.element.ownerDocument, text, 0)
+    ? createSplitTextChunkParts(row.element.ownerDocument, text, 0, characterWidth(view))
     : createRenderedChunkParts(
         row.element.ownerDocument,
         text,
@@ -1744,11 +1738,7 @@ function createRowChunkParts(
   text: string,
   localStart: number,
 ): RenderedChunkParts {
-  if (isSimpleRowText(text)) {
-    return createSplitTextChunkParts(view.scrollElement.ownerDocument, text, localStart)
-  }
-
-  return createRenderedChunkParts(
+  return createSplitTextChunkParts(
     view.scrollElement.ownerDocument,
     text,
     localStart,
@@ -1756,22 +1746,16 @@ function createRowChunkParts(
   )
 }
 
-/**
- * Reading a character position out of a text node costs the browser a scan of that node, and the
- * scan does not stay linear in its length — so caret placement, hit testing and every highlight
- * range painted over a very long line get steadily more expensive the more text one node holds.
- * Spreading the text over several nodes bounds each of those scans and changes nothing about what
- * renders or what the parts describe: adjacent text nodes lay out as one, and the parts still cover
- * the same local span end to end.
- *
- * Callers must have established that the text is simple. A fixed stride can cut a grapheme cluster
- * in two, and each half then measures — and stops the caret — as a character of its own.
- */
+// Bound browser text-node scans without splitting grapheme clusters.
 function createSplitTextChunkParts(
   document: Document,
   text: string,
   localStart: number,
+  characterWidth: number,
 ): RenderedChunkParts {
+  if (!isSimpleRowText(text))
+    return createRenderedChunkParts(document, text, localStart, characterWidth)
+
   const nodeCount = Math.max(1, Math.ceil(text.length / MAX_ROW_TEXT_NODE_LENGTH))
   const nodes: Text[] = []
   const parts: VirtualizedTextChunkPart[] = []

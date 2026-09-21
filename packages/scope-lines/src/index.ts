@@ -1,3 +1,4 @@
+import { scheduleFrame, type ScheduledFrame } from '@singapore-editor/core/internal'
 import type { TextSnapshot } from '@singapore-editor/core/document'
 import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
 import type {
@@ -119,7 +120,7 @@ class ScopeLinesContribution implements EditorViewContribution {
   private readonly root: HTMLDivElement
   private readonly options: ResolvedScopeLinesOptions
   private pendingContentSnapshot: EditorViewSnapshot | null = null
-  private pendingContentFrame: number | null = null
+  private pendingContentFrame: ScheduledFrame | null = null
   private renderedSnapshot: EditorViewSnapshot | null = null
   private renderedSegments: readonly RenderedScopeLineSegment[] = []
   private signature = ''
@@ -167,14 +168,10 @@ class ScopeLinesContribution implements EditorViewContribution {
     this.pendingContentSnapshot = snapshot
     if (this.pendingContentFrame !== null) return
 
-    const view = this.root.ownerDocument.defaultView
-    if (!view?.requestAnimationFrame) {
-      this.pendingContentSnapshot = null
-      this.renderSnapshot(snapshot)
-      return
-    }
-
-    this.pendingContentFrame = view.requestAnimationFrame(this.flushContentUpdate)
+    this.pendingContentFrame = scheduleFrame(
+      this.flushContentUpdate,
+      this.root.ownerDocument.defaultView ?? globalThis,
+    )
   }
 
   private flushContentUpdate = (): void => {
@@ -193,7 +190,7 @@ class ScopeLinesContribution implements EditorViewContribution {
     this.pendingContentSnapshot = null
     if (frame === null) return
 
-    this.root.ownerDocument.defaultView?.cancelAnimationFrame(frame)
+    frame.cancel()
   }
 
   private renderSnapshot(snapshot: EditorViewSnapshot): void {

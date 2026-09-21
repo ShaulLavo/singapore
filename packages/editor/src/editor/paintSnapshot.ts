@@ -27,7 +27,7 @@ export type SavedPaintRow = {
 }
 
 export type SavedPaint = {
-  readonly format: 3
+  readonly format: 4
   readonly appearance: string
   readonly scrollTop: number
   readonly scrollLeft: number
@@ -37,6 +37,9 @@ export type SavedPaint = {
   readonly reservedRight: number
   readonly viewportWidth: number
   readonly viewportHeight: number
+  // The scroller's outer box: unlike the viewport, a scrollbar arriving with content cannot move it.
+  readonly boxWidth: number
+  readonly boxHeight: number
   readonly gutterWidth: number
   readonly gutterLayout: EditorVisibleSnapshotJSON['gutterLayout']
   readonly rows: readonly SavedPaintRow[]
@@ -55,7 +58,7 @@ export function encodePaintSnapshot(
   }[] = [],
 ): string | null {
   const paint: SavedPaint = {
-    format: 3,
+    format: 4,
     reservedLeft: reservations.left,
     reservedRight: reservations.right,
     appearance,
@@ -65,6 +68,8 @@ export function encodePaintSnapshot(
     scrollWidth: snapshot.viewport.scrollWidth,
     viewportWidth: snapshot.viewport.clientWidth,
     viewportHeight: snapshot.viewport.clientHeight,
+    boxWidth: snapshot.viewport.borderBoxWidth ?? 0,
+    boxHeight: snapshot.viewport.borderBoxHeight ?? 0,
     gutterWidth: snapshot.gutterWidth,
     gutterLayout: snapshot.gutterLayout,
     rows: snapshot.rows.map((row, index) => ({
@@ -224,7 +229,7 @@ function isLayer(value: unknown): value is SavedPaint['layers'][number] {
 }
 
 function isSavedPaint(value: unknown): value is SavedPaint {
-  if (!record(value) || value.format !== 3 || !string(value.appearance)) return false
+  if (!record(value) || value.format !== 4 || !string(value.appearance)) return false
   if (
     ![
       'scrollTop',
@@ -235,6 +240,8 @@ function isSavedPaint(value: unknown): value is SavedPaint {
       'reservedRight',
       'viewportWidth',
       'viewportHeight',
+      'boxWidth',
+      'boxHeight',
       'gutterWidth',
     ].every((key) => number(value[key]))
   )

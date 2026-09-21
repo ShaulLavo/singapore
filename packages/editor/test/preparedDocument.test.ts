@@ -1,3 +1,4 @@
+import { EditorSyntaxController } from '../src/editor/syntaxController'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createEditorBufferSession,
@@ -401,77 +402,96 @@ describe('prepared editor documents', () => {
     claimed?.structural?.dispose()
   })
 
-  it('attaches transferred sessions without repeating covered preparation', async () => {
-    const buffer = createEditorTextBuffer('const value = 1;\n')
-    const structuralSession = syntaxSession()
-    const highlighterSession = highlightSession()
-    const structuralProvider: EditorSyntaxProvider = {
-      createSession: vi.fn(() => structuralSession),
-    }
-    const highlighterProvider: EditorHighlighterProvider = {
-      createSession: vi.fn(() => highlighterSession),
-    }
-    const prepared = createEditorPreparedDocument({
-      buffer,
-      configuredTabSize: 4,
-      tabSizePolicy: 'detect-indentation',
-      documentConfigurationTag: [],
-      documentId: 'file.ts',
-      languageId: 'typescript',
-    })
-    const structuralOutcome = prepared.startStage({
-      abortSignal: new AbortController().signal,
-      configuration: structuralConfiguration,
-      configurationTag: ['tree-sitter', 1],
-      family: 'structural',
-      provider: structuralProvider,
-      range: { startIndex: 0, endIndex: buffer.getSnapshot().length },
-    })
-    const highlighterOutcome = prepared.startStage({
-      abortSignal: new AbortController().signal,
-      configurationTag: ['shiki', 'dark'],
-      family: 'highlighter',
-      provider: highlighterProvider,
-      range: 'full',
-    })
-    await Promise.all([structuralOutcome, highlighterOutcome])
-    const plugin: EditorPlugin = {
-      activate: (context) => [
-        context.registerSyntaxProvider(structuralProvider),
-        context.registerHighlighter(highlighterProvider),
-      ],
-    }
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const editor = createVisibleEditor(container, { plugins: [plugin] })
-
-    editor.attachSession(
-      createEditorBufferSession(buffer, createEditorViewSession(buffer, 'prepared-view')),
-      {
+  it.each(['repeat', 'edit-first'])(
+    'attaches transferred sessions without repeating covered preparation: %s',
+    async (mode) => {
+      const buffer = createEditorTextBuffer('const value = 1;\n')
+      const structuralSession = syntaxSession()
+      const highlighterSession = highlightSession()
+      const structuralProvider: EditorSyntaxProvider = {
+        createSession: vi.fn(() => structuralSession),
+      }
+      const highlighterProvider: EditorHighlighterProvider = {
+        createSession: vi.fn(() => highlighterSession),
+      }
+      const prepared = createEditorPreparedDocument({
+        buffer,
+        configuredTabSize: 4,
+        tabSizePolicy: 'detect-indentation',
         documentConfigurationTag: [],
         documentId: 'file.ts',
-        highlighterConfigurationTag: ['shiki', 'dark'],
         languageId: 'typescript',
-        preparedDocument: prepared,
-        structuralConfigurationTag: ['tree-sitter', 1],
-      },
-    )
-    await Promise.resolve()
+      })
+      const structuralOutcome = prepared.startStage({
+        abortSignal: new AbortController().signal,
+        configuration: structuralConfiguration,
+        configurationTag: ['tree-sitter', 1],
+        family: 'structural',
+        provider: structuralProvider,
+        range: { startIndex: 0, endIndex: buffer.getSnapshot().length },
+      })
+      const highlighterOutcome = prepared.startStage({
+        abortSignal: new AbortController().signal,
+        configurationTag: ['shiki', 'dark'],
+        family: 'highlighter',
+        provider: highlighterProvider,
+        range: 'full',
+      })
+      await Promise.all([structuralOutcome, highlighterOutcome])
+      const plugin: EditorPlugin = {
+        activate: (context) => [
+          context.registerSyntaxProvider(structuralProvider),
+          context.registerHighlighter(highlighterProvider),
+        ],
+      }
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const editor = createVisibleEditor(container, { plugins: [plugin] })
 
-    expect(structuralProvider.createSession).toHaveBeenCalledTimes(1)
-    expect(highlighterProvider.createSession).toHaveBeenCalledTimes(1)
-    expect(structuralSession.refresh).toHaveBeenCalledTimes(1)
-    expect(highlighterSession.refresh).toHaveBeenCalledTimes(1)
-    expect(editor.getState()).toMatchObject({
-      initialHighlightStatus: 'painted',
-      syntaxStatus: 'ready',
-    })
+      const initialRefresh = vi.spyOn(EditorSyntaxController.prototype, 'refresh')
+      if (mode === 'edit-first') initialRefresh.mockImplementationOnce(() => undefined)
 
-    editor.dispose()
-    container.remove()
-    expect(structuralSession.dispose).toHaveBeenCalledTimes(1)
-    expect(highlighterSession.dispose).toHaveBeenCalledTimes(1)
-  })
+      editor.attachSession(
+        createEditorBufferSession(buffer, createEditorViewSession(buffer, 'prepared-view')),
+        {
+          documentConfigurationTag: [],
+          documentId: 'file.ts',
+          highlighterConfigurationTag: ['shiki', 'dark'],
+          languageId: 'typescript',
+          preparedDocument: prepared,
+          structuralConfigurationTag: ['tree-sitter', 1],
+        },
+      )
+      initialRefresh.mockRestore()
+      await Promise.resolve()
+
+      if (mode === 'repeat') {
+        editor['syntax'].refresh(editor['documentVersion'], null)
+        editor['syntax'].refresh(editor['documentVersion'], null)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      expect(structuralProvider.createSession).toHaveBeenCalledTimes(1)
+      expect(highlighterProvider.createSession).toHaveBeenCalledTimes(1)
+      expect(structuralSession.refresh).toHaveBeenCalledTimes(1)
+      expect(highlighterSession.refresh).toHaveBeenCalledTimes(1)
+      expect(editor.getState()).toMatchObject({
+        initialHighlightStatus: 'painted',
+        syntaxStatus: 'ready',
+      })
+
+      editor.edit({ from: 0, to: 0, text: 'x' })
+      await vi.waitFor(() => {
+        expect(structuralSession.applyChange).toHaveBeenCalledOnce()
+        expect(highlighterSession.applyChange).toHaveBeenCalledOnce()
+      })
+
+      editor.dispose()
+      container.remove()
+      expect(structuralSession.dispose).toHaveBeenCalledTimes(1)
+      expect(highlighterSession.dispose).toHaveBeenCalledTimes(1)
+    },
+  )
 
   it('installs ready prepared tokens without publishing an empty initial token state', async () => {
     const buffer = createEditorTextBuffer('const value = 1;\n')
