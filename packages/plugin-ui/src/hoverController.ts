@@ -8,7 +8,8 @@ import type { EditorTheme } from '@singapore-editor/core/rendering'
 import { EDITOR_SNIPPET_TOKENS_FEATURE } from '@singapore-editor/core/extensions'
 
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
-import { createTooltipCodeTokenizer } from './codeTokens'
+import { createTooltipCodeTokenizer, type TooltipCodeBlock } from './codeTokens'
+import { tooltipCodeBlocks } from './markdownTooltip'
 import type {
   EditorHoverParticipant,
   HoverAnchor,
@@ -109,15 +110,26 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     tooltip.hide()
   }
 
+  const warmCodeBlock = (block: TooltipCodeBlock): void => {
+    void codeTokenizer?.tokenize(block.text, block.languageId)
+  }
+
   const isCurrent = (candidate: HoverOperation): boolean => operation === candidate
 
   const render = (current: HoverOperation): void => {
-    if (!isCurrent(current) || !current.revealed) return
+    if (!isCurrent(current)) return
 
     const parts = orderedParts(current)
+    const blocks = parts.flatMap((part) => (part.markdown ? tooltipCodeBlocks(part.markdown) : []))
+    // An answer usually lands inside the dwell, so its tokens are asked for before the reveal.
+    if (!current.revealed) return blocks.forEach(warmCodeBlock)
+
     const pending = current.pendingAsync > 0
     if (parts.length === 0 && pending && !current.loading) return
     if (parts.length === 0 && !pending) return hide()
+
+    const tokens = codeTokenizer?.prepare(blocks)
+    if (tokens) return void tokens.then(() => render(current))
 
     const range = unionOffsetRange(parts.map((part) => part.range)) ?? current.anchor.range
     const rect = context.getRangeClientRect(range.start, range.end)

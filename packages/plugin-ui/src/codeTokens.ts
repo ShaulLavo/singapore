@@ -3,6 +3,15 @@ import type { EditorToken } from '@singapore-editor/core/syntax'
 
 const MAX_CACHED_SNIPPETS = 64
 
+// Long enough for a worker round trip behind the document's own work, short enough that a hover
+// held for it never reads as late.
+const TOKEN_HOLD_MS = 250
+
+export type TooltipCodeBlock = {
+  readonly text: string
+  readonly languageId: string
+}
+
 /**
  * The editor's own tokens for a hover's fenced code. Settled answers are kept because a hover
  * re-renders whole as each participant reports, and a block that repainted from plain on every
@@ -11,6 +20,11 @@ const MAX_CACHED_SNIPPETS = 64
 export type TooltipCodeTokenizer = {
   cached(text: string, languageId: string): readonly EditorToken[] | null
   tokenize(text: string, languageId: string): Promise<readonly EditorToken[]>
+  /**
+   * Null when every block can paint in colour now, or was already waited for once. Otherwise
+   * settles when they can or the hold runs out, so a hover opens coloured instead of turning.
+   */
+  prepare(blocks: readonly TooltipCodeBlock[]): Promise<void> | null
   clear(): void
 }
 
@@ -18,6 +32,8 @@ export function createTooltipCodeTokenizer(
   feature: EditorSnippetTokensFeature,
 ): TooltipCodeTokenizer {
   const settled = new Map<string, readonly EditorToken[]>()
+  const inFlight = new Map<string, Promise<readonly EditorToken[]>>()
+  const heldOnce = new Set<string>()
   const keyFor = (text: string, languageId: string): string => `${languageId}\n${text}`
 
   const remember = (key: string, tokens: readonly EditorToken[]): void => {
@@ -25,19 +41,52 @@ export function createTooltipCodeTokenizer(
     settled.set(key, tokens)
   }
 
+  const tokenize = (text: string, languageId: string): Promise<readonly EditorToken[]> => {
+    const key = keyFor(text, languageId)
+    const known = settled.get(key)
+    if (known) return Promise.resolve(known)
+
+    const running = inFlight.get(key)
+    if (running) return running
+
+    // A failed parse settles as plain, so a broken grammar is not asked again on every render.
+    const request = feature
+      .tokenize(text, languageId)
+      .catch((): readonly EditorToken[] => [])
+      .then((tokens) => {
+        inFlight.delete(key)
+        remember(key, tokens)
+        return tokens
+      })
+    inFlight.set(key, request)
+    return request
+  }
+
   return {
     cached: (text, languageId) => settled.get(keyFor(text, languageId)) ?? null,
-    tokenize: async (text, languageId) => {
-      const key = keyFor(text, languageId)
-      const known = settled.get(key)
-      if (known) return known
+    tokenize,
+    prepare: (blocks) => {
+      const waiting: Promise<unknown>[] = []
+      for (const block of blocks) {
+        const key = keyFor(block.text, block.languageId)
+        if (settled.has(key) || heldOnce.has(key)) continue
 
-      const tokens = await feature.tokenize(text, languageId)
-      remember(key, tokens)
-      return tokens
+        heldOnce.add(key)
+        waiting.push(tokenize(block.text, block.languageId))
+      }
+      if (waiting.length === 0) return null
+
+      return Promise.race([Promise.all(waiting), holdTimeout()]).then(() => undefined)
     },
-    clear: () => settled.clear(),
+    clear: () => {
+      settled.clear()
+      heldOnce.clear()
+    },
   }
+}
+
+function holdTimeout(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, TOKEN_HOLD_MS))
 }
 
 export function paintCodeTokens(

@@ -4,7 +4,7 @@ import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 import { unified } from 'unified'
 
-import { paintCodeTokens, type TooltipCodeTokenizer } from './codeTokens'
+import { paintCodeTokens, type TooltipCodeBlock, type TooltipCodeTokenizer } from './codeTokens'
 
 type MarkdownNode = {
   readonly type: string
@@ -52,6 +52,23 @@ function markdownStringifier() {
 
 export function normalizeTooltipMarkdown(markdown: string): string {
   return String(markdownStringifier().processSync(markdown))
+}
+
+/** The fenced blocks a render of this Markdown would ask tokens for. */
+export function tooltipCodeBlocks(markdown: string): readonly TooltipCodeBlock[] {
+  const blocks: TooltipCodeBlock[] = []
+  collectCodeBlocks(markdownParser().parse(markdown) as MarkdownNode, blocks)
+  return blocks
+}
+
+function collectCodeBlocks(node: MarkdownNode, blocks: TooltipCodeBlock[]): void {
+  const languageId = codeLanguage(node.lang)
+  if (node.type === 'code' && languageId) blocks.push({ text: stringValue(node.value), languageId })
+  for (const child of node.children ?? []) collectCodeBlocks(child, blocks)
+}
+
+function codeLanguage(lang: unknown): string {
+  return typeof lang === 'string' ? lang.toLowerCase() : ''
 }
 
 export function renderTooltipMarkdown(
@@ -176,7 +193,7 @@ function codeBlockElement(
 ): HTMLElement {
   const pre = document.createElement('pre')
   const code = document.createElement('code')
-  const language = typeof lang === 'string' ? lang.toLowerCase() : ''
+  const language = codeLanguage(lang)
   renderCodeContent(document, code, value, language, context)
   if (language) code.dataset.language = language
 
@@ -232,11 +249,10 @@ function renderCodeContent(
   const cached = tokenizer.cached(value, language)
   if (cached) return paintCodeTokens(document, code, value, cached)
 
-  // Colour only, so the block keeps its size when the tokens land. A failed parse leaves it plain.
+  // Reached only when the hold ran out. Colour only, so the block keeps its size.
   void tokenizer
     .tokenize(value, language)
     .then((tokens) => paintCodeTokens(document, code, value, tokens))
-    .catch(() => undefined)
 }
 
 function linkElement(
