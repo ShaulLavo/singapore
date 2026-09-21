@@ -1,7 +1,7 @@
 # TODO
 
-The original wishlist. All 22 topics now have scoped proposals in the
-[Editor backlog](plans/README.md): 30 plans with dependencies, ownership, and acceptance checks.
+The original wishlist and later additions. All 24 topics are covered in the
+[Editor backlog](plans/README.md): 47 entries with dependencies, ownership, and acceptance checks.
 
 > These notes preserve the ideas and their original context. Some missing-feature and performance
 > claims below are historical; each plan's **Current code** section records the checked baseline.
@@ -573,3 +573,14 @@ Acceptance: an edit in a 500,000-line document allocates no token objects outsid
 and the input-latency gate's paste and undo groups do not regress. The Shiki worker, splice, and
 browser tests from the same-day change stay as they are; they already assert a spliced answer
 equals a fresh full tokenization.
+
+## Platform-agnostic core and React Strict DOM
+
+Requested on 2026-09-20. Extract existing document and editing behavior from DOM and browser
+execution dependencies, preserve the DOM editor and Fregat's consumer contracts, and prove a
+Strict DOM native host before claiming editable native support.
+[E047](plans/e047-platform-agnostic-core.md) owns the cross-repository migration proposal;
+[detailed research](docs/architecture/e047-platform-agnostic-core.md) and the
+[pinned source ledger](docs/architecture/e047-platform-agnostic-core-sources.json) preserve its
+input, geometry, lifecycle, packaging and performance evidence. Implementation has not started.
+This does not authorize a Fregat native-app rewrite or reorder the cross-project roadmap.

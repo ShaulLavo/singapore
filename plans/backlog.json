@@ -762,6 +762,24 @@
         "Input latency as an enforced budget"
       ],
       "baseline": "7cafb67f0d441fe50cbdb19d59da9375422a438f"
+    },
+    {
+      "id": "E047",
+      "file": "e047-platform-agnostic-core.md",
+      "title": "Extract a platform-agnostic core and prove a Strict DOM host",
+      "status": "Proposed",
+      "owner": "Cross-repo",
+      "kind": "Implementation",
+      "priority": "P3",
+      "effort": "XL",
+      "dependsOn": [
+        "E001",
+        "E002"
+      ],
+      "topics": [
+        "Platform-agnostic core and React Strict DOM"
+      ],
+      "baseline": "45e22a495902c577243334586bc391f04201a827"
     }
   ]
 }
