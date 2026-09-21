@@ -52,12 +52,49 @@ test('bootstrap emptiness preserves saved rows and an authoritative empty file r
   expect(restored.host.querySelectorAll('.editor-virtualized')).toHaveLength(1)
 })
 
+test('content-dependent overlay reservations do not reject bootstrap paint', () => {
+  const overlay = (width: number): EditorPlugin => ({
+    activate: (context) =>
+      context.registerViewContribution({
+        createContribution(view) {
+          view.reserveOverlayWidth('right', width)
+          return { update() {}, dispose() {} }
+        },
+      }),
+  })
+  const original = mount({ documentKey: 'file-a', plugins: [overlay(126)] })
+  original.editor.openDocument({
+    documentId: 'file-a',
+    text: 'saved overlay paint',
+  })
+  const view: unknown = Reflect.get(original.editor, 'view')
+  if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, 474)
+  const saved = original.editor.captureSnapshot()
+  expect(saved).not.toBeNull()
+  if (!saved) return
+  const restored = mount(
+    { documentKey: 'file-a', snapshot: saved.paint, plugins: [overlay(120)] },
+    474,
+  )
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  expect(restored.host.textContent).toContain('saved overlay paint')
+  expect(restored.editor.materializeFullText()).toBe('')
+  restored.editor.openDocument({
+    documentId: 'file-a',
+    text: 'live overlay paint',
+  })
+  expect(restored.editor.getPresentationState()).toBe('live')
+  expect(restored.host.textContent).toContain('live overlay paint')
+})
+
 test('real document waits independently for highlights and commits once with no provisional source rows', async () => {
   const saved = capture('saved paint')
   const result = deferredHighlight()
   const events: EditorInitialPaintEvent[] = []
   const states: string[] = []
-  const inspection: { read: (() => EditorViewSnapshot) | null } = { read: null }
+  const inspection: { read: (() => EditorViewSnapshot) | null } = {
+    read: null,
+  }
   const inspect: EditorPlugin = {
     activate: (context) =>
       context.registerViewContribution({
@@ -177,7 +214,10 @@ test('a contribution that fails after writing is disposed before authoritative p
               return
             view.container.appendChild(broken)
             failed = true
-            throw createError({ message: 'Injected contribution failure', status: 500 })
+            throw createError({
+              message: 'Injected contribution failure',
+              status: 500,
+            })
           },
           dispose: () => broken.remove(),
         }),
@@ -270,7 +310,10 @@ test.each(['{broken', '[]', '{"format":1}', 'x'.repeat(262145)])(
 test('saved paint may arrive after the real document while its first highlights are still pending', async () => {
   const saved = capture('saved paint')
   const result = deferredHighlight()
-  const restored = mount({ documentKey: 'file-a', plugins: [delayedHighlighter(result.promise)] })
+  const restored = mount({
+    documentKey: 'file-a',
+    plugins: [delayedHighlighter(result.promise)],
+  })
   restored.editor.openDocument({
     documentId: 'file-a',
     text: 'const real = 1',
@@ -412,14 +455,14 @@ function rangesIn(host: HTMLElement) {
   return count
 }
 
-function mount(options: ConstructorParameters<typeof Editor>[1] = {}) {
+function mount(options: ConstructorParameters<typeof Editor>[1] = {}, viewportWidth = 600) {
   const host = document.createElement('div')
   document.body.append(host)
   hosts.push(host)
   const editor = new Editor(host, { lineHeight: 20, ...options })
   editors.push(editor)
   const view: unknown = Reflect.get(editor, 'view')
-  if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, 600)
+  if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, viewportWidth)
   return { editor, host }
 }
 
@@ -429,7 +472,10 @@ function capture(text: string) {
   const snapshot = original.editor.captureSnapshot()
   expect(snapshot).not.toBeNull()
   if (snapshot) return snapshot
-  throw createError({ message: 'Native fixture could not capture paint', status: 500 })
+  throw createError({
+    message: 'Native fixture could not capture paint',
+    status: 500,
+  })
 }
 
 function delayedHighlighter(result: Promise<EditorHighlightResult>): EditorPlugin {
@@ -456,3 +502,78 @@ function deferredHighlight() {
   })
   return { promise, resolve: (value: EditorHighlightResult) => resolve(value) }
 }
+
+test('external projection readiness retains native saved paint until its tokens are installed', () => {
+  const saved = capture('saved paint')
+  const restored = mount({
+    documentKey: 'file-a',
+    snapshot: saved.paint,
+    presentationReady: false,
+  })
+  restored.editor.setText('live projection', {
+    documentMode: 'static',
+    languageId: null,
+  })
+  expect(restored.editor.materializeFullText()).toBe('live projection')
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  expect(restored.host.textContent).toContain('saved paint')
+  expect(restored.editor.captureSnapshot()).toBeNull()
+  restored.editor.setTokens(RED_TOKENS)
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  restored.editor.setPresentationReady(true)
+  expect(restored.editor.getPresentationState()).toBe('live')
+  expect(restored.host.textContent).toContain('live projection')
+  expect(restored.host.textContent).not.toContain('saved paint')
+  expect(restored.editor.captureSnapshot()).not.toBeNull()
+})
+
+test('synthetic document attachment preserves the provisional visible scroll', () => {
+  const text = Array.from({ length: 80 }, (_, index) => `line ${index}`).join('\n')
+  const original = mount({ documentKey: 'file-a' })
+  original.editor.setText(text, { documentMode: 'static', languageId: null })
+  original.editor.setScrollPosition({ top: 240 })
+  const saved = original.editor.captureSnapshot()
+  expect(saved).not.toBeNull()
+  if (!saved) return
+  const restored = mount({
+    documentKey: 'file-a',
+    snapshot: saved.paint,
+    presentationReady: false,
+  })
+  expect(restored.editor.getScrollPosition().top).toBe(240)
+  restored.editor.setText(text, { documentMode: 'static', languageId: null })
+  restored.editor.setPresentationReady(true)
+  expect(restored.editor.getScrollPosition().top).toBe(240)
+})
+
+test('selection paint survives provisionally without seeding document selection authority', () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.classList.contains('editor-virtualized-selection-range'))
+      return new DOMRect(40, 10, 30, 19)
+    return new DOMRect(0, 0, 600, 120)
+  })
+  const original = mount({ documentKey: 'file-a' })
+  original.editor.setText('selected text', { documentMode: 'static', languageId: null })
+  original.editor.setSelection(0, 8)
+  const selection = original.host.querySelector<HTMLElement>('.editor-virtualized-selection-range')
+  expect(selection).not.toBeNull()
+  if (!selection) return
+  selection.style.backgroundColor = 'rgba(56, 189, 248, 0.35)'
+  const saved = original.editor.captureSnapshot()
+  expect(saved).not.toBeNull()
+  if (!saved) return
+  const restored = mount({ documentKey: 'file-a', snapshot: saved.paint, presentationReady: false })
+  const rectangle = restored.host.querySelector<HTMLElement>(
+    '[data-editor-saved-paint-layer="editor.selection"]',
+  )
+  expect(rectangle?.style.left).toBe('40px')
+  expect(rectangle?.style.width).toBe('30px')
+  expect(restored.editor.materializeFullText()).toBe('')
+  restored.editor.setText('selected text', { documentMode: 'static', languageId: null })
+  restored.editor.setPresentationReady(true)
+  expect(
+    restored.host.querySelector('[data-editor-saved-paint-layer="editor.selection"]'),
+  ).toBeNull()
+})

@@ -71,12 +71,17 @@ export class DiffSyntaxController {
   private rows: readonly DiffRenderRow[] = []
   private tokens: readonly EditorToken[] = []
   private disposed = false
+  private ready = true
 
   constructor(private readonly options: DiffSyntaxControllerOptions) {}
 
   /** A disposed controller is terminal — its scheduler never runs another task. */
   isDisposed(): boolean {
     return this.disposed
+  }
+
+  isReady(): boolean {
+    return this.ready
   }
 
   getTokens(): readonly EditorToken[] {
@@ -86,6 +91,7 @@ export class DiffSyntaxController {
   /** New file: drop the cached streams and reparse. */
   setFile(file: DiffFile | null, rows: readonly DiffRenderRow[]): void {
     this.file = file
+    this.ready = !file || this.options.enabled === false
     this.rows = rows
     this.sources = []
     this.sourcesFile = null
@@ -130,7 +136,12 @@ export class DiffSyntaxController {
       tags: { configuration: 'syntax', viewport: this.options.side },
       run: (context) => this.loadSources(file, context, sessions),
       apply: (sources) => this.applySources(file, sources, sessions),
-      fail: () => disposeMutableSessions(sessions),
+      fail: () => {
+        disposeMutableSessions(sessions)
+        if (this.file !== file) return
+        this.ready = true
+        this.options.onDidChangeTokens()
+      },
       cancel: () => disposeMutableSessions(sessions),
     })
   }
@@ -209,7 +220,7 @@ export class DiffSyntaxController {
     sources: readonly DiffSyntaxTokenSource[] | null,
     sessions: { dispose(): void }[],
   ): void {
-    if (!sources || this.file !== file) {
+    if (this.file !== file) {
       disposeMutableSessions(sessions)
       return
     }
@@ -219,7 +230,8 @@ export class DiffSyntaxController {
     // Indexed here, once per parse. The index depends only on the token streams, and expansion
     // does not change those — so rebuilding it inside every re-projection would be repeated work
     // plus a fresh Map and N arrays of garbage on each toggle.
-    this.sources = indexTokenSources(sources)
+    this.sources = indexTokenSources(sources ?? [])
+    this.ready = true
     this.sourcesFile = file
     this.reproject()
     this.options.onDidChangeTokens()

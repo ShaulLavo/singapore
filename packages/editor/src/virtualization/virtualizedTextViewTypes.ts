@@ -117,6 +117,8 @@ export type VirtualizedTextHighlightStyle = {
 }
 
 export type VirtualizedTextRowDecoration = {
+  /** Declares that these classes change only foreground/background paint. */
+  readonly snapshotStyle?: 'colors'
   readonly className?: string
   readonly gutterClassName?: string
 }
@@ -281,6 +283,7 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly rowDecorationClassName: string
   readonly rowDecorationGutterClassName: string
   readonly rowDecorationKey: string
+  readonly rowDecorationSnapshotStyle: boolean
   /** Classes derived from the row's inline replacement kinds (`editor-inline-<kind>`). */
   readonly inlineKindsClassName: string
   readonly cursorLineContentActive: boolean

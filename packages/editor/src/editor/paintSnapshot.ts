@@ -20,16 +20,21 @@ export type SavedPaintRow = {
   readonly cursor: boolean
   readonly activeLanes: readonly string[]
   readonly segments: readonly Segment[]
+  readonly backgroundColor: string
+  readonly color: string
+  readonly gutterBackgroundColor: string
   readonly gutterCells: readonly { readonly id: string; readonly paint: string }[]
 }
 
 export type SavedPaint = {
-  readonly format: 1
+  readonly format: 3
   readonly appearance: string
   readonly scrollTop: number
   readonly scrollLeft: number
   readonly scrollHeight: number
   readonly scrollWidth: number
+  readonly reservedLeft: number
+  readonly reservedRight: number
   readonly viewportWidth: number
   readonly viewportHeight: number
   readonly gutterWidth: number
@@ -42,9 +47,17 @@ export function encodePaintSnapshot(
   snapshot: EditorVisibleSnapshotJSON,
   appearance: string,
   gutters: readonly SavedPaintRow['gutterCells'][],
+  reservations: { readonly left: number; readonly right: number },
+  backgrounds: readonly {
+    readonly backgroundColor: string
+    readonly color: string
+    readonly gutterBackgroundColor: string
+  }[] = [],
 ): string | null {
   const paint: SavedPaint = {
-    format: 1,
+    format: 3,
+    reservedLeft: reservations.left,
+    reservedRight: reservations.right,
     appearance,
     scrollTop: snapshot.viewport.scrollTop,
     scrollLeft: snapshot.viewport.scrollLeft,
@@ -56,6 +69,9 @@ export function encodePaintSnapshot(
     gutterLayout: snapshot.gutterLayout,
     rows: snapshot.rows.map((row, index) => ({
       gutterCells: gutters[index] ?? [],
+      backgroundColor: backgrounds[index]?.backgroundColor ?? '',
+      color: backgrounds[index]?.color ?? '',
+      gutterBackgroundColor: backgrounds[index]?.gutterBackgroundColor ?? '',
       top: row.top,
       height: row.height,
       left: row.leftSpacerWidth,
@@ -167,6 +183,9 @@ function isSegment(value: unknown): value is Segment {
 function isRow(value: unknown): value is SavedPaintRow {
   if (!record(value)) return false
   return (
+    color(value.backgroundColor) &&
+    color(value.color) &&
+    color(value.gutterBackgroundColor) &&
     number(value.top) &&
     number(value.height) &&
     value.height > 0 &&
@@ -205,13 +224,15 @@ function isLayer(value: unknown): value is SavedPaint['layers'][number] {
 }
 
 function isSavedPaint(value: unknown): value is SavedPaint {
-  if (!record(value) || value.format !== 1 || !string(value.appearance)) return false
+  if (!record(value) || value.format !== 3 || !string(value.appearance)) return false
   if (
     ![
       'scrollTop',
       'scrollLeft',
       'scrollHeight',
       'scrollWidth',
+      'reservedLeft',
+      'reservedRight',
       'viewportWidth',
       'viewportHeight',
       'gutterWidth',
@@ -228,6 +249,7 @@ function isSavedPaint(value: unknown): value is SavedPaint {
 }
 
 function validPaintGeometry(paint: SavedPaint): boolean {
+  if (paint.reservedLeft + paint.reservedRight > MAX_ABSOLUTE_PAINT_EXTENT) return false
   if (paint.viewportWidth <= 0 || paint.viewportHeight <= 0) return false
   if (
     paint.scrollHeight > MAX_ABSOLUTE_PAINT_EXTENT ||

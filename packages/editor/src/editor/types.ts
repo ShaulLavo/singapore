@@ -94,6 +94,8 @@ export type EditorChangeHandler = (state: EditorState, change: DocumentSessionCh
 export type EditorOptions = {
   readonly documentKey?: string | null
   readonly snapshot?: string | null
+  /** External projections may hold saved paint until their tokens and geometry are ready. */
+  readonly presentationReady?: boolean
   readonly onPresentationChange?: (state: 'provisional' | 'live' | 'empty') => void
   readonly defaultText?: string
   readonly documentMode?: EditorDocumentMode

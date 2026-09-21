@@ -279,6 +279,7 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
     rowDecorationClassName: '',
     rowDecorationGutterClassName: '',
     rowDecorationKey: '',
+    rowDecorationSnapshotStyle: false,
     inlineKindsClassName: '',
     cursorLineContentActive: false,
     textRenderMode: 'simple',
@@ -2247,6 +2248,8 @@ function applyRowDecoration(
   virtualRow: number,
 ): void {
   const decoration = rowDecorationForVirtualRow(view, virtualRow)
+  ;(row as { rowDecorationSnapshotStyle: boolean }).rowDecorationSnapshotStyle =
+    decoration?.snapshotStyle === 'colors'
   if (!decoration) {
     clearRowDecoration(row)
     return
@@ -2287,7 +2290,7 @@ function rowDecorationKeyForDecoration(
 ): string {
   if (!decoration) return ''
 
-  return `${decoration.className ?? ''}|${decoration.gutterClassName ?? ''}`
+  return `${decoration.className ?? ''}|${decoration.gutterClassName ?? ''}|${decoration.snapshotStyle ?? ''}`
 }
 
 function clearRowDecoration(row: MountedVirtualizedTextRow): void {
@@ -2348,8 +2351,8 @@ function setCoreBidiRefusal(row: MountedVirtualizedTextRow, active: boolean): vo
 function updateMountedRowPaintFacts(row: MountedVirtualizedTextRow, state: RowUpdateState): void {
   const unsupportedClass =
     row.inlineKindsClassName.length > 0 ||
-    row.rowDecorationClassName.length > 0 ||
-    row.rowDecorationGutterClassName.length > 0
+    (!row.rowDecorationSnapshotStyle &&
+      (row.rowDecorationClassName.length > 0 || row.rowDecorationGutterClassName.length > 0))
   const unsupportedWidget = row.textRenderMode === 'widget' && !row.coreBidiRefusal
   const mutable = row as {
     primaryText: boolean
@@ -3090,6 +3093,7 @@ export function paintProvisionalRows(
     layer.rectangles.map((rectangle) => {
       const element = view.scrollElement.ownerDocument.createElement('div')
       element.dataset.editorSavedPaintLayer = layer.id
+      element.style.zIndex = '1'
       Object.assign(element.style, {
         position: 'absolute',
         pointerEvents: 'none',
@@ -3124,6 +3128,8 @@ function paintProvisionalRow(
   slot.element.dataset.editorProvisionalRow = ''
   Object.assign(slot.element.style, {
     top: `${row.top}px`,
+    backgroundColor: row.backgroundColor,
+    color: row.color,
     transform: '',
     height: `${row.height}px`,
     lineHeight: `${row.height}px`,
@@ -3138,6 +3144,8 @@ function paintProvisionalRow(
   for (const segment of row.segments) {
     const span = view.scrollElement.ownerDocument.createElement('span')
     span.textContent = segment.text
+    span.style.position = 'relative'
+    span.style.zIndex = '2'
     if (segment.kind === 'control') span.className = 'editor-virtualized-control-character'
     if (segment.kind === 'refusal') span.className = 'editor-virtualized-bidi-ceiling'
     if (segment.width > 0) span.style.width = `${segment.width}px`
@@ -3184,6 +3192,7 @@ function paintProvisionalGutter(
     if (!renderer || !savedCell || !restoreSavedGutter(renderer, cell, savedCell.paint))
       return false
   }
+  slot.gutterElement.style.backgroundColor = row.gutterBackgroundColor
   view.gutterElement.appendChild(slot.gutterElement)
   return true
 }
@@ -3238,6 +3247,7 @@ function releaseProvisionalSlot(
     rowDecorationClassName: '',
     rowDecorationGutterClassName: '',
     rowDecorationKey: '',
+    rowDecorationSnapshotStyle: false,
     inlineKindsClassName: '',
   })
   view.rowPool.push(slot)

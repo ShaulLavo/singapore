@@ -62,10 +62,16 @@ const NUMBER_LANES: readonly DiffGutterLaneKind[] = ['old', 'new']
 export function createDiffGutterContribution(options: DiffGutterOptions): EditorGutterContribution {
   const laneKinds = gutterLaneKinds(options.side)
   let lastLayoutKey: string | null = null
+  let laneWidths: readonly number[] = []
 
   return {
     id: `editor-diff-gutter-${options.side}`,
     className: 'editor-diff-gutter-cell',
+    snapshotRenderer: {
+      key: `diff-gutter-v1:${options.side}`,
+      capture: (cell) => captureGutter(cell, laneKinds, laneWidths),
+      restore: (cell, paint) => restoreGutter(cell, paint, laneKinds),
+    },
     createCell(document) {
       return createDiffGutterCell(document, laneKinds)
     },
@@ -87,6 +93,7 @@ export function createDiffGutterContribution(options: DiffGutterOptions): Editor
       // identical while the split needs to change, and a total-keyed memo would silently keep
       // publishing the previous columns. Lanes are `overflow: hidden`, so the under-sized one
       // clips its leading digit.
+      laneWidths = layout.lanes.map((lane) => lane.width)
       const layoutKey = gutterLayoutKey(layout)
       if (layoutKey !== lastLayoutKey) {
         lastLayoutKey = layoutKey
@@ -137,6 +144,7 @@ function updateDiffGutterCell(
 ): void {
   const cached = lanesByCell.get(element)
   if (!cached) return
+  element.style.removeProperty('grid-template-columns')
 
   const diffRow = diffRowForGutterRow(row, options)
   element.hidden = !diffRow
@@ -185,4 +193,95 @@ function setLaneTone(lane: HTMLElement, tone: string): void {
 function setDataset(element: HTMLElement, key: string, value: string): void {
   if (element.dataset[key] === value) return
   element.dataset[key] = value
+}
+
+type GutterPaint = {
+  hidden: boolean
+  type: string
+  tone: string
+  lanes: { text: string; tone: string; width: number }[]
+}
+
+function captureGutter(
+  cell: HTMLElement,
+  kinds: readonly DiffGutterLaneKind[],
+  widths: readonly number[],
+): string | null {
+  const cached = lanesByCell.get(cell)
+  if (!cached || widths.length !== kinds.length) return null
+  const lanes = kinds.map((kind, index) => {
+    const lane = cached.lanes.get(kind)
+    return {
+      text: lane?.textContent ?? '',
+      tone: lane?.dataset.diffTone ?? 'default',
+      width: widths[index]!,
+    }
+  })
+  return JSON.stringify({
+    hidden: cell.hidden,
+    type: cell.dataset.diffRowType ?? '',
+    tone: cell.dataset.diffRowTone ?? 'default',
+    lanes,
+  })
+}
+
+function restoreGutter(
+  cell: HTMLElement,
+  paint: string,
+  kinds: readonly DiffGutterLaneKind[],
+): boolean {
+  if (paint.length > 4096) return false
+  let value: unknown
+  try {
+    value = JSON.parse(paint)
+  } catch {
+    return false
+  }
+  if (!validGutterPaint(value, kinds.length)) return false
+  const cached = lanesByCell.get(cell)
+  if (!cached) return false
+  cell.hidden = value.hidden
+  setDataset(cell, 'diffRowType', value.type)
+  setDataset(cell, 'diffRowTone', value.tone)
+  cell.style.gridTemplateColumns = value.lanes.map((lane) => `${lane.width}px`).join(' ')
+  for (let index = 0; index < kinds.length; index += 1) {
+    const lane = cached.lanes.get(kinds[index]!)
+    const saved = value.lanes[index]
+    if (!lane || !saved) return false
+    setLaneText(lane, saved.text)
+    setLaneTone(lane, saved.tone)
+  }
+  return true
+}
+
+function validGutterPaint(value: unknown, length: number): value is GutterPaint {
+  if (!value || typeof value !== 'object') return false
+  if (!('hidden' in value) || typeof value.hidden !== 'boolean') return false
+  if (
+    !('type' in value) ||
+    typeof value.type !== 'string' ||
+    !['', 'context', 'addition', 'deletion', 'placeholder', 'hunk', 'empty'].includes(value.type)
+  )
+    return false
+  if (!('tone' in value) || !validTone(value.tone)) return false
+  if (!('lanes' in value) || !Array.isArray(value.lanes) || value.lanes.length !== length)
+    return false
+  return value.lanes.every(validLane)
+}
+
+function validTone(value: unknown): value is string {
+  return typeof value === 'string' && ['default', 'added', 'deleted', 'hunk'].includes(value)
+}
+
+function validLane(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  if (!('text' in value) || typeof value.text !== 'string' || value.text.length > 24) return false
+  if (!('tone' in value) || !validTone(value.tone)) return false
+  return (
+    'width' in value &&
+    typeof value.width === 'number' &&
+    Number.isFinite(value.width) &&
+    value.width >= 0 &&
+    value.width <= 10_000
+  )
 }

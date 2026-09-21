@@ -356,7 +356,10 @@ export class Editor {
   private readonly detachedEditChain = new DocumentEditChain(0, 0)
   private unsubscribeBufferChanges: (() => void) | null = null
   private unsubscribeLeaseChanges: (() => void) | null = null
-  private lineStartsViewCache: { textVersion: number; view: LineStartsView } | null = null
+  private lineStartsViewCache: {
+    textVersion: number
+    view: LineStartsView
+  } | null = null
   private readonly displayProjections = new EditorDisplayProjectionRegistry()
   private readonly decorations = new EditorDecorationStore()
   private readonly highlightPrefix: string
@@ -406,6 +409,7 @@ export class Editor {
   private snapshotDocumentKey: string | null = null
   private lastSnapshot: string | null = null
   private snapshotGeneration: number | null = null
+  private presentationReady = true
   private snapshotSettled = false
   private pendingDocumentScroll: EditorScrollPosition | null = null
   private preparingDocument = false
@@ -472,6 +476,7 @@ export class Editor {
     const mountStart = nowMs()
     this.container = container
     this.options = options
+    this.presentationReady = options.presentationReady !== false
     this.configuredTabSize = normalizeTabSize(options.tabSize)
     this.tabSize = this.configuredTabSize
     this.tabMovesFocus = options.tabMovesFocus ?? false
@@ -523,7 +528,10 @@ export class Editor {
       (collapsedRegions) => {
         const session = editorBufferSession(this.session)
         if (!session || this.preparingDocument) return
-        session.view.setFoldState({ ...session.view.getFoldState(), collapsedRegions })
+        session.view.setFoldState({
+          ...session.view.getFoldState(),
+          collapsedRegions,
+        })
       },
     )
     this.el = this.view.scrollElement
@@ -763,6 +771,11 @@ export class Editor {
     return this.session ? 'live' : 'empty'
   }
 
+  setPresentationReady(ready: boolean): void {
+    this.presentationReady = ready
+    if (ready) this.commitSnapshotIfReady()
+  }
+
   setSnapshot(snapshot: string | null, documentKey: string | null): void {
     if (this.disposed) return
     const changedTarget = documentKey !== this.snapshotDocumentKey
@@ -778,7 +791,10 @@ export class Editor {
       this.withdrawSnapshot()
       return
     }
-    if (this.snapshotSettled || (this.session && this.syntax.renderDataReady)) {
+    if (
+      this.snapshotSettled ||
+      (this.session && this.syntax.renderDataReady && this.presentationReady)
+    ) {
       this.recordSnapshotAdmission('generation-live')
       return
     }
@@ -791,12 +807,22 @@ export class Editor {
     this.view.measureInitialViewport()
     const appearance = this.paintAppearance()
     if (paint.appearance !== appearance) {
-      this.recordSnapshotAdmission('appearance', { savedAppearance: paint.appearance, appearance })
+      this.recordSnapshotAdmission('appearance', {
+        savedAppearance: paint.appearance,
+        appearance,
+      })
       return
     }
     const state = this.view.getState()
     if (
-      Math.abs(paint.viewportWidth - state.viewportWidth) > 1 ||
+      Math.abs(
+        paint.viewportWidth +
+          paint.reservedLeft +
+          paint.reservedRight -
+          state.viewportWidth -
+          this.view.reservedOverlayWidth('left') -
+          this.view.reservedOverlayWidth('right'),
+      ) > 1 ||
       Math.abs(paint.viewportHeight - state.viewportHeight) > 1
     ) {
       this.recordSnapshotAdmission('viewport', {
@@ -822,7 +848,7 @@ export class Editor {
   captureSnapshot() {
     if (this.disposed || !this.session || this.view.isProvisional || this.preparingDocument)
       return null
-    if (!this.syntax.renderDataReady) return null
+    if (!this.syntax.renderDataReady || !this.presentationReady) return null
     const appearance = this.paintAppearance()
     if (appearance === null) return null
     const snapshot = this.viewContributions.captureSnapshot().toVisibleSnapshot()
@@ -832,7 +858,28 @@ export class Editor {
       return null
     const gutters = this.view.captureGutterPaint()
     if (!gutters) return null
-    const paint = encodePaintSnapshot(snapshot.toJSON(), appearance, gutters)
+    const json = snapshot.toJSON()
+    const visible = json.rows.flatMap((row, index) =>
+      row.top + row.height > json.viewport.scrollTop &&
+      row.top < json.viewport.scrollTop + json.viewport.clientHeight
+        ? [index]
+        : [],
+    )
+    const backgrounds = this.view.captureRowBackgrounds()
+    const paint = encodePaintSnapshot(
+      {
+        ...json,
+        rows: visible.map((index) => json.rows[index]!),
+        paintLayers: [...json.paintLayers, this.view.captureSelectionPaint()],
+      },
+      appearance,
+      visible.map((index) => gutters[index]!),
+      {
+        left: this.view.reservedOverlayWidth('left'),
+        right: this.view.reservedOverlayWidth('right'),
+      },
+      visible.map((index) => backgrounds[index]!),
+    )
     if (!paint) return null
     const buffer = editorBufferSession(this.session)?.buffer ?? null
     return {
@@ -900,7 +947,7 @@ export class Editor {
     if (!this.view.isProvisional || this.preparingDocument || this.committingPresentation)
       return false
     if (this.snapshotGeneration !== this.documentVersion || !this.session) return false
-    if (!this.syntax.renderDataReady) return false
+    if (!this.syntax.renderDataReady || !this.presentationReady) return false
     this.committingPresentation = true
     const saved = this.view.savedPaint
     const pendingReveal = this.view.hasPendingReveal
@@ -949,7 +996,10 @@ export class Editor {
       if (this.invalidateIncompatibleSnapshot()) this.remeasureTextMetrics()
     })
     for (let element: HTMLElement | null = this.el; element; element = element.parentElement) {
-      observer.observe(element, { attributes: true, attributeFilter: ['class', 'style'] })
+      observer.observe(element, {
+        attributes: true,
+        attributeFilter: ['class', 'style'],
+      })
     }
     this.snapshotAppearanceObserver = observer
   }
@@ -984,7 +1034,11 @@ export class Editor {
       hasSession: this.session !== null,
       ...fields,
     }
-    this.log({ action: 'editor.snapshot.admission', level: 'debug', snapshot: detail })
+    this.log({
+      action: 'editor.snapshot.admission',
+      level: 'debug',
+      snapshot: detail,
+    })
     recordEditorPerformanceDiagnostic('editor.snapshot.admission', detail)
     this.el.ownerDocument.defaultView?.performance.mark('editor.snapshot.admission', { detail })
   }
@@ -1414,7 +1468,11 @@ export class Editor {
     if (!resolved) return false
 
     this.edit(
-      { from: resolved.range.start, to: resolved.range.end, text: resolved.replacement },
+      {
+        from: resolved.range.start,
+        to: resolved.range.end,
+        text: resolved.replacement,
+      },
       {
         selection: {
           anchor: resolved.selection.start,
@@ -1493,6 +1551,8 @@ export class Editor {
   }
 
   getScrollPosition(): Required<EditorScrollPosition> {
+    const provisional = this.view.provisionalScrollPosition
+    if (provisional) return provisional
     const viewState = this.view.getState()
     return {
       top: viewState.scrollTop,
@@ -1634,7 +1694,10 @@ export class Editor {
     this.log({
       action: 'editor.layout.text_metrics_remeasured',
       level: 'info',
-      layout: { rowHeight: metrics.rowHeight, characterWidth: metrics.characterWidth },
+      layout: {
+        rowHeight: metrics.rowHeight,
+        characterWidth: metrics.characterWidth,
+      },
     })
   }
 
@@ -3104,7 +3167,10 @@ export class Editor {
       cachedView && cachedView.textVersion === this.textVersion
         ? cachedView.view
         : new LineStartsView(textSnapshot)
-    this.lineStartsViewCache = { textVersion: this.textVersion, view: lineStartsView }
+    this.lineStartsViewCache = {
+      textVersion: this.textVersion,
+      view: lineStartsView,
+    }
     const sync = this.currentDocumentEditChain()
     const deferredMarkerSource = this.view.captureDeferredFoldMarkerSource()
     let visibleFoldMarkers: ReadonlyMap<number, VirtualizedFoldMarker> | undefined
@@ -3417,7 +3483,11 @@ export class Editor {
 
   private visibleSyntaxLeadChars(
     first: { readonly startOffset: number; readonly top: number },
-    last: { readonly endOffset: number; readonly top: number; readonly height: number },
+    last: {
+      readonly endOffset: number
+      readonly top: number
+      readonly height: number
+    },
   ): number {
     const textSpan = Math.max(1, last.endOffset - first.startOffset)
     const pixelSpan = Math.max(1, last.top + last.height - first.top)
@@ -4030,7 +4100,10 @@ export class Editor {
     this.log({
       action: 'editor.fold.revealed',
       level: 'info',
-      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: expanded },
+      fold: {
+        collapsedCount: this.foldState.collapsedFoldCount,
+        foldCount: expanded,
+      },
     })
   }
 
@@ -4078,7 +4151,10 @@ export class Editor {
     this.log({
       action: 'editor.fold.manual.created',
       level: 'info',
-      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: created.length },
+      fold: {
+        collapsedCount: this.foldState.collapsedFoldCount,
+        foldCount: created.length,
+      },
     })
     return true
   }
@@ -4099,7 +4175,10 @@ export class Editor {
     this.log({
       action: 'editor.fold.manual.removed',
       level: 'info',
-      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: removedCount },
+      fold: {
+        collapsedCount: this.foldState.collapsedFoldCount,
+        foldCount: removedCount,
+      },
     })
     return true
   }
@@ -4416,6 +4495,8 @@ function mergeRowDecoration(
   if (!base) return next
 
   return {
+    snapshotStyle:
+      base.snapshotStyle === 'colors' && next.snapshotStyle === 'colors' ? 'colors' : undefined,
     className: joinClassNames(base.className, next.className),
     gutterClassName: joinClassNames(base.gutterClassName, next.gutterClassName),
   }

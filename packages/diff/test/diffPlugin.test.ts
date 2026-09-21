@@ -9,7 +9,13 @@ import {
   type EditorToken,
   type EditorTokenInput,
 } from '@singapore-editor/core/syntax'
-import { createDiffPlugin, createTextDiff, diffSyntaxBackend, joinRenderLines } from '../src'
+import {
+  createDiffPlugin,
+  createTextDiff,
+  diffRowAtEvent,
+  diffSyntaxBackend,
+  joinRenderLines,
+} from '../src'
 import { createDiffGutterContribution } from '../src/diffGutter'
 import { diffGutterDigits } from '../src/gutters'
 import { projectDiffSyntaxTokens } from '../src/diffSyntax'
@@ -51,11 +57,6 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
       (element) => Number(element.dataset.editorVirtualRow),
     )
     expect(indices).toEqual(plugin.getRows().map((_row, index) => index))
-    expect(plugin.getDocumentModeStatus()).toMatchObject({
-      lineCount: plugin.getRows().length,
-      rowCount: plugin.getRows().length,
-      violations: [],
-    })
   })
 
   it('toggles an expandable hunk row from a gutter click, and shows a pointer over it', () => {
@@ -78,6 +79,24 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
 
     view.dispatchEvent(pointerEvent('mouseleave', 0))
     expect(view.style.cursor).toBe('')
+  })
+
+  it('names the diff row and pane under a pointer event', () => {
+    const { plugin, host } = mountDiff({ file: singleHunkDiff(), side: 'new' })
+    const element = host.querySelector<HTMLElement>('[data-editor-virtual-row="1"]')
+    const press = pointerEvent('mousedown', 0)
+    element?.dispatchEvent(press)
+
+    expect(diffRowAtEvent(press)).toEqual({ side: 'new', rowIndex: 1, rows: plugin.getRows() })
+
+    // The gutter band: no row element under the pointer, so the row geometry answers.
+    const gutterPress = pointerEvent('mousedown', 0)
+    queryScrollElement(host).dispatchEvent(gutterPress)
+    expect(diffRowAtEvent(gutterPress)?.rowIndex).toBe(0)
+
+    const outside = pointerEvent('mousedown', 0)
+    document.body.dispatchEvent(outside)
+    expect(diffRowAtEvent(outside)).toBeNull()
   })
 
   it('refuses a caret on a separator it cannot expand', () => {

@@ -16,12 +16,7 @@ import { EDITOR_SNIPPET_TOKENS_FEATURE } from '@singapore-editor/core/extensions
 import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type { EditorToken } from '@singapore-editor/core/syntax'
 import { createDiffGutterContribution } from './diffGutter'
-import {
-  diffInlineHighlightRanges,
-  diffRowDecorations,
-  documentModeViolations,
-  type DiffDocumentModeViolation,
-} from './diffRows'
+import { diffInlineHighlightRanges, diffRowDecorations } from './diffRows'
 import { DiffSyntaxController } from './diffSyntax'
 import {
   diffGutterDigits,
@@ -68,30 +63,39 @@ export type DiffPlugin = EditorPlugin & {
    * host applies these immediately after every `setText`, or an expansion toggle repaints
    * uncoloured (§C10).
    */
+  isSyntaxReady(): boolean
   getTokens(): readonly EditorToken[]
   onDidChangeRows(listener: () => void): EditorDisposable
   onDidChangeTokens(listener: () => void): EditorDisposable
   /** §C5. Hosts must not mirror this. */
   getExpandedRegions(): ReadonlySet<string>
   toggleRegion(key: string): void
-  /** The exact counts and violations from the latest row-index identity check. */
-  getDocumentModeStatus(): DiffDocumentModeStatus
 
   /** `overlay` mode: the buffer the live editor text is diffed against. */
   setBaseFile(file: DiffTextFile | null): void
   setEnabled(enabled: boolean): void
 }
 
-export type DiffDocumentModeStatus = {
-  readonly lineCount: number
-  readonly rowCount: number
-  readonly violations: readonly DiffDocumentModeViolation[]
+/** The diff row under a pointer: which pane, that pane's rows, and the index into them. */
+export type DiffRowHit = {
+  readonly side: DiffGutterSide
+  readonly rowIndex: number
+  readonly rows: readonly DiffRenderRow[]
 }
 
-const EMPTY_DOCUMENT_MODE_STATUS: DiffDocumentModeStatus = {
-  lineCount: 0,
-  rowCount: 0,
-  violations: [],
+// How a pointer event finds the plugin that owns the pane under it, so a host never reads row
+// attributes or pane classes to work out where a press landed.
+const viewsByScrollElement = new WeakMap<Element, DiffViewContribution>()
+
+/** `null` outside a `document`-mode diff pane, or over something that is not a diff row. */
+export function diffRowAtEvent(event: MouseEvent): DiffRowHit | null {
+  const target = event.target
+  if (!(target instanceof Element)) return null
+
+  const scrollElement = target.closest('[data-editor-diff-side]')
+  if (!scrollElement) return null
+
+  return viewsByScrollElement.get(scrollElement)?.rowHitAt(event) ?? null
 }
 
 const EMPTY_PROJECTION: LiveDiffProjection = {
@@ -126,11 +130,11 @@ export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
     setFile: (file) => runtime.setFile(file),
     getRows: () => runtime.getRows(),
     getTokens: () => runtime.getTokens(),
+    isSyntaxReady: () => runtime.isSyntaxReady(),
     onDidChangeRows: (listener) => runtime.onDidChangeRows(listener),
     onDidChangeTokens: (listener) => runtime.onDidChangeTokens(listener),
     getExpandedRegions: () => runtime.getExpandedRegions(),
     toggleRegion: (key) => runtime.toggleRegion(key),
-    getDocumentModeStatus: () => runtime.getDocumentModeStatus(),
     setBaseFile: (file) => runtime.setBaseFile(file),
     setEnabled: (enabled) => runtime.setEnabled(enabled),
   }
@@ -150,7 +154,6 @@ class DiffPluginRuntime {
   private digits: DiffGutterDigits = { old: 0, new: 0 }
   private hunkRows = false
   private expandableRows = false
-  private documentModeStatus = EMPTY_DOCUMENT_MODE_STATUS
 
   private baseFile: DiffTextFile | null = null
   private enabled: boolean
@@ -257,6 +260,10 @@ class DiffPluginRuntime {
     return this.rows
   }
 
+  isSyntaxReady(): boolean {
+    return this.syntax.isReady()
+  }
+
   getTokens(): readonly EditorToken[] {
     return this.syntax.getTokens()
   }
@@ -283,10 +290,6 @@ class DiffPluginRuntime {
     // synchronously and `getTokens()` is correct before the host's `setText` returns (§C10).
     this.syntax.setRows(this.rows)
     this.notifyRows()
-  }
-
-  getDocumentModeStatus(): DiffDocumentModeStatus {
-    return this.documentModeStatus
   }
 
   onDidChangeRows(listener: () => void): EditorDisposable {
@@ -426,9 +429,6 @@ class DiffPluginRuntime {
       hasHunkRows: () => this.hunkRows,
       hasExpandableRows: () => this.expandableRows,
       toggleRegion: (key) => this.toggleRegion(key),
-      reportStatus: (status) => {
-        this.documentModeStatus = status
-      },
       detach: (disposed) => {
         lentSyntax?.dispose()
         if (this.view === disposed) this.view = null
@@ -558,7 +558,6 @@ type DiffViewOptions = {
   readonly hasHunkRows: () => boolean
   readonly hasExpandableRows: () => boolean
   readonly toggleRegion: (key: string) => void
-  readonly reportStatus: (status: DiffDocumentModeStatus) => void
   readonly detach: (contribution: DiffViewContribution) => void
 }
 
@@ -574,6 +573,7 @@ type DiffViewOptions = {
  * expandable separator users actually aim at — needs the Y hit-test, and so does the pointer cursor.
  */
 class DiffViewContribution implements EditorViewContribution {
+  readonly snapshotKey = 'diff-inline-v1'
   private snapshot: EditorViewSnapshot | null = null
   private lastHighlightRows: readonly DiffRenderRow[] | null = null
   private lastHighlightTextVersion = -1
@@ -583,6 +583,7 @@ class DiffViewContribution implements EditorViewContribution {
     private readonly options: DiffViewOptions,
   ) {
     this.context.scrollElement.dataset.editorDiffSide = options.side
+    viewsByScrollElement.set(this.context.scrollElement, this)
     // Registration order puts this ahead of the editor's own mousedown handler
     // (Editor.ts:580 creates view contributions, :633 installs input handling), which is what lets
     // a gutter-toggle click suppress caret placement. `stopImmediatePropagation` in the handler is
@@ -598,22 +599,41 @@ class DiffViewContribution implements EditorViewContribution {
    * derived jobs below are not per-frame work.
    *
    * `update` is called for `'viewport'` too, which `Editor.handleViewportChange` fires on every
-   * scroll frame. Running the §C4 self-check there allocated a `Set`, spread it into an array and
-   * walked every mounted row on the exact path the Aug-2026 scroll work hardened — to answer a
-   * question that can only change when the rows or the projection do.
+   * scroll frame, and the highlights can only change when the rows or the text do.
    */
   update(snapshot: EditorViewSnapshot, kind: EditorViewContributionUpdateKind): void {
     this.snapshot = snapshot
     if (this.options.mode !== 'document') return
     if (kind === 'viewport' || kind === 'selection') return
 
-    const rows = this.options.getRows()
-    this.options.reportStatus({
-      lineCount: snapshot.lineCount,
-      rowCount: rows.length,
-      violations: documentModeViolations(snapshot, rows),
-    })
     this.applyInlineHighlights()
+  }
+
+  captureVisiblePaint(snapshot: EditorViewSnapshot) {
+    const viewport = this.context.scrollElement.getBoundingClientRect()
+    const rows = this.options.getRows()
+    const ranges = snapshot.visibleRows.flatMap((visible) => {
+      const row = rows[visible.bufferRow]
+      if (!row) return []
+      const start = snapshot.lineStarts[visible.bufferRow] ?? visible.startOffset
+      return diffInlineHighlightRanges([row]).map((range) => ({
+        start: range.start + start,
+        end: range.end + start,
+      }))
+    })
+    const rectangles = []
+    for (const range of ranges) {
+      const rect = this.context.getRangeClientRect(range.start, range.end)
+      if (!rect || rect.width <= 0 || rect.height <= 0) continue
+      rectangles.push({
+        left: rect.left - viewport.left + snapshot.viewport.scrollLeft,
+        top: rect.top - viewport.top + snapshot.viewport.scrollTop,
+        width: rect.width,
+        height: rect.height,
+        backgroundColor: INLINE_HIGHLIGHT_STYLE.backgroundColor,
+      })
+    }
+    return { id: `diff-inline-${this.options.side}`, status: 'ready' as const, rectangles }
   }
 
   refreshRows(): void {
@@ -636,6 +656,10 @@ class DiffViewContribution implements EditorViewContribution {
     this.context.scrollElement.removeEventListener('mousemove', this.handleMouseMove)
     this.context.scrollElement.removeEventListener('mouseleave', this.handleMouseLeave)
     this.context.scrollElement.style.cursor = ''
+    // A replacement view on the same element may already have registered itself.
+    if (viewsByScrollElement.get(this.context.scrollElement) === this) {
+      viewsByScrollElement.delete(this.context.scrollElement)
+    }
     this.context.clearRangeHighlight?.(this.options.highlightName)
     // Or the runtime keeps writing highlights and gutter geometry through a torn-down context,
     // and holds its scroll element alive for the plugin's lifetime.
@@ -746,28 +770,42 @@ class DiffViewContribution implements EditorViewContribution {
    * open them, and those are still not somewhere a caret belongs.
    */
   private hunkRowAt(event: MouseEvent): DiffRenderRow | null {
-    if (this.options.mode !== 'document') return null
     if (!this.options.hasHunkRows()) return null
 
-    const index = this.rowIndexAt(event)
-    if (index === null) return null
-
-    const row = this.options.getRows()[index]
+    const hit = this.rowHitAt(event)
+    const row = hit?.rows[hit.rowIndex]
     return row?.type === 'hunk' ? row : null
   }
 
-  private rowIndexAt(event: MouseEvent): number | null {
-    const target = event.target
-    if (target instanceof Element) {
-      const rowElement = target.closest<HTMLElement>('[data-editor-virtual-row]')
-      if (rowElement) return Number(rowElement.dataset.editorVirtualRow)
-    }
+  /** Only `document` mode has an answer: there a buffer row is an index into `getRows()`. */
+  rowHitAt(event: MouseEvent): DiffRowHit | null {
+    if (this.options.mode !== 'document') return null
 
-    return this.rowIndexFromPoint(event.clientY)
+    const rowIndex = this.bufferRowAt(event)
+    if (rowIndex === null) return null
+
+    const rows = this.options.getRows()
+    return rows[rowIndex] ? { side: this.options.side, rowIndex, rows } : null
+  }
+
+  /**
+   * The buffer row, never the display row. The element under the pointer names a display index,
+   * which is the buffer row only until word wrap, a fold or an injected row shifts it, so it is
+   * resolved through the snapshot rather than trusted.
+   */
+  private bufferRowAt(event: MouseEvent): number | null {
+    const target = event.target
+    const rowElement =
+      target instanceof Element ? target.closest<HTMLElement>('[data-editor-virtual-row]') : null
+    if (!rowElement) return this.bufferRowFromPoint(event.clientY)
+
+    const displayIndex = Number(rowElement.dataset.editorVirtualRow)
+    const row = this.snapshot?.visibleRows.find((visible) => visible.index === displayIndex)
+    return row?.source === 'document' ? row.bufferRow : null
   }
 
   /** Ported from `DiffView.paneRowIndexFromPoint` (DiffView.ts:849-862) — see the class comment. */
-  private rowIndexFromPoint(clientY: number): number | null {
+  private bufferRowFromPoint(clientY: number): number | null {
     const snapshot = this.snapshot
     if (!snapshot) return null
 
@@ -782,7 +820,6 @@ class DiffViewContribution implements EditorViewContribution {
     const y = clientY - bounds.top + snapshot.viewport.scrollTop
     for (const row of snapshot.visibleRows) {
       if (row.source !== 'document') continue
-      if (row.startOffset !== snapshot.lineStarts[row.bufferRow]) continue
       if (y < row.top || y >= row.top + row.height) continue
       return row.bufferRow
     }

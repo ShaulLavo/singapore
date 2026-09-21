@@ -483,9 +483,40 @@ export class VirtualizedTextView {
       hiddenCharacters: view.hiddenCharacters,
       suspiciousCharacters: view.suspiciousCharacters,
       cursorLineHighlight: view.cursorLineHighlight,
-      reservedLeft: this.reservedOverlayWidth('left'),
-      reservedRight: this.reservedOverlayWidth('right'),
+      // Overlay reservations depend on live document overflow. Saved paint owns
+      // its geometry until takeover; an empty bootstrap has different reservations.
     })
+  }
+
+  public captureSelectionPaint() {
+    const window = this.scrollElement.ownerDocument.defaultView
+    const origin = this.view.spacer.getBoundingClientRect()
+    const viewport = this.scrollElement.getBoundingClientRect()
+    const rectangles = Array.from(
+      this.view.spacer.querySelectorAll<HTMLElement>('.editor-virtualized-selection-range'),
+    ).flatMap((element) => {
+      const bounds = element.getBoundingClientRect()
+      if (bounds.bottom <= viewport.top || bounds.top >= viewport.bottom) return []
+      return [
+        {
+          left: bounds.left - origin.left,
+          top: bounds.top - origin.top,
+          width: bounds.width,
+          height: bounds.height,
+          backgroundColor: window?.getComputedStyle(element).backgroundColor ?? '',
+        },
+      ]
+    })
+    return { id: 'editor.selection', rectangles }
+  }
+
+  public captureRowBackgrounds() {
+    const window = this.scrollElement.ownerDocument.defaultView
+    return getMountedRows(this.view).map((row) => ({
+      backgroundColor: window?.getComputedStyle(row.element).backgroundColor ?? '',
+      color: window?.getComputedStyle(row.element).color ?? '',
+      gutterBackgroundColor: window?.getComputedStyle(row.gutterElement).backgroundColor ?? '',
+    }))
   }
 
   public captureGutterPaint() {
@@ -523,12 +554,20 @@ export class VirtualizedTextView {
   }
 
   public restorePaint(paint: SavedPaint): boolean {
+    const liveWidths =
+      this.pendingOverlayWidths ??
+      new Map<'left' | 'right', number>([
+        ['left', this.reservedOverlayWidth('left')],
+        ['right', this.reservedOverlayWidth('right')],
+      ])
     this.releaseProvisionalPaint()
     clearTokenHighlights(this.view)
     clearSelectionHighlight(this.view)
     this.view.caretLayerElement.hidden = true
     this.view.provisional = true
-    this.pendingOverlayWidths = new Map()
+    this.pendingOverlayWidths = liveWidths
+    this.view.viewport.reserveOverlayWidth('left', paint.reservedLeft)
+    this.view.viewport.reserveOverlayWidth('right', paint.reservedRight)
     this.scrollElement.dataset.editorPresentation = 'provisional'
     this.scrollElement.setAttribute('aria-busy', 'true')
     this.scrollElement.inert = true
