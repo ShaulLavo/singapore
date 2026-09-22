@@ -332,6 +332,8 @@ class EditorFixture {
       setSelections: vi.fn(),
       setScrollTop: vi.fn(),
       reserveOverlayWidth: vi.fn(),
+      rowAtPoint: () => null,
+      markerAtPoint: () => null,
       textOffsetFromPoint: vi.fn(() => 0),
       getRangeClientRect: () => new DOMRect(0, 0, 1, 1),
       // Every edit this fixture makes is an insertion at offset zero, so a tracked set follows the

@@ -561,17 +561,7 @@ type DiffViewOptions = {
   readonly detach: (contribution: DiffViewContribution) => void
 }
 
-/**
- * Pointer handling and inline word-diff highlights.
- *
- * The pointer half is not optional decoration — see §3.4. A click in the gutter band cannot be
- * resolved with `closest('[data-editor-virtual-row]')`: `.editor-virtualized-gutter` is
- * `pointer-events: none` (editor/style.css:132) so the click lands on the scroll element, gutter
- * rows carry `data-editor-virtual-gutter-row` rather than the text row's attribute
- * (virtualizedTextViewRows.ts:1845 vs :580), and text rows start at `left: var(--editor-gutter-width)`
- * so none of them sits under the band. Expanding a region by clicking its gutter — the half of an
- * expandable separator users actually aim at — needs the Y hit-test, and so does the pointer cursor.
- */
+/** Pointer handling and inline word-diff highlights. */
 class DiffViewContribution implements EditorViewContribution {
   readonly snapshotKey = 'diff-inline-v1'
   private snapshot: EditorViewSnapshot | null = null
@@ -666,19 +656,7 @@ class DiffViewContribution implements EditorViewContribution {
     this.options.detach(this)
   }
 
-  /**
-   * Inline word-diff tint, isolated from everything else this contribution does.
-   *
-   * `EditorViewContributionController` responds to a throw out of `update()` by disposing and
-   * unregistering the whole contribution — which would take the pointer handling with it, and the
-   * comment on this class is a long argument that the pointer half is *not* optional: a gutter
-   * click is the only way to expand a region. `setRangeHighlight` reaches an unguarded
-   * `new Highlight()` whenever there are ranges to paint, so on any engine without the CSS Custom
-   * Highlight API the first diff carrying word-diff ranges would silently disable expansion.
-   *
-   * Losing the tint is a cosmetic degradation. Losing expansion is not, so they do not share a
-   * `try` boundary.
-   */
+  // A highlight failure must not dispose the contribution and disable gutter expansion.
   private applyInlineHighlights(): void {
     const rows = this.options.getRows()
     const textVersion = this.snapshot?.textVersion ?? -1
@@ -754,10 +732,7 @@ class DiffViewContribution implements EditorViewContribution {
   }
 
   private expandableRowAt(event: MouseEvent): DiffRenderRow | null {
-    // A diff with no skipped ranges has no expandable separator anywhere, so the answer is
-    // structurally null and the hit-test below is pure cost. This runs on every mousemove, and over
-    // the gutter band `closest()` misses by construction — that is this class's whole premise — so
-    // every one of those events would otherwise fall through to a forced layout read.
+    // Avoid a point query on every mousemove when no separator can expand.
     if (!this.options.hasExpandableRows()) return null
 
     const row = this.hunkRowAt(event)
@@ -781,50 +756,12 @@ class DiffViewContribution implements EditorViewContribution {
   rowHitAt(event: MouseEvent): DiffRowHit | null {
     if (this.options.mode !== 'document') return null
 
-    const rowIndex = this.bufferRowAt(event)
-    if (rowIndex === null) return null
+    const hit = this.context.rowAtPoint(event.clientX, event.clientY)
+    if (hit?.source !== 'document') return null
+    const rowIndex = hit.bufferRow
 
     const rows = this.options.getRows()
     return rows[rowIndex] ? { side: this.options.side, rowIndex, rows } : null
-  }
-
-  /**
-   * The buffer row, never the display row. The element under the pointer names a display index,
-   * which is the buffer row only until word wrap, a fold or an injected row shifts it, so it is
-   * resolved through the snapshot rather than trusted.
-   */
-  private bufferRowAt(event: MouseEvent): number | null {
-    const target = event.target
-    const rowElement =
-      target instanceof Element ? target.closest<HTMLElement>('[data-editor-virtual-row]') : null
-    if (!rowElement) return this.bufferRowFromPoint(event.clientY)
-
-    const displayIndex = Number(rowElement.dataset.editorVirtualRow)
-    const row = this.snapshot?.visibleRows.find((visible) => visible.index === displayIndex)
-    return row?.source === 'document' ? row.bufferRow : null
-  }
-
-  /** Ported from `DiffView.paneRowIndexFromPoint` (DiffView.ts:849-862) — see the class comment. */
-  private bufferRowFromPoint(clientY: number): number | null {
-    const snapshot = this.snapshot
-    if (!snapshot) return null
-
-    // `getBoundingClientRect` forces a style and layout flush, and the render pass writes
-    // `--editor-gutter-width` and the spacer sizes every frame — so a mousemove interleaved with
-    // scrolling would synchronously lay out the editor subtree. The callers gate it: a mousemove
-    // reaches here only on a diff with an expandable separator, a press only on one with a
-    // separator at all.
-    const bounds = this.context.scrollElement.getBoundingClientRect()
-    if (clientY < bounds.top || clientY > bounds.bottom) return null
-
-    const y = clientY - bounds.top + snapshot.viewport.scrollTop
-    for (const row of snapshot.visibleRows) {
-      if (row.source !== 'document') continue
-      if (y < row.top || y >= row.top + row.height) continue
-      return row.bufferRow
-    }
-
-    return null
   }
 }
 

@@ -1,3 +1,4 @@
+import type { EditorPointHit, EditorMarkerHit } from './pointQueries'
 import type { TextContent } from './textContent'
 import type { EditorDecorationRange, EditorDecorationStore } from './editor/decorationStore'
 import type { DocumentSessionChange } from './documentSession'
@@ -591,6 +592,8 @@ export type EditorViewContributionContext = {
   // that anchors itself to the edge can step clear of them instead of covering
   // them. Changes are announced as a 'layout' update.
   getReservedOverlayWidth?(side: EditorOverlaySide): number
+  rowAtPoint(clientX: number, clientY: number): EditorPointHit | null
+  markerAtPoint(clientX: number, clientY: number): EditorMarkerHit | null
   textOffsetFromPoint(clientX: number, clientY: number): number | null
   getRangeClientRect(start: number, end: number): DOMRect | null
   // Spans the document follows on the contribution's behalf; see EditorTrackedRanges. Whether an

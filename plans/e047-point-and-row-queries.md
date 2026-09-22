@@ -1,6 +1,6 @@
 # E047: One answer to "what is under this point"
 
-- Status: Proposed
+- Status: Implemented
 - Kind: Implementation
 - Owner: Cross-repo
 - Priority: P1
@@ -99,3 +99,38 @@ event`; add a wrapped-row case, which the display-index shortcut could not have 
   this plan exists to remove.
 - D2: whether `Editor.rowAtPoint` is public API or stays plugin-only with hosts writing a two-line
   plugin. Recommendation: public. Search results are a host surface with no plugin of their own.
+
+## Implementation evidence, 2026-09-21
+
+- `Editor` and contribution contexts expose `rowAtPoint`, `markerAtPoint`, and
+  `textOffsetFromPoint`. Point queries and selection positions share `locatePoint`; selection
+  dragging keeps its outside-viewport clamping and bidi affinity handling.
+- Viewport bounds are cached for one animation frame. Queries read current scroll coordinates.
+  Simple-text queries reuse the viewport scale instead of measuring each row again.
+- The hidden-character layer registers the markers it paints, including the 2px painted width
+  of an invisible character. Clearing or recycling a row clears that registration.
+- Diff row lookup uses `rowAtPoint`; its DOM attribute lookup and private Y scan are deleted.
+- The current projection has document and injected text rows only, no separate block-row kind.
+  The browser tests cover a folded block and the document row below it.
+- The native auxiliary-element retry remains reachable through bidi caret probing. Keeping it
+  preserves the browser-oracle tests; ordinary LTR queries do not enter that path.
+
+Verification:
+
+- 173 focused DOM tests and 134 browser tests pass, including the seven new point-query cases.
+  The burst case proves one viewport read and no repeated row-bound reads for 100 queries.
+- The wrapped diff-row regression passes. The diff suite's gutter-width expectation and three
+  snapshot-restoration failures also reproduce on unmodified `7a37f10` in a separate worktree.
+- Core and diff typechecks pass. The workspace typecheck reports an existing possibly-undefined
+  value at `packages/editor/src/editor/indentationGuess.ts:83` through tree-sitter-languages.
+- Platform `git-diff-line-comment` passes against rebuilt packages. Screenshot and before/after
+  traces: `/work/tmp/fregat-evidence/20260921T193947Z-trace-git-diff-line-comment/`.
+  Its five mousemove dispatches contain no Layout events. Whole-scenario timing includes startup
+  and is not evidence of an overall speedup.
+- The full diff suite finishes with 96 passing tests and the same four baseline failures.
+- All Editor packages build, formatting checks pass, and Platform gates pass.
+- Deployed on 2026-09-22 as `20260922T030243Z-4590463f-e047-point-queries` after the
+  model-picker references were corrected in the Platform checkout. Production typecheck, build,
+  and live check pass. Live `git-diff-line-comment` and `chat-model-picker` scenarios pass;
+  screenshots were inspected in `/work/tmp/fregat-evidence/20260922T030305Z-scenario-git-diff-line-comment/`
+  and `/work/tmp/fregat-evidence/20260922T030306Z-scenario-chat-model-picker/`.

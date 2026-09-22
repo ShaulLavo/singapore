@@ -716,6 +716,8 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
     setSelection: vi.fn(),
     setSelections: vi.fn(),
     setScrollTop: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => null),
     getRangeClientRect: vi.fn(() => null),
   }

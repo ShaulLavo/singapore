@@ -193,6 +193,8 @@ function viewContext(
     setSelections: vi.fn(),
     setScrollTop: vi.fn(),
     reserveOverlayWidth: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => null),
     getRangeClientRect: vi.fn(() => null),
     setRangeHighlight: vi.fn(),

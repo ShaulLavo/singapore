@@ -1,3 +1,4 @@
+import type { LanguageServerDocument } from './document'
 import type { DocumentLogicalRevisionScope } from '@singapore-editor/core/document'
 import type {
   EditorDisposable,
@@ -98,18 +99,31 @@ export type LanguageServerReferencesResult = {
   readonly targets: readonly LanguageServerDefinitionTarget[]
 }
 
+export type LanguageServerDocumentSnapshot = Pick<
+  EditorViewSnapshot,
+  | 'documentId'
+  | 'languageId'
+  | 'textSnapshot'
+  | 'fullText'
+  | 'textVersion'
+  | 'documentSyncPoint'
+  | 'changesSinceDocumentSyncPoint'
+  | 'lineStarts'
+  | 'lineStartsView'
+>
+
 export type LanguageServerDocumentSyncOptions = {
   /** Projects a live path transition before deferred view publication catches up. */
   readonly controller?: LanguageServerDocumentSyncController
   /** Resolves opaque editor identities to protocol URIs. Returning null disables synchronization. */
-  uriForDocument?(snapshot: EditorViewSnapshot): lsp.DocumentUri | null
+  uriForDocument?(snapshot: LanguageServerDocumentSnapshot): lsp.DocumentUri | null
   /**
    * The language id sent to the server when the editor and protocol use different names.
    * Returning undefined keeps the editor's id.
    */
   languageIdForDocument?(languageId: string, uri: lsp.DocumentUri): string | undefined
-  shouldSyncLanguageId?(languageId: string, snapshot: EditorViewSnapshot): boolean
-  shouldSyncUri?(uri: lsp.DocumentUri, snapshot: EditorViewSnapshot): boolean
+  shouldSyncLanguageId?(languageId: string, snapshot: LanguageServerDocumentSnapshot): boolean
+  shouldSyncUri?(uri: lsp.DocumentUri, snapshot: LanguageServerDocumentSnapshot): boolean
 }
 
 export type { WorkspaceTextDocumentProvenance } from './workspaceTextEdits'
@@ -240,7 +254,6 @@ export type LanguageServerLaneOptions = LanguageServerLaneHostOptions & {
 
 export type LanguageServerSetPluginOptions = Pick<
   LanguageServerPluginOptions,
-  | 'documentSync'
   | 'onDiagnostics'
   | 'onDidNavigateDiagnostic'
   | 'onInteractiveReady'
@@ -249,10 +262,29 @@ export type LanguageServerSetPluginOptions = Pick<
   | 'onOpenDefinition'
   | 'onOpenReferences'
   | 'onError'
-  | 'onApplyWorkspaceEdit'
 > & {
-  readonly lanes: readonly LanguageServerLaneOptions[]
   readonly semanticTokens?: LanguageServerSemanticTokensFactory
+} & (
+    | {
+        readonly lanes: readonly LanguageServerLaneOptions[]
+        readonly document?: never
+        readonly documentSync?: LanguageServerDocumentSyncOptions
+        readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
+      }
+    | {
+        readonly document: LanguageServerDocument
+        readonly lanes?: never
+        readonly documentSync?: never
+        readonly onApplyWorkspaceEdit?: never
+      }
+  )
+
+export type LanguageServerDocumentPluginOptions = Omit<
+  Extract<LanguageServerSetPluginOptions, { readonly document: LanguageServerDocument }>,
+  'lanes' | 'document'
+> & {
+  readonly document: LanguageServerDocument
+  readonly webSocketRoute?: never
 }
 
 export type LanguageServerPlugin = EditorPlugin

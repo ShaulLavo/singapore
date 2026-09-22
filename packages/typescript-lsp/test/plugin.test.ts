@@ -1652,6 +1652,8 @@ function viewContributionContext(
     setSelections: vi.fn(),
     setScrollTop: vi.fn(),
     reserveOverlayWidth: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 22),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
     setRangeHighlight: vi.fn(),

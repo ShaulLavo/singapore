@@ -1,3 +1,4 @@
+export type { EditorPointHit, EditorMarkerHit } from './pointQueries'
 export {
   createEditorConsoleLogger,
   createEditorConsoleLoggingPlugin,

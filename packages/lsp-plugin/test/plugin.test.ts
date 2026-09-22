@@ -1,3 +1,6 @@
+import { LspConnectionPool } from '../src/lspConnectionPool'
+import { createLanguageServerDocument } from '../src/document'
+import { createEditorTextBuffer, createEditorBufferSession } from '@singapore-editor/core/document'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
@@ -729,6 +732,154 @@ describe('connectionProvider', () => {
   })
 })
 
+describe('shared language-server documents', () => {
+  it('advertises document-owned workspace edits before any view attaches', async () => {
+    const onApplyWorkspaceEdit = vi.fn(async () => ({ status: 'applied' as const }))
+    const document = createLanguageServerDocument({
+      buffer: createEditorTextBuffer('# Notes'),
+      uri: 'file:///README.md',
+      languageId: 'markdown',
+      onApplyWorkspaceEdit,
+      lanes: [
+        {
+          id: 'test',
+          features: { diagnostics: 0 },
+          webSocketRoute: 'ws://localhost/lsp',
+          webSocketTransportOptions: { WebSocketCtor: FakeWebSocket },
+        },
+      ],
+    })
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.open()
+    await flushPromises()
+    expect(jsonMessage(socket.sent[0])).toMatchObject({
+      method: 'initialize',
+      params: {
+        capabilities: {
+          workspace: {
+            workspaceEdit: {
+              documentChanges: true,
+              resourceOperations: ['create', 'rename', 'delete'],
+            },
+          },
+        },
+      },
+    })
+    expect(document.lanes[0]!.options.onApplyWorkspaceEdit).toBe(onApplyWorkspaceEdit)
+    document.dispose()
+  })
+
+  it('retains diagnostics and synchronization without a view, then paints synchronously on reattachment', async () => {
+    const buffer = createEditorTextBuffer('# Notes')
+    const document = createLanguageServerDocument({
+      buffer,
+      uri: 'file:///README.md',
+      languageId: 'markdown',
+      lanes: [
+        {
+          id: 'test',
+          features: { diagnostics: 0 },
+          webSocketRoute: 'ws://localhost/lsp',
+          webSocketTransportOptions: { WebSocketCtor: FakeWebSocket },
+        },
+      ],
+    })
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.open()
+    await flushPromises()
+    socket.receive(initializeResponse(jsonMessage(socket.sent[0])))
+    await document.lanes[0]!.connection.ready
+    const mount = () => {
+      const { provider, features } = activatePlugin(createLanguageServerPlugin({ document }), {
+        applyEdits: vi.fn(),
+      })
+      const context = viewContributionContext(editorSnapshot(buffer.materializeFullText()), {
+        features,
+      })
+      const view = provider.createContribution(context)!
+      return { context, view }
+    }
+    const first = mount()
+    socket.receive(publishDiagnosticsMessage())
+    expect(first.context.setRangeHighlight).toHaveBeenCalledWith(
+      'editor-test-lsp-plugin-error',
+      [{ start: 0, end: 1 }],
+      expect.any(Object),
+    )
+    first.view.dispose()
+    expect(socket.sent.filter(hasMethod('textDocument/didClose'))).toHaveLength(0)
+
+    const edit = createEditorBufferSession(buffer)
+    edit.applyEdits([{ from: 7, to: 7, text: '!' }])
+    await flushPromises()
+    expect(socket.sent.filter(hasMethod('textDocument/didChange'))).toHaveLength(1)
+    const diagnostic = {
+      ...publishDiagnosticsMessage(),
+      params: {
+        uri: 'file:///README.md',
+        version: 1,
+        diagnostics: [
+          {
+            severity: 1,
+            message: 'updated while hidden',
+            range: { start: { line: 0, character: 2 }, end: { line: 0, character: 3 } },
+          },
+        ],
+      },
+    }
+    socket.receive(diagnostic)
+    socket.receive(publishDiagnosticsMessage())
+    const second = mount()
+    expect(second.context.setRangeHighlight).toHaveBeenCalledWith(
+      'editor-test-lsp-plugin-error',
+      [{ start: 2, end: 3 }],
+      expect.any(Object),
+    )
+    expect(socket.sent.filter(hasMethod('textDocument/didOpen'))).toHaveLength(1)
+    const split = mount()
+    second.view.dispose()
+    expect(socket.sent.filter(hasMethod('textDocument/didClose'))).toHaveLength(0)
+    split.view.dispose()
+    document.dispose()
+    document.dispose()
+    await flushPromises()
+    expect(socket.sent.filter(hasMethod('textDocument/didClose'))).toHaveLength(1)
+    const sent = socket.sent.length
+    edit.applyEdits([{ from: 8, to: 8, text: '?' }])
+    await flushPromises()
+    expect(socket.sent).toHaveLength(sent)
+  })
+  it('marks a retired pooled connection unusable and clears its diagnostics', async () => {
+    const pool = new LspConnectionPool()
+    const document = createLanguageServerDocument({
+      buffer: createEditorTextBuffer('# Notes'),
+      uri: 'file:///README.md',
+      languageId: 'markdown',
+      lanes: [
+        {
+          id: 'test',
+          features: { diagnostics: 0 },
+          webSocketRoute: 'ws://localhost/lsp',
+          connectionProvider: pool.provider('test'),
+          webSocketTransportOptions: { WebSocketCtor: FakeWebSocket },
+        },
+      ],
+    })
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.open()
+    await flushPromises()
+    socket.receive(initializeResponse(jsonMessage(socket.sent[0])))
+    await document.lanes[0]!.connection.ready
+    socket.receive(publishDiagnosticsMessage())
+    expect(document.lanes[0]!.sync.diagnostics).toHaveLength(1)
+    socket.close()
+    expect(document.lanes[0]!.status).toBe('error')
+    expect(document.lanes[0]!.sync.diagnostics).toHaveLength(0)
+    document.dispose()
+    pool.dispose()
+  })
+})
+
 function activatePlugin(
   plugin: LanguageServerPlugin,
   options: ActivationOptions,
@@ -827,6 +978,8 @@ function viewContributionContext(
     setSelections: vi.fn(),
     setScrollTop: vi.fn(),
     reserveOverlayWidth: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
     setRangeHighlight: vi.fn(),

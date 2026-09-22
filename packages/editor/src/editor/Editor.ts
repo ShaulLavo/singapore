@@ -1,3 +1,4 @@
+import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 import { decodePaintSnapshot, encodePaintSnapshot } from './paintSnapshot'
 import { detectPlatform } from '@tanstack/hotkeys'
 import {
@@ -2872,6 +2873,8 @@ export class Editor {
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
       getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
       setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
+      rowAtPoint: (clientX, clientY) => this.rowAtPoint(clientX, clientY),
+      markerAtPoint: (clientX, clientY) => this.markerAtPoint(clientX, clientY),
       textOffsetFromPoint: (clientX, clientY) =>
         this.inputSelection.textOffsetFromPoint(clientX, clientY),
       getRangeClientRect: (start, end) => this.inputSelection.rangeClientRect(start, end),
@@ -3399,6 +3402,18 @@ export class Editor {
       top: scrollTop,
       left: this.view.getState().scrollLeft,
     })
+  }
+
+  rowAtPoint(clientX: number, clientY: number): EditorPointHit | null {
+    return this.view.rowAtPoint(clientX, clientY)
+  }
+
+  markerAtPoint(clientX: number, clientY: number): EditorMarkerHit | null {
+    return this.view.markerAtPoint(clientX, clientY)
+  }
+
+  textOffsetFromPoint(clientX: number, clientY: number): number | null {
+    return this.view.textOffsetFromPoint(clientX, clientY)
   }
 
   private readonly readViewport = (): EditorViewportSnapshot => this.view.getViewport()

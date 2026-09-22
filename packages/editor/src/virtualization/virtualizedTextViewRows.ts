@@ -1,3 +1,4 @@
+import { pointViewport } from './pointViewport'
 import type { SavedPaint, SavedPaintRow } from '../editor/paintSnapshot'
 import type { MeasuredText } from '../textMeasurements'
 import { sliceTextContent, type TextContent } from '../textContent'
@@ -34,7 +35,6 @@ import {
   restoreRowElements,
   retireRowElements,
   rowElementFromNode,
-  scrollElementPadding,
   setStyleValue,
   showFoldPlaceholder,
   snapshotRowsKey,
@@ -2968,17 +2968,20 @@ export function viewportPointMetrics(
   readonly clientX: number
   readonly clientY: number
   readonly verticalDirection: number
+  readonly scale: number
 } {
-  const rect = view.scrollElement.getBoundingClientRect()
-  const padding = scrollElementPadding(view.scrollElement)
-  const left = rect.left + padding.left
-  const top = rect.top + padding.top
-  const right = Math.max(left, rect.right - padding.right)
-  const bottom = Math.max(top, rect.bottom - padding.bottom)
+  const { left, top, right, bottom, scale } = pointViewport(view.scrollElement)
 
   return {
-    x: viewportTextX(view, clientX, left, right, view.virtualizer.getSnapshot().scrollLeft),
-    y: clamp(clientY, top, Math.max(top, bottom - 1)) - top,
+    x: viewportTextX(
+      view,
+      clientX / scale,
+      left / scale,
+      right / scale,
+      view.scrollElement.scrollLeft,
+    ),
+    y: (clamp(clientY, top, Math.max(top, bottom - 1)) - top) / scale,
+    scale,
     clientX,
     clientY,
     verticalDirection: pointVerticalDirection(clientY, top, bottom),

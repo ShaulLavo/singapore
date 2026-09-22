@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
 import { Editor } from '@singapore-editor/core/editor'
 import { createVisibleEditor } from './support/visibleEditor'
 import {
@@ -84,7 +85,7 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
   it('names the diff row and pane under a pointer event', () => {
     const { plugin, host } = mountDiff({ file: singleHunkDiff(), side: 'new' })
     const element = host.querySelector<HTMLElement>('[data-editor-virtual-row="1"]')
-    const press = pointerEvent('mousedown', 0)
+    const press = pointerEvent('mousedown', rowY(element!))
     element?.dispatchEvent(press)
 
     expect(diffRowAtEvent(press)).toEqual({ side: 'new', rowIndex: 1, rows: plugin.getRows() })
@@ -97,6 +98,25 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
     const outside = pointerEvent('mousedown', 0)
     document.body.dispatchEvent(outside)
     expect(diffRowAtEvent(outside)).toBeNull()
+  })
+
+  it('names a buffer row after wrapped segments shift its display index', () => {
+    const { editor, plugin, host } = mountDiff({
+      file: createTextDiff({
+        oldFile: { path: 'a.txt', text: `${'long '.repeat(200)}\nbefore\n` },
+        newFile: { path: 'a.txt', text: `${'long '.repeat(200)}\nafter\n` },
+      }),
+    })
+    editor.setWordWrap(true)
+    const target = plugin.getRows().findIndex((row) => row.type === 'addition')
+    const view: unknown = Reflect.get(editor, 'view')
+    if (!(view instanceof EditorSecondaryTextView)) throw new Error('Expected text view')
+    view.scrollToRow(target)
+    const row = view.getState().mountedRows.find((row) => row.bufferRow === target)!
+    expect(row.index).toBeGreaterThan(target)
+    const event = pointerEvent('mousedown', rowY(row.element) - queryScrollElement(host).scrollTop)
+    queryScrollElement(host).dispatchEvent(event)
+    expect(diffRowAtEvent(event)?.rowIndex).toBe(target)
   })
 
   it('refuses a caret on a separator it cannot expand', () => {
@@ -684,11 +704,18 @@ function clickGutter(view: HTMLElement, y: number): void {
   view.dispatchEvent(pointerEvent('click', y))
 }
 
+function rowY(element: HTMLElement): number {
+  const top = Number.parseFloat(
+    element.style.transform.replace('translateY(', '') || element.style.top,
+  )
+  return top + 1
+}
+
 function clickRow(host: HTMLElement, row: number): void {
   const element = host.querySelector<HTMLElement>(`[data-editor-virtual-row="${row}"]`)
   if (!element) throw new Error(`Expected virtual row ${row}`)
-  element.dispatchEvent(pointerEvent('mousedown', 0))
-  element.dispatchEvent(pointerEvent('click', 0))
+  element.dispatchEvent(pointerEvent('mousedown', rowY(element)))
+  element.dispatchEvent(pointerEvent('click', rowY(element)))
 }
 
 /** `cancelable`, or `preventDefault()` is a no-op and `defaultPrevented` can never be true. */

@@ -275,6 +275,8 @@ function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
     ),
     getReservedOverlayWidth: (side) =>
       Number.parseFloat(scrollElement.style[overlayPadding(side)]) || 0,
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => null),
     getRangeClientRect: vi.fn(() => null),
     setRangeHighlight: vi.fn(),

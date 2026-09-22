@@ -176,6 +176,8 @@ function mount(participants: readonly EditorHoverParticipant[]) {
     getSnapshot: () => snapshot,
     getProviders: () => participants,
     focusEditor: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: () => pointerOffset,
     getRangeClientRect: () => new DOMRect(10, 20, 40, 18),
   } as unknown as EditorViewContributionContext

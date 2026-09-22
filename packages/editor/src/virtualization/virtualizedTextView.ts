@@ -1,3 +1,6 @@
+import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
+import { pointViewport } from './pointViewport'
+import { markerAtRowX } from './virtualizedTextViewHiddenCharacters'
 import { ScrollViewport } from './scrollViewport'
 import type { FoldMarkerSource } from './foldMarkerSource'
 import type { SavedPaint } from '../editor/paintSnapshot'
@@ -82,6 +85,7 @@ import {
   rowForCaretPosition,
   rowForOffset,
   rowForViewportY,
+  rowTop,
   sameLineEditPatch,
   setFoldStateLayout,
   setInjectedTextRowsLayout,
@@ -1203,27 +1207,41 @@ export class VirtualizedTextView {
     }
   }
 
+  public rowAtPoint(clientX: number, clientY: number): EditorPointHit | null {
+    const point = locatePoint(this.view, clientX, clientY)
+    if (!point) return null
+    const { bounds, metrics, row } = point
+    const displayRow = row.index
+    const view = this.view
+    const base = { bufferRow: row.bufferRow, displayRow, source: row.source }
+    if ((clientX - bounds.left) / bounds.scale < gutterWidth(view))
+      return { ...base, region: 'gutter', offset: null }
+    const mounted = view.rowElements.get(displayRow)
+    const extent =
+      mounted?.kind === 'text'
+        ? rowTextExtent(view, mounted).right
+        : ((row.displayEndColumn - row.displayStartColumn) * view.metrics.characterWidth) /
+          metrics.scale
+    if (metrics.x > extent) return { ...base, region: 'trailing', offset: null }
+    const offset = this.textPositionAt(point, false)?.offset ?? null
+    return { ...base, region: 'text', offset }
+  }
+
+  public markerAtPoint(clientX: number, clientY: number): EditorMarkerHit | null {
+    const point = locatePoint(this.view, clientX, clientY)
+    if (!point) return null
+    if ((clientX - point.bounds.left) / point.bounds.scale < gutterWidth(this.view)) return null
+    const row = this.view.rowElements.get(point.row.index)
+    return row?.kind === 'text' ? markerAtRowX(row, point.metrics.x) : null
+  }
+
   public textOffsetFromPoint(clientX: number, clientY: number): number | null {
-    return this.textOffsetFromViewportPoint(clientX, clientY)
+    const point = locatePoint(this.view, clientX, clientY, true)
+    return point ? (this.textPositionAt(point, false)?.offset ?? null) : null
   }
 
   public textOffsetFromViewportPoint(clientX: number, clientY: number): number | null {
-    if (this.view.provisional) return null
-    const view = this.view
-    const metrics = viewportPointMetrics(view, clientX, clientY)
-    const row = rowForViewportY(view, metrics.y)
-    if (metrics.verticalDirection < 0) return lineStartOffset(view, row)
-    if (metrics.verticalDirection > 0) return lineEndOffset(view, row)
-    if (view.model.projection.getRowMetrics(row)?.source !== 'document') return null
-
-    const mounted = view.rowElements.get(row)
-    if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
-      return bidiOffsetFromViewportPoint(view, mounted, metrics)
-    }
-    if (mounted?.kind === 'text') return xToOffset(view, mounted, metrics.x)
-
-    const column = Math.floor(metrics.x / Math.max(1, view.metrics.characterWidth))
-    return offsetForViewportColumn(view, row, column)
+    return this.textOffsetFromPoint(clientX, clientY)
   }
 
   public textPositionFromPoint(
@@ -1238,24 +1256,33 @@ export class VirtualizedTextView {
     clientX: number,
     clientY: number,
   ): VirtualizedTextHitPosition | null {
-    if (this.view.provisional) return null
+    const point = locatePoint(this.view, clientX, clientY, true)
+    return point ? this.textPositionAt(point, true) : null
+  }
+
+  private textPositionAt(
+    point: NonNullable<ReturnType<typeof locatePoint>>,
+    includeAffinity: boolean,
+  ): VirtualizedTextHitPosition | null {
     const view = this.view
-    const metrics = viewportPointMetrics(view, clientX, clientY)
-    const row = rowForViewportY(view, metrics.y)
+    const { metrics } = point
+    const row = point.row.index
     if (metrics.verticalDirection < 0) {
       return textHitPosition(lineStartOffset(view, row), 'after', row, metrics.x)
     }
     if (metrics.verticalDirection > 0) {
       return textHitPosition(lineEndOffset(view, row), 'before', row, metrics.x)
     }
-    if (view.model.projection.getRowMetrics(row)?.source !== 'document') return null
+    if (point.row.source !== 'document') return null
 
     const mounted = view.rowElements.get(row)
     if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
-      return bidiTextHitPosition(view, mounted, metrics)
+      if (includeAffinity) return bidiTextHitPosition(view, mounted, metrics)
+      const offset = bidiOffsetFromViewportPoint(view, mounted, metrics)
+      return offset === null ? null : textHitPosition(offset, 'after', row, metrics.x)
     }
     if (mounted?.kind === 'text') {
-      const offset = xToOffset(view, mounted, metrics.x)
+      const offset = xToOffset(view, mounted, metrics.x, metrics.scale)
       return textHitPosition(offset, endpointAffinity(mounted, offset), row, metrics.x)
     }
 
@@ -1622,6 +1649,31 @@ export class VirtualizedTextView {
     updateVirtualizerRows(view)
     return true
   }
+}
+
+function locatePoint(
+  view: VirtualizedTextViewInternal,
+  clientX: number,
+  clientY: number,
+  clamp = false,
+) {
+  if (view.provisional) return null
+  const bounds = pointViewport(view.scrollElement)
+  if (
+    !clamp &&
+    (clientX < bounds.left ||
+      clientX >= bounds.right ||
+      clientY < bounds.top ||
+      clientY >= bounds.bottom)
+  )
+    return null
+  const metrics = viewportPointMetrics(view, clientX, clientY)
+  const index = rowForViewportY(view, metrics.y)
+  const y = view.scrollElement.scrollTop + metrics.y
+  if (!clamp && (y < rowTop(view, index) || y >= rowTop(view, index) + view.metrics.rowHeight))
+    return null
+  const row = view.model.projection.getRowMetrics(index)
+  return row ? { bounds, metrics, row } : null
 }
 
 type ViewportPointMetrics = ReturnType<typeof viewportPointMetrics>

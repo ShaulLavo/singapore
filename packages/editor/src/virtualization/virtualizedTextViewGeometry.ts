@@ -468,8 +468,9 @@ export function xToOffset(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   x: number,
+  scale?: number,
 ): number {
-  if (rowUsesCalculatedGeometry(row)) return calculatedXToOffset(view, row, x)
+  if (rowUsesCalculatedGeometry(row)) return calculatedXToOffset(view, row, x, scale)
 
   const geometry = ensureRowGeometry(view, row)
   return offsetForX(geometry, Math.max(0, x))
@@ -1582,12 +1583,15 @@ function calculatedXToOffset(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   x: number,
+  scale?: number,
 ): number {
   const anchor = calculatedRowAnchorForX(view, row, x)
   // Undoing the anchor's own offset costs a few bits, so a column's exact left edge can come back a
   // hair under the whole number it was built from and fall into the cell before it. The tolerance
   // is orders of magnitude below a pixel, so it can only reclaim that.
-  const cells = (x - anchor.x) / Math.max(1, calculatedCellWidth(view, row)) + COLUMN_EPSILON
+  const cells =
+    (x - anchor.x) / Math.max(1, cellWidthInRowSpace(view, scale ?? rowClientRectScale(row))) +
+    COLUMN_EPSILON
   // Each anchor speaks only for its own columns. Re-anchoring on a measured
   // advance leaves a gap wherever the measured position and the extrapolated
   // one disagree, and an x inside that gap extrapolates past the span into
@@ -1633,13 +1637,6 @@ function calculatedRowAnchorForX(
 // probed through the host, which may scale everything it contains.
 function cellWidthInRowSpace(view: VirtualizedTextViewInternal, scale: number): number {
   return view.metrics.characterWidth / scale
-}
-
-function calculatedCellWidth(
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-): number {
-  return cellWidthInRowSpace(view, rowClientRectScale(row))
 }
 
 const clampChunkLocal = (chunk: VirtualizedTextChunk, local: number): number =>

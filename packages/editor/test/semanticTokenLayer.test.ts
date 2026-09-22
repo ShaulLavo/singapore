@@ -59,6 +59,8 @@ function harness(options: Partial<SemanticTokenLayerOptions> = {}): Harness {
     setSelections: vi.fn(),
     setScrollTop: vi.fn(),
     reserveOverlayWidth: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: vi.fn(() => null),
     setRangeHighlight: (name, ranges, style) => {

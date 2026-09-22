@@ -248,6 +248,8 @@ function viewContext(getSnapshot: () => EditorViewSnapshot): EditorViewContribut
     setScrollTop: vi.fn(),
     setSelection: vi.fn(),
     setSelections: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => null),
   }
 }

@@ -1,3 +1,4 @@
+export type { EditorPointHit, EditorMarkerHit } from './pointQueries'
 import './style.css'
 
 export { createBracketMatchPlugin, EDITOR_BRACKET_MATCH_PLUGIN_ID } from './bracketMatchPlugin'

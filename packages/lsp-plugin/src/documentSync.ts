@@ -1,3 +1,4 @@
+import type { LanguageServerDocumentSnapshot } from './types'
 import {
   type DocumentLogicalRevisionScope,
   type DocumentSessionChange,
@@ -5,10 +6,7 @@ import {
   type DocumentSyncSegment,
   type TextEdit,
 } from '@singapore-editor/core/document'
-import type {
-  EditorViewContributionUpdateKind,
-  EditorViewSnapshot,
-} from '@singapore-editor/core/extensions'
+import type { EditorViewContributionUpdateKind } from '@singapore-editor/core/extensions'
 import { defineLazyFullTextProperty } from '@singapore-editor/core/internal'
 import {
   recordLspPerformanceDiagnostic,
@@ -66,13 +64,19 @@ export class DocumentSync {
     return this.diagnosticItems
   }
 
-  public shouldSync(kind: EditorViewContributionUpdateKind, snapshot: EditorViewSnapshot): boolean {
+  public shouldSync(
+    kind: EditorViewContributionUpdateKind,
+    snapshot: LanguageServerDocumentSnapshot,
+  ): boolean {
     if (kind === 'document' || kind === 'content' || kind === 'clear') return true
     if (!this.document) return false
     return !sameSyncPoint(this.syncPoint, snapshot.documentSyncPoint)
   }
 
-  public sync(snapshot: EditorViewSnapshot, change: DocumentSessionChange | null): void {
+  public sync(
+    snapshot: LanguageServerDocumentSnapshot,
+    change: DocumentSessionChange | null,
+  ): void {
     const projectedUri = this.projectedDocumentUri(snapshot)
     const descriptor = documentDescriptor(snapshot, this.options, projectedUri)
     if (!descriptor) {
@@ -89,7 +93,7 @@ export class DocumentSync {
   }
 
   public transitionDocumentUri(
-    snapshot: EditorViewSnapshot,
+    snapshot: LanguageServerDocumentSnapshot,
     transition: LanguageServerDocumentUriTransition,
   ): boolean {
     if (!this.matchesTransitionSource(snapshot, transition)) return false
@@ -126,7 +130,7 @@ export class DocumentSync {
   }
 
   private matchesTransitionSource(
-    snapshot: EditorViewSnapshot,
+    snapshot: LanguageServerDocumentSnapshot,
     transition: LanguageServerDocumentUriTransition,
   ): boolean {
     const active = this.document
@@ -140,7 +144,9 @@ export class DocumentSync {
     return point.segment !== transition.syncPoint.segment
   }
 
-  private projectedDocumentUri(snapshot: EditorViewSnapshot): lsp.DocumentUri | undefined {
+  private projectedDocumentUri(
+    snapshot: LanguageServerDocumentSnapshot,
+  ): lsp.DocumentUri | undefined {
     const projection = this.pendingUriProjection
     if (!projection) return undefined
     if (snapshot.documentSyncPoint.segment !== projection.segment) {
@@ -193,7 +199,7 @@ export class DocumentSync {
   private openOrUpdateDocument(
     descriptor: DocumentDescriptor,
     change: DocumentSessionChange | null,
-    snapshot: EditorViewSnapshot,
+    snapshot: LanguageServerDocumentSnapshot,
   ): void {
     const active = this.document
     if (!active) {
@@ -270,7 +276,7 @@ export class DocumentSync {
   private updateDocument(
     descriptor: DocumentDescriptor,
     change: DocumentSessionChange | null,
-    snapshot: EditorViewSnapshot,
+    snapshot: LanguageServerDocumentSnapshot,
   ): void {
     const active = this.document
     const diagnostics = projectDiagnosticsInSnapshot(this.diagnosticItems, {
@@ -367,7 +373,7 @@ type SyncChanges = {
 }
 
 function changesSinceLastSync(
-  snapshot: EditorViewSnapshot,
+  snapshot: LanguageServerDocumentSnapshot,
   point: DocumentSyncPoint | null,
   scope: DocumentLogicalRevisionScope,
   change: DocumentSessionChange | null,
@@ -397,7 +403,7 @@ function changesSinceLastSync(
 }
 
 function fallbackSyncChanges(
-  snapshot: EditorViewSnapshot,
+  snapshot: LanguageServerDocumentSnapshot,
   point: DocumentSyncPoint | null,
   change: DocumentSessionChange | null,
   scope: DocumentLogicalRevisionScope,
@@ -487,7 +493,7 @@ function activeDocumentForTransition(
 }
 
 function documentUri(
-  snapshot: EditorViewSnapshot,
+  snapshot: LanguageServerDocumentSnapshot,
   options: LanguageServerDocumentSyncOptions,
 ): lsp.DocumentUri | null {
   if (!snapshot.documentId) return null
@@ -496,7 +502,7 @@ function documentUri(
 }
 
 function documentDescriptor(
-  snapshot: EditorViewSnapshot,
+  snapshot: LanguageServerDocumentSnapshot,
   options: LanguageServerDocumentSyncOptions,
   projectedUri?: lsp.DocumentUri,
   projectedTextSnapshot?: LspTextSnapshot,
@@ -521,7 +527,7 @@ function documentDescriptor(
 }
 
 export function activeDocumentForSnapshot(
-  snapshot: EditorViewSnapshot,
+  snapshot: LanguageServerDocumentSnapshot,
   options: LanguageServerDocumentSyncOptions,
 ): ActiveDocument | null {
   const descriptor = documentDescriptor(snapshot, options)

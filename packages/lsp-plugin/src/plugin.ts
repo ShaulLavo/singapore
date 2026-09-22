@@ -1,3 +1,5 @@
+import { LanguageServerDocument, type DocumentLanguageServerLane } from './document'
+import type { LanguageServerDocumentPluginOptions } from './types'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
 import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type {
@@ -55,11 +57,7 @@ import { currentWorkspaceEditOrigin } from './workspaceEditProvenance'
 import { wordRangeAtOffset } from '@singapore-editor/core/internal'
 import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
 import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
-import {
-  acquireResolvedLanguageServerLane,
-  resolveLanguageServerLaneOptions,
-  type LanguageServerResolvedLaneOptions,
-} from './lane'
+import { resolveLanguageServerLaneOptions, type LanguageServerResolvedLaneOptions } from './lane'
 import {
   allLanguageServerFeatures,
   captureWorkspaceEditOriginGuard,
@@ -72,7 +70,6 @@ import type {
   DiagnosticMarkerDirection,
   LanguageServerNavigationCommand,
 } from './pluginTypes'
-import { PullDiagnosticsController } from './pullDiagnostics'
 import { formattingChangesText, formattingOptions, prepareFormattingEdits } from './formatting'
 import type { TextEdit } from '@singapore-editor/core'
 import type {
@@ -195,6 +192,7 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
 
 type LanguageServerResolvedAdapterOptions = {
   readonly name: string
+  readonly document?: LanguageServerDocument
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
   readonly lanes: readonly LanguageServerResolvedLaneOptions[]
   readonly defaultHighlightPrefix: string
@@ -236,7 +234,14 @@ type LanguageServerResolvedAdapterOptions = {
 
 export function createLanguageServerPlugin(
   options: LanguageServerPluginOptions,
+): LanguageServerPlugin
+export function createLanguageServerPlugin(
+  options: LanguageServerDocumentPluginOptions,
+): LanguageServerPlugin
+export function createLanguageServerPlugin(
+  options: LanguageServerPluginOptions | LanguageServerDocumentPluginOptions,
 ): LanguageServerPlugin {
+  if ('document' in options) return createLanguageServerSetPlugin(options)
   return createLanguageServerSetPlugin({
     lanes: [languageServerLaneFromPluginOptions(options)],
     onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
@@ -386,8 +391,7 @@ class LanguageServerCompletionEditContribution implements EditorEditContribution
 }
 
 type ViewLanguageServerLane = LanguageServerSetLane & {
-  readonly documentSyncRegistration: EditorDisposable | null
-  readonly pullDiagnostics: PullDiagnosticsController | null
+  readonly subscription: EditorDisposable
   readonly sync: DocumentSync
 }
 
@@ -402,6 +406,7 @@ type RenameWorkspaceEditDispatch = {
 }
 
 class LanguageServerContribution implements EditorViewContribution {
+  private readonly document: LanguageServerDocument
   private readonly lanes: readonly ViewLanguageServerLane[]
   private readonly servers: LanguageServerSet
   private readonly diagnostics: CompositeDiagnosticsPresenter
@@ -450,7 +455,15 @@ class LanguageServerContribution implements EditorViewContribution {
       rankedLanguageServerLanes(options.lanes, 'diagnostics').map((lane) => lane.id),
       options.onDiagnostics,
     )
-    this.lanes = options.lanes.map((lane) => this.createLane(lane))
+    this.document =
+      options.document ??
+      new LanguageServerDocument(
+        {
+          getSnapshot: () => context.getSnapshot(),
+        },
+        { lanes: options.lanes, documentSync: options.documentSync },
+      )
+    this.lanes = this.document.lanes.map((lane) => this.createLane(lane))
     this.servers = new LanguageServerSet(this.lanes)
     this.completionSources = new LanguageServerCompletionSources(
       context,
@@ -551,13 +564,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.abortRenameOnDocumentDrift()
     this.definitionLink.update(snapshot, kind)
     if (anchoredSurfaceFollowsUpdate(kind)) this.reanchorRenamePrompt()
-    for (const lane of this.lanes) {
-      if (!lane.connection.isReady()) continue
-      if (!lane.sync.shouldSync(kind, snapshot)) continue
-
-      lane.sync.sync(snapshot, change ?? null)
-      lane.pullDiagnostics?.synchronize()
-    }
+    if (!this.options.document) this.document.synchronize(change ?? null, kind)
     this.completion.update(snapshot, kind, change ?? null)
     this.signatureHelp?.update(snapshot, kind)
     this.documentHighlights.update(snapshot, kind)
@@ -574,11 +581,8 @@ class LanguageServerContribution implements EditorViewContribution {
     this.definitionLink.dispose()
     this.hoverParticipantRegistration?.dispose()
     this.completion.hide()
-    for (const lane of this.lanes) {
-      lane.documentSyncRegistration?.dispose()
-      lane.pullDiagnostics?.dispose()
-      lane.sync.close()
-    }
+    for (const lane of this.lanes) lane.subscription.dispose()
+    if (!this.options.document) this.document.dispose()
     this.diagnostics.clear()
     this.completionSources.dispose()
     this.completion.dispose()
@@ -594,7 +598,6 @@ class LanguageServerContribution implements EditorViewContribution {
     this.semanticTokensOwner = null
     this.cancelRename()
     this.rename?.dispose()
-    for (const lane of this.lanes) lane.connection.release()
   }
 
   public goToDefinitionFromSelection(): boolean {
@@ -652,64 +655,30 @@ class LanguageServerContribution implements EditorViewContribution {
     return this.codeActions.applyAutoFix()
   }
 
-  private createLane(options: LanguageServerResolvedLaneOptions): ViewLanguageServerLane {
-    let lane: ViewLanguageServerLane | null = null
-    const diagnostics = this.diagnostics.forLane(options.id, options.onDiagnostics)
-    const connection = acquireResolvedLanguageServerLane(options, {
-      onDiagnosticRefresh: () => lane?.pullDiagnostics?.refresh(),
-      onPublishDiagnostics: (params) => {
-        if (options.features.diagnostics === undefined) return
-        if (!lane) return
-
-        lane.sync.publishDiagnostics(params)
-        this.codeActions.diagnosticsChanged()
+  private createLane(documentLane: DocumentLanguageServerLane): ViewLanguageServerLane {
+    const options = documentLane.options
+    const diagnostics = this.diagnostics.forLane(options.id)
+    const subscription = documentLane.attach(
+      {
+        clear: () => diagnostics.clear(),
+        render: (document, items) => diagnostics.render(document, items),
+        publishSummary: (uri, version, items) => {
+          diagnostics.publishSummary(uri, version, items)
+          this.codeActions?.diagnosticsChanged()
+        },
       },
-      onReady: () => {
-        if (lane) this.syncReadyLane(lane)
-      },
-      onUnavailable: () => {
-        if (!lane) return
-
-        lane.pullDiagnostics?.cancel()
-        lane.sync.clearDiagnostics()
+      () => {
+        if (this.disposed) return
+        this.completion?.hide()
         this.syncSemanticTokens(this.context.getSnapshot(), 'document')
       },
-    })
-    const sync = new DocumentSync(connection.workspace, diagnostics, {
-      ...this.options.documentSync,
-      logicalRevisionScope: connection.logicalRevisionScope,
-      onDocumentClosed: () => this.completion.hide(),
-    })
-    const pullDiagnostics =
-      options.features.diagnostics === undefined
-        ? null
-        : new PullDiagnosticsController({
-            client: connection.client,
-            getDocument: () => {
-              const active = sync.activeDocument
-              return active ? { uri: active.uri, version: active.lspVersion } : null
-            },
-            publish: (document, items) => {
-              sync.pullDiagnostics(document.uri, document.version, items)
-              this.codeActions.diagnosticsChanged()
-            },
-            onRequestError: (error) => {
-              if (options.onRequestError) options.onRequestError('textDocument/diagnostic', error)
-              else this.options.onRequestError?.(options.id, 'textDocument/diagnostic', error)
-            },
-          })
-    const documentSyncRegistration = this.options.documentSync.controller?.register({
-      getSnapshot: () => this.context.getSnapshot(),
-      sync,
-      workspace: connection.workspace,
-    })
-    lane = {
-      connection,
-      documentSyncRegistration: documentSyncRegistration ?? null,
+    )
+    return {
+      connection: documentLane.connection,
+      subscription,
       features: options.features,
       id: options.id,
-      onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
-      pullDiagnostics,
+      onApplyWorkspaceEdit: this.options.onApplyWorkspaceEdit ?? options.onApplyWorkspaceEdit,
       onRequestError: (method, error) => {
         if (options.onRequestError) options.onRequestError(method, error)
         else this.options.onRequestError?.(options.id, method, error)
@@ -718,20 +687,8 @@ class LanguageServerContribution implements EditorViewContribution {
         if (options.onInteractiveReady) options.onInteractiveReady()
         else this.options.onInteractiveReady?.()
       },
-      sync,
+      sync: documentLane.sync,
     }
-    void connection.ready.catch(() => undefined)
-    return lane
-  }
-
-  private syncReadyLane(lane: ViewLanguageServerLane): void {
-    if (this.disposed) return
-
-    const snapshot = this.context.getSnapshot()
-    if (!lane.sync.shouldSync('document', snapshot)) return
-    lane.sync.sync(snapshot, null)
-    lane.pullDiagnostics?.synchronize()
-    this.syncSemanticTokens(snapshot, 'document')
   }
 
   /**
@@ -1105,14 +1062,20 @@ function resolveLanguageServerSetOptions(
 ): LanguageServerResolvedAdapterOptions {
   return {
     name: DEFAULT_PLUGIN_NAME,
-    lanes: options.lanes.map((lane) =>
-      resolveLanguageServerLaneOptions({
-        ...lane,
-        onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
-      }),
-    ),
+    document: options.document,
+    lanes: options.document
+      ? options.document.lanes.map((lane) => lane.options)
+      : options.lanes.map((lane) =>
+          resolveLanguageServerLaneOptions({
+            ...lane,
+            onApplyWorkspaceEdit: options.onApplyWorkspaceEdit ?? lane.onApplyWorkspaceEdit,
+            onRequestError:
+              lane.onRequestError ??
+              ((method, error) => options.onRequestError?.(lane.id, method, error)),
+          }),
+        ),
     defaultHighlightPrefix: DEFAULT_HIGHLIGHT_PREFIX,
-    documentSync: options.documentSync ?? {},
+    documentSync: options.document?.syncOptions ?? options.documentSync ?? {},
     diagnostics: resolveDiagnosticsOptions(),
     completion: resolveCompletionOptions(),
     formatOnType: true,

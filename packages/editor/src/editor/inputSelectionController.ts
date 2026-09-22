@@ -1619,10 +1619,7 @@ export class InputSelectionController {
   }
 
   textOffsetFromPoint(clientX: number, clientY: number): number | null {
-    return (
-      this.options.view.textOffsetFromPoint(clientX, clientY) ??
-      this.options.view.textOffsetFromViewportPoint(clientX, clientY)
-    )
+    return this.options.view.textOffsetFromPoint(clientX, clientY)
   }
 
   rangeClientRect(start: number, end: number): DOMRect | null {
@@ -2374,9 +2371,7 @@ export class InputSelectionController {
     clientY: number,
     fallback: VirtualizedTextHitPosition,
   ): VirtualizedTextHitPosition {
-    const position =
-      this.options.view.textPositionFromPoint(clientX, clientY) ??
-      this.options.view.textPositionFromViewportPoint(clientX, clientY)
+    const position = this.options.view.textPositionFromPoint(clientX, clientY)
     if (position) return position
     return fallback
   }
@@ -3315,10 +3310,7 @@ export class InputSelectionController {
   }
 
   private textPositionFromMouseEvent(event: MouseEvent): VirtualizedTextHitPosition | null {
-    return (
-      this.options.view.textPositionFromPoint(event.clientX, event.clientY) ??
-      this.options.view.textPositionFromViewportPoint(event.clientX, event.clientY)
-    )
+    return this.options.view.textPositionFromPoint(event.clientX, event.clientY)
   }
 
   private externalBoundaryToTextOffset(node: Node, offset: number): number | null {
