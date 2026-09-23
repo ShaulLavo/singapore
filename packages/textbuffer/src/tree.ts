@@ -1,9 +1,10 @@
+import type { TextPageOwner } from './textPages'
 import type { Piece, PieceBufferId, PieceTableBuffers, PieceTreeNode } from './pieceTableTypes'
 import type { EditContext, HideSnap, InsertContext, InsertProbe } from './internalTypes'
 import {
   appendChunksToBuffers,
   BUFFER_CHUNK_SIZE,
-  bufferForPiece,
+  forEachBufferSpan,
   bufferUnitAt,
   countLineBreaks,
   countPieceLineBreaksBefore,
@@ -620,8 +621,13 @@ export const collectTextInRange = (
     const pieceStart = Math.max(0, start - nodeStart)
     const pieceEnd = Math.min(node.piece.length, end - nodeStart)
     if (pieceEnd > pieceStart) {
-      const buf = bufferForPiece(buffers, node.piece)
-      acc.push(buf.slice(node.piece.start + pieceStart, node.piece.start + pieceEnd))
+      forEachBufferSpan(
+        buffers,
+        node.piece.buffer,
+        node.piece.start + pieceStart,
+        node.piece.start + pieceEnd,
+        (text, from, to) => acc.push(text.slice(from, to)),
+      )
     }
   }
 
@@ -633,7 +639,7 @@ export const forEachTextInRange = (
   buffers: PieceTableBuffers,
   start: number,
   end: number,
-  visit: (text: string, start: number, end: number, buffer: Piece['buffer']) => void,
+  visit: (text: string, start: number, end: number, owner: TextPageOwner) => void,
   baseOffset = 0,
 ) => {
   if (!node || baseOffset >= end) return
@@ -649,8 +655,13 @@ export const forEachTextInRange = (
     const pieceStart = Math.max(0, start - nodeStart)
     const pieceEnd = Math.min(node.piece.length, end - nodeStart)
     if (pieceEnd > pieceStart) {
-      const buffer = bufferForPiece(buffers, node.piece)
-      visit(buffer, node.piece.start + pieceStart, node.piece.start + pieceEnd, node.piece.buffer)
+      forEachBufferSpan(
+        buffers,
+        node.piece.buffer,
+        node.piece.start + pieceStart,
+        node.piece.start + pieceEnd,
+        visit,
+      )
     }
   }
 

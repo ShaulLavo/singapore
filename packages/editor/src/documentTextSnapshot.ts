@@ -1,4 +1,4 @@
-import { getDocumentTextSourceIndex } from './documentTextSourceCache'
+import { appendDocumentTextMeasurements } from './documentTextSourceCache'
 import {
   forEachPieceTableTextChunk,
   materializePieceTableFullText,
@@ -45,7 +45,10 @@ export type DocumentTextSnapshot = TextSnapshot & {
   readonly snapshot: PieceTableSnapshot
 }
 
-const rangeMeasurements = new WeakMap<TextSnapshot, Map<string, TextMeasurements>>()
+const rangeMeasurements = new WeakMap<
+  object,
+  WeakMap<TextSnapshot, Map<string, TextMeasurements>>
+>()
 const MAX_CACHED_MEASUREMENT_RANGES = 128
 
 export function measureTextSnapshotRange(
@@ -53,10 +56,17 @@ export function measureTextSnapshotRange(
   start: number,
   end: number,
 ): TextMeasurements {
-  let ranges = rangeMeasurements.get(snapshot)
+  const storage =
+    snapshot instanceof PieceTableDocumentTextSnapshot ? snapshot.snapshot.buffers : snapshot
+  let snapshots = rangeMeasurements.get(storage)
+  if (!snapshots) {
+    snapshots = new WeakMap()
+    rangeMeasurements.set(storage, snapshots)
+  }
+  let ranges = snapshots.get(snapshot)
   if (!ranges) {
     ranges = new Map()
-    rangeMeasurements.set(snapshot, ranges)
+    snapshots.set(snapshot, ranges)
   }
   const key = `${start}:${end}`
   const cached = ranges.get(key)
@@ -88,9 +98,8 @@ function measureDocumentRange(
   end: number,
 ): TextMeasurements {
   const ranges: MeasuredTextRange[] = []
-  forEachTextInRange(snapshot.root, snapshot.buffers, start, end, (text, from, to, buffer) => {
-    const source = getDocumentTextSourceIndex(snapshot.buffers, buffer, text)
-    ranges.push({ source, start: from, end: to })
+  forEachTextInRange(snapshot.root, snapshot.buffers, start, end, (text, from, to, owner) => {
+    appendDocumentTextMeasurements(ranges, owner, text, from, to)
   })
   return new TextMeasurements(ranges)
 }

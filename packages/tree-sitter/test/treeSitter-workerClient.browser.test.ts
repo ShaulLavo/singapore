@@ -5,8 +5,10 @@ import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/
 import {
   applyBatchToPieceTable,
   createPieceTableSnapshot,
+  insertIntoPieceTable,
   type TextEdit,
 } from '@singapore-editor/core/document'
+import { reclaimPieceTableText } from '@singapore-editor/core/internal'
 import {
   createAnchorSelection,
   createSelectionSet,
@@ -105,6 +107,75 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
 
     expect(result?.documentId).toBe(documentId)
     expect(result?.captures.length).toBeGreaterThan(0)
+  })
+
+  it('parses copied original survivors through a warmed worker source cache', async () => {
+    const prefix = 'const 名前 = "🎉";\n'
+    const deleted = '// retired text\n'.repeat(4096)
+    const original = createPieceTableSnapshot(prefix + deleted + 'export const last = 42;\n')
+    const snapshot = applyBatchToPieceTable(original, [
+      { from: prefix.length, to: prefix.length + deleted.length, text: '' },
+    ])
+    const request = {
+      documentId: 'reclaimed.ts',
+      runtimeSessionId: 'runtime-reclaimed',
+      languageId: 'typescript',
+    }
+    const before = await workerClient.parse({ ...request, snapshotVersion: 1, snapshot })
+    const compact = reclaimPieceTableText(snapshot)
+    expect(compact.buffers).not.toBe(snapshot.buffers)
+    const after = await workerClient.parse({
+      ...request,
+      snapshotVersion: 2,
+      snapshot: compact,
+    })
+    expect(after?.captures.length).toBeGreaterThan(0)
+    expect(after?.captures).toEqual(before?.captures)
+    expect(after?.tokensPacked).toEqual(before?.tokensPacked)
+
+    const edits = [{ from: prefix.length, to: prefix.length, text: '// new line\n' }]
+    const nextSnapshot = applyBatchToPieceTable(compact, edits)
+    const payload = createTreeSitterEditPayload({
+      ...request,
+      previousSnapshotVersion: 2,
+      snapshotVersion: 3,
+      previousSnapshot: compact,
+      nextSnapshot,
+      edits,
+    })
+    const edited = payload ? await workerClient.edit(payload) : undefined
+    const full = await workerClient.parse({
+      ...request,
+      runtimeSessionId: 'runtime-reclaimed-full',
+      snapshotVersion: 3,
+      snapshot: nextSnapshot,
+    })
+    expect(edited?.captures.length).toBeGreaterThan(0)
+    expect(edited?.captures).toEqual(full?.captures)
+    expect(edited?.tokensPacked).toEqual(full?.tokensPacked)
+  })
+
+  it('parses equal-length divergent append tails without reusing the other branch text', async () => {
+    const base = insertIntoPieceTable(createPieceTableSnapshot(''), 0, 'const value = ')
+    const left = insertIntoPieceTable(base, base.length, '1;\n')
+    const right = insertIntoPieceTable(base, base.length, 'x;\n')
+    const request = {
+      documentId: 'fork.ts',
+      runtimeSessionId: 'runtime-fork',
+      languageId: 'typescript',
+    }
+    const first = await workerClient.parse({ ...request, snapshotVersion: 1, snapshot: left })
+    const second = await workerClient.parse({ ...request, snapshotVersion: 2, snapshot: right })
+    const full = await workerClient.parse({
+      ...request,
+      runtimeSessionId: 'runtime-fork-full',
+      snapshotVersion: 2,
+      snapshot: right,
+    })
+    expect(second?.captures.length).toBeGreaterThan(0)
+    expect(second?.captures).not.toEqual(first?.captures)
+    expect(second?.captures).toEqual(full?.captures)
+    expect(second?.tokensPacked).toEqual(full?.tokensPacked)
   })
 
   it('highlights PascalCase TSX component tag names and reports JSX folds', async () => {

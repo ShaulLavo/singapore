@@ -69,10 +69,11 @@ walking a lazy `Proxy` array were 90%. Its execution plan has been removed.
 The order below is a recommendation.
 
 E006 is in progress. [Automatic text reclamation](../docs/storage/e006-text-reclamation.md)
-now runs in live buffers, preserves transaction identity and retained history, and releases
-measurement-cache text along with dead chunks. It frees only whole dead chunks, so ordinary
-typing frees nothing yet; partial/original chunks are next, and position-metadata reclamation
-remains open.
+now releases unused portions of append chunks and original text in live buffers, while preserving
+transaction identity and retained history. Measurement caches and worker descriptors follow the
+new physical spans. Mounted heap checks cover surviving fragments and paragraph replacement;
+string-storage gates now pass, untouched spans retain their owners, and small undo slices no longer
+pin whole strings. Position-metadata bounds remain open.
 
 The existing [Platform Plan 071 — syntax highlight retry](../../platform/plans/071-syntax-highlight-retry.md)
 is an additional Editor-only proposal. It remains in its existing file; E003 coordinates with it.

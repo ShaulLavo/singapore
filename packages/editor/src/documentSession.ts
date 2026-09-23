@@ -54,7 +54,7 @@ import {
   readPieceTableTextRange,
   snapBatchEditRanges,
 } from '@singapore-editor/textbuffer'
-import { bufferStorageIdentity } from '@singapore-editor/textbuffer/internal/buffers'
+import { bufferStorageIdentity, copyTextRange } from '@singapore-editor/textbuffer/internal/buffers'
 
 import {
   DocumentEditChain,
@@ -2823,10 +2823,12 @@ function invertTextEdits(
   for (const edit of sorted) {
     const from = edit.from + delta
     const to = from + edit.text.length
+    const text = readPieceTableTextRange(snapshot, edit.from, edit.to)
     inverse.push({
       from,
       to,
-      text: readPieceTableTextRange(snapshot, edit.from, edit.to),
+      // Small undo slices must not pin a whole source; large deletions stay off this copy path.
+      text: text.length <= 1024 ? copyTextRange(text, 0, text.length) : text,
     })
     delta += edit.text.length - (edit.to - edit.from)
   }

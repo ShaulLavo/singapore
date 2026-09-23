@@ -6,7 +6,7 @@ import type {
   RealAnchor,
   ResolvedAnchor,
 } from './pieceTableTypes'
-import { getBufferText } from './buffers'
+import { bufferLength } from './buffers'
 import { splitsSurrogatePair } from './reads'
 import { anchoredUnit, coversAnchorOffset, lookupReverseIndex } from './reverseIndex'
 import {
@@ -90,9 +90,9 @@ const resolveMissingAnchor = (
   snapshot: PieceTableTreeSnapshot,
   anchor: RealAnchor,
 ): ResolvedAnchor => {
-  const originalText = getBufferText(snapshot.buffers, snapshot.buffers.original)
+  const originalLength = bufferLength(snapshot.buffers, snapshot.buffers.original)
   const isEmptyOriginalAnchor =
-    originalText.length === 0 && anchor.buffer === snapshot.buffers.original && anchor.offset === 0
+    originalLength === 0 && anchor.buffer === snapshot.buffers.original && anchor.offset === 0
 
   if (isEmptyOriginalAnchor) {
     return {

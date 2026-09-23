@@ -1,5 +1,6 @@
 import type { PieceTableSnapshot } from '@singapore-editor/core/document'
 import { debugPieceTable, type PieceBufferId } from '@singapore-editor/core/debug'
+import { forEachBufferSpan } from '@singapore-editor/core/internal'
 
 type TreeSitterSourcePieceSpan = {
   readonly chunkId: string
@@ -55,6 +56,8 @@ const SOURCE_CHUNK_SIZE = 16 * 1024
 // web-tree-sitter copies parser callback text into a fixed 10KB UTF-16 buffer.
 const PARSER_READ_BATCH_CODE_UNITS = 4096
 const UTF16_READ_BATCH = 8192
+const sourceOwners = new WeakMap<object, number>()
+let nextSourceOwner = 1
 
 export const createTreeSitterSourceDescriptor = (
   snapshot: PieceTableSnapshot,
@@ -166,21 +169,30 @@ const appendPieceSpans = (
   length: number,
   builder: PieceSpanBuilder,
 ): void => {
-  const text = getSnapshotBufferText(snapshot, bufferId)
-  let offset = start
-  let remaining = length
+  forEachBufferSpan(snapshot.buffers, bufferId, start, start + length, (text, from, to, owner) => {
+    appendSourceSpans(text, owner, from, to, builder)
+  })
+}
 
-  while (remaining > 0) {
+const appendSourceSpans = (
+  text: string,
+  owner: object,
+  start: number,
+  end: number,
+  builder: PieceSpanBuilder,
+): void => {
+  let offset = start
+
+  while (offset < end) {
     const chunkStart = Math.floor(offset / SOURCE_CHUNK_SIZE) * SOURCE_CHUNK_SIZE
     const chunkLength = Math.min(text.length - chunkStart, SOURCE_CHUNK_SIZE)
     const spanStart = offset - chunkStart
-    const spanLength = Math.min(remaining, chunkLength - spanStart)
-    const chunkId = sourceChunkId(bufferId, chunkStart)
+    const spanLength = Math.min(end - offset, chunkLength - spanStart)
+    const chunkId = sourceChunkId(owner, chunkStart)
 
     builder.pieces.push({ chunkId, start: spanStart, length: spanLength })
     appendChunkPayload(text, chunkId, chunkStart, chunkLength, builder)
     offset += spanLength
-    remaining -= spanLength
   }
 }
 
@@ -191,8 +203,7 @@ const appendChunkPayload = (
   chunkLength: number,
   builder: PieceSpanBuilder,
 ): void => {
-  // Piece buffers are append-only but their tail chunk grows in place, so a
-  // previously sent chunk id only stays valid while its length is unchanged.
+  // Physical owners survive append-only growth; forks and copied survivors get new owners.
   if (builder.sentChunkLengths?.get(chunkId) === chunkLength) return
   if (builder.emittedChunkIds.has(chunkId)) return
 
@@ -222,13 +233,13 @@ const createSharedUtf16Buffer = (text: string): SharedArrayBuffer => {
   return buffer
 }
 
-const sourceChunkId = (bufferId: PieceBufferId, chunkStart: number): string =>
-  `${bufferId}:${chunkStart}`
-
-const getSnapshotBufferText = (snapshot: PieceTableSnapshot, bufferId: PieceBufferId): string => {
-  const text = snapshot.buffers.chunks.get(bufferId)
-  if (text !== undefined) return text
-  throw new Error('piece buffer not found')
+const sourceChunkId = (owner: object, chunkStart: number): string => {
+  let id = sourceOwners.get(owner)
+  if (id === undefined) {
+    id = nextSourceOwner++
+    sourceOwners.set(owner, id)
+  }
+  return `${id}:${chunkStart}`
 }
 
 const supportsSharedTreeSitterSource = (): boolean => {

@@ -9,18 +9,14 @@ import {
   readPieceTableTextRange,
   streamPieceTablePieces,
 } from '@singapore-editor/textbuffer'
-import {
-  ensureValidRange,
-  getPieceTableOriginalText,
-} from '@singapore-editor/textbuffer/internal/reads'
+import { ensureValidRange } from '@singapore-editor/textbuffer/internal/reads'
 
 describe('piece table reads', () => {
-  it('reads snapshot length, original text, full text, and ranges', () => {
+  it('reads snapshot length, full text, and ranges', () => {
     const initial = createPieceTableSnapshot('abcdef')
     const edited = insertIntoPieceTable(initial, 3, 'XX')
 
     expect(getPieceTableLength(edited)).toBe(8)
-    expect(getPieceTableOriginalText(edited)).toBe('abcdef')
     expect(materializePieceTableFullText(edited)).toBe('abcXXdef')
     expect(materializePieceTableFullText(edited)).toBe('abcXXdef')
     expect(readPieceTableTextRange(edited, 2, 6)).toBe('cXXd')

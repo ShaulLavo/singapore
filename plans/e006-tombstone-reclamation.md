@@ -10,23 +10,23 @@
 
 ## Execution update, 2026-09-23
 
-[Automatic text reclamation](../docs/storage/e006-text-reclamation.md) is now installed in
-editor buffers. Incremental background work retires wholly dead append chunks across current
-and retained history snapshots. Publication preserves snapshot identity, prepared transactions,
-leases, receipts, dirty state and logical revision. Last-view detach cancels maintenance.
-Text-measurement caches now follow chunk ownership so they release reclaimed strings too.
+[Automatic text reclamation](../docs/storage/e006-text-reclamation.md) now releases unused
+portions of append chunks and original text across current and retained history snapshots.
+Sparse physical spans preserve logical coordinates, snapshot identity, prepared transactions,
+leases, receipts, dirty state and revision. Rendering measurements borrow bounded movable
+pages and detach them during reclamation; worker source IDs follow physical owners, including divergent branches.
 
-Node tests cover live publication and every retained undo/redo state. A mounted two-view
-Chromium harness measures actual heap release with default history and checks trusted typing,
-peer rendering and disposal. It frees 69–82% when each insert fills a chunk and dies whole, and
-nothing when survivors share chunks, which is how typing behaves. The tree-sitter worker now
-keeps only the source chunks of its latest request. Platform WorkspaceEdit service/event tests
-pass against the link. Partial/original chunks are the next step, and position metadata remains
-open, so E006 stays in progress. The
-current-code section below predates the append-only log, AVL tree and branching history;
-use the implementation reference above for current behavior. The
-[earlier investigation](../docs/storage/e006-reclamation-investigation.md) retains the ownership
-inventory and unsafe-compactor counterexamples.
+Large-paste survivors detach during incremental maintenance, preserving synchronous paste
+latency. Mounted two-view checks measure actual heap release under mixed edits, small surviving
+fragments, fixed-size paragraph replacement and original-text deletion. Retained readers keep
+their text until released. The implementation reference records results and reproduction commands.
+The follow-up passes all 30 mounted samples against string-category bytes and retained code
+units. Total heap is observational because compiled code dominated its small growth denominator.
+At 500 cycles, survivors/mixed/paragraph release 48.01%/26.57%/31.50% of string growth. The old
+failed total-heap runs remain recorded. Repeated maintenance reuses untouched sparse spans and
+tail owners, and small inverse edits copy at most 1,024 units. Fresh mixed/survivor snapshots
+find zero sliced-string parents behind undo payloads, down from 782–847 KB. Position metadata
+remains the separate unfinished milestone, so E006 stays in progress.
 
 ## Outcome
 
@@ -37,80 +37,97 @@ to every paragraph ever inserted after obsolete history and external readers rel
 
 ## Current code
 
-- [Deletion](../packages/textbuffer/src/tree.ts) uses `markTreeInvisible`, retaining
-  deleted pieces in new roots. `normalizePieceOrders` already rebuilds tree metadata.
-- [History](../packages/editor/src/history.ts) now caps undo depth at 200 entries.
-  The wishlist's unbounded-history claim is stale. A cap alone does not remove current-root tombstones.
-- [Buffers](../packages/textbuffer/src/buffers.ts) use a persistent paged chunk store.
-  A surviving snapshot can retain chunk strings even after its visible pieces stop using them.
-- [Anchors](../packages/textbuffer/src/anchors.ts) resolve deleted positions using
-  invisible pieces and reverse-index neighbors. Dropping those records can change positions.
-- [DocumentSession](../packages/editor/src/documentSession.ts) also retains clean snapshots,
-  history, transaction receipts, and staged transaction state beyond the active snapshot.
+- [Storage](../packages/textbuffer/src/buffers.ts) uses append-only logs and 16 Ki-unit append
+  chunks. Original text is one unrestricted chunk. Several insertion IDs can share a chunk.
+- [The collector](../packages/textbuffer/src/reclamation.ts) groups snapshots by actual log
+  identity and protects text across visible pieces in every retained root. Numeric insertion IDs
+  alone cannot distinguish divergent branches.
+- [Buffer maintenance](../packages/editor/src/textStorageMaintenance.ts) schedules incremental
+  quiet-time collection. [Document sessions](../packages/editor/src/documentSession.ts) enumerate
+  history, save baselines, current wrappers and transaction endpoints. Snapshot identity is part
+  of lease and receipt validity; storage publication must preserve it.
+- [Measurements](../packages/editor/src/documentTextSnapshot.ts) and
+  [worker source descriptors](../packages/tree-sitter/src/treeSitter/source.ts) are storage readers.
+  Their cached source strings and IDs must follow the physical text representation.
+- Tombstones, reverse-index entries and insertion-ID mappings still grow with edit history.
+  Deleted anchors depend on those position records even after their characters are released.
 
 ## Scope
 
-Measure retention, define a safe ownership boundary, then implement bounded maintenance.
-Count tree nodes, invisible pieces, buffer bytes, line indexes, and explicitly retained roots.
-Include buffer reclamation when no protected root or anchor requires the buffer.
-Do not compact by serializing the current text into a new document and discarding history.
-Do not introduce shared-memory reclamation here. E012 owns that extension.
+The current implementation milestone reclaims partial append chunks and original text, while
+preserving logical coordinates, snapshot identity, undo, transaction validity and external readers.
+It includes every storage reader, line indexes, rendering measurements and worker descriptors.
+It does not claim bounded total memory: position-metadata reclamation is the subsequent milestone.
+No shared-memory redesign, new settings, scheduler rewrite or history truncation is required.
 
 ## Design
 
-Start with an ownership inventory across session state, views, decorations, plugins,
-prepared transactions, undo entries, save baselines, and asynchronous snapshot consumers.
-Plain exported anchors and snapshots have no release protocol at this baseline.
-Do not infer that an absent history entry means nobody holds the text.
+Keep logical piece and anchor coordinates unchanged. Collect the union of protected visible
+ranges per physical log, then retain independently copied source spans for that union. Readers
+resolve a physical source once per span; walker character reads stay direct string accesses.
+Original-only documents are eligible, but clean baselines and retained history still protect
+original text they display. Writable append tails remain dense. When a pass retires text,
+it also detaches borrowed dense append survivors, including the tail: a 64-unit substring
+must not keep a multi-megabyte paste allocation alive. Already detached closed chunks are reused.
 
-Propose a maintenance input containing the active root, protected roots, and protected anchor records.
-Choose between explicit scoped retention handles and preserving enough deleted-position metadata
-to maintain every supported external anchor. Prove the chosen contract before removing any records.
-Use opaque generation identifiers if compaction creates a new storage generation.
-Migrate every affected caller in the same change. Do not preserve an untracked parallel API.
+Copy in bounded batches, preserving UTF-16 code units including isolated surrogates. Retain
+logical newline offsets and their ordinal positions, but remove their references to old strings.
+Publication across a shared group stays atomic after incremental preparation.
 
-Build a new root and reverse index without mutating protected roots.
-Preserve buffer identifiers and offsets where possible. If a rewrite needs remapping,
-perform it atomically for every owned anchor and selection before publishing the new state.
-A maintenance-only root replacement must not become a user edit, mark the file dirty,
-increment the logical text revision, or invalidate a valid prepared transaction silently.
+Rendering indexes borrow bounded page handles without copying on cold acquisition or first
+classification. A document-family registry detaches retired backing during maintenance, including
+unread readers from abandoned logs; leaves keep handles rather than raw strings. Internally cached measurements are weakly owned by their storage
+generation. Externally returned ranges remain readable. Worker source IDs identify physical
+content: unchanged ID and length must imply unchanged text, including divergent branches.
 
-Schedule maintenance outside the keystroke path and bound work per scheduling turn.
-Keep partially built state private. Cancel or restart if its input generation is no longer current.
-Allow old generations to outlive the active one until their owners release them.
-Record before-and-after retention and the reason reclamation was blocked.
+This selects sparse retained spans over paging all input text. Eager pages would add ingestion
+cost and per-page metadata to every document. The selected design adopts bounded measurement
+blocks from that alternative without imposing them on ordinary storage and walker reads.
 
 ## Steps
 
-1. Extend E001 churn fixtures with pinned and released snapshots and deleted anchors.
-   Publish baseline piece growth, retained bytes, and edit and walker latency distributions.
-2. Map all retention owners and the mutation-lease and receipt rules in DocumentSession.
-   Write the precise condition under which each tombstone and chunk becomes reclaimable.
-3. Prototype compaction against a small snapshot graph using the E005 checker.
-   Compare anchor resolution and historical text before and after every maintenance operation.
-4. Implement one session-owned maintenance entry point and its bounded scheduler integration.
-   Expose diagnostic counters, without adding a user setting unless host policy needs one.
-5. Repeat the original churn measurement, including multiple views and pinned readers.
-   Report memory reclaimed, peak rebuild memory, maintenance pauses, and unreclaimable owners.
+1. Capture current same-browser mounted heap and input measurements before changes.
+2. Implement sparse retained spans for closed append chunks; migrate all readers and indexes.
+   Verify anchors, branches, Unicode, line mapping, cancellation and retained snapshots.
+3. Extend the representation to original-only text with bounded copying. Verify legitimate
+   clean/history/external pins, then release those owners and measure reclamation.
+4. Migrate measurement caches and worker descriptors in the same buildable change. Prove idle
+   warmed views do not pin old whole strings and workers cannot reuse stale same-length data.
+5. Run mounted mixed/survivor and fixed-live-size paragraph churn workloads, retained undo,
+   prepared transactions and paired current-browser input measurements. Record peak memory,
+   maintenance pauses and actual post-GC release, not just logical retired-unit counts.
+6. Bound small undo-payload backing and measure input impact. Gate text reclamation on string
+   categories and retained code units; keep total heap observational. This follow-up is implemented.
+   Do not assume the remaining heap is position metadata.
+7. Keep E006 open for position metadata. Establish either a compact equivalent position
+   representation or an explicit lifetime contract before removing any tombstone or reverse entry.
 
 ## Verification
 
-Use `bun run test test/pieceTable-anchors.test.ts test/pieceTable-snapshot.test.ts
-test/documentSession.test.ts` from `packages/editor`, as one command.
-Add a focused maintenance test file that checks retained snapshot text and deleted-anchor bias.
-Test undo beyond a maintenance boundary, redo, a dropped redo branch, save-baseline equality,
-receipt reversal, document replacement, and disposal during an unfinished rebuild.
-Test a buffer reused by a different undo branch so identifiers alone cannot hide stale text.
+Run the textbuffer package tests through `bun run test`; the focused collector suite is
+`src/reclamation.test.ts`. Core maintenance and measurement tests run with
+`bun run --cwd packages/editor test --project node test/storageMaintenance.node.test.ts src/textMeasurements.test.ts`.
+Run Tree-sitter source and real-worker tests and the linked Platform WorkspaceEdit tests.
 
-Accept when repeated churn reaches a stable retained-memory range after releases,
-all protected snapshots remain readable, and E005 reports no invariant violation.
-Set the memory and pause budgets from E001's observed workload before choosing the algorithm.
-The measured result must improve retained bytes without regressing p95 typing latency.
+`bun run --cwd examples/stress bench:reclamation-live` measures two mounted views. Surviving-text
+and mixed workloads must release real heap, not merely finish successfully. Original text tests
+must warm measurement caches, preserve a pinned reader, then release all eligible owners.
+A fixed-live-size workload separates avoidable retention from legitimate document growth.
+
+Compare input before and after using the same browser and fixture configuration. Existing
+Chromium 148 controls cannot certify a Chromium 153 candidate. Record failures and baseline
+noise honestly; do not silently relax a performance gate to pass a candidate.
+
+The metadata milestone additionally needs piece/index growth bounds and deleted-anchor
+comparison against an unreclaimed control. E005 tree invariants alone cannot detect the known
+anchor regression from deleting invisible pieces.
 
 ## Risks and decisions
 
-This is an anchor-lifetime contract change before it is a garbage-collection algorithm.
-If the ownership inventory cannot prove safe removal, stop after the measured design report.
-Retaining a tiny deleted anchor may require a large original buffer under the present layout.
-Measure whether a compact deleted-position record is worth that additional representation.
-Coordinate E017 history branching with this retention contract before either changes history ownership.
+- A substring may keep its parent's allocation; detached copies require actual heap evidence.
+- Original chunks are unbounded; one original survivor cannot become one unbounded copy task.
+- Exact snapshot identity remains unchanged. Physical storage is replaceable; logical revision
+  and dirty state are not maintenance events.
+- External readers legitimately pin old logs. Missing from undo history does not mean unused.
+- Newline ordinals and position metadata remain for the next milestone; text release alone is
+  not a proof that total storage plateaus with edit count.

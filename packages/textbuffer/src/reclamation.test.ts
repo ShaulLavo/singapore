@@ -77,13 +77,14 @@ describe('reclaiming closed chunks without removing position records', () => {
     expectValid(compact)
   })
 
-  test('keeps a whole chunk if any of its pieces remains live', () => {
+  test('releases deleted portions of a partly live closed chunk', () => {
     const initial = createPieceTableSnapshot('ab')
     const inserted = insertIntoPieceTable(initial, 1, payload)
     const partial = deleteFromPieceTable(inserted, 1, payload.length - 1)
     const current = insertIntoPieceTable(partial, 0, '!')
-    expect(reclaimPieceTableText(current)).toBe(current)
-    expect(readPieceTableLine(current, 0)).toBe('!a')
+    const compact = reclaimPieceTableText(current)
+    expect(compact).not.toBe(current)
+    expect(readPieceTableLine(compact, 0)).toBe('!a')
     expectValid(current)
   })
 
@@ -228,7 +229,6 @@ describe('reclaiming closed chunks without removing position records', () => {
         offsets: new Uint32Array([text.length - 1]),
         count: 1,
         scannedLength: text.length,
-        text,
       })
     }
     let visited = 0
@@ -239,7 +239,7 @@ describe('reclaiming closed chunks without removing position records', () => {
         yield entry
       }
     })
-    const job = reclaimBufferGroup([buffers], new Set(), { chunks: 0, codeUnits: 0 })
+    const job = reclaimBufferGroup([buffers], new Map(), { chunks: 0, codeUnits: 0 })
     let largestBatch = 0
     let step: ReturnType<typeof job.next>
     do {

@@ -7,7 +7,13 @@ import type {
 } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
 import { reverseIndexEntries, reverseIndexSlot } from './reverseIndex'
-import { bufferStoreExtent, chunkOfBuffer, retiredBufferLength } from './buffers'
+import {
+  bufferLength,
+  bufferSpanAt,
+  bufferStoreExtent,
+  chunkOfBuffer,
+  retiredBufferLength,
+} from './buffers'
 import { ORIGINAL_BUFFER } from './node'
 
 export type PieceTreeIssueKind =
@@ -114,8 +120,7 @@ function checkPiece(
   const text = snapshot.buffers.chunks.get(piece.buffer)
   const retiredLength = retiredBufferLength(snapshot.buffers, piece.buffer)
   if (retiredLength !== undefined) return checkRetiredPiece(piece, retiredLength, id, report)
-  if (text === undefined)
-    report('buffer-bounds', id, 'piece.buffer', 'existing buffer', piece.buffer)
+  if (text === undefined) return checkSparsePiece(snapshot, piece, id, report)
   const validStart =
     Number.isSafeInteger(piece.start) && piece.start >= 0 && piece.start <= (text?.length ?? 0)
   const validLength =
@@ -140,7 +145,130 @@ function checkPiece(
   const chunk = chunkOfBuffer(snapshot.buffers, piece.buffer)
   const before = chunkBreaksBefore(chunkBreaks, chunk, text, piece.start)
   report('line-breaks', id, 'piece.firstLineBreak', before, piece.firstLineBreak)
+  const index = snapshot.buffers.lineIndexes.get(chunk)
+  if (index && index.scannedLength > piece.start) {
+    const end = Math.min(piece.start + piece.length, index.scannedLength)
+    const indexedBreaks = checkSpanBreaks(text, piece.start, end, 0, index, before, id, report)
+    checkIndexedRange(index, piece.start, end, indexedBreaks, id, report)
+  }
   return breaks
+}
+
+function checkSparsePiece(
+  snapshot: PieceTableSnapshot,
+  piece: Piece,
+  id: string,
+  report: Report,
+): number {
+  let length: number
+  try {
+    length = bufferLength(snapshot.buffers, piece.buffer)
+  } catch {
+    report('buffer-bounds', id, 'piece.buffer', 'existing buffer', piece.buffer)
+    return NaN
+  }
+  if (!piece.visible) return checkRetiredPiece(piece, length, id, report)
+  const validRange =
+    Number.isSafeInteger(piece.start) &&
+    Number.isSafeInteger(piece.length) &&
+    piece.start >= 0 &&
+    piece.length > 0 &&
+    piece.start + piece.length <= length
+  report('buffer-bounds', id, 'piece.range', true, validRange)
+  report('ordering', id, 'piece.order.finite', true, Number.isFinite(piece.order))
+  if (!validRange) return NaN
+  try {
+    return checkSparseBreaks(snapshot, piece, id, report)
+  } catch {
+    report('buffer-bounds', id, 'retained.visible', true, false)
+    return NaN
+  }
+}
+
+function checkSparseBreaks(
+  snapshot: PieceTableSnapshot,
+  piece: Piece,
+  id: string,
+  report: Report,
+): number {
+  const index = snapshot.buffers.lineIndexes.get(chunkOfBuffer(snapshot.buffers, piece.buffer))
+  let breaks = 0
+  let at = piece.start
+  const end = at + piece.length
+  while (at < end) {
+    const span = bufferSpanAt(snapshot.buffers, piece.buffer, at)
+    const stop = Math.min(end, span.end)
+    breaks += checkSpanBreaks(
+      span.text,
+      at - span.start,
+      stop - span.start,
+      span.start,
+      index,
+      piece.firstLineBreak + breaks,
+      id,
+      report,
+    )
+    at = stop
+  }
+  report('line-breaks', id, 'piece.lineBreaks', breaks, piece.lineBreaks)
+  if (index) {
+    checkIndexedRange(index, piece.start, end, breaks, id, report)
+    report(
+      'line-breaks',
+      id,
+      'piece.firstLineBreak',
+      lineIndexBefore(index, piece.start),
+      piece.firstLineBreak,
+    )
+  }
+  return breaks
+}
+
+function checkIndexedRange(
+  index: PieceBufferLineIndex,
+  start: number,
+  end: number,
+  breaks: number,
+  id: string,
+  report: Report,
+): void {
+  const count = lineIndexBefore(index, end) - lineIndexBefore(index, start)
+  report('line-index', id, 'count', breaks, count)
+}
+
+function lineIndexBefore(index: PieceBufferLineIndex, at: number): number {
+  let low = 0
+  let high = index.count
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (index.offsets[middle]! < at) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+function checkSpanBreaks(
+  text: string,
+  from: number,
+  to: number,
+  base: number,
+  index: PieceBufferLineIndex | undefined,
+  ordinal: number,
+  id: string,
+  report: Report,
+): number {
+  let count = 0
+  for (let at = text.indexOf('\n', from); at !== -1 && at < to; at = text.indexOf('\n', at + 1)) {
+    report(
+      'line-index',
+      id,
+      `offsets[${ordinal + count}]`,
+      base + at,
+      index && ordinal + count < index.count ? index.offsets[ordinal + count] : undefined,
+    )
+    count++
+  }
+  return count
 }
 
 function checkRetiredPiece(piece: Piece, length: number, id: string, report: Report): number {
@@ -220,24 +348,31 @@ function checkSplitBalance(
 }
 
 function checkLineIndex(index: PieceBufferLineIndex, id: string, report: Report): void {
-  report('line-index', id, 'scannedLength', index.text.length, index.scannedLength)
+  report(
+    'line-index',
+    id,
+    'scannedLength.valid',
+    true,
+    Number.isSafeInteger(index.scannedLength) && index.scannedLength >= 0,
+  )
   const countValid =
     Number.isSafeInteger(index.count) && index.count >= 0 && index.count <= index.offsets.length
-  if (!countValid)
+  if (!countValid) {
     report('line-index', id, 'count', `integer in [0, ${index.offsets.length}]`, index.count)
-  let count = 0
-  for (let at = 0; at < index.text.length; at++) {
-    if (index.text.charCodeAt(at) !== 10) continue
+    return
+  }
+  let previous = -1
+  for (let at = 0; at < index.count; at++) {
+    const offset = index.offsets[at]!
     report(
       'line-index',
       id,
-      `offsets[${count}]`,
-      at,
-      count < index.count ? index.offsets[count] : undefined,
+      `offsets[${at}].valid`,
+      true,
+      offset > previous && offset < index.scannedLength,
     )
-    count++
+    previous = offset
   }
-  report('line-index', id, 'count', count, index.count)
 }
 
 // The store is shared with newer snapshots; the extent is what this snapshot

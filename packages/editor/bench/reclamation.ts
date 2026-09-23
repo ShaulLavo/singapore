@@ -9,7 +9,7 @@ import {
   type PieceTableSnapshot,
 } from '@singapore-editor/textbuffer'
 import { validatePieceTreeInvariants } from '@singapore-editor/textbuffer/debug'
-import { chunkOfBuffer } from '@singapore-editor/textbuffer/internal/buffers'
+import { bufferStoreExtent } from '@singapore-editor/textbuffer/internal/buffers'
 import { createNode } from '@singapore-editor/textbuffer/internal/node'
 import type { Piece, PieceTreeNode } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
 import { buildReverseIndex } from '@singapore-editor/textbuffer/internal/reverseIndex'
@@ -18,10 +18,8 @@ import { flattenPieces } from '@singapore-editor/textbuffer/internal/tree'
 
 // This counts the snapshot's readable extent, not the backing log's heap retention.
 export function storageExtent(snapshot: PieceTableSnapshot) {
-  const chunks = new Map<number, number>()
-  for (const [buffer, text] of snapshot.buffers.chunks) {
-    chunks.set(chunkOfBuffer(snapshot.buffers, buffer), text.length)
-  }
+  const extent = bufferStoreExtent(snapshot.buffers)
+  if (!extent) throw new RangeError('expected piece buffer storage')
   let lineIndexCapacityBytes = 0
   for (const index of snapshot.buffers.lineIndexes.values()) {
     lineIndexCapacityBytes += index.offsets.byteLength
@@ -30,9 +28,9 @@ export function storageExtent(snapshot: PieceTableSnapshot) {
   return {
     liveCodeUnits: snapshot.length,
     ...validation.counts,
-    chunks: chunks.size,
+    chunks: extent.retainedChunkCount,
     bufferIds: snapshot.buffers.nextBufferSequence,
-    storedCodeUnits: [...chunks.values()].reduce((sum, length) => sum + length, 0),
+    storedCodeUnits: extent.retainedCodeUnits,
     lineIndexCapacityBytes,
     invariantIssues: validation.issues,
   }

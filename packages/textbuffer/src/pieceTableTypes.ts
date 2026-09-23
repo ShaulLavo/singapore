@@ -92,13 +92,10 @@ export type PieceBufferLineIndex = {
   offsets: Uint32Array
   count: number
   scannedLength: number
-  // The chunk string as scanned, `scannedLength` long. The inspector checks the
-  // offsets against it; the store itself trusts the log's append-only contract.
-  text: string
 }
 
-// `size` counts chunk slots, including retired coordinate extents. `get` and
-// iteration expose retained text only; retired buffers have no string to read.
+// `size` counts logical chunk slots. `get` and iteration expose dense chunks only;
+// sparse text is read through bufferSpanAt/forEachBufferSpan with logical offsets.
 export type PieceBufferChunks = {
   readonly size: number
   get(buffer: PieceBufferId): string | undefined

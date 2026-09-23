@@ -42,6 +42,8 @@ export type {
 } from './editor/workScheduler'
 export type { AnchorSelection, SelectionAffinity, SelectionSet } from './selections'
 export type { PieceTableAnchor } from '@singapore-editor/textbuffer'
+export { forEachBufferSpan } from '@singapore-editor/textbuffer/internal/buffers'
+export { reclaimPieceTableText } from '@singapore-editor/textbuffer/internal/reclamation'
 export type { VirtualizedTextViewState } from './virtualization'
 
 export { scheduleFrame, type ScheduledFrame } from './editor/scheduleFrame'
