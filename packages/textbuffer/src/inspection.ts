@@ -7,7 +7,7 @@ import type {
 } from './pieceTableTypes'
 import { createInspectionLabels, walkInspectionTree } from './inspectionWalk'
 import { reverseIndexEntries, reverseIndexSlot } from './reverseIndex'
-import { bufferStoreExtent, chunkOfBuffer } from './buffers'
+import { bufferStoreExtent, chunkOfBuffer, retiredBufferLength } from './buffers'
 import { ORIGINAL_BUFFER } from './node'
 
 export type PieceTreeIssueKind =
@@ -112,6 +112,8 @@ function checkPiece(
 ): number {
   const piece = node.piece
   const text = snapshot.buffers.chunks.get(piece.buffer)
+  const retiredLength = retiredBufferLength(snapshot.buffers, piece.buffer)
+  if (retiredLength !== undefined) return checkRetiredPiece(piece, retiredLength, id, report)
   if (text === undefined)
     report('buffer-bounds', id, 'piece.buffer', 'existing buffer', piece.buffer)
   const validStart =
@@ -139,6 +141,27 @@ function checkPiece(
   const before = chunkBreaksBefore(chunkBreaks, chunk, text, piece.start)
   report('line-breaks', id, 'piece.firstLineBreak', before, piece.firstLineBreak)
   return breaks
+}
+
+function checkRetiredPiece(piece: Piece, length: number, id: string, report: Report): number {
+  report('buffer-bounds', id, 'retired.visible', false, piece.visible)
+  const validRange =
+    Number.isSafeInteger(piece.start) &&
+    Number.isSafeInteger(piece.length) &&
+    piece.start >= 0 &&
+    piece.length > 0 &&
+    piece.start + piece.length <= length
+  report('buffer-bounds', id, 'retired.range', true, validRange)
+  report('ordering', id, 'piece.order.finite', true, Number.isFinite(piece.order))
+  const validBreaks =
+    Number.isSafeInteger(piece.lineBreaks) &&
+    piece.lineBreaks >= 0 &&
+    piece.lineBreaks <= piece.length &&
+    Number.isSafeInteger(piece.firstLineBreak) &&
+    piece.firstLineBreak >= 0
+  report('line-breaks', id, 'retired.lineBreaks', true, validBreaks)
+  // The retired text cannot be recounted; invisible pieces contribute zero breaks.
+  return piece.lineBreaks
 }
 
 function checkTotals(

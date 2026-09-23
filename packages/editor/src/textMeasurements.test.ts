@@ -1,4 +1,10 @@
 import { getDocumentTextSourceIndex } from './documentTextSourceCache'
+import { reclaimSnapshotStorage } from '@singapore-editor/textbuffer/internal/reclamation'
+import {
+  createPieceTableSnapshot,
+  insertIntoPieceTable,
+  deleteFromPieceTable,
+} from '@singapore-editor/textbuffer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bufferColumnToVisualColumn, visualColumnToBufferColumn } from './displayTransforms'
 import { createDocumentTextSnapshot, measureTextSnapshotRange } from './documentTextSnapshot'
@@ -94,6 +100,33 @@ describe('indexed text measurements', () => {
       measureTextSnapshotRange(restoredWrapper, 0, original.length + 3).columnAt(3, 4, 'utf16'),
     ).toBe(4)
     expect(indexedLengths.filter((length) => length >= original.length)).toEqual([original.length])
+  })
+
+  it('keeps original measurements through reclamation while old ranges remain readable', () => {
+    const original = createPieceTableSnapshot('original')
+    const inserted = insertIntoPieceTable(original, 0, 'x'.repeat(16384))
+    const deleted = deleteFromPieceTable(inserted, 0, 16384)
+    const current = insertIntoPieceTable(deleted, 0, '!')
+    const source = getDocumentTextSourceIndex(current.buffers, current.buffers.original, 'original')
+    const oldRange = measureTextSnapshotRange(
+      createDocumentTextSnapshot(inserted),
+      0,
+      inserted.length,
+    )
+    const job = reclaimSnapshotStorage([current])
+    while (!job.next().done) {
+      /* Finish maintenance before asking for the retained index. */
+    }
+    expect(getDocumentTextSourceIndex(current.buffers, current.buffers.original, 'original')).toBe(
+      source,
+    )
+    expect(oldRange.columnAt(inserted.length, 4, 'utf16')).toBe(inserted.length)
+    const newRange = measureTextSnapshotRange(
+      createDocumentTextSnapshot(current),
+      0,
+      current.length,
+    )
+    expect(newRange.columnAt(current.length, 4, 'utf16')).toBe(9)
   })
 
   it('indexes only the requested old-text slices when paste makes one row measurable', () => {

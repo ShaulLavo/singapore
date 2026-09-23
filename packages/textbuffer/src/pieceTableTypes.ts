@@ -97,8 +97,8 @@ export type PieceBufferLineIndex = {
   text: string
 }
 
-// Read view of a snapshot's chunk store: `size` counts chunk strings, `get`
-// resolves a buffer id to the chunk text it lives in.
+// `size` counts chunk slots, including retired coordinate extents. `get` and
+// iteration expose retained text only; retired buffers have no string to read.
 export type PieceBufferChunks = {
   readonly size: number
   get(buffer: PieceBufferId): string | undefined
@@ -163,6 +163,7 @@ export type PieceTableReverseIndex = {
 }
 
 export type PieceTableTreeSnapshot = {
+  // Storage maintenance may republish this with equal text; never key a cache on its identity.
   readonly buffers: PieceTableBuffers
   readonly root: PieceTreeNode | null
   readonly reverseIndex: PieceTableReverseIndex

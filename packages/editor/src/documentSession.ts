@@ -41,6 +41,7 @@ import {
 } from './historySerialization'
 import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
+import { TextStorageMaintenance, type TextStorageMaintenanceStats } from './textStorageMaintenance'
 import {
   applyBatchToPieceTable,
   createPieceTableSnapshot,
@@ -53,6 +54,7 @@ import {
   readPieceTableTextRange,
   snapBatchEditRanges,
 } from '@singapore-editor/textbuffer'
+import { bufferStorageIdentity } from '@singapore-editor/textbuffer/internal/buffers'
 
 import {
   DocumentEditChain,
@@ -187,6 +189,7 @@ export type EditorHistoryGraph = {
 }
 
 export type EditorTextBuffer = {
+  getStorageMaintenanceStats(): Readonly<TextStorageMaintenanceStats>
   applyText(
     selections: SelectionSet<PieceTableAnchor>,
     text: string,
@@ -583,6 +586,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private readonly tooLargeForHeapOperation: boolean
   private readonly retainedHistoryStates: number | undefined
   private readonly now: () => number
+  private subscribers = 0
+  private readonly storageMaintenance = new TextStorageMaintenance(() => this.storageSnapshots())
 
   public constructor(rawText: string, options: EditorTextBufferOptions = {}) {
     this.retainedHistoryStates = options.retainedHistoryStates
@@ -958,6 +963,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     }
     this.history = this.createHistory(this.history.current, this.history.selections)
     this.typingRun = null
+    this.storageMaintenance.request(0, true)
     // No text moved, so no revision either; a checkout change with no edits tells every
     // view that undo and redo just went away.
     const change = appendTiming(this.createChange('checkout', []), 'session.clearHistory', start)
@@ -1020,6 +1026,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     this.cleanSnapshot = this.history.current
     this.dirtyCacheSnapshot = this.history.current
     this.dirtyCacheValue = false
+    this.storageMaintenance.request(0, true)
   }
 
   public breakTypingRun(): void {
@@ -1028,7 +1035,33 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public subscribe(listener: EditorTextBufferChangeListener): () => void {
     const subscription = this.changes.subscribe(listener)
-    return () => subscription.dispose()
+    this.subscribers++
+    this.storageMaintenance.resume()
+    let active = true
+    return () => {
+      if (!active) return
+      active = false
+      subscription.dispose()
+      if (--this.subscribers === 0) this.storageMaintenance.suspend()
+    }
+  }
+
+  public getStorageMaintenanceStats(): Readonly<TextStorageMaintenanceStats> {
+    return this.storageMaintenance.getStats()
+  }
+
+  private *storageSnapshots(): Generator<PieceTableSnapshot> {
+    yield this.cleanSnapshot
+    yield this.dirtyCacheSnapshot
+    yield this.textSnapshot.snapshot
+    yield* historyStorageSnapshots(this.history)
+    for (let barrier = this.currentBarrier; barrier; barrier = barrier.older) {
+      yield* historyStorageSnapshots(barrier.historyBefore)
+      for (const segment of barrier.segments) {
+        yield segment.snapshotBefore
+        yield segment.snapshotAfter
+      }
+    }
   }
 
   public acquireMutationLease(
@@ -1100,6 +1133,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     )
     const revisionBefore = this.revision
     const historyBefore = this.history
+    // Maintenance may have moved history to a reclaimed log while this was prepared on the old one.
+    const storageBefore = bufferStorageIdentity(prepared.snapshotBefore.buffers)
+    if (bufferStorageIdentity(prepared.snapshotAfter.buffers) !== storageBefore) {
+      this.storageMaintenance.request(0, true)
+    }
     const barrier = this.commitPreparedHistory(
       transaction,
       options.history,
@@ -1274,6 +1312,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history = this.createHistory(last.snapshotAfter, last.selectionAfter)
     }
     state.completed = true
+    this.storageMaintenance.request(0, true)
     const receipt = createReceipt(barrier)
     return { status: 'completed', receipt }
   }
@@ -1284,6 +1323,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const alreadySealed = barrier.phase === 'sealed'
     barrier.phase = 'sealed'
     barrier.historyBefore = clearEditorHistoryRedo(barrier.historyBefore)
+    this.storageMaintenance.request(0, true)
     const sealedReceipt = createReceipt(barrier)
     return {
       receipt: sealedReceipt,
@@ -1300,6 +1340,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     barrier.released = true
     barrier.installed = false
     this.unlinkBarrier(barrier)
+    this.storageMaintenance.request(0, true)
     return { status: 'released' }
   }
 
@@ -1677,6 +1718,9 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): void {
     if (change.kind === 'none') return
 
+    const deletedUnits = change.edits.reduce((sum, edit) => sum + edit.to - edit.from, 0)
+    this.storageMaintenance.request(deletedUnits)
+
     this.pendingChanges.push({ change, origin, sourceViewId: sourceViewId ?? null })
     if (this.publishingChanges) return
 
@@ -1687,6 +1731,15 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.pendingChanges.length = 0
       this.publishingChanges = false
     }
+  }
+}
+
+function* historyStorageSnapshots(history: DocumentHistory): Generator<PieceTableSnapshot> {
+  for (const node of history.nodes.values()) {
+    yield node.snapshot
+    if (!node.transaction) continue
+    yield node.transaction.snapshotBefore
+    yield node.transaction.snapshotAfter
   }
 }
 

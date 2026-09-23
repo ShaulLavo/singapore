@@ -1,12 +1,32 @@
 # E006: Reclaim deleted text without breaking retained document states
 
-- Status: Proposed
+- Status: In progress
 - Kind: Implementation
 - Owner: Editor
 - Priority: P1
 - Effort: L
 - Dependencies: [E001](../examples/stress/README.md), [E005](../docs/storage/piece-tree-inspection.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, 2026-09-05.
+
+## Execution update, 2026-09-23
+
+[Automatic text reclamation](../docs/storage/e006-text-reclamation.md) is now installed in
+editor buffers. Incremental background work retires wholly dead append chunks across current
+and retained history snapshots. Publication preserves snapshot identity, prepared transactions,
+leases, receipts, dirty state and logical revision. Last-view detach cancels maintenance.
+Text-measurement caches now follow chunk ownership so they release reclaimed strings too.
+
+Node tests cover live publication and every retained undo/redo state. A mounted two-view
+Chromium harness measures actual heap release with default history and checks trusted typing,
+peer rendering and disposal. It frees 69–82% when each insert fills a chunk and dies whole, and
+nothing when survivors share chunks, which is how typing behaves. The tree-sitter worker now
+keeps only the source chunks of its latest request. Platform WorkspaceEdit service/event tests
+pass against the link. Partial/original chunks are the next step, and position metadata remains
+open, so E006 stays in progress. The
+current-code section below predates the append-only log, AVL tree and branching history;
+use the implementation reference above for current behavior. The
+[earlier investigation](../docs/storage/e006-reclamation-investigation.md) retains the ownership
+inventory and unsafe-compactor counterexamples.
 
 ## Outcome
 

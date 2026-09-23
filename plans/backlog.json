@@ -68,7 +68,7 @@
       "id": "E006",
       "file": "e006-tombstone-reclamation.md",
       "title": "Reclaim deleted text without breaking retained document states",
-      "status": "Proposed",
+      "status": "In progress",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

@@ -16,15 +16,17 @@ const CARRIAGE_RETURN = 0x0d
 const HIGH_SURROGATE_FIRST = 0xd800
 const HIGH_SURROGATE_LAST = 0xdbff
 
-// One log per lineage. Only the snapshot whose extent matches the log exactly
+// Each append branch owns a log. Only a snapshot whose extent matches it exactly
 // may append to it in place; every other snapshot reads through its own extent
 // and forks the log before it writes. Chunk 0 is the original text and is
 // never extended; inserted text fills the newest chunk before opening another.
 type PieceBufferLog = {
-  readonly chunks: string[]
+  // A retired chunk keeps its coordinate extent, but owns no text.
+  readonly chunks: (string | { readonly length: number })[]
   // Buffer id → chunk sequence. Several buffers share a chunk once inserts fill it.
   readonly chunkOfBuffer: number[]
   readonly lineIndexes: Map<number, PieceBufferLineIndex>
+  readonly textOwners: Map<number, object>
   // The tail chunk's last code unit. The tail is a fresh concatenation after
   // every keystroke and charCodeAt would flatten it; the insert probe reads
   // this unit on every keystroke, so it is remembered from the appended text.
@@ -56,6 +58,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
       chunks: [original],
       chunkOfBuffer: [0],
       lineIndexes: new Map(),
+      textOwners: new Map(),
       tailLastUnit: original.charCodeAt(original.length - 1),
     }
     return new PieceBufferChunkView(log, 1, original.length, 1, 0)
@@ -65,12 +68,98 @@ class PieceBufferChunkView implements PieceBufferChunks {
     return this.log.lineIndexes
   }
 
+  public get storageIdentity(): object {
+    return this.log
+  }
+
+  public textOwner(buffer: PieceBufferId): object {
+    const chunk = this.chunkOf(buffer)!
+    let owner = this.log.textOwners.get(chunk)
+    if (!owner) {
+      owner = {}
+      this.log.textOwners.set(chunk, owner)
+    }
+    return owner
+  }
+
+  public *reclaimGroup(
+    sources: readonly PieceBufferChunkView[],
+    liveChunks: ReadonlySet<number>,
+    result: { chunks: number; codeUnits: number },
+  ): Generator<void, Map<PieceBufferChunkView, PieceBufferChunkView>> {
+    const tails = new Set<number>()
+    for (const source of sources) {
+      tails.add(source.size - 1)
+      yield
+    }
+    const chunks: PieceBufferLog['chunks'] = []
+    const reclaimed = new Set<number>()
+    for (let chunk = 0; chunk < this.size; chunk++) {
+      const entry = this.log.chunks[chunk]!
+      const drop =
+        chunk > 0 && !tails.has(chunk) && !liveChunks.has(chunk) && typeof entry === 'string'
+      chunks.push(drop ? { length: entry.length } : entry)
+      if (drop) reclaimed.add(chunk)
+      if (chunk % 256 === 255) yield
+    }
+    if (reclaimed.size === 0) return new Map()
+    chunks[this.size - 1] = this.chunkText(this.size - 1)
+    const chunkOfBuffer: number[] = []
+    for (let buffer = 0; buffer < this.bufferCount; buffer++) {
+      chunkOfBuffer.push(this.log.chunkOfBuffer[buffer]!)
+      if (buffer % 256 === 255) yield
+    }
+    const lineIndexes = new Map<number, PieceBufferLineIndex>()
+    let visitedIndexes = 0
+    for (const [chunk, index] of this.log.lineIndexes) {
+      if (++visitedIndexes % 256 === 0) yield
+      if (chunk >= this.size || reclaimed.has(chunk)) continue
+      lineIndexes.set(
+        chunk,
+        shareOrCopyLineIndex(index, this.chunkText(chunk), chunk > 0 && chunk === this.size - 1),
+      )
+    }
+    const textOwners = new Map<number, object>()
+    for (const [chunk, owner] of this.log.textOwners) {
+      if (chunk < this.size && !reclaimed.has(chunk)) textOwners.set(chunk, owner)
+      yield
+    }
+    const log: PieceBufferLog = {
+      chunks,
+      chunkOfBuffer,
+      lineIndexes,
+      textOwners,
+      tailLastUnit: this.chunkText(this.size - 1).charCodeAt(this.tailLength - 1),
+    }
+    const views = new Map<PieceBufferChunkView, PieceBufferChunkView>()
+    for (const source of sources) {
+      views.set(
+        source,
+        new PieceBufferChunkView(
+          log,
+          source.size,
+          source.tailLength,
+          source.bufferCount,
+          source.tailLineBreaks,
+        ),
+      )
+      yield
+    }
+    for (const chunk of reclaimed) {
+      result.chunks++
+      result.codeUnits += this.log.chunks[chunk]!.length
+      yield
+    }
+    return views
+  }
+
   public chunkOf(buffer: PieceBufferId): number | undefined {
     return buffer < this.bufferCount ? this.log.chunkOfBuffer[buffer] : undefined
   }
 
   public chunkText(chunk: number): string {
     const text = this.log.chunks[chunk]!
+    if (typeof text !== 'string') throw new RangeError('piece buffer text reclaimed')
     if (chunk !== this.size - 1 || text.length === this.tailLength) return text
     // A newer snapshot grew the tail after this one; the extent is the truth.
     return text.slice(0, this.tailLength)
@@ -78,7 +167,15 @@ class PieceBufferChunkView implements PieceBufferChunks {
 
   public get(buffer: PieceBufferId): string | undefined {
     const chunk = this.chunkOf(buffer)
-    return chunk === undefined ? undefined : this.chunkText(chunk)
+    if (chunk === undefined || typeof this.log.chunks[chunk] !== 'string') return undefined
+    return this.chunkText(chunk)
+  }
+
+  public retiredLength(buffer: PieceBufferId): number | undefined {
+    const chunk = this.chunkOf(buffer)
+    if (chunk === undefined) return undefined
+    const entry = this.log.chunks[chunk]
+    return typeof entry === 'object' ? entry.length : undefined
   }
 
   // A code unit of a buffer's chunk without flattening the tail: the unit
@@ -87,6 +184,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
     const chunk = this.chunkOf(buffer)
     if (chunk === undefined) return -1
     const text = this.log.chunks[chunk]!
+    if (typeof text !== 'string') throw new RangeError('piece buffer text reclaimed')
     // An older view's tail is not the log's once a newer view opened a chunk.
     if (
       chunk === this.log.chunks.length - 1 &&
@@ -101,7 +199,8 @@ class PieceBufferChunkView implements PieceBufferChunks {
   public *entries(): IterableIterator<[PieceBufferId, string]> {
     for (let sequence = 0; sequence < this.bufferCount; sequence += 1) {
       const buffer = createBufferId(sequence)
-      yield [buffer, this.get(buffer)!]
+      const text = this.get(buffer)
+      if (text !== undefined) yield [buffer, text]
     }
   }
 
@@ -116,7 +215,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   public extent(): PieceBufferStoreExtent {
     let overflowingChunk: number | null = null
     for (let chunk = 1; chunk < this.size; chunk += 1) {
-      if (this.chunkText(chunk).length <= BUFFER_CHUNK_SIZE) continue
+      if (this.log.chunks[chunk]!.length <= BUFFER_CHUNK_SIZE) continue
       overflowingChunk = chunk
       break
     }
@@ -145,13 +244,21 @@ class PieceBufferChunkView implements PieceBufferChunks {
     const lineIndexes = new Map<number, PieceBufferLineIndex>()
     for (const [chunk, index] of this.log.lineIndexes) {
       if (chunk >= this.size) continue
-      lineIndexes.set(chunk, shareOrCopyLineIndex(index, chunks[chunk]!))
+      lineIndexes.set(
+        chunk,
+        shareOrCopyLineIndex(index, this.chunkText(chunk), chunk > 0 && chunk === this.size - 1),
+      )
+    }
+    const textOwners = new Map<number, object>()
+    for (const [chunk, owner] of this.log.textOwners) {
+      if (chunk < this.size) textOwners.set(chunk, owner)
     }
     const log = {
       chunks,
       chunkOfBuffer: this.log.chunkOfBuffer.slice(0, this.bufferCount),
       lineIndexes,
-      tailLastUnit: chunks[this.size - 1]!.charCodeAt(this.tailLength - 1),
+      textOwners,
+      tailLastUnit: this.chunkText(this.size - 1).charCodeAt(this.tailLength - 1),
     }
     return new PieceBufferChunkView(
       log,
@@ -163,7 +270,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   }
 
   public extendTail(text: string, lineBreaks: number): PieceBufferChunkView {
-    this.log.chunks[this.size - 1] += text
+    this.log.chunks[this.size - 1] = this.chunkText(this.size - 1) + text
     this.log.tailLastUnit = text.charCodeAt(text.length - 1)
     return new PieceBufferChunkView(
       this.log,
@@ -175,7 +282,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   }
 
   public fill(text: string, lineBreaks: number): PieceBufferChunkView {
-    this.log.chunks[this.size - 1] += text
+    this.log.chunks[this.size - 1] = this.chunkText(this.size - 1) + text
     this.log.chunkOfBuffer.push(this.size - 1)
     this.log.tailLastUnit = text.charCodeAt(text.length - 1)
     return new PieceBufferChunkView(
@@ -201,11 +308,13 @@ class PieceBufferChunkView implements PieceBufferChunks {
   }
 }
 
-// An index is shared across a fork only when nothing can grow it again: the
-// chunk string is final in both logs and the index has scanned all of it.
-// Anything else is copied, trimmed to what the forking view can see.
-const shareOrCopyLineIndex = (index: PieceBufferLineIndex, text: string): PieceBufferLineIndex => {
-  if (index.text === text && index.scannedLength === text.length) return index
+// Fully scanned tails still grow independently after a fork, so they must own their index.
+const shareOrCopyLineIndex = (
+  index: PieceBufferLineIndex,
+  text: string,
+  canGrow: boolean,
+): PieceBufferLineIndex => {
+  if (!canGrow && index.text === text && index.scannedLength === text.length) return index
 
   const count = firstLineBreakAtOrAfter(index, text.length)
   return {
@@ -276,6 +385,46 @@ export const chunkOfBuffer = (buffers: PieceTableBuffers, buffer: PieceBufferId)
   const chunk = storeOf(buffers.chunks).chunkOf(buffer)
   if (chunk !== undefined) return chunk
   throw new Error('piece buffer not found')
+}
+
+export const retiredBufferLength = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+): number | undefined =>
+  buffers.chunks instanceof PieceBufferChunkView ? buffers.chunks.retiredLength(buffer) : undefined
+
+// Derived text caches follow chunk ownership, not the longer-lived anchor lineage.
+export const bufferTextOwner = (buffers: PieceTableBuffers, buffer: PieceBufferId): object =>
+  storeOf(buffers.chunks).textOwner(buffer)
+
+export const bufferStorageIdentity = (buffers: PieceTableBuffers): object =>
+  storeOf(buffers.chunks).storageIdentity
+
+export function* reclaimBufferGroup(
+  sources: readonly PieceTableBuffers[],
+  liveChunks: ReadonlySet<number>,
+  result: { chunks: number; codeUnits: number },
+): Generator<void, Map<PieceTableBuffers, PieceTableBuffers>> {
+  const stores: PieceBufferChunkView[] = []
+  let newest = storeOf(sources[0]!.chunks)
+  for (const source of sources) {
+    const store = storeOf(source.chunks)
+    stores.push(store)
+    if (
+      store.size > newest.size ||
+      (store.size === newest.size && store.tailLength > newest.tailLength)
+    )
+      newest = store
+    yield
+  }
+  const views = yield* newest.reclaimGroup(stores, liveChunks, result)
+  const buffers = new Map<PieceTableBuffers, PieceTableBuffers>()
+  for (const source of sources) {
+    const view = views.get(storeOf(source.chunks))
+    if (view) buffers.set(source, withStore(source, view, source.nextBufferSequence, ''))
+    yield
+  }
+  return buffers
 }
 
 export const isNewestBuffer = (buffers: PieceTableBuffers, buffer: PieceBufferId): boolean =>

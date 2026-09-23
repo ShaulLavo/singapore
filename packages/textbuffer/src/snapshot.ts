@@ -11,19 +11,40 @@ import { createNode, getSubtreePieces, getSubtreeVisibleLength } from './node'
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_DOCUMENT_LINE_ENDING, normalizeDocumentText } from './lineEndings'
 
+class StoredSnapshot implements PieceTableTreeSnapshot {
+  readonly length: number
+  readonly pieceCount: number
+  readonly epoch: number
+  consumed = false
+
+  constructor(
+    public buffers: PieceTableBuffers,
+    public readonly root: PieceTreeNode | null,
+    public readonly reverseIndex: PieceTableReverseIndex,
+  ) {
+    this.length = getSubtreeVisibleLength(root)
+    this.pieceCount = getSubtreePieces(root)
+    this.epoch = buffers.lineage.epoch
+  }
+}
+
 export const createSnapshot = (
   buffers: PieceTableBuffers,
   root: PieceTreeNode | null,
   reverseIndex: PieceTableReverseIndex,
-): PieceTableTreeSnapshot => ({
-  buffers,
-  root,
-  reverseIndex,
-  length: getSubtreeVisibleLength(root),
-  pieceCount: getSubtreePieces(root),
-  epoch: buffers.lineage.epoch,
-  consumed: false,
-})
+): PieceTableTreeSnapshot => new StoredSnapshot(buffers, root, reverseIndex)
+
+// Only physical storage changes. Text, coordinates and snapshot identity stay fixed.
+export function publishSnapshotStorage(
+  snapshot: PieceTableTreeSnapshot,
+  expected: PieceTableBuffers,
+  next: PieceTableBuffers,
+): boolean {
+  if (!(snapshot instanceof StoredSnapshot) || snapshot.consumed || snapshot.buffers !== expected)
+    return false
+  snapshot.buffers = next
+  return true
+}
 
 // Orders ran out of room somewhere, so every piece is relabelled.
 export const createNormalizedSnapshot = (

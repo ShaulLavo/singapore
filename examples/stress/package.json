@@ -6,6 +6,7 @@
     "build": "vite build",
     "bench": "node run.mjs",
     "bench:hidden": "node hidden.mjs",
+    "bench:reclamation": "node reclamation.mjs",
     "bench:first-paint": "node first-paint.mjs",
     "fixtures": "node fixtures.mjs",
     "first-paint:proof": "node test/verify-first-paint.mjs results/first-paint",
@@ -20,7 +21,8 @@
     "format:check": "oxfmt --check .",
     "bench:input": "node run.mjs --suite input-latency",
     "input:compare": "node input-compare.mjs",
-    "input:proof": "node test/verify-input-results.mjs results/input-latency"
+    "input:proof": "node test/verify-input-results.mjs results/input-latency",
+    "bench:reclamation-live": "node reclamation-live.mjs"
   },
   "dependencies": {
     "@singapore-editor/core": "workspace:*",

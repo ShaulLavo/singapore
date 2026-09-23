@@ -1,25 +1,22 @@
 import type { PieceBufferId } from '@singapore-editor/textbuffer'
 import type { PieceTableBuffers } from '@singapore-editor/textbuffer/internal/pieceTableTypes'
+import { bufferTextOwner } from '@singapore-editor/textbuffer/internal/buffers'
 import { TextSourceIndex } from './textMeasurements'
 
-// One cache per document lineage, not per version. Editing and undo keep reuse intact.
-const sourceIndexes = new WeakMap<object, Map<PieceBufferId, TextSourceIndex>>()
+// Retained chunks share measurements; reclaiming a chunk releases its cached text too.
+const sourceIndexes = new WeakMap<object, TextSourceIndex>()
 
 export function getDocumentTextSourceIndex(
   buffers: PieceTableBuffers,
   buffer: PieceBufferId,
   text: string,
 ): TextSourceIndex {
-  let indexes = sourceIndexes.get(buffers.identity)
-  if (!indexes) {
-    indexes = new Map()
-    sourceIndexes.set(buffers.identity, indexes)
-  }
-  let source = indexes.get(buffer)
-  // Undo branches may reuse a buffer ID for different text. Retained ranges keep the old index.
+  const owner = bufferTextOwner(buffers, buffer)
+  let source = sourceIndexes.get(owner)
+  // Tail extents and divergent branches can expose different text through the same owner.
   if (source?.text !== text) {
     source = new TextSourceIndex(text)
-    indexes.set(buffer, source)
+    sourceIndexes.set(owner, source)
   }
   return source
 }

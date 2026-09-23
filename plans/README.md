@@ -68,6 +68,12 @@ walking a lazy `Proxy` array were 90%. Its execution plan has been removed.
 [E048](../docs/display/e048-minimap-document-space.md) is complete on 2026-09-21. Minimap rendering and navigation share document-line coordinates, with unit and Chromium verification recorded in the reference. Its execution plan has been removed.
 The order below is a recommendation.
 
+E006 is in progress. [Automatic text reclamation](../docs/storage/e006-text-reclamation.md)
+now runs in live buffers, preserves transaction identity and retained history, and releases
+measurement-cache text along with dead chunks. It frees only whole dead chunks, so ordinary
+typing frees nothing yet; partial/original chunks are next, and position-metadata reclamation
+remains open.
+
 The existing [Platform Plan 071 — syntax highlight retry](../../platform/plans/071-syntax-highlight-retry.md)
 is an additional Editor-only proposal. It remains in its existing file; E003 coordinates with it.
 
