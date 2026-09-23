@@ -477,7 +477,7 @@ export class CompletionController {
 
   private completionEditFeature(): LanguageServerCompletionEditFeature | null {
     const token = this.options.completionEditFeature ?? LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE
-    return this.context.getFeature?.(token) ?? null
+    return this.context.getFeature(token)
   }
 
   private cancelCompletionRequest(): void {

@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { createPieceTableSnapshot } from '@singapore-editor/core/document'
 import {
   createAnchorSelection,
+  createPieceTableSnapshot,
   createSelectionSet,
   resolveSelection,
-} from '@singapore-editor/core/internal'
-import type {
-  EditorDisposable,
-  EditorPlugin,
-  EditorPluginContext,
-} from '@singapore-editor/core/extensions'
+} from '@singapore-editor/core/document'
+import type { EditorPlugin, EditorPluginContext } from '@singapore-editor/core/extensions'
+import { createTestPluginContext } from '@singapore-editor/core/testing'
 import type { FoldRange } from '@singapore-editor/core/syntax'
 import { createTreeSitterLanguagePlugin } from '../src/index'
 import {
@@ -294,20 +291,10 @@ function recordingPluginContext(): {
   selectionRangeProviders: SelectionRangeProvider[]
 } {
   const selectionRangeProviders: SelectionRangeProvider[] = []
-  const ignored = (): EditorDisposable => ({ dispose: () => {} })
 
   return {
     selectionRangeProviders,
-    context: {
-      registerHighlighter: ignored,
-      registerSyntaxProvider: ignored,
-      registerViewContribution: ignored,
-      registerCommandContribution: ignored,
-      registerCapabilityContribution: ignored,
-      registerEditContribution: ignored,
-      registerDecorationContribution: ignored,
-      registerGutterContribution: ignored,
-      registerInjectedTextRowProvider: ignored,
+    context: createTestPluginContext({
       registerSelectionRangeProvider: (provider) => {
         selectionRangeProviders.push(provider)
         return {
@@ -316,7 +303,7 @@ function recordingPluginContext(): {
           },
         }
       },
-    },
+    }),
   }
 }
 

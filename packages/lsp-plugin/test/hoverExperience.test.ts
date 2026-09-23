@@ -5,6 +5,7 @@ import type {
 } from '@singapore-editor/core/extensions'
 import type { LspClient } from '@singapore-editor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createTestViewContributionContext } from '@singapore-editor/core/testing'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
@@ -396,13 +397,13 @@ function hoverController(
     getDiagnostics: () => [],
     onRequestError: vi.fn(),
   })
-  const context = {
+  const context = createTestViewContributionContext({
     container: element,
     scrollElement: element,
     contentElement: element,
     hasDocument: () => true,
     getSnapshot: () => snapshot,
-    getProviders: () => [participant],
+    getProviders: (() => [participant]) as EditorViewContributionContext['getProviders'],
     focusEditor: vi.fn(),
     rowAtPoint: () => null,
     markerAtPoint: () => null,
@@ -411,7 +412,7 @@ function hoverController(
     setSelection: vi.fn(),
     setRangeHighlight: vi.fn(),
     clearRangeHighlight: vi.fn(),
-  } as unknown as EditorViewContributionContext
+  })
   const hover = createHoverController({ context, classNamespace: 'test' })
   const definitionLink = new DefinitionLinkController({
     context,

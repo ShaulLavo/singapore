@@ -142,7 +142,7 @@ export class FormatOnTypeController {
     // reader never touched; the version is the one reading that counts every edit either way.
     if (snapshot.textVersion !== pending.textVersion) return
 
-    const feature = this.options.context.getFeature?.(this.options.editFeature)
+    const feature = this.options.context.getFeature(this.options.editFeature)
     if (!feature) return
 
     const head =

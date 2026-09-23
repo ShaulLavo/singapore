@@ -54,7 +54,7 @@ import {
 import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
 import { parseWorkspaceEdit } from './workspaceEdit'
 import { currentWorkspaceEditOrigin } from './workspaceEditProvenance'
-import { wordRangeAtOffset } from '@singapore-editor/core/internal'
+import { wordRangeAtOffset } from '@singapore-editor/core/document'
 import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
 import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
 import { resolveLanguageServerLaneOptions, type LanguageServerResolvedLaneOptions } from './lane'
@@ -98,7 +98,6 @@ export type { LanguageServerConnectionContext } from './types'
 export type { LanguageServerResolvedOptions } from './pluginTypes'
 
 const DEFAULT_PLUGIN_NAME = 'editor.lsp-plugin'
-const DEFAULT_HIGHLIGHT_PREFIX = 'editor-lsp-plugin'
 const DEFAULT_NAMESPACE = 'lsp-plugin'
 const DEFAULT_TIMING_PREFIX = 'lspPlugin'
 const DEFAULT_DIAGNOSTICS_SOURCE_ID = 'editor.lsp-plugin.diagnostics'
@@ -137,7 +136,6 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
   createTransport(): ReturnType<LspConnectionTransportFactory>
   /** Borrows the connection instead of constructing one per view. See LspConnectionProvider. */
   readonly connectionProvider?: LspConnectionProvider
-  readonly defaultHighlightPrefix?: string
   readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly diagnostics?: {
     readonly minimapSourceId?: string
@@ -195,7 +193,6 @@ type LanguageServerResolvedAdapterOptions = {
   readonly document?: LanguageServerDocument
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
   readonly lanes: readonly LanguageServerResolvedLaneOptions[]
-  readonly defaultHighlightPrefix: string
   readonly documentSync: LanguageServerDocumentSyncOptions
   readonly diagnostics: {
     readonly minimapSourceId: string
@@ -444,8 +441,7 @@ class LanguageServerContribution implements EditorViewContribution {
     private readonly state: LanguageServerPluginState,
     private readonly options: LanguageServerResolvedAdapterOptions,
   ) {
-    const prefix = context.highlightPrefix ?? options.defaultHighlightPrefix
-    const presenter = new DiagnosticsPresenter(context, prefix, {
+    const presenter = new DiagnosticsPresenter(context, context.highlightPrefix, {
       ...options.diagnostics,
       onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
       onError: options.onError,
@@ -496,7 +492,6 @@ class LanguageServerContribution implements EditorViewContribution {
     this.definitionLink = new DefinitionLinkController({
       context,
       router: this.servers,
-      defaultHighlightPrefix: options.defaultHighlightPrefix,
       linkHighlightNameNamespace: options.hoverDefinition.linkHighlightNameNamespace,
       navigationTimingNamePrefix: options.hoverDefinition.navigationTimingNamePrefix,
       getActiveDocument: () => this.activeDocument(),
@@ -507,7 +502,7 @@ class LanguageServerContribution implements EditorViewContribution {
     })
     // Every document: which server answers is the router's call, not the selector's.
     this.hoverParticipantRegistration =
-      context.registerProvider?.(
+      context.registerProvider(
         EDITOR_HOVER_PARTICIPANT,
         { language: '*' },
         createLanguageServerHoverParticipant({
@@ -523,7 +518,7 @@ class LanguageServerContribution implements EditorViewContribution {
           onRequestError: (error) => this.handleRequestError(error),
         }),
       ) ?? null
-    this.typedTextRegistration = context.onDidType?.((text) => this.handleTypedText(text)) ?? null
+    this.typedTextRegistration = context.onDidType((text) => this.handleTypedText(text))
     this.signatureHelpOptions = {
       router: this.servers,
       context,
@@ -536,7 +531,7 @@ class LanguageServerContribution implements EditorViewContribution {
       router: this.servers,
       context,
       getActiveDocument: () => this.activeDocument(),
-      highlightName: `${context.highlightPrefix ?? options.defaultHighlightPrefix}-document-highlight`,
+      highlightName: `${context.highlightPrefix}-document-highlight`,
       onRequestError: (error) => this.handleRequestError(error),
     })
     this.codeActions = new CodeActionController({
@@ -1009,7 +1004,7 @@ class LanguageServerContribution implements EditorViewContribution {
    * mapped through a rewrite of the whole file.
    */
   private applyFormattingEdits(edits: readonly TextEdit[]): void {
-    const feature = this.context.getFeature?.(this.options.completion.editFeature)
+    const feature = this.context.getFeature(this.options.completion.editFeature)
     if (!feature) return
 
     const head = this.context.getSnapshot().selections[0]?.headOffset ?? 0
@@ -1037,7 +1032,6 @@ function resolveAdapterOptions(
   return {
     name: options.name,
     lanes: [resolvedLaneFromAdapterOptions(options)],
-    defaultHighlightPrefix: options.defaultHighlightPrefix ?? DEFAULT_HIGHLIGHT_PREFIX,
     documentSync: options.documentSync ?? {},
     diagnostics: resolveDiagnosticsOptions(options),
     completion: resolveCompletionOptions(options),
@@ -1074,7 +1068,6 @@ function resolveLanguageServerSetOptions(
               ((method, error) => options.onRequestError?.(lane.id, method, error)),
           }),
         ),
-    defaultHighlightPrefix: DEFAULT_HIGHLIGHT_PREFIX,
     documentSync: options.document?.syncOptions ?? options.documentSync ?? {},
     diagnostics: resolveDiagnosticsOptions(),
     completion: resolveCompletionOptions(),

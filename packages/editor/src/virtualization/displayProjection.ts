@@ -229,8 +229,9 @@ export class DisplayProjection {
     return this.rowForBufferRow(Math.max(0, location.sourceStart - 1))
   }
 
-  bufferRowForRow(index: number): number {
-    return this.getRowMetrics(clamp(index, this.rowCount - 1))?.bufferRow ?? 0
+  /** Null for a row the projection does not have; a caller that wants a nearest row clamps first. */
+  bufferRowForRow(index: number): number | null {
+    return this.getRowMetrics(index)?.bufferRow ?? null
   }
 
   rowForOffset(offset: number, bias: TransformBias = 'nearest'): number {

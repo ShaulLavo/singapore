@@ -16,6 +16,7 @@ import {
 } from '../src/semanticTokenLayer'
 import { createSemanticTokenStyles, EditorTokenStore, type SemanticTokenSpan } from '../src/syntax'
 import type { VirtualizedTextHighlightStyle } from '../src/virtualization'
+import { createTestViewContributionContext } from '../src/testContexts'
 
 const LINE_COUNT = 12
 // Long enough that a test can lay out a hundred distinct spans without them clamping into each
@@ -45,31 +46,20 @@ function harness(options: Partial<SemanticTokenLayerOptions> = {}): Harness {
   const resyncs: string[] = []
   let snapshot = baseSnapshot()
 
-  const context: EditorViewContributionContext = {
+  const context: EditorViewContributionContext = createTestViewContributionContext({
     container: document.createElement('div'),
     scrollElement: document.createElement('div') as HTMLDivElement,
     contentElement: document.createElement('div'),
     highlightPrefix: 'test-',
-    hasDocument: () => true,
     getSnapshot: () => snapshot,
-    requestViewUpdate: () => undefined,
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
-    getRangeClientRect: vi.fn(() => null),
     setRangeHighlight: (name, ranges, style) => {
       groups.set(name, { ranges: ranges.map((range) => ({ ...range })), style })
     },
     clearRangeHighlight: (name) => {
       groups.delete(name)
     },
-  }
+  })
 
   const layer = createSemanticTokenLayer(context, {
     name: 'semantic',

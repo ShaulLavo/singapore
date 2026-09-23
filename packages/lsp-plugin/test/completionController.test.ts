@@ -2,7 +2,6 @@ import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import type {
   EditorEditContributionContext,
-  EditorPluginContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
@@ -16,6 +15,11 @@ import { CompletionController } from '../src/completionController'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
 import type { ActiveDocument } from '../src/pluginTypes'
 import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  createTestEditContributionContext,
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 type JsonMessage = Record<string, unknown>
 
@@ -845,39 +849,31 @@ function activateProvider(
   createLanguageServerAdapterPlugin({
     name: 'editor.test-lsp',
     createTransport: () => transport,
-    defaultHighlightPrefix: 'editor-test',
     completion: {
       acceptTimingName: COMPLETION_ACCEPT_TIMING_NAME,
       widgetClassNamespace: 'test-lsp',
     },
-  }).activate({
-    registerHighlighter: () => disposable,
-    registerSyntaxProvider: () => disposable,
-    registerViewContribution: (value) => {
-      provider = value
-      return disposable
-    },
-    registerCommandContribution: () => disposable,
-    registerCapabilityContribution: () => disposable,
-    registerEditContribution: (value) => {
-      value.createContribution({
-        hasDocument: () => true,
-        materializeFullText: () => '',
-        getTextSnapshot: () => null,
-        getSelections: () => [],
-        focusEditor: vi.fn(),
-        applyEdits,
-        registerFeature: (id, feature) => {
-          features.set(id, feature)
-          return { dispose: () => features.delete(id) }
-        },
-      })
-      return disposable
-    },
-    registerDecorationContribution: () => disposable,
-    registerGutterContribution: () => disposable,
-    registerInjectedTextRowProvider: () => disposable,
-  } satisfies EditorPluginContext)
+  }).activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        provider = value
+        return disposable
+      },
+      registerEditContribution: (value) => {
+        value.createContribution(
+          createTestEditContributionContext({
+            materializeFullText: () => '',
+            applyEdits,
+            registerFeature: (id, feature) => {
+              features.set(id, feature)
+              return { dispose: () => features.delete(id) }
+            },
+          }),
+        )
+        return disposable
+      },
+    }),
+  )
 
   if (!provider) throw new Error('missing provider')
   return provider
@@ -889,28 +885,16 @@ function viewContributionContext(options: {
   getRangeClientRect(): DOMRect
   getFeature(token: unknown): unknown
 }): EditorViewContributionContext {
-  return {
+  return createTestViewContributionContext({
     container: options.element,
     scrollElement: options.element,
     contentElement: options.element,
     highlightPrefix: 'editor-test',
-    hasDocument: () => true,
     getSnapshot: options.getSnapshot,
-    requestViewUpdate: vi.fn(),
     getFeature: options.getFeature as EditorViewContributionContext['getFeature'],
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: () => options.getRangeClientRect(),
-    setRangeHighlight: vi.fn(),
-    clearRangeHighlight: vi.fn(),
-  }
+  })
 }
 
 function editorSnapshot(

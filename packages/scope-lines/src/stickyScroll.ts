@@ -9,7 +9,10 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
-import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
+import {
+  createEditorSecondaryTextView,
+  type EditorSecondaryTextView,
+} from '@singapore-editor/core/secondary-views'
 import './style.css'
 
 export type StickyScrollPluginOptions = {
@@ -214,7 +217,7 @@ class StickyScrollContribution implements EditorViewContribution {
       '--editor-sticky-scroll-viewport-width',
       `${snapshot.viewport.clientWidth}px`,
     )
-    lineView.scrollElement.style.height = `${header.stackHeight}px`
+    lineView.setHeight(header.stackHeight)
   }
 }
 
@@ -251,7 +254,7 @@ function createLineView(
   context: EditorViewContributionContext,
   snapshot: EditorViewSnapshot,
 ): EditorSecondaryTextView {
-  const lineView = new EditorSecondaryTextView(root, {
+  return createEditorSecondaryTextView(root, {
     className: 'editor-sticky-scroll-lines',
     // Static: every line of the stack is on screen at once, so there is nothing to virtualize away.
     scrollMode: 'static',
@@ -260,13 +263,8 @@ function createLineView(
     tabSize: snapshot.tabSize,
     // Measuring the font again could land a fraction of a pixel away from the rows being mirrored.
     textMetrics: snapshot.metrics,
-    selectionHighlightName: `${context.highlightPrefix ?? 'editor'}-sticky-scroll-selection`,
+    selectionHighlightName: `${context.highlightPrefix}-sticky-scroll-selection`,
   })
-  lineView.setEditable(false)
-  // The stack repeats rows that are already in the focus and reading order.
-  lineView.scrollElement.tabIndex = -1
-  lineView.inputElement.tabIndex = -1
-  return lineView
 }
 
 function stickyScrollHeader(

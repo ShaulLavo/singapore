@@ -17,6 +17,7 @@ import {
   markdown,
   typeScript,
 } from '../src'
+import { createTestPluginContext } from '@singapore-editor/core/testing'
 
 describe('Tree-sitter language contributions', () => {
   it('exports the first-party language descriptors', () => {
@@ -120,7 +121,7 @@ async function loadAssets(
 }
 
 function pluginContext(): EditorPluginContext {
-  return {
+  return createTestPluginContext({
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
     registerSyntaxProvider: vi.fn<EditorPluginContext['registerSyntaxProvider']>(() => ({
       dispose: vi.fn(),
@@ -132,5 +133,5 @@ function pluginContext(): EditorPluginContext {
     registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  }
+  })
 }

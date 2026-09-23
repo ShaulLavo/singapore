@@ -198,19 +198,12 @@ const contributeToEditor = (
   context: EditorPluginContext,
   provider: TreeSitterSyntaxProvider,
 ): readonly EditorDisposable[] => {
-  const contributions = [context.registerSyntaxProvider(provider)]
-
-  const selectionRanges = context.registerSelectionRangeProvider?.((selection) =>
-    treeSitterSelectionRanges(selection.folds),
-  )
-  if (selectionRanges) return [...contributions, selectionRanges]
-
-  context.log?.({
-    action: 'tree-sitter.selection_ranges.unsupported',
-    level: 'warn',
-    message: 'Editor does not support selection range providers; expand ignores the syntax tree.',
-  })
-  return contributions
+  return [
+    context.registerSyntaxProvider(provider),
+    context.registerSelectionRangeProvider((selection) =>
+      treeSitterSelectionRanges(selection.folds),
+    ),
+  ]
 }
 
 const retainLanguage = (

@@ -89,7 +89,7 @@ function inlineReplacementPlugin(seen: (readonly EditorSyntaxCapture[])[]): Edit
   return {
     name: 'test.inline-replacements',
     activate: (context) =>
-      context.registerInlineReplacementProvider?.((replacementContext) => {
+      context.registerInlineReplacementProvider((replacementContext) => {
         seen.push(replacementContext.captures)
         return []
       }),

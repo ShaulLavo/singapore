@@ -1,12 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createTestPluginContext } from '../../src/testContexts'
 
 import { createPieceTableSnapshot } from '../../src'
-import type {
-  EditorDisposable,
-  EditorHighlighterProvider,
-  EditorPlugin,
-  EditorPluginContext,
-} from '../../src/plugins'
+import type { EditorDisposable, EditorHighlighterProvider, EditorPlugin } from '../../src/plugins'
 import {
   createShikiHighlighterPlugin,
   createShikiHighlighterProvider,
@@ -244,14 +240,14 @@ function activateHighlighterProvider(
   options: Partial<ShikiHighlighterPluginOptions> = {},
 ): EditorHighlighterProvider {
   let provider: EditorHighlighterProvider | null = null
-  const context: Partial<EditorPluginContext> = {
+  const context = createTestPluginContext({
     registerHighlighter: (nextProvider) => {
       provider = nextProvider
       return { dispose: () => undefined }
     },
-  }
+  })
 
-  createShikiHighlighterPlugin(pluginOptions(options)).activate(context as EditorPluginContext)
+  createShikiHighlighterPlugin(pluginOptions(options)).activate(context)
   if (!provider) throw new Error('Expected Shiki plugin to register a highlighter')
   return provider
 }
@@ -259,12 +255,8 @@ function activateHighlighterProvider(
 function activateWithDisposables(
   options: Partial<ShikiHighlighterPluginOptions> = {},
 ): readonly EditorDisposable[] {
-  const context: Partial<EditorPluginContext> = {
-    registerHighlighter: () => ({ dispose: () => undefined }),
-  }
-
   return toDisposables(
-    createShikiHighlighterPlugin(pluginOptions(options)).activate(context as EditorPluginContext),
+    createShikiHighlighterPlugin(pluginOptions(options)).activate(createTestPluginContext()),
   )
 }
 

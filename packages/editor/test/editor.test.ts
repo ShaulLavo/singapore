@@ -1978,12 +1978,12 @@ describe('Editor', () => {
       editor = createVisibleEditor(container, { plugins: [plugin] })
       const context = requireViewContributionContext(contributionContext)
 
-      expect(context.getReservedOverlayWidth?.('right')).toBe(0)
+      expect(context.getReservedOverlayWidth('right')).toBe(0)
 
       context.reserveOverlayWidth('right', 96)
 
-      expect(context.getReservedOverlayWidth?.('right')).toBe(96)
-      expect(context.getReservedOverlayWidth?.('left')).toBe(0)
+      expect(context.getReservedOverlayWidth('right')).toBe(96)
+      expect(context.getReservedOverlayWidth('left')).toBe(0)
     })
 
     it('skips layout updates for unchanged overlay reservations', () => {
@@ -2418,10 +2418,54 @@ describe('Editor', () => {
   })
 
   describe('attachSession', () => {
-    it('does not let public render APIs bypass an attached leased buffer', () => {
+    it('routes setContent through an attached buffer as one undoable edit', () => {
       const buffer = createEditorTextBuffer('abc')
       const session = createEditorBufferSession(buffer)
       editor.attachSession(session)
+
+      editor.setContent('replaced')
+
+      expect(buffer.materializeFullText()).toBe('replaced')
+      expect(editorRoot().textContent).toBe('replaced')
+      session.undo()
+      expect(buffer.materializeFullText()).toBe('abc')
+    })
+
+    it('routes applyEdit through an attached buffer', () => {
+      const buffer = createEditorTextBuffer('abc')
+      editor.attachSession(createEditorBufferSession(buffer))
+
+      editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])
+
+      expect(buffer.materializeFullText()).toBe('Xbc')
+      expect(editorRoot().textContent).toBe('Xbc')
+    })
+
+    it('refuses setDocument on an attached buffer', () => {
+      const buffer = createEditorTextBuffer('abc')
+      editor.attachSession(createEditorBufferSession(buffer))
+
+      expect(() => editor.setDocument({ text: 'replacement', tokens: [] })).toThrow(
+        expect.objectContaining({ code: 'EDITOR_SET_DOCUMENT_ON_BUFFER_SESSION' }),
+      )
+      expect(buffer.materializeFullText()).toBe('abc')
+    })
+
+    it('refuses routed edits through a read-only editor', () => {
+      editor.dispose()
+      editor = createVisibleEditor(container, { editability: 'readonly' })
+      const buffer = createEditorTextBuffer('abc')
+      editor.attachSession(createEditorBufferSession(buffer))
+
+      const notEditable = expect.objectContaining({ code: 'EDITOR_NOT_EDITABLE' })
+      expect(() => editor.setContent('bypass')).toThrow(notEditable)
+      expect(() => editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])).toThrow(notEditable)
+      expect(buffer.materializeFullText()).toBe('abc')
+    })
+
+    it('refuses routed edits while another writer leases the buffer', () => {
+      const buffer = createEditorTextBuffer('abc')
+      editor.attachSession(createEditorBufferSession(buffer))
       const acquired = acquireDocumentMutationLease(
         buffer,
         buffer.getRevision(),
@@ -2430,9 +2474,9 @@ describe('Editor', () => {
       )
       if (acquired.status !== 'acquired') throw new RangeError('expected lease')
 
-      editor.setContent('bypass')
-      editor.setDocument({ text: 'replacement', tokens: [] })
-      editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])
+      const leased = expect.objectContaining({ code: 'EDITOR_BUFFER_LEASED' })
+      expect(() => editor.setContent('bypass')).toThrow(leased)
+      expect(() => editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])).toThrow(leased)
 
       expect(buffer.materializeFullText()).toBe('abc')
       expect(editorRoot().textContent).toBe('abc')

@@ -21,7 +21,6 @@ import type {
   EditorEditContributionContext,
   EditorLanguageFeatureSelector,
   EditorLanguageFeatureToken,
-  EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,
@@ -40,6 +39,11 @@ import type {
   LanguageServerRenamePrompt,
 } from '../src/types'
 import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  createTestEditContributionContext,
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 type JsonMessage = Record<string, unknown>
 
@@ -404,7 +408,6 @@ function activateProvider(
   createLanguageServerAdapterPlugin({
     name: 'editor.test-lsp',
     createTransport: () => transport,
-    defaultHighlightPrefix: 'editor-test',
     completion: {
       acceptTimingName: COMPLETION_ACCEPT_TIMING_NAME,
       widgetClassNamespace: 'test-lsp',
@@ -419,43 +422,38 @@ function activateProvider(
     onDefinitionLinkHover: options.onDefinitionLinkHover,
     onConnectionCreated: options.onConnectionCreated,
     onRequestError: (_serverId, _method, error) => errors.push(error),
-  }).activate({
-    registerHighlighter: () => disposable,
-    registerSyntaxProvider: () => disposable,
-    registerViewContribution: (value) => {
-      provider = value
-      return disposable
-    },
-    registerCommandContribution: (value) => {
-      value.createContribution({
-        registerCommand: (commandId, handler) => {
-          commands.set(commandId, handler)
-          return { dispose: () => commands.delete(commandId) }
-        },
-      })
-      return disposable
-    },
-    registerCapabilityContribution: () => disposable,
-    registerEditContribution: (value) => {
-      value.createContribution({
-        hasDocument: () => true,
-        materializeFullText: () => '',
-        getTextSnapshot: () => null,
-        getSelections: () => [],
-        focusEditor: vi.fn(),
-        applyEdits,
-        startSnippetSession: (ranges) => snippetSessions.push(ranges),
-        registerFeature: (id, feature) => {
-          features.set(id, feature)
-          return { dispose: () => features.delete(id) }
-        },
-      })
-      return disposable
-    },
-    registerDecorationContribution: () => disposable,
-    registerGutterContribution: () => disposable,
-    registerInjectedTextRowProvider: () => disposable,
-  } satisfies EditorPluginContext)
+  }).activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        provider = value
+        return disposable
+      },
+      registerCommandContribution: (value) => {
+        value.createContribution({
+          registerCommand: (commandId, handler) => {
+            commands.set(commandId, handler)
+            return { dispose: () => commands.delete(commandId) }
+          },
+        })
+        return disposable
+      },
+      registerEditContribution: (value) => {
+        value.createContribution(
+          createTestEditContributionContext({
+            materializeFullText: () => '',
+            focusEditor: vi.fn(),
+            applyEdits,
+            startSnippetSession: (ranges) => snippetSessions.push(ranges),
+            registerFeature: (id, feature) => {
+              features.set(id, feature)
+              return { dispose: () => features.delete(id) }
+            },
+          }),
+        )
+        return disposable
+      },
+    }),
+  )
 
   if (!provider) throw new Error('missing provider')
   return provider
@@ -466,28 +464,23 @@ function activateHoverPlugin(
 ): EditorViewContributionProvider {
   let provider: EditorViewContributionProvider | null = null
   const disposable = { dispose: () => undefined }
-  createHoverPlugin({ classNamespace: 'test' }).activate({
-    registerHighlighter: () => disposable,
-    registerSyntaxProvider: () => disposable,
-    registerViewContribution: (value) => {
-      provider = value
-      return disposable
-    },
-    registerCommandContribution: (value) => {
-      value.createContribution({
-        registerCommand: (commandId, handler) => {
-          commands.set(commandId, handler)
-          return { dispose: () => commands.delete(commandId) }
-        },
-      })
-      return disposable
-    },
-    registerCapabilityContribution: () => disposable,
-    registerEditContribution: () => disposable,
-    registerDecorationContribution: () => disposable,
-    registerGutterContribution: () => disposable,
-    registerInjectedTextRowProvider: () => disposable,
-  } satisfies EditorPluginContext)
+  createHoverPlugin({ classNamespace: 'test' }).activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        provider = value
+        return disposable
+      },
+      registerCommandContribution: (value) => {
+        value.createContribution({
+          registerCommand: (commandId, handler) => {
+            commands.set(commandId, handler)
+            return { dispose: () => commands.delete(commandId) }
+          },
+        })
+        return disposable
+      },
+    }),
+  )
 
   if (!provider) throw new Error('missing hover provider')
   return provider
@@ -528,30 +521,19 @@ function viewContributionContext(options: {
   focusEditor(): void
   onDidType(listener: (text: string) => void): () => void
 }): EditorViewContributionContext {
-  return {
+  return createTestViewContributionContext({
     ...providerRegistry(),
     onDidType: (listener) => ({ dispose: options.onDidType(listener) }),
     container: options.element,
     scrollElement: options.element,
     contentElement: options.element,
     highlightPrefix: 'editor-test',
-    hasDocument: () => true,
     getSnapshot: options.getSnapshot,
-    requestViewUpdate: vi.fn(),
     getFeature: options.getFeature as EditorViewContributionContext['getFeature'],
-    revealLine: vi.fn(),
     focusEditor: options.focusEditor,
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: () => options.getRangeClientRect(),
-    setRangeHighlight: vi.fn(),
-    clearRangeHighlight: vi.fn(),
-  }
+  })
 }
 
 function editorSnapshot(

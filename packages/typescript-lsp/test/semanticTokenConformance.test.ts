@@ -25,7 +25,6 @@ import type {
   TextEdit,
 } from '@singapore-editor/core/document'
 import type {
-  EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,
@@ -45,6 +44,10 @@ import { createLanguageServerPlugin, decodeSemanticTokens } from '@singapore-edi
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { typeScriptLibraryFilesFromDisk } from './realTypeScriptService'
+import {
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 /**
  * Milestone 2's seam, reached from outside.
@@ -318,22 +321,12 @@ class EditorFixture {
     this.#textNode = document.createTextNode(this.text)
     container.appendChild(this.#textNode)
 
-    this.context = {
+    this.context = createTestViewContributionContext({
       container,
       scrollElement: container as unknown as HTMLDivElement,
       contentElement: container,
       highlightPrefix: 'editor-test-',
-      hasDocument: () => true,
       getSnapshot: () => this.snapshot(),
-      requestViewUpdate: vi.fn(),
-      revealLine: vi.fn(),
-      focusEditor: vi.fn(),
-      setSelection: vi.fn(),
-      setSelections: vi.fn(),
-      setScrollTop: vi.fn(),
-      reserveOverlayWidth: vi.fn(),
-      rowAtPoint: () => null,
-      markerAtPoint: () => null,
       textOffsetFromPoint: vi.fn(() => 0),
       getRangeClientRect: () => new DOMRect(0, 0, 1, 1),
       // Every edit this fixture makes is an insertion at offset zero, so a tracked set follows the
@@ -359,7 +352,7 @@ class EditorFixture {
       clearRangeHighlight: (name) => {
         this.painted.delete(name)
       },
-    }
+    })
   }
 
   /** One character typed at the top of the file, which moves every span in it. */
@@ -900,20 +893,14 @@ function activate(
   const captured: { provider: EditorViewContributionProvider | null } = { provider: null }
   const disposable = { dispose: () => undefined }
 
-  plugin.activate({
-    registerHighlighter: () => disposable,
-    registerSyntaxProvider: () => disposable,
-    registerViewContribution: (value) => {
-      captured.provider = value
-      return disposable
-    },
-    registerCommandContribution: () => disposable,
-    registerCapabilityContribution: () => disposable,
-    registerEditContribution: () => disposable,
-    registerDecorationContribution: () => disposable,
-    registerGutterContribution: () => disposable,
-    registerInjectedTextRowProvider: () => disposable,
-  } satisfies EditorPluginContext)
+  plugin.activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        captured.provider = value
+        return disposable
+      },
+    }),
+  )
 
   const provider = captured.provider
   if (!provider) throw new Error('the plugin registered no view contribution provider')

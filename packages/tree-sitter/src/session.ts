@@ -20,7 +20,7 @@ import {
   treeSitterCapturesToEditorTokens,
   EditorTokenStore,
 } from '@singapore-editor/core/syntax'
-import { documentSessionChangeTextSnapshot } from '@singapore-editor/core/internal'
+import { documentSessionChangeTextSnapshot } from '@singapore-editor/core/document'
 import type {
   TreeSitterDegradedState,
   TreeSitterInputEdit,

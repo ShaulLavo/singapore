@@ -32,10 +32,29 @@ export type EditorViewContributionFailureHandler = (
   error: unknown,
 ) => void
 
+type QueuedUpdate = {
+  readonly kind: EditorViewContributionUpdateKind
+  readonly change: DocumentSessionChange | null
+  /** The contribution whose update or viewport callback asked for it, when one did. */
+  readonly requester: EditorViewContribution | null
+  /** The update whose pass asked for this one; null for a notification from outside. */
+  readonly cause: QueuedUpdate | null
+  readonly depth: number
+}
+
+/**
+ * How long a chain of updates, each asked for from inside the last, may grow before it is a loop.
+ * A burst asked for from one pass is one step deep however many updates it holds.
+ */
+const MAX_REENTRANT_DEPTH = 32
+
 export class EditorViewContributionController {
   private notifying = false
   private activeUpdateKind: EditorViewContributionUpdateKind | null = null
-  private pendingLayout = false
+  private pendingLayout: QueuedUpdate | null = null
+  private readonly pendingUpdates: QueuedUpdate[] = []
+  private updatingContribution: EditorViewContribution | null = null
+  private deliveringUpdate: QueuedUpdate | null = null
   private currentSnapshot: EditorViewSnapshot | null = null
   private readonly contributions: EditorViewContribution[]
   private readonly initialUpdates = new Set<EditorViewContribution>()
@@ -79,7 +98,7 @@ export class EditorViewContributionController {
       }
     } finally {
       this.notifying = false
-      this.pendingLayout = false
+      this.clearQueuedUpdates()
     }
     return failed
   }
@@ -146,17 +165,18 @@ export class EditorViewContributionController {
   notifyViewport(createViewport: () => EditorViewportSnapshot): void {
     if (!this.canPresent() || this.notifying || this.viewportContributions.size === 0) return
     this.notifying = true
+    this.deliveringUpdate = rootUpdate('viewport', null)
     try {
       const viewport = createViewport()
       if (viewport.clientHeight === 0) return
       for (const contribution of this.viewportContributions) {
         this.updateContributionViewport(contribution, viewport)
       }
-      this.flushPendingLayout()
+      this.drainQueuedUpdates()
     } finally {
       this.notifying = false
       this.activeUpdateKind = null
-      this.pendingLayout = false
+      this.clearQueuedUpdates()
     }
   }
 
@@ -164,11 +184,14 @@ export class EditorViewContributionController {
     contribution: EditorViewContribution,
     viewport: EditorViewportSnapshot,
   ): void {
+    this.updatingContribution = contribution
     try {
       contribution.updateViewport?.(viewport)
     } catch (error) {
       this.removeFailedContribution(contribution, 'viewport', error)
       this.notifyMembershipChange()
+    } finally {
+      this.updatingContribution = null
     }
   }
 
@@ -178,33 +201,97 @@ export class EditorViewContributionController {
   ): void {
     if (!this.canPresent() || this.contributions.length === 0) return
     if (this.notifying) {
-      this.queueReentrantUpdate(kind)
+      this.queueReentrantUpdate(kind, change)
       return
     }
 
     this.notifying = true
+    this.deliveringUpdate = rootUpdate(kind, change)
     try {
       this.update(kind, change)
-      this.flushPendingLayout()
+      this.drainQueuedUpdates()
     } finally {
       this.notifying = false
       this.activeUpdateKind = null
-      this.pendingLayout = false
+      this.clearQueuedUpdates()
     }
   }
 
-  private queueReentrantUpdate(kind: EditorViewContributionUpdateKind): void {
-    if (kind !== 'layout') return
+  private queueReentrantUpdate(
+    kind: EditorViewContributionUpdateKind,
+    change: DocumentSessionChange | null,
+  ): void {
+    if (kind !== 'layout') {
+      this.pendingUpdates.push(this.queuedUpdate(kind, change))
+      return
+    }
+    // A layout pass reads a fresh snapshot anyway, and one asked for from inside a layout pass would
+    // re-run every contribution that calls requestViewUpdate() from update() forever.
     if (this.activeUpdateKind === 'layout') return
 
-    this.pendingLayout = true
+    this.queueLayout()
   }
 
-  private flushPendingLayout(): void {
-    if (!this.pendingLayout) return
+  private queueLayout(): void {
+    this.pendingLayout ??= this.queuedUpdate('layout', null)
+  }
 
-    this.pendingLayout = false
-    this.update('layout', null)
+  private queuedUpdate(
+    kind: EditorViewContributionUpdateKind,
+    change: DocumentSessionChange | null,
+  ): QueuedUpdate {
+    const cause = this.deliveringUpdate
+    const depth = (cause?.depth ?? 0) + 1
+    return { kind, change, requester: this.updatingContribution, cause, depth }
+  }
+
+  /** Delivers what arrived during the pass in order, each one after the last has finished. */
+  private drainQueuedUpdates(): void {
+    for (let next = this.nextQueuedUpdate(); next; next = this.nextQueuedUpdate()) {
+      if (next.depth > MAX_REENTRANT_DEPTH) {
+        this.stopUpdateLoop(next)
+        continue
+      }
+      this.deliveringUpdate = next
+      this.update(next.kind, next.change)
+    }
+  }
+
+  private nextQueuedUpdate(): QueuedUpdate | null {
+    const queued = this.pendingUpdates.shift()
+    if (queued) return queued
+
+    const layout = this.pendingLayout
+    this.pendingLayout = null
+    return layout
+  }
+
+  /**
+   * A chain that ran this deep repeats itself, so whoever asks more than once along it is the loop.
+   * A contribution that asked once, at the end, only reacted to it, and it stays.
+   */
+  private stopUpdateLoop(update: QueuedUpdate): void {
+    const error = reentrantUpdateLoop(update.kind)
+    const looping = repeatedRequesters(update)
+    if (looping.size === 0) throw error
+
+    for (const contribution of looping) this.removeFailedContribution(contribution, 'update', error)
+    this.dropUpdatesFrom(looping)
+  }
+
+  private dropUpdatesFrom(removed: ReadonlySet<EditorViewContribution>): void {
+    const kept = this.pendingUpdates.filter(
+      (queued) => !queued.requester || !removed.has(queued.requester),
+    )
+    this.pendingUpdates.splice(0, this.pendingUpdates.length, ...kept)
+    const layoutRequester = this.pendingLayout?.requester
+    if (layoutRequester && removed.has(layoutRequester)) this.pendingLayout = null
+  }
+
+  private clearQueuedUpdates(): void {
+    this.pendingLayout = null
+    this.pendingUpdates.length = 0
+    this.deliveringUpdate = null
   }
 
   private update(
@@ -251,6 +338,9 @@ export class EditorViewContributionController {
     remainingRectangles: number,
   ): EditorVisiblePaintLayer | null | undefined {
     if (!contribution.captureVisiblePaint || !this.contributions.includes(contribution)) return
+    // Capture can run lazily from inside another contribution's update, whose attribution resumes.
+    const updating = this.updatingContribution
+    this.updatingContribution = contribution
     try {
       const capture = contribution.captureVisiblePaint(snapshot)
       if (capture.status === 'pending') return null
@@ -262,6 +352,8 @@ export class EditorViewContributionController {
       this.removeFailedContribution(contribution, 'capture-visible-paint', error)
       this.notifyMembershipChange()
       return null
+    } finally {
+      this.updatingContribution = updating
     }
   }
 
@@ -272,7 +364,7 @@ export class EditorViewContributionController {
   private notifyMembershipChange(): void {
     this.invalidateCurrentPaint()
     if (this.notifying) {
-      this.pendingLayout = true
+      this.queueLayout()
       return
     }
     this.notify('layout')
@@ -286,6 +378,7 @@ export class EditorViewContributionController {
   ): void {
     if (!this.contributions.includes(contribution)) return
     const initialUpdate = this.initialUpdates.delete(contribution)
+    this.updatingContribution = contribution
     try {
       contribution.update(
         snapshot,
@@ -298,6 +391,8 @@ export class EditorViewContributionController {
         initialUpdate ? 'initial-update' : 'update',
         error,
       )
+    } finally {
+      this.updatingContribution = null
     }
   }
 
@@ -321,4 +416,32 @@ export class EditorViewContributionController {
       this.onFailure(contribution, 'dispose', error)
     }
   }
+}
+
+function rootUpdate(
+  kind: EditorViewContributionUpdateKind,
+  change: DocumentSessionChange | null,
+): QueuedUpdate {
+  return { kind, change, requester: null, cause: null, depth: 0 }
+}
+
+function repeatedRequesters(update: QueuedUpdate): ReadonlySet<EditorViewContribution> {
+  const seen = new Set<EditorViewContribution>()
+  const repeated = new Set<EditorViewContribution>()
+  for (let step: QueuedUpdate | null = update; step; step = step.cause) {
+    if (!step.requester) continue
+    if (seen.has(step.requester)) repeated.add(step.requester)
+    seen.add(step.requester)
+  }
+  return repeated
+}
+
+function reentrantUpdateLoop(kind: EditorViewContributionUpdateKind) {
+  return createError({
+    code: 'EDITOR_VIEW_UPDATE_LOOP',
+    message: `View contributions kept re-notifying each other; stopped before another '${kind}' update`,
+    why: 'Each update a contribution triggers from update() is delivered after the pass, so one that always triggers another never settles.',
+    fix: 'Make the contribution skip the notification when the state it would set is already current.',
+    internal: { kind, limit: MAX_REENTRANT_DEPTH },
+  })
 }

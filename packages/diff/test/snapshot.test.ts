@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { Editor } from '@singapore-editor/core/editor'
-import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
+import { VirtualizedTextView } from '@singapore-editor/core/testing'
 import { createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
 
 const editors: Editor[] = []
@@ -54,7 +54,7 @@ function mount(options: ConstructorParameters<typeof Editor>[1]) {
   document.body.append(host)
   const editor = new Editor(host, options)
   const view: unknown = Reflect.get(editor, 'view')
-  if (view instanceof EditorSecondaryTextView) view.setScrollMetrics(0, 240, 640)
+  if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 240, 640)
   editors.push(editor)
   return { host, editor }
 }

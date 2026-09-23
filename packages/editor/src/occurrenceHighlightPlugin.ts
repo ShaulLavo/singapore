@@ -71,7 +71,7 @@ class OccurrenceHighlightController implements EditorViewContribution {
     private readonly context: EditorViewContributionContext,
     private readonly style: VirtualizedTextHighlightStyle,
   ) {
-    this.highlightName = `${context.highlightPrefix ?? 'editor'}-occurrence-highlight`
+    this.highlightName = `${context.highlightPrefix}-occurrence-highlight`
   }
 
   update(snapshot: EditorViewSnapshot, kind: EditorViewContributionUpdateKind): void {
@@ -96,17 +96,17 @@ class OccurrenceHighlightController implements EditorViewContribution {
     if (!this.decorations.replaceOwner(EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID, specs)) return
 
     if (painted.length === 0) {
-      this.context.clearRangeHighlight?.(this.highlightName)
+      this.context.clearRangeHighlight(this.highlightName)
       return
     }
 
-    this.context.setRangeHighlight?.(this.highlightName, painted, this.style)
+    this.context.setRangeHighlight(this.highlightName, painted, this.style)
   }
 
   private clear(): void {
     if (!this.decorations.replaceOwner(EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID, [])) return
 
-    this.context.clearRangeHighlight?.(this.highlightName)
+    this.context.clearRangeHighlight(this.highlightName)
   }
 }
 

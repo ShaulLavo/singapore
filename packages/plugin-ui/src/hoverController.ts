@@ -83,7 +83,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   let nextOperationId = 0
   let theme: EditorTheme | null = context.getSnapshot().theme ?? null
   let disposed = false
-  const snippetTokens = context.getFeature?.(EDITOR_SNIPPET_TOKENS_FEATURE) ?? null
+  const snippetTokens = context.getFeature(EDITOR_SNIPPET_TOKENS_FEATURE)
   const codeTokenizer = snippetTokens ? createTooltipCodeTokenizer(snippetTokens) : null
 
   const tooltip: TooltipController = createTooltipController({
@@ -192,7 +192,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
 
   const start = (anchor: HoverAnchor, focusOnShow: boolean): boolean => {
     const snapshot = context.getSnapshot()
-    const participants = context.getProviders?.(EDITOR_HOVER_PARTICIPANT, snapshot.languageId) ?? []
+    const participants = context.getProviders(EDITOR_HOVER_PARTICIPANT, snapshot.languageId)
     if (participants.length === 0) return false
 
     hide()

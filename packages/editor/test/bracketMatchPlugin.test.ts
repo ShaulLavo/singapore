@@ -5,7 +5,6 @@ import type { EditorCommandId } from '../src/editor/commands'
 import type {
   EditorCommandContribution,
   EditorCommandContributionProvider,
-  EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewSnapshot,
@@ -16,6 +15,7 @@ import {
 } from './factories/documentSync'
 import type { BracketInfo } from '../src/syntax/session'
 import { EditorTokenStore } from '../src/syntax/tokenStore'
+import { createTestPluginContext, createTestViewContributionContext } from '../src/testContexts'
 
 const TEXT = 'fn(a)'
 const BRACKETS: BracketInfo[] = [
@@ -184,7 +184,7 @@ function activate(snapshotOptions: SnapshotOptions = {}) {
   const commands = new Map<EditorCommandId, () => boolean>()
   let contribution: EditorViewContribution | null = null
 
-  const context = {
+  const context = createTestPluginContext({
     registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerCommandContribution: vi.fn((provider: EditorCommandContributionProvider) => {
       const created: EditorCommandContribution | null = provider.createContribution({
@@ -205,7 +205,7 @@ function activate(snapshotOptions: SnapshotOptions = {}) {
       contribution = provider.createContribution(view)
       return { dispose: vi.fn() }
     }),
-  } as unknown as EditorPluginContext
+  })
 
   // Read through a function: the assignment happens inside registerViewContribution's callback,
   // which control-flow analysis in this body does not see, so an inline read still narrows to the
@@ -231,25 +231,14 @@ function viewContext(getSnapshot: () => EditorViewSnapshot): EditorViewContribut
   const scrollElement = document.createElement('div')
   container.appendChild(scrollElement)
 
-  return {
+  return createTestViewContributionContext({
     clearRangeHighlight: vi.fn(),
     container,
-    focusEditor: vi.fn(),
-    getRangeClientRect: vi.fn(() => null),
     getSnapshot,
-    requestViewUpdate: vi.fn(),
-    hasDocument: () => true,
     highlightPrefix: 'test',
-    reserveOverlayWidth: vi.fn(),
-    revealLine: vi.fn(),
     scrollElement: scrollElement as HTMLDivElement,
     contentElement: scrollElement,
     setRangeHighlight: vi.fn(),
-    setScrollTop: vi.fn(),
     setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
-    textOffsetFromPoint: vi.fn(() => null),
-  }
+  })
 }

@@ -119,7 +119,7 @@ export type EditorFindHost = {
   trackPaintedRanges(ranges: readonly FindRange[]): FindTrackedRanges
   getSelections(): readonly EditorFindResolvedSelection[]
   focusEditor(): void
-  announce?(message: string): void
+  announce(message: string): void
   setSelection(
     anchor: number,
     head: number,
@@ -292,7 +292,7 @@ export class EditorFindController {
     const match = this.nextMatchAt(startOffset, true)
     // Landing behind where the search started is the search having run out and begun again. Nothing
     // on screen says so to a reader who cannot see the caret jump back up the file.
-    if (match && match.start < startOffset) this.host?.announce?.('Wrapped to the first match')
+    if (match && match.start < startOffset) this.host?.announce('Wrapped to the first match')
 
     return this.selectMatch(match)
   }
@@ -304,7 +304,7 @@ export class EditorFindController {
     const match = this.searchFrom(findPreviousMatchFrom, startOffset, {
       escapeEmptyMatchAtOffset: true,
     })
-    if (match && match.start > startOffset) this.host?.announce?.('Wrapped to the last match')
+    if (match && match.start > startOffset) this.host?.announce('Wrapped to the last match')
 
     return this.selectMatch(match)
   }

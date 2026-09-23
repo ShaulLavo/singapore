@@ -350,7 +350,7 @@ class MergeConflictViewContribution implements EditorViewContribution {
     this.root = document.createElement('div')
     this.root.className = 'editor-merge-conflict-lens-layer'
     context.contentElement.appendChild(this.root)
-    this.minimap = context.getFeature?.(EDITOR_MINIMAP_FEATURE) ?? null
+    this.minimap = context.getFeature(EDITOR_MINIMAP_FEATURE)
     this.subscription = controller.subscribe(() => this.render(context.getSnapshot()))
     const snapshot = context.getSnapshot()
     this.controller.activateFromSnapshot(snapshot, 'document')

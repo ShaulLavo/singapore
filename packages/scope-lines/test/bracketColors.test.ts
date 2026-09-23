@@ -11,6 +11,10 @@ import type {
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
 import { createBracketColorsPlugin, createScopeLinesPlugin } from '../src/index'
+import {
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 type PaintedHighlight = {
   readonly name: string
@@ -235,7 +239,7 @@ function levelColorDefaults(): string[] {
 function createPluginContext(
   registerViewContribution: EditorPluginContext['registerViewContribution'],
 ): EditorPluginContext {
-  return {
+  return createTestPluginContext({
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
     registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerViewContribution,
@@ -245,46 +249,27 @@ function createPluginContext(
     registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  }
+  })
 }
 
 function context(viewSnapshot = snapshot()) {
-  const container = document.createElement('div')
-  const scrollElement = document.createElement('div')
-  container.appendChild(scrollElement)
   const painted: PaintedHighlight[] = []
   const cleared: string[] = []
 
   return {
-    container,
-    scrollElement,
-    contentElement: scrollElement,
+    ...createTestViewContributionContext({
+      highlightPrefix: 'editor',
+      getSnapshot: () => viewSnapshot,
+      setRangeHighlight: (name, ranges, style) => {
+        if (ranges.length === 0) return
+        painted.push({ name, ranges: [...ranges], style })
+      },
+      clearRangeHighlight: (name) => {
+        cleared.push(name)
+      },
+    }),
     painted,
     cleared,
-    hasDocument: () => true,
-    getSnapshot: () => viewSnapshot,
-    requestViewUpdate: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
-    textOffsetFromPoint: vi.fn(() => null),
-    getRangeClientRect: vi.fn(() => null),
-    setRangeHighlight: (
-      name: string,
-      ranges: readonly { readonly start: number; readonly end: number }[],
-      style: VirtualizedTextHighlightStyle,
-    ) => {
-      if (ranges.length === 0) return
-      painted.push({ name, ranges: [...ranges], style })
-    },
-    clearRangeHighlight: (name: string) => {
-      cleared.push(name)
-    },
   }
 }
 

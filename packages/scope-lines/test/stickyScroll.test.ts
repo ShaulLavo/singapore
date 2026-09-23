@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@singapore-editor/core/editor'
-import { VirtualizedTextView } from '@singapore-editor/core/internal'
+import { VirtualizedTextView } from '@singapore-editor/core/testing'
 import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
 import { EditorTokenStore, type EditorToken } from '@singapore-editor/core/syntax'
 import type {
@@ -10,8 +10,12 @@ import type {
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
 } from '@singapore-editor/core/extensions'
-import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
-import { resetEditorInstanceCount, setHighlightRegistry } from '@singapore-editor/core/testing'
+import {
+  createTestPluginContext,
+  createTestViewContributionContext,
+  resetEditorInstanceCount,
+  setHighlightRegistry,
+} from '@singapore-editor/core/testing'
 import { createStickyScrollPlugin } from '../src/stickyScroll'
 
 const LINES = [
@@ -241,7 +245,7 @@ describe('createStickyScrollPlugin', () => {
   })
 
   it('carries the tokens of the rows it mirrors, rewritten into the stack', () => {
-    const setTokens = vi.spyOn(EditorSecondaryTextView.prototype, 'setTokens')
+    const setTokens = vi.spyOn(VirtualizedTextView.prototype, 'setTokens')
     const registration = registeredProvider(createStickyScrollPlugin())
     const testContext = context({
       ...scrolledSnapshot(60),
@@ -378,7 +382,7 @@ function registeredProvider(plugin: ReturnType<typeof createStickyScrollPlugin>)
 function createPluginContext(
   registerViewContribution: EditorPluginContext['registerViewContribution'],
 ): EditorPluginContext {
-  return {
+  return createTestPluginContext({
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
     registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerViewContribution,
@@ -388,7 +392,7 @@ function createPluginContext(
     registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  }
+  })
 }
 
 function context(viewSnapshot = snapshot()): EditorViewContributionContext {
@@ -398,25 +402,13 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
   scrollElement.appendChild(contentElement)
   container.appendChild(scrollElement)
   document.body.appendChild(container)
-  return {
+  return createTestViewContributionContext({
     container,
     scrollElement,
     contentElement,
     highlightPrefix: 'sticky-test',
-    hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
-    requestViewUpdate: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
-    textOffsetFromPoint: vi.fn(() => null),
-    getRangeClientRect: vi.fn(() => null),
-  }
+  })
 }
 
 function stickyRoot(context: EditorViewContributionContext): HTMLElement | null {

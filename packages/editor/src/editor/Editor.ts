@@ -101,12 +101,7 @@ import {
   rangeDecorationsWithProjectionStacking,
   sameEditorRangeDecorations,
 } from './rangeDecorations'
-import {
-  normalizeEditorSetSelectionOptions,
-  selectionRevealOffset,
-  type EditorSetSelectionInput,
-  type EditorSetSelectionOptions,
-} from './selectionReveal'
+import { selectionRevealOffset, type EditorSetSelectionOptions } from './selectionReveal'
 import { syncTextEdit } from './textEdits'
 import type {
   EditorDocumentMode,
@@ -220,6 +215,7 @@ import {
 import { normalizeSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { observeBrowserTextMetricsInvalidation } from '../virtualization/browserMetrics'
 import { EditorDisposableStore } from './disposables'
+import { createError } from '../logging/evlog'
 import type { EditorPreparedDocumentPayload } from './preparedDocument'
 
 const RAPID_INPUT_SECONDARY_WORK_DELAY_MS = 150
@@ -1061,9 +1057,15 @@ export class Editor {
     this.el.ownerDocument.defaultView?.performance.mark(name, { detail })
   }
 
+  /** On a buffer session this replaces the buffer's text as one undoable edit every view sees. */
   setContent(text: string): void {
-    if (editorBufferSession(this.session)) return
-    this.renderContent(text)
+    const session = editorBufferSession(this.session)
+    if (!session) {
+      this.renderContent(text)
+      return
+    }
+    const to = session.getSnapshot().length
+    this.editBufferSession(session, 'setContent', [{ from: 0, to, text }], null)
   }
 
   private renderContent(text: string | TextSnapshot): void {
@@ -1089,9 +1091,56 @@ export class Editor {
     this.adoptTokens(toEditorTokenStore(tokens))
   }
 
+  /** On a buffer session the edit goes through the session, which supplies the text snapshot. */
   applyEdit(edit: TextEdit, tokens: EditorTokenInput, textSnapshot?: TextSnapshot): void {
-    if (editorBufferSession(this.session)) return
-    this.renderEdit(edit, toEditorTokenStore(tokens), textSnapshot)
+    const session = editorBufferSession(this.session)
+    if (!session) {
+      this.renderEdit(edit, toEditorTokenStore(tokens), textSnapshot)
+      return
+    }
+    this.editBufferSession(session, 'applyEdit', [edit], toEditorTokenStore(tokens))
+  }
+
+  private editBufferSession(
+    session: EditorBufferSession,
+    operation: string,
+    edits: readonly TextEdit[],
+    tokens: EditorTokenStore | null,
+  ): void {
+    const lease = getDocumentMutationLeaseState(session.buffer)
+    if (lease.isLeased) {
+      throw createError({
+        code: 'EDITOR_BUFFER_LEASED',
+        status: 409,
+        message: `${operation} cannot edit the buffer while another writer holds its lease`,
+        why: 'A leased buffer refuses every edit until the lease is released.',
+        fix: 'Wait for the lease holder to release the buffer, then edit again.',
+        internal: { operation, sessionKind: 'buffer', leaseOwner: lease.ownerId },
+      })
+    }
+    // The same gate edit() applies, so a read-only or still-provisional view cannot write the buffer.
+    if (this.view.isProvisional || !this.document.canEditDocument()) {
+      throw createError({
+        code: 'EDITOR_NOT_EDITABLE',
+        status: 409,
+        message: `${operation} cannot edit the buffer through an editor that is not editable`,
+        why: 'The editor is read-only, or is still showing saved paint in place of its document.',
+        fix: 'Make the editor editable, or wait until it has finished opening the document.',
+        internal: {
+          operation,
+          provisional: this.view.isProvisional,
+          editability: this.document.editability,
+          documentMode: this.document.documentMode,
+        },
+      })
+    }
+    // Tokens are adopted inside the edit's operation: its listeners run when it ends, and one of
+    // them may open another document that these tokens do not describe.
+    this.runInOperation(() => {
+      const change = session.applyEdits(edits)
+      if (change.kind !== 'none') this.applySessionChange(change, `editor.${operation}`, nowMs())
+      if (tokens) this.adoptTokens(tokens)
+    })
   }
 
   private renderEdit(edit: TextEdit, tokens: EditorTokenStore, textSnapshot?: TextSnapshot): void {
@@ -1120,7 +1169,17 @@ export class Editor {
   }
 
   setDocument(document: EditorDocument): void {
-    if (editorBufferSession(this.session)) return
+    if (editorBufferSession(this.session)) {
+      throw createError({
+        code: 'EDITOR_SET_DOCUMENT_ON_BUFFER_SESSION',
+        status: 409,
+        message:
+          'setDocument cannot replace the document of an editor attached to a buffer session',
+        why: 'The attached buffer owns the text and every view of it, so this editor cannot swap it alone.',
+        fix: 'Call openDocument to give this editor its own document, or edit the buffer through its session.',
+        internal: { operation: 'setDocument', sessionKind: 'buffer' },
+      })
+    }
     this.renderDocument(document)
   }
 
@@ -1502,15 +1561,7 @@ export class Editor {
     this.view.focusInput()
   }
 
-  setSelection(anchor: number, head?: number, options?: EditorSetSelectionOptions): void
-  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
-  setSelection(anchor: number, head?: number, revealOffset?: number): void
-  setSelection(
-    anchor: number,
-    head?: number,
-    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
-  ): void
-  setSelection(anchor: number, head = anchor, options?: EditorSetSelectionInput): void {
+  setSelection(anchor: number, head = anchor, options?: EditorSetSelectionOptions): void {
     this.runInOperation(() => {
       this.applyRequestedSelection(anchor, head, 'editor.setSelection', options, true)
     })
@@ -2964,6 +3015,8 @@ export class Editor {
       getTextSnapshot: () => this.session?.getTextSnapshot() ?? null,
       getSelections: () => this.inputSelection.resolveViewSelections(),
       registerFeature: (key, feature) => this.registerFeature(key, feature),
+      registerProvider: (token, selector, provider) =>
+        this.registerLanguageFeatureProvider(token, selector, provider),
       focusEditor: () => this.focus(),
       applyEdits: (edits, timingName, selection) =>
         this.inputSelection.applyFindEdits(edits, timingName, selection),
@@ -3007,6 +3060,7 @@ export class Editor {
         this.applyRequestedSelections(selections, timingName, revealOffset),
       applyEdits: (edits, timingName, selection) =>
         this.inputSelection.applyFindEdits(edits, timingName, selection),
+      startSnippetSession: (stops) => this.inputSelection.startSnippetSession(stops),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
       clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
       setRowDecorations: (sourceId, decorations) =>
@@ -3014,6 +3068,8 @@ export class Editor {
       clearRowDecorations: (sourceId) => this.clearSourceRowDecorations(sourceId, owner),
       registerCommand: (command, handler) => this.registerCommandHandler(command, handler),
       registerFeature: (key, feature) => this.registerFeature(key, feature),
+      registerProvider: (token, selector, provider) =>
+        this.registerLanguageFeatureProvider(token, selector, provider),
     }
   }
 
@@ -4079,15 +4135,14 @@ export class Editor {
     anchor: number,
     head: number,
     timingName: string,
-    options?: EditorSetSelectionInput,
+    options?: EditorSetSelectionOptions,
     revealByDefault = false,
   ): void {
-    const normalizedOptions = normalizeEditorSetSelectionOptions(options)
     this.revealFoldedOffset(head)
     this.inputSelection.applyFindSelection(anchor, head, timingName, {
-      affinity: normalizedOptions?.affinity,
-      revealBlock: normalizedOptions?.revealBlock,
-      revealOffset: selectionRevealOffset(normalizedOptions, head, revealByDefault),
+      affinity: options?.affinity,
+      revealBlock: options?.revealBlock,
+      revealOffset: selectionRevealOffset(options, head, revealByDefault),
     })
   }
 

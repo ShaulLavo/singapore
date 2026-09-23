@@ -435,7 +435,7 @@ class DiffPluginRuntime {
       },
     })
     const lentSyntax = context
-      .getFeature?.(EDITOR_SNIPPET_TOKENS_FEATURE)
+      .getFeature(EDITOR_SNIPPET_TOKENS_FEATURE)
       ?.addSource(snippetTokenSource(this.options.syntaxBackend))
     this.view = contribution
     if (this.lastGutterLayout) contribution.applyGutterLayout(this.lastGutterLayout)
@@ -507,7 +507,7 @@ class DiffDecorationContribution {
     if (this.options.mode === 'overlay') {
       if (change?.kind === 'selection') return
 
-      const snapshot = this.context.getTextSnapshot?.() ?? null
+      const snapshot = this.context.getTextSnapshot()
       if (snapshot !== null && snapshot === this.lastTextSnapshot) return
     }
 
@@ -515,7 +515,7 @@ class DiffDecorationContribution {
   }
 
   refresh(): void {
-    this.lastTextSnapshot = this.context.getTextSnapshot?.() ?? null
+    this.lastTextSnapshot = this.context.getTextSnapshot()
     if (this.options.mode === 'document') {
       this.context.setRowDecorations(
         ROW_DECORATION_SOURCE,
@@ -650,7 +650,7 @@ class DiffViewContribution implements EditorViewContribution {
     if (viewsByScrollElement.get(this.context.scrollElement) === this) {
       viewsByScrollElement.delete(this.context.scrollElement)
     }
-    this.context.clearRangeHighlight?.(this.options.highlightName)
+    this.context.clearRangeHighlight(this.options.highlightName)
     // Or the runtime keeps writing highlights and gutter geometry through a torn-down context,
     // and holds its scroll element alive for the plugin's lifetime.
     this.options.detach(this)
@@ -667,13 +667,13 @@ class DiffViewContribution implements EditorViewContribution {
     this.lastHighlightRows = rows
     this.lastHighlightTextVersion = textVersion
     try {
-      this.context.setRangeHighlight?.(
+      this.context.setRangeHighlight(
         this.options.highlightName,
         diffInlineHighlightRanges(rows),
         INLINE_HIGHLIGHT_STYLE,
       )
     } catch (error) {
-      this.context.log?.({
+      this.context.log({
         action: 'editor.diff.inline_highlight_failed',
         level: 'warn',
         error: { message: error instanceof Error ? error.message : String(error) },

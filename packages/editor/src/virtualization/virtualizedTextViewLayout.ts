@@ -370,7 +370,10 @@ export function visibleLineCount(view: VirtualizedTextViewInternal): number {
   return Math.max(1, view.model.visibleLineCount)
 }
 
-export function bufferRowForVirtualRow(view: VirtualizedTextViewInternal, row: number): number {
+export function bufferRowForVirtualRow(
+  view: VirtualizedTextViewInternal,
+  row: number,
+): number | null {
   return view.model.projection.bufferRowForRow(row)
 }
 

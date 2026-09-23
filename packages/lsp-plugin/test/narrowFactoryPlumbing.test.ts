@@ -1,6 +1,5 @@
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type {
-  EditorPluginContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
@@ -21,6 +20,10 @@ import { LanguageServerDocumentSyncController } from '../src/documentSyncControl
 import type { LanguageServerPluginOptions } from '../src/types'
 import { flushPromises } from './connectedEditor'
 import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 /**
  * The narrow `createLanguageServerPlugin` factory, driven end to end over a stub socket.
@@ -473,20 +476,14 @@ function activate(
   let provider: EditorViewContributionProvider | null = null
   const disposable = { dispose: () => undefined }
 
-  plugin.activate({
-    registerHighlighter: () => disposable,
-    registerSyntaxProvider: () => disposable,
-    registerViewContribution: (value) => {
-      provider = value
-      return disposable
-    },
-    registerCommandContribution: () => disposable,
-    registerCapabilityContribution: () => disposable,
-    registerEditContribution: () => disposable,
-    registerDecorationContribution: () => disposable,
-    registerGutterContribution: () => disposable,
-    registerInjectedTextRowProvider: () => disposable,
-  } satisfies EditorPluginContext)
+  plugin.activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        provider = value
+        return disposable
+      },
+    }),
+  )
 
   if (!provider) throw new Error('missing provider')
   return provider
@@ -494,27 +491,15 @@ function activate(
 
 function viewContributionContext(): EditorViewContributionContext {
   const element = document.createElement('div')
-  return {
+  return createTestViewContributionContext({
     container: element,
     scrollElement: element as unknown as HTMLDivElement,
     contentElement: element,
     highlightPrefix: 'editor-test',
-    hasDocument: () => true,
     getSnapshot: () => snapshot(),
-    requestViewUpdate: vi.fn(),
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: () => new DOMRect(0, 0, 1, 1),
-    setRangeHighlight: vi.fn(),
-    clearRangeHighlight: vi.fn(),
-  }
+  })
 }
 
 function snapshot(): EditorViewSnapshot {
@@ -759,25 +744,14 @@ function layerContext(
   painted: string[],
 ): EditorViewContributionContext {
   const element = document.createElement('div')
-  return {
+  return createTestViewContributionContext({
     container: element,
     scrollElement: element as unknown as HTMLDivElement,
     contentElement: element,
     highlightPrefix: 'editor-test-',
-    hasDocument: () => true,
     getSnapshot,
-    requestViewUpdate: vi.fn(),
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: () => new DOMRect(0, 0, 1, 1),
     setRangeHighlight: (name) => painted.push(name),
-    clearRangeHighlight: vi.fn(),
-  }
+  })
 }

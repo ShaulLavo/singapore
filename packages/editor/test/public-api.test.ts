@@ -40,12 +40,12 @@ import {
   type TextCharacterClass,
   type TextEdit,
   type TextOffsetRange,
+  createSelectionSet,
+  type SelectionSet,
 } from '@singapore-editor/core/document'
 import {
   Editor,
   type EditorInitialPaintEvent as EditorInitialPaintEventFromEditor,
-  type EditorSelectionRevealOptions,
-  type EditorSelectionRevealTarget,
   type EditorSetSelectionOptions,
   type EditorViewSnapshotJSON as EditorViewSnapshotJSONFromEditor,
   type EditorVisibleSnapshotJSON as EditorVisibleSnapshotJSONFromEditor,
@@ -99,21 +99,15 @@ import {
 } from '@singapore-editor/core/extensions'
 import { applyEditorTheme, type EditorTheme } from '@singapore-editor/core/rendering'
 import {
-  EditorSecondaryTextView,
+  createEditorSecondaryTextView,
   EditorSecondaryViewScheduler,
 } from '@singapore-editor/core/secondary-views'
 import {
   createEmptySyntaxResult,
   treeSitterCapturesToEditorTokens,
 } from '@singapore-editor/core/syntax'
-import { EditorPluginHost } from '@singapore-editor/core/testing'
+import { EditorPluginHost, VirtualizedTextView } from '@singapore-editor/core/testing'
 import { debugPieceTable } from '@singapore-editor/core/debug'
-import {
-  createSelectionSet,
-  type EditorSelectionContributionContext,
-  type SelectionSet,
-  VirtualizedTextView,
-} from '@singapore-editor/core/internal'
 import {
   createMergeConflictDocumentText,
   EDITOR_MERGE_CONFLICT_FEATURE,
@@ -386,32 +380,21 @@ describe('public API facade', () => {
     }
     const contributionOptions: Parameters<EditorViewContributionContext['setSelection']>[3] =
       rootOptions
+    // @ts-expect-error A reveal offset goes in the options object, never positionally.
     const editorNumericArgs: Parameters<Editor['setSelection']> = [1, 2, 3]
     const viewNumericArgs: Parameters<EditorViewContributionContext['setSelection']> = [
       1,
       2,
       'test.numericViewSelection',
+      // @ts-expect-error A reveal offset goes in the options object, never positionally.
       3,
     ]
-    const selectionNumericArgs: Parameters<EditorSelectionContributionContext['setSelection']> = [
-      1,
-      2,
-      'test.numericSelection',
-      3,
-    ]
-    const legacyOptions: EditorSelectionRevealOptions = { reveal: false, revealOffset: 9 }
-    const legacyTarget: EditorSelectionRevealTarget = 12
-    const rootLegacyOptions: core.EditorSelectionRevealOptions = legacyOptions
-    const rootLegacyTarget: core.EditorSelectionRevealTarget = legacyTarget
 
     expect(categoryOptions.affinity).toBe('before')
     expect(editSelection.affinity).toBe('after')
     expect(contributionOptions?.revealOffset).toBe(12)
-    expect(editorNumericArgs[2]).toBe(3)
-    expect(viewNumericArgs[3]).toBe(3)
-    expect(selectionNumericArgs[3]).toBe(3)
-    expect(rootLegacyOptions.revealOffset).toBe(9)
-    expect(rootLegacyTarget).toBe(12)
+    expect(editorNumericArgs).toHaveLength(3)
+    expect(viewNumericArgs).toHaveLength(4)
   })
 
   it('exports the whitespace modes a host can select', () => {
@@ -620,7 +603,7 @@ describe('public API facade', () => {
     expect(syntax.tokens).toEqual([])
     expect(debugPieceTable(createPieceTableSnapshot('abc')).length).toBeGreaterThan(0)
     expect(VirtualizedTextView).toBeTypeOf('function')
-    expect(EditorSecondaryTextView).toBeTypeOf('function')
+    expect(createEditorSecondaryTextView).toBeTypeOf('function')
     expect(EditorSecondaryViewScheduler).toBeTypeOf('function')
     expect({} as EditorPluginContext).toMatchObject({})
     host.dispose()

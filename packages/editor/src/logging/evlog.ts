@@ -122,7 +122,7 @@ export function createEditorEvlogLoggingPlugin(
     name: options.name ?? 'editor.evlog-logging',
     activate(context) {
       initializeEvlog(options.init)
-      return context.registerLogger?.(createEditorEvlogLogger(options))
+      return context.registerLogger(createEditorEvlogLogger(options))
     },
   }
 }

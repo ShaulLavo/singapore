@@ -277,6 +277,7 @@ function createFindHarness(fixture: FindFixture): FindHarness {
     trackPaintedRanges: (ranges) => store.trackRanges(ranges),
     getSelections: () => selections,
     focusEditor: () => {},
+    announce: () => {},
     setSelection: (anchor, head, _timingName, options) => {
       selections = [resolveSelection({ anchor, head, affinity: options?.affinity })]
     },

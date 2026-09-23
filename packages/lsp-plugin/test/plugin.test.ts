@@ -9,7 +9,6 @@ import {
   type EditorCommandContributionContext,
   type EditorCommandHandler,
   type EditorEditContributionContext,
-  type EditorPluginContext,
   type EditorViewContributionContext,
   type EditorViewContributionProvider,
   type EditorViewSnapshot,
@@ -40,6 +39,11 @@ import type {
 } from '../src/types'
 import { connectedEditor, DOCUMENT_URI } from './connectedEditor'
 import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  createTestEditContributionContext,
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 type JsonMessage = Record<string, unknown>
 type Listener = (event: Event) => void
@@ -147,7 +151,6 @@ describe('createLanguageServerAdapterPlugin', () => {
       createLanguageServerAdapterPlugin({
         name: 'editor.test-lsp',
         createTransport: () => transport,
-        defaultHighlightPrefix: 'editor-test',
         diagnostics: {
           minimapSourceId: 'editor.test-lsp.diagnostics',
           highlightNameNamespace: 'test-lsp',
@@ -217,7 +220,6 @@ describe('createLanguageServerAdapterPlugin', () => {
       createLanguageServerAdapterPlugin({
         name: 'editor.test-lsp',
         createTransport: () => transport,
-        defaultHighlightPrefix: 'editor-test',
         completion: { acceptTimingName: 'testLsp.completion.accept' },
       }),
       { applyEdits },
@@ -641,7 +643,6 @@ describe('connectionProvider', () => {
       name: 'editor.test-lsp',
       createTransport: () => transport,
       connectionProvider: provider,
-      defaultHighlightPrefix: 'editor-test',
       completion: { acceptTimingName: 'testLsp.completion.accept' },
     })
   }
@@ -717,7 +718,6 @@ describe('connectionProvider', () => {
         name: 'editor.test-lsp',
         createTransport: () => transport,
         connectionProvider,
-        defaultHighlightPrefix: 'editor-test',
         completion: { acceptTimingName: 'testLsp.completion.accept' },
         onConnected,
       }),
@@ -891,26 +891,22 @@ function activatePlugin(
   let provider: EditorViewContributionProvider | null = null
   const commands = new Map<EditorCommandId, EditorCommandHandler>()
   const features = new Map<unknown, unknown>()
-  plugin.activate({
-    registerHighlighter: () => ({ dispose: () => undefined }),
-    registerSyntaxProvider: () => ({ dispose: () => undefined }),
-    registerViewContribution: (value) => {
-      provider = value
-      return { dispose: () => undefined }
-    },
-    registerCommandContribution: (value) => {
-      value.createContribution(commandContributionContext(commands))
-      return { dispose: () => undefined }
-    },
-    registerCapabilityContribution: () => ({ dispose: () => undefined }),
-    registerEditContribution: (value) => {
-      value.createContribution(editContributionContext(features, options.applyEdits))
-      return { dispose: () => undefined }
-    },
-    registerDecorationContribution: () => ({ dispose: () => undefined }),
-    registerGutterContribution: () => ({ dispose: () => undefined }),
-    registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
-  } satisfies EditorPluginContext)
+  plugin.activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        provider = value
+        return { dispose: () => undefined }
+      },
+      registerCommandContribution: (value) => {
+        value.createContribution(commandContributionContext(commands))
+        return { dispose: () => undefined }
+      },
+      registerEditContribution: (value) => {
+        value.createContribution(editContributionContext(features, options.applyEdits))
+        return { dispose: () => undefined }
+      },
+    }),
+  )
 
   if (!provider) throw new Error('missing provider')
   return { provider, commands, features }
@@ -931,18 +927,14 @@ function editContributionContext(
   features: Map<unknown, unknown>,
   applyEdits: EditorEditContributionContext['applyEdits'],
 ): EditorEditContributionContext {
-  return {
-    hasDocument: () => true,
+  return createTestEditContributionContext({
     materializeFullText: () => '',
-    getTextSnapshot: () => null,
-    getSelections: () => [],
-    focusEditor: vi.fn(),
     applyEdits,
     registerFeature: (id, feature) => {
       features.set(id, feature)
       return { dispose: () => features.delete(id) }
     },
-  }
+  })
 }
 
 function command(
@@ -963,28 +955,18 @@ function viewContributionContext(
     const feature = options.features.get(token)
     return feature === undefined ? null : feature
   }) as EditorViewContributionContext['getFeature']
-  return {
+  return createTestViewContributionContext({
     container: element,
     scrollElement: element,
     contentElement: element,
     highlightPrefix: 'editor-test',
-    hasDocument: () => true,
     getSnapshot: () => snapshot,
-    requestViewUpdate: vi.fn(),
     getFeature,
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
     setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
     setRangeHighlight: vi.fn(),
-    clearRangeHighlight: vi.fn(),
-  }
+  })
 }
 
 function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorViewSnapshot {

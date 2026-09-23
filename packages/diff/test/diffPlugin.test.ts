@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
+import { VirtualizedTextView } from '@singapore-editor/core/testing'
 import { Editor } from '@singapore-editor/core/editor'
 import { createVisibleEditor } from './support/visibleEditor'
 import {
@@ -110,7 +110,7 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
     editor.setWordWrap(true)
     const target = plugin.getRows().findIndex((row) => row.type === 'addition')
     const view: unknown = Reflect.get(editor, 'view')
-    if (!(view instanceof EditorSecondaryTextView)) throw new Error('Expected text view')
+    if (!(view instanceof VirtualizedTextView)) throw new Error('Expected text view')
     view.scrollToRow(target)
     const row = view.getState().mountedRows.find((row) => row.bufferRow === target)!
     expect(row.index).toBeGreaterThan(target)

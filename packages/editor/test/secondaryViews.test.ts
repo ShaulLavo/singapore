@@ -6,8 +6,8 @@ import {
   unchangedChangesSinceDocumentSyncPoint,
 } from './factories/documentSync'
 import {
+  createEditorSecondaryTextView,
   createEditorSecondaryViewProjection,
-  EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
 } from '@singapore-editor/core/secondary-views'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
@@ -51,9 +51,23 @@ describe('secondary view projections', () => {
     expect(projection.visibleLineModel.rows.map((row) => row.text)).toEqual(['alpha'])
   })
 
-  it('exposes the secondary text view and scheduler entry points', () => {
-    expect(EditorSecondaryTextView).toBeTypeOf('function')
+  it('creates a read-only text view outside the tab order that sizes itself', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const view = createEditorSecondaryTextView(host, { scrollMode: 'static', overscan: 0 })
+
+    view.setText('alpha')
+    view.setHeight(40)
+
+    const scrollElement = host.querySelector<HTMLElement>('.editor-virtualized')
+    const inputElement = host.querySelector('textarea')
+    expect(scrollElement?.style.height).toBe('40px')
+    expect(scrollElement?.tabIndex).toBe(-1)
+    expect(inputElement?.tabIndex).toBe(-1)
+    expect(inputElement?.readOnly).toBe(true)
     expect(EditorSecondaryViewScheduler).toBeTypeOf('function')
+    view.dispose()
+    host.remove()
   })
 })
 

@@ -763,7 +763,7 @@ function readCapabilityOwner(
     activate: (context) =>
       context.registerViewContribution({
         createContribution: (viewContext) => {
-          owner = viewContext.getFeature?.(token)?.owner ?? null
+          owner = viewContext.getFeature(token)?.owner ?? null
           return { update: () => undefined, dispose: () => undefined }
         },
       }),

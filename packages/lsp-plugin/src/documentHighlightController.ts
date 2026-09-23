@@ -124,7 +124,7 @@ export class DocumentHighlightController {
     }
 
     this.painted = true
-    this.options.context.setRangeHighlight?.(this.options.highlightName, ranges, {
+    this.options.context.setRangeHighlight(this.options.highlightName, ranges, {
       backgroundColor: 'rgba(128, 128, 128, 0.18)',
     })
   }
@@ -134,6 +134,6 @@ export class DocumentHighlightController {
     if (!this.painted) return
 
     this.painted = false
-    this.options.context.clearRangeHighlight?.(this.options.highlightName)
+    this.options.context.clearRangeHighlight(this.options.highlightName)
   }
 }

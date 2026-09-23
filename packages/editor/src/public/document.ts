@@ -162,3 +162,12 @@ export type { EditorDocument, TextEdit } from '../tokens'
 export type { TextCharacterClass, TextOffsetRange } from '../textRanges'
 
 export type { TextStorageMaintenanceStats } from '../textStorageMaintenance'
+export {
+  createAnchorSelection,
+  createSelectionSet,
+  normalizeSelectionSet,
+  resolveSelection,
+} from '../selections'
+export type { AnchorSelection, SelectionSet } from '../selections'
+export { documentSessionChangeTextSnapshot } from '../documentSession'
+export { defineLazyFullTextProperty } from '../documentTextSnapshot'

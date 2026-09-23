@@ -7,7 +7,7 @@ import {
   type TextEdit,
 } from '@singapore-editor/core/document'
 import type { EditorViewContributionUpdateKind } from '@singapore-editor/core/extensions'
-import { defineLazyFullTextProperty } from '@singapore-editor/core/internal'
+import { defineLazyFullTextProperty } from '@singapore-editor/core/document'
 import {
   recordLspPerformanceDiagnostic,
   type LspDocumentTransitionNotification,

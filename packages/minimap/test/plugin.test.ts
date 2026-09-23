@@ -21,6 +21,11 @@ import type {
   MinimapWorkerRequest,
   MinimapWorkerResponse,
 } from '../src/types'
+import {
+  createTestCapabilityContributionContext,
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 // One band past the merge limit, every fifth line: 6000 lines projected onto the
 // 600px the editor is tall leave 30 lines inside one band's width, so the run
@@ -44,17 +49,19 @@ describe('createMinimapPlugin', () => {
     }))
     const plugin = createMinimapPlugin({ enabled: false })
 
-    const disposable = plugin.activate({
-      registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
-      registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
-      registerViewContribution,
-      registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    })
+    const disposable = plugin.activate(
+      createTestPluginContext({
+        registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+        registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+        registerViewContribution,
+        registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      }),
+    )
 
     expect(plugin.name).toBe('minimap')
     expect(disposable).toBeDefined()
@@ -72,19 +79,23 @@ describe('createMinimapPlugin', () => {
     const registerFeature = vi.fn(() => ({ dispose: vi.fn() }))
     const plugin = createMinimapPlugin({ enabled: false })
 
-    plugin.activate({
-      registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
-      registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
-      registerViewContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerCapabilityContribution,
-      registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    })
+    plugin.activate(
+      createTestPluginContext({
+        registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+        registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+        registerViewContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerCapabilityContribution,
+        registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      }),
+    )
 
-    const contribution = registration?.createContribution({ registerFeature })
+    const contribution = registration?.createContribution(
+      createTestCapabilityContributionContext({ registerFeature }),
+    )
 
     expect(registerFeature).toHaveBeenCalledWith(EDITOR_MINIMAP_FEATURE, expect.any(Object))
 
@@ -101,17 +112,19 @@ describe('createMinimapPlugin', () => {
     }
     const plugin = createMinimapPlugin({ enabled: false })
 
-    plugin.activate({
-      registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
-      registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
-      registerViewContribution,
-      registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
-      registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    })
+    plugin.activate(
+      createTestPluginContext({
+        registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+        registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+        registerViewContribution,
+        registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      }),
+    )
 
     expect(registration?.createContribution(context())).toBeNull()
   })
@@ -407,17 +420,19 @@ describe('createMinimapPlugin', () => {
       }
       const plugin = createMinimapPlugin({ enabled: true })
 
-      plugin.activate({
-        registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
-        registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
-        registerViewContribution,
-        registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
-        registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
-        registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
-        registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
-        registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
-        registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-      })
+      plugin.activate(
+        createTestPluginContext({
+          registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+          registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+          registerViewContribution,
+          registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+          registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
+          registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+          registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+          registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+          registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+        }),
+      )
 
       const testContext = context(
         snapshot({
@@ -624,23 +639,25 @@ function activateMinimap(options: EditorMinimapOptions = {}): {
   let capability: EditorCapabilityContributionProvider | undefined
   let view: EditorViewContributionProvider | undefined
 
-  createMinimapPlugin({ enabled: true, ...options }).activate({
-    registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
-    registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
-    registerViewContribution: (provider) => {
-      view = provider
-      return { dispose: vi.fn() }
-    },
-    registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
-    registerCapabilityContribution: (provider) => {
-      capability = provider
-      return { dispose: vi.fn() }
-    },
-    registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
-    registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
-    registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
-    registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  })
+  createMinimapPlugin({ enabled: true, ...options }).activate(
+    createTestPluginContext({
+      registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+      registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      registerViewContribution: (provider) => {
+        view = provider
+        return { dispose: vi.fn() }
+      },
+      registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+      registerCapabilityContribution: (provider) => {
+        capability = provider
+        return { dispose: vi.fn() }
+      },
+      registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+      registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+      registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+      registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    }),
+  )
 
   return { capability, view }
 }
@@ -649,12 +666,14 @@ function registeredMinimapFeature(
   provider: EditorCapabilityContributionProvider | undefined,
 ): EditorMinimapFeature {
   const registered: EditorMinimapFeature[] = []
-  provider?.createContribution({
-    registerFeature: (_token, feature) => {
-      registered.push(feature as EditorMinimapFeature)
-      return { dispose: vi.fn() }
-    },
-  })
+  provider?.createContribution(
+    createTestCapabilityContributionContext({
+      registerFeature: (_token, feature) => {
+        registered.push(feature as EditorMinimapFeature)
+        return { dispose: vi.fn() }
+      },
+    }),
+  )
 
   const feature = registered[0]
   if (!feature) throw new Error('missing minimap decoration registry')
@@ -703,24 +722,15 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
   const scrollElement = document.createElement('div')
   scrollElement.style.setProperty('scrollbar-width', 'none')
   container.appendChild(scrollElement)
-  return {
+  return createTestViewContributionContext({
     container,
     scrollElement,
     contentElement: scrollElement,
-    hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
-    requestViewUpdate: vi.fn(),
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
     setScrollTop: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
-    textOffsetFromPoint: vi.fn(() => null),
-    getRangeClientRect: vi.fn(() => null),
-  }
+  })
 }
 
 function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): EditorViewSnapshot {

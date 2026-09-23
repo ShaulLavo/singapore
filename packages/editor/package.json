@@ -37,11 +37,6 @@
       "import": "./dist/public/extensions.js",
       "default": "./dist/public/extensions.js"
     },
-    "./internal": {
-      "types": "./dist/internal.d.ts",
-      "import": "./dist/internal.js",
-      "default": "./dist/internal.js"
-    },
     "./logging": {
       "types": "./dist/logging/index.d.ts",
       "import": "./dist/logging/index.js",

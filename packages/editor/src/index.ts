@@ -285,8 +285,6 @@ export type {
   EditorRangeDecoration,
   EditorScrollMode,
   EditorScrollPosition,
-  EditorSelectionRevealOptions,
-  EditorSelectionRevealTarget,
   EditorSelectionSyncMode,
   EditorSetSelectionOptions,
   EditorSetTextOptions,

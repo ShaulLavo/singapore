@@ -1,3 +1,4 @@
+import { createError } from '../logging/evlog'
 import { pointViewport } from './pointViewport'
 import type { SavedPaint, SavedPaintRow } from '../editor/paintSnapshot'
 import type { MeasuredText } from '../textMeasurements'
@@ -478,13 +479,26 @@ function foldMarkersForPass(
   return source.readRows(bufferRows)
 }
 
+/** A mounted row the projection cannot place would paint as line 1, so it fails instead. */
+function mountedBufferRow(view: VirtualizedTextViewInternal, index: number): number {
+  const bufferRow = bufferRowForVirtualRow(view, index)
+  if (bufferRow !== null) return bufferRow
+  throw createError({
+    code: 'EDITOR_ROW_UNMAPPED',
+    message: 'The editor mounted a display row its projection does not have',
+    why: 'Rows are mounted from the virtualizer, which must agree with the display projection.',
+    fix: 'Report this editor bug with the document that triggered it.',
+    internal: { index, rowCount: view.model.projection.rowCount },
+  })
+}
+
 function rowUpdateState(
   view: VirtualizedTextViewInternal,
   index: number,
   updatePass: RowUpdatePass,
 ): RowUpdateState {
   const displayRow = view.model.projection.getRow(index)
-  const bufferRow = bufferRowForVirtualRow(view, index)
+  const bufferRow = mountedBufferRow(view, index)
   const primaryText = isDocumentTextDisplayRow(displayRow) && displayRow.sourceStartColumn === 0
 
   return {
@@ -2255,7 +2269,9 @@ function rowDecorationForVirtualRow(
   const displayRow = view.model.projection.getRow(virtualRow)
   if (isInjectedTextDisplayRow(displayRow)) return injectedRowDecoration(displayRow)
 
-  return view.rowDecorations.get(bufferRowForVirtualRow(view, virtualRow))
+  const bufferRow = bufferRowForVirtualRow(view, virtualRow)
+  if (bufferRow === null) return undefined
+  return view.rowDecorations.get(bufferRow)
 }
 
 function injectedRowDecoration(

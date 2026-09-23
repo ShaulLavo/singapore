@@ -1,5 +1,9 @@
-import type { EditorViewContributionContext } from '@singapore-editor/core/extensions'
+import type {
+  EditorViewContributionContext,
+  EditorViewSnapshot,
+} from '@singapore-editor/core/extensions'
 import { describe, expect, it, vi } from 'vitest'
+import { createTestViewContributionContext } from '@singapore-editor/core/testing'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { DiagnosticsPresenter } from '../src/diagnosticsPresenter'
@@ -139,17 +143,15 @@ class TestMinimap {
 }
 
 function editorContext(minimap: TestMinimap, headOffset = 0): EditorViewContributionContext {
-  return {
-    getSnapshot: () => ({
-      lineCount: 1,
-      selections: [{ headOffset }],
-    }),
-    getFeature: () => minimap,
+  return createTestViewContributionContext({
+    getSnapshot: () =>
+      ({ lineCount: 1, selections: [{ headOffset }] }) as unknown as EditorViewSnapshot,
+    getFeature: (() => minimap) as EditorViewContributionContext['getFeature'],
     setRangeHighlight: vi.fn(),
     clearRangeHighlight: vi.fn(),
     setSelection: vi.fn(),
     focusEditor: vi.fn(),
-  } as unknown as EditorViewContributionContext
+  })
 }
 
 function presenterOptions(

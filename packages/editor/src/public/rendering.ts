@@ -49,3 +49,4 @@ export type {
   VirtualizedTextHighlightStyle,
   VirtualizedTextRowDecoration,
 } from '../virtualization'
+export { scheduleFrame, type ScheduledFrame } from '../editor/scheduleFrame'

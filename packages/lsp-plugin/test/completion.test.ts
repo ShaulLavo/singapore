@@ -12,6 +12,7 @@ import {
   createCompletionEditFeature,
   createCompletionWidgetController,
 } from '../src/completion'
+import { createTestEditContributionContext } from '@singapore-editor/core/testing'
 
 describe('completion helpers', () => {
   it('detects identifier and trigger-character completion changes', () => {
@@ -109,15 +110,11 @@ describe('completion helpers', () => {
 })
 
 function editContext(): EditorEditContributionContext {
-  return {
-    hasDocument: () => true,
+  return createTestEditContributionContext({
     materializeFullText: () => '',
-    getTextSnapshot: () => null,
-    getSelections: () => [],
-    focusEditor: vi.fn(),
     applyEdits: vi.fn(),
     registerFeature: vi.fn(() => ({ dispose: vi.fn() })),
-  }
+  })
 }
 
 function editChange(text: string): Parameters<typeof completionTriggerFromChange>[0] {

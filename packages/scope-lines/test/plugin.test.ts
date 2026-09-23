@@ -9,6 +9,10 @@ import type {
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
 import { createScopeLinesPlugin } from '../src/index'
+import {
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 const TEST_DOCUMENT_SYNC_SEGMENT = Object.freeze(
   {},
@@ -527,7 +531,7 @@ function registeredProvider(plugin: ReturnType<typeof createScopeLinesPlugin>) {
 function createContext(
   registerViewContribution: EditorPluginContext['registerViewContribution'],
 ): EditorPluginContext {
-  return {
+  return createTestPluginContext({
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
     registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerViewContribution,
@@ -537,7 +541,7 @@ function createContext(
     registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  }
+  })
 }
 
 function context(viewSnapshot = snapshot()): EditorViewContributionContext {
@@ -546,24 +550,13 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
   const contentElement = document.createElement('div')
   scrollElement.appendChild(contentElement)
   container.appendChild(scrollElement)
-  return {
+  return createTestViewContributionContext({
     container,
     scrollElement,
     contentElement,
-    hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
     requestViewUpdate: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
-    textOffsetFromPoint: vi.fn(() => null),
-    getRangeClientRect: vi.fn(() => null),
-  }
+  })
 }
 
 function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapshot {

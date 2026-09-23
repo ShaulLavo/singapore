@@ -4,16 +4,14 @@ import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/
 
 import {
   applyBatchToPieceTable,
+  createAnchorSelection,
   createPieceTableSnapshot,
+  createSelectionSet,
   insertIntoPieceTable,
+  resolveSelection,
   type TextEdit,
 } from '@singapore-editor/core/document'
-import { reclaimPieceTableText } from '@singapore-editor/core/internal'
-import {
-  createAnchorSelection,
-  createSelectionSet,
-  resolveSelection,
-} from '@singapore-editor/core/internal'
+import { reclaimPieceTableText } from '@singapore-editor/core/testing'
 import {
   expandTreeSitterSelection,
   resolveTreeSitterLanguageContribution,

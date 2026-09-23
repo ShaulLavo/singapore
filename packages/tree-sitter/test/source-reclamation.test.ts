@@ -6,7 +6,7 @@ import {
   materializePieceTableFullText,
   type PieceTableSnapshot,
 } from '@singapore-editor/core/document'
-import { reclaimPieceTableText } from '@singapore-editor/core/internal'
+import { reclaimPieceTableText } from '@singapore-editor/core/testing'
 import {
   createTreeSitterSourceDescriptor,
   readTreeSitterInputRange,

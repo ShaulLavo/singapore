@@ -15,6 +15,11 @@ import {
   EDITOR_FIND_FEATURE,
   type EditorFindContributionProviders,
 } from '../src'
+import {
+  createTestCapabilityContributionContext,
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 describe('createEditorFindPlugin', () => {
   it('registers public find contribution providers', () => {
@@ -35,12 +40,14 @@ describe('createEditorFindPlugin', () => {
     const providers = createEditorFindContributionProviders()
     const registrations: { readonly token: unknown; readonly feature: unknown }[] = []
 
-    const contribution = providers.capability.createContribution({
-      registerFeature: (token, feature) => {
-        registrations.push({ token, feature })
-        return { dispose: vi.fn() }
-      },
-    })
+    const contribution = providers.capability.createContribution(
+      createTestCapabilityContributionContext({
+        registerFeature: (token, feature) => {
+          registrations.push({ token, feature })
+          return { dispose: vi.fn() }
+        },
+      }),
+    )
 
     expect(registrations).toEqual([
       {
@@ -91,12 +98,14 @@ describe('createEditorFindPlugin', () => {
     const features: { openFind(): boolean }[] = []
     const viewContribution = providers.view.createContribution(context)
 
-    providers.capability.createContribution({
-      registerFeature: (_token, value) => {
-        features.push(value as { openFind(): boolean })
-        return { dispose: vi.fn() }
-      },
-    })
+    providers.capability.createContribution(
+      createTestCapabilityContributionContext({
+        registerFeature: (_token, value) => {
+          features.push(value as { openFind(): boolean })
+          return { dispose: vi.fn() }
+        },
+      }),
+    )
 
     const feature = features[0]
     expect(context.container.querySelector('.editor-find-widget')).toBeNull()
@@ -208,12 +217,14 @@ function trackMutationObservers(): { connected(): number; restore(): void } {
 
 function openFindWidget(providers: EditorFindContributionProviders): void {
   const features: { openFind(): boolean }[] = []
-  providers.capability.createContribution({
-    registerFeature: (_token, value) => {
-      features.push(value as { openFind(): boolean })
-      return { dispose: vi.fn() }
-    },
-  })
+  providers.capability.createContribution(
+    createTestCapabilityContributionContext({
+      registerFeature: (_token, value) => {
+        features.push(value as { openFind(): boolean })
+        return { dispose: vi.fn() }
+      },
+    }),
+  )
   features[0]?.openFind()
 }
 
@@ -230,7 +241,7 @@ function findWidgetElement(context: EditorViewContributionContext): HTMLElement 
 }
 
 function pluginContext(): EditorPluginContext {
-  return {
+  return createTestPluginContext({
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
     registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerViewContribution: vi.fn<EditorPluginContext['registerViewContribution']>(
@@ -248,26 +259,19 @@ function pluginContext(): EditorPluginContext {
     registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  }
+  })
 }
 
 function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
   const container = document.createElement('div')
   const scrollElement = document.createElement('div')
   container.appendChild(scrollElement)
-  return {
+  return createTestViewContributionContext({
     container,
     scrollElement,
     contentElement: scrollElement,
     highlightPrefix: 'editor-find-test',
-    hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
-    requestViewUpdate: vi.fn(),
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
     reserveOverlayWidth: vi.fn<EditorViewContributionContext['reserveOverlayWidth']>(
       (side, width) => {
         scrollElement.style[overlayPadding(side)] = width > 0 ? `${Math.ceil(width)}px` : ''
@@ -275,13 +279,7 @@ function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
     ),
     getReservedOverlayWidth: (side) =>
       Number.parseFloat(scrollElement.style[overlayPadding(side)]) || 0,
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
-    textOffsetFromPoint: vi.fn(() => null),
-    getRangeClientRect: vi.fn(() => null),
-    setRangeHighlight: vi.fn(),
-    clearRangeHighlight: vi.fn(),
-  }
+  })
 }
 
 function snapshot(): EditorViewSnapshot {

@@ -5,8 +5,11 @@ import type {
   EditorViewContributionContext,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
-import { setHighlightRegistry } from '@singapore-editor/core/testing'
-import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
+import {
+  createTestCapabilityContributionContext,
+  setHighlightRegistry,
+  VirtualizedTextView,
+} from '@singapore-editor/core/testing'
 import {
   createEditorFindContributionProviders,
   createEditorFindPlugin,
@@ -280,7 +283,7 @@ function editorProbe(text: string, plugins: readonly EditorPlugin[] = []): Edito
   const editor = new Editor(container, { defaultText: text, plugins: [...plugins, capture] })
   const view: unknown = Reflect.get(editor, 'view')
   // happy-dom has no layout, so deliver the first visible viewport measurement explicitly.
-  if (view instanceof EditorSecondaryTextView) view.setScrollMetrics(0, 24)
+  if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 24)
   openProbes.push(() => {
     editor.dispose()
     container.remove()
@@ -298,12 +301,14 @@ function attachFind(context: EditorViewContributionContext): FindAttachment {
   })
   const view = providers.view.createContribution(context)
   const features: EditorFindFeature[] = []
-  const capability = providers.capability.createContribution({
-    registerFeature: (_token, feature) => {
-      features.push(feature as EditorFindFeature)
-      return { dispose: () => {} }
-    },
-  })
+  const capability = providers.capability.createContribution(
+    createTestCapabilityContributionContext({
+      registerFeature: (_token, feature) => {
+        features.push(feature as EditorFindFeature)
+        return { dispose: () => {} }
+      },
+    }),
+  )
   openProbes.push(() => {
     capability?.dispose()
     view?.dispose()

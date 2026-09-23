@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Editor } from '@singapore-editor/core/editor'
-import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
-import { setEditorSyntaxSessionFactory, setHighlightRegistry } from '@singapore-editor/core/testing'
+import {
+  setEditorSyntaxSessionFactory,
+  setHighlightRegistry,
+  VirtualizedTextView,
+} from '@singapore-editor/core/testing'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxCapture,
   type EditorSyntaxResult,
   type EditorSyntaxSession,
 } from '@singapore-editor/core/syntax'
-import type { EditorPluginContext } from '@singapore-editor/core/extensions'
 import { createMarkdownPreviewPlugin } from '../src/index'
 
 /**
@@ -83,7 +85,7 @@ describe('markdown preview plugin', () => {
     editor = new Editor(container, { plugins: [createMarkdownPreviewPlugin()] })
     const view: unknown = Reflect.get(editor, 'view')
     // happy-dom has no layout, so deliver the first visible viewport measurement explicitly.
-    if (view instanceof EditorSecondaryTextView) view.setScrollMetrics(0, 240, 640)
+    if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 240, 640)
   })
 
   afterEach(() => {
@@ -126,31 +128,5 @@ describe('markdown preview plugin', () => {
     await openMarkdown('typescript')
 
     expect(rowTexts()).toEqual(['# Title', 'a **bold** b'])
-  })
-})
-
-describe('markdown preview plugin on an unsupported host', () => {
-  const pluginContext = (): EditorPluginContext =>
-    ({
-      registerHighlighter: () => ({ dispose: () => undefined }),
-      registerSyntaxProvider: () => ({ dispose: () => undefined }),
-      registerViewContribution: () => ({ dispose: () => undefined }),
-      registerCommandContribution: () => ({ dispose: () => undefined }),
-      registerCapabilityContribution: () => ({ dispose: () => undefined }),
-      registerEditContribution: () => ({ dispose: () => undefined }),
-      registerDecorationContribution: () => ({ dispose: () => undefined }),
-      registerGutterContribution: () => ({ dispose: () => undefined }),
-      registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
-    }) satisfies EditorPluginContext
-
-  it('warns instead of silently rendering nothing', () => {
-    const logged: string[] = []
-    const context = {
-      ...pluginContext(),
-      log: (event: { action: string }) => logged.push(event.action),
-    }
-
-    expect(createMarkdownPreviewPlugin().activate(context)).toBeUndefined()
-    expect(logged).toEqual(['markdown.preview.unsupported'])
   })
 })

@@ -11,7 +11,7 @@
     "@phosphor-icons/web",
     "@tree-sitter-grammars/tree-sitter-markdown",
     "tree-sitter-cli",
-    "@playwright/test"
+    "@playwright/test",
   ],
   // Each package builds its public surface from the `exports` map (build-package.ts maps
   // ./dist/X.js -> ./src/X.ts), so every exports entry point is registered here. Everything
@@ -19,14 +19,13 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/*.{ts,mjs}"],
-      "project": "scripts/**/*.{ts,mjs}"
+      "project": "scripts/**/*.{ts,mjs}",
     },
     "packages/editor": {
       "entry": [
         "src/index.ts",
         "src/debug.ts",
         "src/editor.ts",
-        "src/internal.ts",
         "src/public/document.ts",
         "src/public/extensions.ts",
         "src/public/rendering.ts",
@@ -37,21 +36,21 @@
         "src/logging/evlog.ts",
         "src/shiki/index.ts",
         "src/**/*.worker.ts",
-        "bench/**/*.ts"
+        "bench/**/*.ts",
       ],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/markdown": {
       "entry": ["src/index.ts"],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/gutters": {
       "entry": ["src/index.ts", "src/lineGutter.ts", "src/foldGutter.ts"],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/lsp": {
       "entry": ["src/index.ts", "src/positions.ts", "src/types.ts"],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/lsp-plugin": {
       "entry": [
@@ -67,9 +66,9 @@
         "src/paths.ts",
         "src/pluginTypes.ts",
         "src/plugin.styles.ts",
-        "src/websocket.ts"
+        "src/websocket.ts",
       ],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/plugin-ui": {
       "entry": [
@@ -82,33 +81,40 @@
         "src/markdownTooltip.ts",
         "src/offsetRange.ts",
         "src/styles.ts",
-        "src/tooltip.ts"
+        "src/tooltip.ts",
       ],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/typescript-lsp": {
       "entry": ["src/index.ts", "src/server.ts", "src/tsDiagnostics.ts", "src/**/*.worker.ts"],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/tree-sitter": {
       "entry": ["src/index.ts", "src/**/*.worker.ts", "bench/**/*.ts"],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/minimap": {
       "entry": ["src/index.ts", "src/**/*.worker.ts", "bench/**/*.ts"],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "packages/*": {
       "entry": ["src/index.ts"],
-      "project": "src/**/*.{ts,tsx}"
+      "project": "src/**/*.{ts,tsx}",
     },
     "examples/stress": {
-      "entry": ["index.html", "run.mjs", "fixtures.mjs", "compare.mjs", "profile-summary.mjs", "test/verify-results.mjs"],
-      "project": ["src/**/*.ts", "*.mjs"]
+      "entry": [
+        "index.html",
+        "run.mjs",
+        "fixtures.mjs",
+        "compare.mjs",
+        "profile-summary.mjs",
+        "test/verify-results.mjs",
+      ],
+      "project": ["src/**/*.ts", "*.mjs"],
     },
     "examples/app": {
       "entry": ["index.html"],
-      "project": "src/**/*.{ts,tsx}"
-    }
-  }
+      "project": "src/**/*.{ts,tsx}",
+    },
+  },
 }

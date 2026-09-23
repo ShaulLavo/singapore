@@ -78,7 +78,7 @@ class BracketMatchController implements EditorViewContribution {
     private readonly context: EditorViewContributionContext,
     private readonly style: VirtualizedTextHighlightStyle,
   ) {
-    this.highlightName = `${context.highlightPrefix ?? 'editor'}-bracket-match`
+    this.highlightName = `${context.highlightPrefix}-bracket-match`
   }
 
   update(snapshot: EditorViewSnapshot, kind: EditorViewContributionUpdateKind): void {
@@ -114,11 +114,11 @@ class BracketMatchController implements EditorViewContribution {
 
     this.painted = match
     if (!match) {
-      this.context.clearRangeHighlight?.(this.highlightName)
+      this.context.clearRangeHighlight(this.highlightName)
       return
     }
 
-    this.context.setRangeHighlight?.(
+    this.context.setRangeHighlight(
       this.highlightName,
       [
         { end: match.openOffset + 1, start: match.openOffset },
@@ -132,7 +132,7 @@ class BracketMatchController implements EditorViewContribution {
     if (!this.painted) return
 
     this.painted = null
-    this.context.clearRangeHighlight?.(this.highlightName)
+    this.context.clearRangeHighlight(this.highlightName)
   }
 }
 

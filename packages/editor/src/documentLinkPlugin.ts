@@ -65,7 +65,7 @@ class DocumentLinkController implements EditorViewContribution {
     private readonly style: VirtualizedTextHighlightStyle,
     private readonly openLink: (url: string) => void,
   ) {
-    this.highlightName = `${context.highlightPrefix ?? 'editor'}-document-link`
+    this.highlightName = `${context.highlightPrefix}-document-link`
     this.context.container.addEventListener('click', this.handleClick)
   }
 
@@ -110,7 +110,7 @@ class DocumentLinkController implements EditorViewContribution {
     }
 
     this.painted = true
-    this.context.setRangeHighlight?.(
+    this.context.setRangeHighlight(
       this.highlightName,
       links.map((link) => ({ end: link.end, start: link.start })),
       this.style,
@@ -122,7 +122,7 @@ class DocumentLinkController implements EditorViewContribution {
     if (!this.painted) return
 
     this.painted = false
-    this.context.clearRangeHighlight?.(this.highlightName)
+    this.context.clearRangeHighlight(this.highlightName)
   }
 }
 

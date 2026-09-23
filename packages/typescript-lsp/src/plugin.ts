@@ -59,7 +59,6 @@ export function createTypeScriptLspPlugin(
     clientInfo: resolved.clientInfo,
     semanticTokens: resolved.semanticTokens,
     createTransport: typeScriptTransportFactory(resolved),
-    defaultHighlightPrefix: 'editor-typescript-lsp',
     documentSync: {
       shouldSyncLanguageId: isTypeScriptLspLanguage,
       shouldSyncUri: isTypeScriptLspSourceFileName,

@@ -20,6 +20,7 @@ import {
   treeSitterCapturesToEditorTokens,
 } from '../src/syntax'
 import { type VirtualizedTextHighlightRegistry, VirtualizedTextView } from '../src/virtualization'
+import { createTestViewContributionContext } from '../src/testContexts'
 
 /**
  * The semantic layer over a real mounted view, in the harness the house already uses for "which
@@ -90,27 +91,16 @@ function viewContext(
   view: VirtualizedTextView,
   container: HTMLElement,
 ): EditorViewContributionContext {
-  return {
+  return createTestViewContributionContext({
     container,
     scrollElement: container as HTMLDivElement,
     contentElement: view.contentElement,
     highlightPrefix: 'test-',
-    hasDocument: () => true,
     getSnapshot: () => snapshot(),
-    requestViewUpdate: () => undefined,
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 0),
-    getRangeClientRect: vi.fn(() => null),
     setRangeHighlight: (name, ranges, style) => view.setRangeHighlight(name, ranges, style),
     clearRangeHighlight: (name) => view.clearRangeHighlight(name),
-  }
+  })
 }
 
 function snapshot(): EditorViewSnapshot {

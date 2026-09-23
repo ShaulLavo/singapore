@@ -527,7 +527,8 @@ export type EditorViewContributionContext = {
   readonly scrollElement: HTMLDivElement
   /** Document paint parent inside the code viewport, separate from native scrollbars. */
   readonly contentElement: HTMLDivElement
-  readonly highlightPrefix?: string
+  /** Unique per editor, so two editors' CSS highlights never share a registry name. */
+  readonly highlightPrefix: string
   hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
   requestViewUpdate(): void
@@ -535,16 +536,15 @@ export type EditorViewContributionContext = {
    * The character the user typed, after its edit has landed. A contribution that acts on a
    * keystroke reads it here rather than deducing it from the change: auto-closing turns a typed
    * `(` into a two-character `()`, and typing over the closer it inserted changes no text at all.
-   * Optional so a hand-written context keeps compiling.
    */
-  onDidType?(listener: (text: string) => void): EditorDisposable
-  getFeature?<T>(token: EditorCapabilityToken<T>): T | null
+  onDidType(listener: (text: string) => void): EditorDisposable
+  getFeature<T>(token: EditorCapabilityToken<T>): T | null
   /**
    * The sources registered for a language feature, best first. The language is the caller's to name
    * because the region being answered for is not always the whole document's — an embedded fence
    * asks on behalf of the language inside it.
    */
-  getProviders?<T>(
+  getProviders<T>(
     token: EditorLanguageFeatureToken<T>,
     languageId: EditorSyntaxLanguageId | null,
   ): readonly T[]
@@ -554,32 +554,21 @@ export type EditorViewContributionContext = {
    * thing goes away, and the contribution's own disposal is what knows when; a source that owns
    * nothing view-scoped registers from a capability contribution instead.
    */
-  registerProvider?<T>(
+  registerProvider<T>(
     token: EditorLanguageFeatureToken<T>,
     selector: EditorLanguageFeatureSelector,
     provider: T,
   ): EditorDisposable
-  log?(event: EditorLogInput): void
+  log(event: EditorLogInput): void
   revealLine(row: number): void
   focusEditor(): void
-  /**
-   * Says something out loud to a screen reader. Optional so a hand-written context keeps compiling;
-   * a host without one simply stays quiet, which is what it did before it could speak at all.
-   */
-  announce?(message: string): void
+  /** Says something out loud to a screen reader. */
+  announce(message: string): void
   setSelection(
     anchor: number,
     head: number,
     timingName: string,
     options?: EditorSetSelectionOptions,
-  ): void
-  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
-  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
-  setSelection(
-    anchor: number,
-    head: number,
-    timingName: string,
-    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
   ): void
   setSelections(
     selections: readonly EditorSelectionRange[],
@@ -591,7 +580,7 @@ export type EditorViewContributionContext = {
   // Width already claimed on that edge by other contributions, so an overlay
   // that anchors itself to the edge can step clear of them instead of covering
   // them. Changes are announced as a 'layout' update.
-  getReservedOverlayWidth?(side: EditorOverlaySide): number
+  getReservedOverlayWidth(side: EditorOverlaySide): number
   rowAtPoint(clientX: number, clientY: number): EditorPointHit | null
   markerAtPoint(clientX: number, clientY: number): EditorMarkerHit | null
   textOffsetFromPoint(clientX: number, clientY: number): number | null
@@ -600,17 +589,17 @@ export type EditorViewContributionContext = {
   // edge absorbs text arriving against it is the contribution's call, in the bias terms
   // EditorDecorationRange states it in: a region selected to work within absorbs it, something
   // found in the text does not.
-  trackRanges?(
+  trackRanges(
     ranges: readonly TextOffsetRange[],
     bias?: Pick<EditorDecorationRange, 'startBias' | 'endBias'>,
   ): EditorTrackedRanges
-  trackPoint?(anchor: Extract<EditorTextAnchor, { readonly kind: 'point' }>): EditorTrackedPoint
-  setRangeHighlight?(
+  trackPoint(anchor: Extract<EditorTextAnchor, { readonly kind: 'point' }>): EditorTrackedPoint
+  setRangeHighlight(
     name: string,
     ranges: readonly { readonly start: number; readonly end: number }[],
     style: VirtualizedTextHighlightStyle,
   ): void
-  clearRangeHighlight?(name: string): void
+  clearRangeHighlight(name: string): void
 }
 
 export type EditorViewContributionUpdateKind =
@@ -654,21 +643,21 @@ export type EditorSelectionRange = {
   readonly affinity?: SelectionAffinity
 }
 
-export type EditorFeatureDomContributionContext = {
+type EditorFeatureDomContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
   readonly contentElement: HTMLDivElement
   readonly highlightPrefix: string
 }
 
-export type EditorDocumentContributionContext = {
+type EditorDocumentContributionContext = {
   hasDocument(): boolean
-  log?(event: EditorLogInput): void
+  log(event: EditorLogInput): void
   materializeFullText(): string
-  getTextSnapshot?(): TextSnapshot | null
+  getTextSnapshot(): TextSnapshot | null
 }
 
-export type EditorSelectionContributionContext = {
+type EditorSelectionContributionContext = {
   getSelections(): readonly EditorResolvedSelection[]
   focusEditor(): void
   setSelection(
@@ -677,14 +666,6 @@ export type EditorSelectionContributionContext = {
     timingName: string,
     options?: EditorSetSelectionOptions,
   ): void
-  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
-  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
-  setSelection(
-    anchor: number,
-    head: number,
-    timingName: string,
-    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
-  ): void
   setSelections(
     selections: readonly EditorSelectionRange[],
     timingName: string,
@@ -692,7 +673,7 @@ export type EditorSelectionContributionContext = {
   ): void
 }
 
-export type EditorRangeHighlightContributionContext = {
+type EditorRangeHighlightContributionContext = {
   setRangeHighlight(
     name: string,
     ranges: readonly { readonly start: number; readonly end: number }[],
@@ -701,7 +682,7 @@ export type EditorRangeHighlightContributionContext = {
   clearRangeHighlight(name: string): void
 }
 
-export type EditorRowDecorationContributionContext = {
+type EditorRowDecorationContributionContext = {
   setRowDecorations(
     sourceId: string,
     decorations: ReadonlyMap<number, VirtualizedTextRowDecoration>,
@@ -719,13 +700,8 @@ export type EditorCapabilityContributionContext = {
    * Adds one more source for a language feature, next to whichever others already answer it. The
    * selector decides which documents it is asked about and where in the order it sits; see
    * EditorLanguageFeatureSelector.
-   *
-   * Optional on the same terms as the newer plugin-context registrations. A host without it hands
-   * the source on to no one, so a caller that consumes the feature itself is left asking what it
-   * registered and nothing else, and one that only registers has nothing to fall back to and should
-   * say so rather than going quiet.
    */
-  registerProvider?<T>(
+  registerProvider<T>(
     token: EditorLanguageFeatureToken<T>,
     selector: EditorLanguageFeatureSelector,
     provider: T,
@@ -734,7 +710,6 @@ export type EditorCapabilityContributionContext = {
 
 export type EditorEditContributionContext = EditorDocumentContributionContext &
   EditorCapabilityContributionContext & {
-    getTextSnapshot(): TextSnapshot | null
     getSelections(): readonly EditorResolvedSelection[]
     focusEditor(): void
     applyEdits(
@@ -747,11 +722,8 @@ export type EditorEditContributionContext = EditorDocumentContributionContext &
      * range the caret visits and, where the snippet writes that stop more than once, the copies
      * that have to go on reading the same as it while it is being typed into. A copy with a
      * `transform` is rendered from the stop's text rather than holding it verbatim.
-     *
-     * Optional so existing hand-written contexts (test doubles, mostly) keep compiling; a host
-     * without it simply leaves the caret at the first stop.
      */
-    startSnippetSession?(stops: readonly EditorSnippetStop[]): void
+    startSnippetSession(stops: readonly EditorSnippetStop[]): void
   }
 
 /** A second place a snippet writes a stop, kept reading the same as the stop while it is typed. */
@@ -964,8 +936,8 @@ export type EditorSelectionRangeProvider = (
 ) => readonly TextOffsetRange[]
 
 export type EditorPluginContext = {
-  log?(event: EditorLogInput): void
-  registerLogger?(logger: EditorLogger): EditorDisposable
+  log(event: EditorLogInput): void
+  registerLogger(logger: EditorLogger): EditorDisposable
   registerHighlighter(provider: EditorHighlighterProvider): EditorDisposable
   registerSyntaxProvider(provider: EditorSyntaxProvider): EditorDisposable
   registerViewContribution(provider: EditorViewContributionProvider): EditorDisposable
@@ -975,14 +947,8 @@ export type EditorPluginContext = {
   registerDecorationContribution(provider: EditorDecorationContributionProvider): EditorDisposable
   registerGutterContribution(contribution: EditorGutterContribution): EditorDisposable
   registerInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): EditorDisposable
-  /**
-   * Optional so that adding these did not break every hand-written `EditorPluginContext` (test
-   * mocks, mostly). The plugin host always provides them; callers should treat a missing one as a
-   * host too old for the contribution and say so rather than silently skipping their own
-   * registration.
-   */
-  registerInlineReplacementProvider?(provider: EditorInlineReplacementProvider): EditorDisposable
-  registerSelectionRangeProvider?(provider: EditorSelectionRangeProvider): EditorDisposable
+  registerInlineReplacementProvider(provider: EditorInlineReplacementProvider): EditorDisposable
+  registerSelectionRangeProvider(provider: EditorSelectionRangeProvider): EditorDisposable
 }
 
 export type EditorInternalPluginContext = EditorPluginContext & {

@@ -12,6 +12,10 @@ import { tokenizeLengths } from '../src/tokenize'
 import { collectRevealRows } from '../src/rows'
 import { RangeText } from '../../editor/dist/textContent'
 import { measureString } from '../../editor/dist/textMeasurements'
+import {
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 const SAMPLE = 'function f() {\n  if (x) {\n    y()\n  }\n}\n'
 const TEST_DOCUMENT_SYNC_SEGMENT = Object.freeze(
@@ -380,7 +384,7 @@ function registeredProvider(
 function pluginContext(
   registerViewContribution: EditorPluginContext['registerViewContribution'],
 ): EditorPluginContext {
-  return {
+  return createTestPluginContext({
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
     registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerViewContribution,
@@ -390,7 +394,7 @@ function pluginContext(
     registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
-  }
+  })
 }
 
 function viewContext(): EditorViewContributionContext {
@@ -399,25 +403,12 @@ function viewContext(): EditorViewContributionContext {
   const contentElement = document.createElement('div')
   scrollElement.appendChild(contentElement)
   container.appendChild(scrollElement)
-  return {
+  return createTestViewContributionContext({
     container,
     scrollElement,
     contentElement,
-    log: vi.fn(),
-    hasDocument: () => true,
     getSnapshot: () => snapshot({ tokens: someTokens() }),
-    requestViewUpdate: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
-    setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
-    textOffsetFromPoint: vi.fn(() => null),
-    getRangeClientRect: vi.fn(() => null),
-  }
+  })
 }
 
 function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapshot {

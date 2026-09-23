@@ -27,23 +27,10 @@ export function createMarkdownPreviewPlugin(
 
   return {
     name: 'markdown-preview',
-    activate: (context) => {
-      // The contribution is optional on the context, so a host that predates it would otherwise
-      // install this plugin and render nothing at all. Say so instead of failing silently.
-      if (!context.registerInlineReplacementProvider) {
-        context.log?.({
-          action: 'markdown.preview.unsupported',
-          level: 'warn',
-          message:
-            'Editor does not support inline replacement providers; markdown preview is inactive.',
-        })
-        return undefined
-      }
-
-      return context.registerInlineReplacementProvider((replacementContext) =>
+    activate: (context) =>
+      context.registerInlineReplacementProvider((replacementContext) =>
         replacementsForContext(replacementContext, languageIds),
-      )
-    },
+      ),
   }
 }
 

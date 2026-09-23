@@ -28,7 +28,6 @@ import type {
 export type DefinitionLinkControllerOptions = {
   readonly context: EditorViewContributionContext
   readonly router: LanguageServerFeatureRouter
-  readonly defaultHighlightPrefix?: string
   readonly linkHighlightNameNamespace?: string
   readonly navigationTimingNamePrefix?: string
   getActiveDocument(): ActiveDocument | null
@@ -212,7 +211,7 @@ export class DefinitionLinkController {
     if (!target) return this.clearDefinitionLink()
 
     this.linkRange = sourceRange
-    this.context.setRangeHighlight?.(this.linkHighlightName, [sourceRange], LINK_HIGHLIGHT_STYLE)
+    this.context.setRangeHighlight(this.linkHighlightName, [sourceRange], LINK_HIGHLIGHT_STYLE)
     this.context.scrollElement.style.cursor = 'pointer'
     this.options.onDefinitionLinkHover?.(target)
   }
@@ -295,7 +294,7 @@ export class DefinitionLinkController {
   private clearDefinitionLink(): void {
     this.definitionHoverRequestId += 1
     this.linkRange = null
-    this.context.clearRangeHighlight?.(this.linkHighlightName)
+    this.context.clearRangeHighlight(this.linkHighlightName)
     this.context.scrollElement.style.cursor = ''
   }
 }
@@ -342,7 +341,6 @@ function definitionLinkHighlightName(
   context: EditorViewContributionContext,
   options: DefinitionLinkControllerOptions,
 ): string {
-  const prefix = context.highlightPrefix ?? options.defaultHighlightPrefix ?? 'editor-lsp-plugin'
   const namespace = options.linkHighlightNameNamespace ?? 'lsp-plugin'
-  return `${prefix}-${namespace}-definition-link`
+  return `${context.highlightPrefix}-${namespace}-definition-link`
 }

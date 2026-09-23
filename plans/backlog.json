@@ -410,7 +410,7 @@
         "Reduce editor memory footprint",
         "Editor hook taxonomy: inventory and completeness check"
       ],
-      "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9"
+      "baseline": "a9140924d5c74b2dbf4b21239e261c7cc27b58e3"
     },
     {
       "id": "E034",
@@ -621,7 +621,7 @@
       "id": "E049",
       "file": "e049-no-silent-misses.md",
       "title": "A miss is an error, not a default",
-      "status": "Proposed",
+      "status": "Implemented",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

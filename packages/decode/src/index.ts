@@ -116,7 +116,7 @@ class DecodeViewContribution implements EditorViewContribution {
     rows: ReturnType<typeof collectRevealRows>,
   ): void {
     this.addInputListeners()
-    this.context.log?.({
+    this.context.log({
       level: 'info',
       action: 'decode.reveal',
       mode: this.options.mode,

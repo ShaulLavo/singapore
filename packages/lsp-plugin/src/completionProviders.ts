@@ -127,7 +127,7 @@ export class LanguageServerCompletionSources
     // Every document, because which ones a server answers for is a question the plugin settles by
     // opening them, not one a language name can be matched against.
     this.registrations = sources.flatMap((source) => {
-      const registration = context.registerProvider?.(
+      const registration = context.registerProvider(
         EDITOR_COMPLETION_SOURCE,
         { language: '*' },
         source,
@@ -139,7 +139,7 @@ export class LanguageServerCompletionSources
   public forLanguage(
     languageId: EditorViewSnapshot['languageId'],
   ): readonly EditorCompletionSource[] {
-    const registered = this.context.getProviders?.(EDITOR_COMPLETION_SOURCE, languageId)
+    const registered = this.context.getProviders(EDITOR_COMPLETION_SOURCE, languageId)
     if (!registered) return this.sources
 
     const missing = this.sources.filter((source) => !registered.includes(source))

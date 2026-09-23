@@ -1,4 +1,4 @@
-import { scheduleFrame, type ScheduledFrame } from '@singapore-editor/core/internal'
+import { scheduleFrame, type ScheduledFrame } from '@singapore-editor/core/rendering'
 import type { TextSnapshot } from '@singapore-editor/core/document'
 import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
 import type {

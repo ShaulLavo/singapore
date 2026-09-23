@@ -15,7 +15,7 @@ import {
   snippetInitialSelection,
   type ParsedSnippet,
   type SnippetRange,
-} from '@singapore-editor/core/internal'
+} from '@singapore-editor/core/extensions'
 
 import { createAnchoredSurface } from '@singapore-editor/plugin-ui/anchored-surface'
 import { fuzzyMatch, looseFuzzyMatch, type FuzzyMatch } from './fuzzyMatch'
@@ -343,7 +343,7 @@ export function createCompletionEditFeature(
       context.applyEdits(application.edits, timingName, application.selection)
       // Started after the edit so the ranges refer to the text now in the document. A host without
       // the hook simply leaves the caret on the first placeholder.
-      if (application.snippetStops) context.startSnippetSession?.(application.snippetStops)
+      if (application.snippetStops) context.startSnippetSession(application.snippetStops)
       context.focusEditor()
       return true
     },

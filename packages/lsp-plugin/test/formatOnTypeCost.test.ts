@@ -3,6 +3,7 @@ import type {
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
 import { describe, expect, it, vi } from 'vitest'
+import { createTestViewContributionContext } from '@singapore-editor/core/testing'
 
 import { LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE } from '../src/completion'
 import { FormatOnTypeController } from '../src/formatOnType'
@@ -76,15 +77,15 @@ async function typeClosingBrace(text: string): Promise<Keystroke> {
     charactersRead += count
   })
   const controller = new FormatOnTypeController({
-    context: {
+    context: createTestViewContributionContext({
       getSnapshot: () => snapshot,
-      getFeature: () => ({
+      getFeature: (() => ({
         applyCompletion: (application: unknown) => {
           applied.push(application)
           return true
         },
-      }),
-    } as unknown as EditorViewContributionContext,
+      })) as EditorViewContributionContext['getFeature'],
+    }),
     editFeature: LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE,
   })
 

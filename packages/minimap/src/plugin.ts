@@ -385,7 +385,7 @@ class MinimapContribution implements EditorViewContribution {
     geometry: ReturnType<typeof minimapViewportGeometry>,
   ): void {
     const viewport = this.latestViewport
-    this.context.log?.({
+    this.context.log({
       action: 'editor.minimap.lane_changed',
       level: 'info',
       minimap: {

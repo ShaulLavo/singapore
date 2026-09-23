@@ -340,7 +340,7 @@ function pasteHandlerPlugin(
     activate: (context) =>
       context.registerCapabilityContribution({
         createContribution: (contributed) =>
-          contributed.registerProvider?.(EDITOR_PASTE_HANDLER, selector, handler) ?? null,
+          contributed.registerProvider(EDITOR_PASTE_HANDLER, selector, handler),
       }),
   }
 }

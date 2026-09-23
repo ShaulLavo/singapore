@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { createTestPluginContext, createTestViewContributionContext } from '../src/testContexts'
 
 import { createOccurrenceHighlightPlugin } from '../src/occurrenceHighlightPlugin'
 import type {
-  EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,
@@ -60,12 +60,12 @@ const LINES = ['const value = 1', 'return value']
 
 function createContribution(calls: HighlightCall[]): EditorViewContribution {
   const registered: EditorViewContributionProvider[] = []
-  const pluginContext = {
+  const pluginContext = createTestPluginContext({
     registerViewContribution: (provider: EditorViewContributionProvider) => {
       registered.push(provider)
       return { dispose: () => {} }
     },
-  } as unknown as EditorPluginContext
+  })
 
   createOccurrenceHighlightPlugin().activate(pluginContext)
   const contribution = registered[0]?.createContribution(contributionContext(calls))
@@ -75,7 +75,7 @@ function createContribution(calls: HighlightCall[]): EditorViewContribution {
 }
 
 function contributionContext(calls: HighlightCall[]): EditorViewContributionContext {
-  const context: Partial<EditorViewContributionContext> = {
+  return createTestViewContributionContext({
     highlightPrefix: 'editor',
     setRangeHighlight: (_name, ranges) => {
       calls.push({
@@ -86,9 +86,7 @@ function contributionContext(calls: HighlightCall[]): EditorViewContributionCont
     clearRangeHighlight: () => {
       calls.push({ kind: 'clear' })
     },
-  }
-
-  return context as EditorViewContributionContext
+  })
 }
 
 function snapshotWithCaret(caretOffset: number): EditorViewSnapshot {

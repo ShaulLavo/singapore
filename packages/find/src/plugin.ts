@@ -108,7 +108,7 @@ class EditorFindViewContribution implements EditorViewContribution {
     this.latestSnapshot = context.getSnapshot()
     this.hostRegistration = controller.attachHost(
       createFindHost(context, () => this.latestSnapshot, this.trackPaintedRanges),
-      context.highlightPrefix ?? EDITOR_FIND_FEATURE_ID,
+      context.highlightPrefix,
     )
     this.subscription = controller.subscribe(this.handleUiEvent)
   }
@@ -217,7 +217,7 @@ class EditorFindViewContribution implements EditorViewContribution {
       scrollElement.getBoundingClientRect().left +
       scrollElement.clientLeft +
       scrollElement.clientWidth
-    const reservedWidth = this.context.getReservedOverlayWidth?.('right') ?? 0
+    const reservedWidth = this.context.getReservedOverlayWidth('right')
     this.widget.setTrailingInset(reservedWidth + Math.max(0, containerRight - viewportRight))
   }
 
@@ -323,31 +323,31 @@ function createFindHost(
     hasDocument: () => context.hasDocument(),
     textSource: () => textSource(getSnapshot()),
     hasTextSnapshot: (snapshot) => getSnapshot().textSnapshot === snapshot,
-    trackRanges: (ranges) => context.trackRanges?.(ranges) ?? fixedFindRanges(ranges),
+    trackRanges: (ranges) => context.trackRanges(ranges),
     trackPaintedRanges,
     getSelections: () => findSelections(getSnapshot().selections),
     focusEditor: () => context.focusEditor(),
-    announce: (message) => context.announce?.(message),
+    announce: (message) => context.announce(message),
     setSelection: (anchor, head, timingName, options) =>
       context.setSelection(anchor, head, timingName, options),
     setSelections: (selections, timingName, revealOffset) =>
       context.setSelections(selections, timingName, revealOffset),
     setRangeHighlight: (name, ranges, style) => {
-      context.setRangeHighlight?.(name, ranges, style)
+      context.setRangeHighlight(name, ranges, style)
       minimapFeature(context)?.setDecorations(
         name,
         minimapBands(textSource(getSnapshot()).lineStartsView, ranges, style),
       )
     },
     clearRangeHighlight: (name) => {
-      context.clearRangeHighlight?.(name)
+      context.clearRangeHighlight(name)
       minimapFeature(context)?.clearDecorations(name)
     },
   }
 }
 
 function minimapFeature(context: EditorViewContributionContext): EditorMinimapFeature | null {
-  return context.getFeature?.(EDITOR_MINIMAP_FEATURE) ?? null
+  return context.getFeature(EDITOR_MINIMAP_FEATURE)
 }
 
 /**
@@ -393,13 +393,6 @@ function bandRows(
   }
 
   return { start: startIndex + 1, end: endIndex + 1 }
-}
-
-// A host that cannot follow its own edits — a static projection of a document,
-// a test double — keeps the ranges it was given, which is the best answer
-// available and one find does not have to ask about.
-function fixedFindRanges(ranges: readonly FindRange[]): FindTrackedRanges {
-  return { resolve: () => ranges }
 }
 
 /**
@@ -448,9 +441,6 @@ class PaintedFindRanges implements FindTrackedRanges {
 
   /** Answers whether the line moved, so a caller only re-reads the set when there is a reason to. */
   public repartition(snapshot: EditorViewSnapshot): boolean {
-    // A host that follows nothing has one answer for every row, so redrawing the
-    // line between them would only walk the set to reach it.
-    if (!this.context.trackRanges) return false
     return this.partition(snapshot)
   }
 
@@ -463,8 +453,7 @@ class PaintedFindRanges implements FindTrackedRanges {
     this.carryElsewhereForward(snapshot)
     const ranges = this.resolve()
     const painted = ranges.filter((range) => overlapsSpan(range, span))
-    const tracked =
-      painted.length === 0 ? null : (this.context.trackRanges?.(painted, MATCH_BIAS) ?? null)
+    const tracked = painted.length === 0 ? null : this.context.trackRanges(painted, MATCH_BIAS)
 
     this.span = span
     this.tracked = tracked

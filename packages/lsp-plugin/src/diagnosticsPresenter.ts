@@ -80,8 +80,6 @@ export class DiagnosticsPresenter {
   public clear(): void {
     this.releaseMarkerClaim()
     this.clearMinimapMarkers()
-    if (!this.context.clearRangeHighlight) return
-
     for (const name of Object.values(this.highlightNames)) this.context.clearRangeHighlight(name)
   }
 
@@ -147,8 +145,6 @@ export class DiagnosticsPresenter {
     document: LspTextDocumentSnapshot,
     diagnostics: readonly lsp.Diagnostic[],
   ): void {
-    if (!this.context.setRangeHighlight) return
-
     const groups = diagnosticHighlightGroups(document, diagnostics)
     for (const severity of DIAGNOSTIC_SEVERITIES) {
       this.context.setRangeHighlight(
@@ -174,7 +170,7 @@ export class DiagnosticsPresenter {
   }
 
   private minimapFeature(): EditorMinimapFeature | null {
-    return this.context.getFeature?.(EDITOR_MINIMAP_FEATURE) ?? null
+    return this.context.getFeature(EDITOR_MINIMAP_FEATURE)
   }
 }
 

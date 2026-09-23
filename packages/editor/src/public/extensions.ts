@@ -144,3 +144,5 @@ export type {
   EditorVisibleSnapshotJSON,
 } from '../plugins'
 export { registerWheelScrollTarget } from '../virtualization/wheelScrollTarget'
+export { parseSnippet, snippetInitialSelection } from '../editor/snippet'
+export type { ParsedSnippet, SnippetRange } from '../editor/snippet'

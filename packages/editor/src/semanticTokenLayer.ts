@@ -122,7 +122,7 @@ export function createSemanticTokenLayer(
     scopeAliases: options.scopeAliases,
     zIndex: SEMANTIC_TOKEN_Z_INDEX,
   })
-  const prefix = context.highlightPrefix ?? ''
+  const prefix = context.highlightPrefix
   // Keyed by resolved style rather than by scope name, and the index is remembered for the layer's
   // life: the live group count is then the number of distinct semantic *colours* the viewport holds,
   // which is a property of the theme and not of the server. A fifty-type legend still collapses to a
@@ -147,7 +147,7 @@ export function createSemanticTokenLayer(
   }
 
   const clearPainted = (): void => {
-    for (const group of painted.values()) context.clearRangeHighlight?.(group.name)
+    for (const group of painted.values()) context.clearRangeHighlight(group.name)
     painted = new Map()
     paintedDocumentId = null
   }
@@ -274,8 +274,8 @@ export function createSemanticTokenLayer(
       if (sameRanges(group.ranges, ranges)) continue
 
       group.ranges = ranges
-      if (ranges.length === 0) context.clearRangeHighlight?.(group.name)
-      else context.setRangeHighlight?.(group.name, ranges, group.style)
+      if (ranges.length === 0) context.clearRangeHighlight(group.name)
+      else context.setRangeHighlight(group.name, ranges, group.style)
     }
   }
 
@@ -311,14 +311,14 @@ export function createSemanticTokenLayer(
     // A group that painted last time and holds nothing now has to be cleared explicitly: an empty
     // set of ranges is not the same message as "leave what is there".
     for (const [styleKey, group] of painted) {
-      if (!groups.has(styleKey)) context.clearRangeHighlight?.(group.name)
+      if (!groups.has(styleKey)) context.clearRangeHighlight(group.name)
     }
     for (const group of groups.values()) {
-      context.setRangeHighlight?.(group.name, group.ranges, group.style)
+      context.setRangeHighlight(group.name, group.ranges, group.style)
       // Anchors are a property of the buffer, so a batch edit, a multi-cursor run, a formatter
       // response and a Replace All all resolve correctly — which single-edit offset projection
       // cannot do.
-      group.tracked = context.trackRanges?.(group.ranges, SEMANTIC_TOKEN_STICKINESS) ?? null
+      group.tracked = context.trackRanges(group.ranges, SEMANTIC_TOKEN_STICKINESS)
     }
     painted = groups
     paintedDocumentId = snapshot.documentId

@@ -14,7 +14,6 @@ import type {
   EditorLanguageFeatureSelector,
   EditorLanguageFeatureToken,
   EditorMinimapFeature,
-  EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,
@@ -33,6 +32,11 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
+import {
+  createTestEditContributionContext,
+  createTestPluginContext,
+  createTestViewContributionContext,
+} from '@singapore-editor/core/testing'
 
 type Listener = (event: Event) => void
 type JsonMessage = Record<string, unknown>
@@ -1491,20 +1495,14 @@ function activateViewProvider(plugin: {
   activate: ReturnType<typeof createTypeScriptLspPlugin>['activate']
 }): EditorViewContributionProvider {
   let provider: EditorViewContributionProvider | null = null
-  plugin.activate({
-    registerHighlighter: () => ({ dispose: () => undefined }),
-    registerSyntaxProvider: () => ({ dispose: () => undefined }),
-    registerViewContribution: (value) => {
-      provider = value
-      return { dispose: () => undefined }
-    },
-    registerCommandContribution: () => ({ dispose: () => undefined }),
-    registerCapabilityContribution: () => ({ dispose: () => undefined }),
-    registerEditContribution: () => ({ dispose: () => undefined }),
-    registerDecorationContribution: () => ({ dispose: () => undefined }),
-    registerGutterContribution: () => ({ dispose: () => undefined }),
-    registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
-  } satisfies EditorPluginContext)
+  plugin.activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        provider = value
+        return { dispose: () => undefined }
+      },
+    }),
+  )
 
   if (!provider) throw new Error('missing provider')
   return provider
@@ -1529,26 +1527,22 @@ function activatePluginWithCommands(
   let provider: EditorViewContributionProvider | null = null
   const commands = new Map<EditorCommandId, EditorCommandHandler>()
   const features = options?.features ?? new Map<string, unknown>()
-  plugin.activate({
-    registerHighlighter: () => ({ dispose: () => undefined }),
-    registerSyntaxProvider: () => ({ dispose: () => undefined }),
-    registerViewContribution: (value) => {
-      provider = value
-      return { dispose: () => undefined }
-    },
-    registerCommandContribution: (value) => {
-      value.createContribution(commandContributionContext(commands))
-      return { dispose: () => undefined }
-    },
-    registerCapabilityContribution: () => ({ dispose: () => undefined }),
-    registerDecorationContribution: () => ({ dispose: () => undefined }),
-    registerEditContribution: (value) => {
-      value.createContribution(editContributionContext({ ...options, features }))
-      return { dispose: () => undefined }
-    },
-    registerGutterContribution: () => ({ dispose: () => undefined }),
-    registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
-  } satisfies EditorPluginContext)
+  plugin.activate(
+    createTestPluginContext({
+      registerViewContribution: (value) => {
+        provider = value
+        return { dispose: () => undefined }
+      },
+      registerCommandContribution: (value) => {
+        value.createContribution(commandContributionContext(commands))
+        return { dispose: () => undefined }
+      },
+      registerEditContribution: (value) => {
+        value.createContribution(editContributionContext({ ...options, features }))
+        return { dispose: () => undefined }
+      },
+    }),
+  )
 
   if (!provider) throw new Error('missing provider')
   return { provider: withHover(provider, {}), commands, features }
@@ -1601,18 +1595,14 @@ function commandContributionContext(
 function editContributionContext(
   options: FeatureContributionContextOptions = {},
 ): EditorEditContributionContext {
-  return {
-    hasDocument: () => true,
+  return createTestEditContributionContext({
     materializeFullText: () => '',
-    getTextSnapshot: () => null,
-    getSelections: () => [],
-    focusEditor: vi.fn(),
     applyEdits: options.applyEdits ?? vi.fn(),
     registerFeature: (id, feature) => {
       options.features?.set(id, feature)
       return { dispose: () => options.features?.delete(id) }
     },
-  }
+  })
 }
 
 function command(
@@ -1636,29 +1626,20 @@ function viewContributionContext(
     const feature = options.features?.get(token)
     return feature === undefined ? null : feature
   }) as EditorViewContributionContext['getFeature']
-  return {
+  return createTestViewContributionContext({
     ...providerRegistry(),
     container: element,
     scrollElement: element,
     contentElement: element,
     highlightPrefix: 'editor-test',
-    hasDocument: () => true,
     getSnapshot: () => snapshot,
-    requestViewUpdate: vi.fn(),
     getFeature,
-    revealLine: vi.fn(),
-    focusEditor: vi.fn(),
     setSelection: vi.fn(),
-    setSelections: vi.fn(),
-    setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
-    rowAtPoint: () => null,
-    markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 22),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
     setRangeHighlight: vi.fn(),
     clearRangeHighlight: vi.fn(),
-  }
+  })
 }
 
 function minimapFeature(): EditorMinimapFeature {
