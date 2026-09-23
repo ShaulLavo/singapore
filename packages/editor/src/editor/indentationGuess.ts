@@ -80,7 +80,9 @@ export function guessedTabSize(text: string, fallbackTabSize: number): number {
     if (diff.looksLikeAlignment && diff.spacesDiff !== fallbackTabSize) continue
 
     previous = line
-    if (diff.spacesDiff <= LARGEST_CANDIDATE_TAB_SIZE) scores[diff.spacesDiff] += 1
+    if (diff.spacesDiff <= LARGEST_CANDIDATE_TAB_SIZE) {
+      scores[diff.spacesDiff] = (scores[diff.spacesDiff] ?? 0) + 1
+    }
   }
 
   if (linesIndentedWithTabs > linesIndentedWithSpaces) return fallbackTabSize

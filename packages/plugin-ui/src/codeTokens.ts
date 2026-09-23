@@ -29,7 +29,7 @@ export type TooltipCodeTokenizer = {
 }
 
 export function createTooltipCodeTokenizer(
-  feature: EditorSnippetTokensFeature,
+  feature: Pick<EditorSnippetTokensFeature, 'tokenize'>,
 ): TooltipCodeTokenizer {
   const settled = new Map<string, readonly EditorToken[]>()
   const inFlight = new Map<string, Promise<readonly EditorToken[]>>()
