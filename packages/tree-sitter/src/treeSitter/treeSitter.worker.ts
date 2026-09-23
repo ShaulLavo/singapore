@@ -258,15 +258,21 @@ const ensureInjectionQuery = (runtime: Runtime): Query | null => {
   return runtime.injectionQuery
 }
 
+// Resolved on receipt, in message order: the client's sent-chunk ledger assumes that order.
+const resolveRequestSource = (
+  request: TreeSitterParseRequest | TreeSitterEditRequest,
+): TreeSitterPieceTableInput =>
+  runWorkerPhase('resolve source', () =>
+    resolveTreeSitterSourceDescriptor(sourceCache, request.runtimeSessionId, request.source),
+  )
+
 const parseDocument = async (
   request: TreeSitterParseRequest,
+  source: TreeSitterPieceTableInput,
 ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> =>
   runCancellableRequest(request, async (context) => {
     const runtime = await runAsyncWorkerPhase('load runtime', () =>
       ensureRuntime(request.languageId),
-    )
-    const source = runWorkerPhase('resolve source', () =>
-      resolveTreeSitterSourceDescriptor(sourceCache, request.runtimeSessionId, request.source),
     )
     const parseStart = nowMs()
     const parsedDocument =
@@ -411,6 +417,7 @@ const parseFullDocument = async (
 
 const editDocument = async (
   request: TreeSitterEditRequest,
+  source: TreeSitterPieceTableInput,
 ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> =>
   runCancellableRequest(request, async (context) => {
     const runtime = await runAsyncWorkerPhase('load runtime', () =>
@@ -429,9 +436,6 @@ const editDocument = async (
       editReusableTree(oldRootLayer.tree, request.inputEdits),
     )
     const editMs = nowMs() - editStart
-    const source = runWorkerPhase('resolve source', () =>
-      resolveTreeSitterSourceDescriptor(sourceCache, request.runtimeSessionId, request.source),
-    )
     const parseStart = nowMs()
     const rootLayer = runWorkerPhase('parse root', () =>
       measurePhase(context, 'parseRoot', () =>
@@ -2420,8 +2424,8 @@ const handleRequest = async (request: TreeSitterWorkerRequest): Promise<TreeSitt
     return undefined
   }
 
-  if (payload.type === 'parse') return parseDocument(payload)
-  if (payload.type === 'edit') return editDocument(payload)
+  if (payload.type === 'parse') return parseDocument(payload, resolveRequestSource(payload))
+  if (payload.type === 'edit') return editDocument(payload, resolveRequestSource(payload))
   if (payload.type === 'queryRange') return queryDocumentRange(payload)
   if (payload.type === 'selection') return selectDocument(payload)
 

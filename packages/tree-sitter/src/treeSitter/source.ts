@@ -88,7 +88,10 @@ export const resolveTreeSitterSourceDescriptor = (
   documentId: string,
   descriptor: TreeSitterSourceDescriptor,
 ): TreeSitterPieceTableInput => {
-  const chunks = resolveDescriptorChunks(ensureDocumentSourceCache(cache, documentId), descriptor)
+  const documentCache = ensureDocumentSourceCache(cache, documentId)
+  const chunks = resolveDescriptorChunks(documentCache, descriptor)
+  // The client forgets the same chunks when it builds the descriptor, so both sides stay in step.
+  keepReferencedChunks(documentCache, descriptor)
   return {
     length: descriptor.length,
     chunks,
@@ -268,6 +271,16 @@ const resolveDescriptorChunks = (
 
   if (documentOffset !== descriptor.length) throw new Error('Tree-sitter source length mismatch')
   return chunks
+}
+
+const keepReferencedChunks = (
+  cache: Map<string, ResolvedTreeSitterSourceChunk>,
+  descriptor: TreeSitterSourceDescriptor,
+): void => {
+  const referenced = new Set(descriptor.pieces.map((piece) => piece.chunkId))
+  for (const chunkId of cache.keys()) {
+    if (!referenced.has(chunkId)) cache.delete(chunkId)
+  }
 }
 
 const cacheChunkPayloads = (
