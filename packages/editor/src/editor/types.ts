@@ -17,6 +17,7 @@ import type {
   VirtualizedTextViewScrollMode,
 } from '../virtualization/virtualizedTextViewTypes'
 import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
+import type { EditorInputRoute } from '../virtualization/virtualizedTextViewHelpers'
 import type { EditorKeymapOptions } from './keymap'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'
@@ -127,6 +128,12 @@ export type EditorOptions = {
    */
   readonly tabMovesFocus?: boolean
   readonly textMetrics?: BrowserTextMetrics
+  /**
+   * `'edit-context'` takes typed text through EditContext where the engine has it (Chromium), so
+   * IME, autocorrect and dictation edits arrive with their ranges instead of being diffed out of a
+   * textarea. Elsewhere, and by default, the textarea.
+   */
+  readonly inputRoute?: EditorInputRoute
   /** Soft-wraps long lines to the viewport width instead of scrolling horizontally. */
   readonly wordWrap?: boolean
 }

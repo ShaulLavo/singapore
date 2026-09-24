@@ -177,6 +177,27 @@ export function isEmptyDeducedInput(edit: DeducedInputEdit, previous: HiddenInpu
  * materialized whole: what is read then says a stretch was skipped, which is true, instead of taking
  * a second to say nothing.
  */
+/**
+ * An EditContext update, which names the range it replaced in the window last written, said around
+ * the caret the way a deduced edit is. A range that stops short of the caret (a word corrected behind
+ * it) rewrites the text between the two as itself, so every caret keeps what stood before it.
+ */
+export function textUpdateEdit(
+  written: HiddenInputState,
+  update: { readonly text: string; readonly rangeStart: number; readonly rangeEnd: number },
+): DeducedInputEdit {
+  const from = Math.min(update.rangeStart, written.selectionStart)
+  const to = Math.max(update.rangeEnd, written.selectionEnd)
+  return {
+    text:
+      written.value.slice(from, update.rangeStart) +
+      update.text +
+      written.value.slice(update.rangeEnd, to),
+    replacePrevCharCnt: written.selectionStart - from,
+    replaceNextCharCnt: to - written.selectionEnd,
+  }
+}
+
 export function pagedHiddenInputContent(
   snapshot: PieceTableSnapshot,
   selection: {

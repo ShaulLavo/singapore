@@ -1,3 +1,4 @@
+import type { EditorInputRoute } from './virtualizedTextViewHelpers'
 import type { TextContent } from '../textContent'
 import type {
   EditorGutterContribution,
@@ -86,6 +87,8 @@ export type VirtualizedTextViewOptions = {
   readonly hiddenCharacters?: HiddenCharactersMode
   readonly tabSize?: number
   readonly textMetrics?: BrowserTextMetrics
+  /** Defaults to the textarea; EditContext is taken only where the engine has it. */
+  readonly inputRoute?: EditorInputRoute
 }
 
 export type VirtualizedTextViewScrollMode = 'virtualized' | 'static'

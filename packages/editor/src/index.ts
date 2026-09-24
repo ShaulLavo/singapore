@@ -374,7 +374,7 @@ export type {
   EditorVisibleSnapshot,
   EditorVisibleSnapshotJSON,
 } from './public/extensions'
-export type { BrowserTextMetrics } from './virtualization'
+export type { BrowserTextMetrics, EditorInputRoute } from './virtualization'
 export type {
   EditorColorDefaults,
   EditorColorId,

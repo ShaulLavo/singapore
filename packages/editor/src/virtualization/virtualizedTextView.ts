@@ -77,7 +77,8 @@ import {
   renderHiddenCharacters,
   setSuspiciousCharacters,
 } from './virtualizedTextViewHiddenCharacters'
-import { setCompositionPreedit } from './virtualizedTextViewComposition'
+import { compositionCharacterRects, setCompositionPreedit } from './virtualizedTextViewComposition'
+import { attachEditContext, createEditContext, type EditorEditContext } from './editContext'
 import { createVirtualizedTextViewModel } from './virtualizedTextViewModel'
 import {
   applyTextLayoutTransition,
@@ -273,7 +274,9 @@ function setScrollModeAttribute(
 export class VirtualizedTextView {
   public readonly scrollElement: HTMLDivElement
   public readonly contentElement: HTMLDivElement
-  public readonly inputElement: HTMLTextAreaElement
+  public readonly inputElement: HTMLElement
+  /** Set when typed text arrives through EditContext rather than the textarea. */
+  public readonly editContext: EditorEditContext | null
   private readonly view: VirtualizedTextViewInternal
   private readonly disposeForegroundHighlightRestore: () => void
   private cancelContentWidthMeasurement: (() => void) | null = null
@@ -306,7 +309,7 @@ export class VirtualizedTextView {
     const rowGap = normalizeRowGap(options.rowGap)
     const scrollMode = normalizeScrollMode(options.scrollMode)
     const rowPositioning = options.rowPositioning ?? 'transform'
-    const inputElement = createInputElement(container)
+    const inputElement = createInputElement(container, options.inputRoute ?? 'textarea')
     const viewport = new ScrollViewport(scrollElement)
     const contentElement = viewport.textContent
     const spacer = viewport.textSpacer
@@ -336,6 +339,8 @@ export class VirtualizedTextView {
     this.scrollElement = scrollElement
     this.contentElement = contentElement
     this.inputElement = inputElement
+    this.editContext =
+      inputElement instanceof HTMLTextAreaElement ? null : createEditContext(inputElement)
     this.view = {
       provisional: false,
       scrollElement,
@@ -579,7 +584,7 @@ export class VirtualizedTextView {
     this.scrollElement.dataset.editorPresentation = 'provisional'
     this.scrollElement.setAttribute('aria-busy', 'true')
     this.scrollElement.inert = true
-    this.inputElement.readOnly = true
+    this.setInputEditable(false)
     this.view.viewport.setDocumentWidth(paint.scrollWidth)
     this.view.viewport.setDocumentHeight(paint.scrollHeight, 0)
     this.view.viewport.setViewportSize(paint.viewportWidth, paint.viewportHeight)
@@ -886,12 +891,24 @@ export class VirtualizedTextView {
 
   public setEditable(editable: boolean): void {
     if (this.view.provisional) editable = false
-    if (editable) {
-      this.inputElement.readOnly = false
+    this.setInputEditable(editable)
+  }
+
+  /** An EditContext only receives text while attached, so a read-only view detaches it. */
+  private setInputEditable(editable: boolean): void {
+    const input = this.inputElement
+    if (input instanceof HTMLTextAreaElement) {
+      input.readOnly = !editable
       return
     }
 
-    this.inputElement.readOnly = true
+    attachEditContext(input, editable ? this.editContext : null)
+    input.setAttribute('aria-readonly', String(!editable))
+  }
+
+  /** Where each character of the drawn composition candidate sits. */
+  public compositionCharacterRects(): DOMRect[] {
+    return compositionCharacterRects(this.view)
   }
 
   /** The text an IME is still assembling, drawn at the caret; empty text takes it back down. */

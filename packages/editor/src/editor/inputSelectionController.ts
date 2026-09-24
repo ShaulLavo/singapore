@@ -68,9 +68,15 @@ import {
   keyboardFallbackText,
   pagedHiddenInputContent,
   readHiddenInputState,
+  textUpdateEdit,
   type DeducedInputEdit,
+  type HiddenInputContent,
   type HiddenInputState,
 } from './input'
+import type {
+  EditorCharacterBoundsUpdateEvent,
+  EditorTextUpdateEvent,
+} from '../virtualization/editContext'
 import {
   NO_MOUSE_SELECTION_AUTO_SCROLL,
   mouseSelectionAutoScrollDelta,
@@ -274,6 +280,12 @@ export class InputSelectionController {
   // advances it — an event the editor decides not to act on leaves the element holding text it can
   // still be diffed against next time.
   private hiddenInputContent: HiddenInputState = EMPTY_HIDDEN_INPUT_STATE
+  /** The window range an EditContext composition replaces, and where its candidate now ends. */
+  private editContextComposition: {
+    readonly rangeStart: number
+    readonly rangeEnd: number
+    readonly spanEnd: number
+  } | null = null
 
   constructor(private readonly options: InputSelectionControllerOptions) {}
 
@@ -1566,9 +1578,7 @@ export class InputSelectionController {
     if (!selection) return
 
     const content = pagedHiddenInputContent(snapshot, resolveSelection(snapshot, selection))
-    const input = this.options.view.inputElement
-    if (input.value !== content.value) input.value = content.value
-    input.setSelectionRange(content.selectionStart, content.selectionEnd, content.direction)
+    this.writeInputWindow(content)
     this.hiddenInputContent = {
       selectionEnd: content.selectionEnd,
       selectionStart: content.selectionStart,
@@ -1657,22 +1667,136 @@ export class InputSelectionController {
     this.transitionInputState({ type: 'selection-owned-by-hidden-input' })
   }
 
+  /** The textarea holds the window as its value; an EditContext holds it as its text model. */
+  private writeInputWindow(content: HiddenInputContent): void {
+    const { editContext, inputElement: input } = this.options.view
+    if (editContext) {
+      if (editContext.text !== content.value) {
+        editContext.updateText(0, editContext.text.length, content.value)
+      }
+      editContext.updateSelection(content.selectionStart, content.selectionEnd)
+      return
+    }
+    if (!(input instanceof HTMLTextAreaElement)) return
+
+    if (input.value !== content.value) input.value = content.value
+    input.setSelectionRange(content.selectionStart, content.selectionEnd, content.direction)
+  }
+
   private installNativeInputHandlers(): void {
     if (this.nativeInputHandlersInstalled) return
 
-    this.options.view.inputElement.addEventListener('input', this.handleHiddenInputChange, {
-      capture: true,
-    })
+    const editContext = this.options.view.editContext
+    if (editContext) {
+      editContext.addEventListener('textupdate', this.handleTextUpdate)
+      editContext.addEventListener('compositionstart', this.handleCompositionStart as EventListener)
+      editContext.addEventListener('compositionend', this.handleEditContextCompositionEnd)
+      editContext.addEventListener('characterboundsupdate', this.handleCharacterBoundsUpdate)
+    } else {
+      this.options.view.inputElement.addEventListener('input', this.handleHiddenInputChange, {
+        capture: true,
+      })
+    }
     this.nativeInputHandlersInstalled = true
   }
 
   private uninstallNativeInputHandlers(): void {
     if (!this.nativeInputHandlersInstalled) return
 
-    this.options.view.inputElement.removeEventListener('input', this.handleHiddenInputChange, {
-      capture: true,
-    })
+    const editContext = this.options.view.editContext
+    if (editContext) {
+      editContext.removeEventListener('textupdate', this.handleTextUpdate)
+      editContext.removeEventListener(
+        'compositionstart',
+        this.handleCompositionStart as EventListener,
+      )
+      editContext.removeEventListener('compositionend', this.handleEditContextCompositionEnd)
+      editContext.removeEventListener('characterboundsupdate', this.handleCharacterBoundsUpdate)
+    } else {
+      this.options.view.inputElement.removeEventListener('input', this.handleHiddenInputChange, {
+        capture: true,
+      })
+    }
     this.nativeInputHandlersInstalled = false
+  }
+
+  /**
+   * Every edit EditContext makes to the window, with the range it replaced: the edits the textarea
+   * route has to diff back out of its value arrive here already named. Typed characters the
+   * beforeinput handler takes never reach it, because preventing that event withholds the update.
+   */
+  private handleTextUpdate = this.traceInput('input.textupdate', (event: Event): void => {
+    const update = event as EditorTextUpdateEvent
+    this.transitionInputState({ type: 'native-input-observed' })
+    const session = this.session
+    if (!session) return
+    if (!this.options.canEditDocument()) return
+    if (this.inputState.compositionActive) {
+      this.updateEditContextComposition(update)
+      return
+    }
+
+    const edit = textUpdateEdit(this.hiddenInputContent, {
+      text: update.text,
+      rangeStart: update.updateRangeStart,
+      rangeEnd: update.updateRangeEnd,
+    })
+    this.applyDeducedInput(session, edit, eventStartMs(event))
+  })
+
+  /**
+   * A candidate replaces the range the composition started over, and each later candidate replaces
+   * the one before it; tracking the span is what lets the commit name the original range.
+   */
+  private updateEditContextComposition(update: EditorTextUpdateEvent): void {
+    const current = this.editContextComposition ?? {
+      rangeStart: update.updateRangeStart,
+      rangeEnd: update.updateRangeEnd,
+      spanEnd: update.updateRangeStart,
+    }
+    const spanEnd =
+      current.spanEnd + update.text.length - (update.updateRangeEnd - update.updateRangeStart)
+    this.editContextComposition = { ...current, spanEnd }
+    const candidate = this.options.view.editContext?.text.slice(current.rangeStart, spanEnd) ?? ''
+    this.transitionInputState({ text: candidate, type: 'composition-update' })
+    this.options.view.setCompositionPreedit(candidate)
+  }
+
+  private handleEditContextCompositionEnd = this.traceInput(
+    'input.compositionend',
+    (event: Event): void => {
+      const composition = this.editContextComposition
+      this.editContextComposition = null
+      const text = (event as CompositionEvent).data ?? ''
+      this.options.view.setCompositionPreedit('')
+      this.transitionInputState({ type: 'composition-end' })
+      const session = this.session
+      const replaces = composition && composition.rangeEnd > composition.rangeStart
+      if (!session || !composition || (text.length === 0 && !replaces)) {
+        this.refreshHiddenInputContent()
+        return
+      }
+
+      const edit = textUpdateEdit(this.hiddenInputContent, {
+        text,
+        rangeStart: composition.rangeStart,
+        rangeEnd: composition.rangeEnd,
+      })
+      this.applyDeducedInput(session, edit, eventStartMs(event))
+    },
+  )
+
+  /** The IME asks where the candidate is drawn, so its window opens beside it rather than guessing. */
+  private handleCharacterBoundsUpdate = (event: Event): void => {
+    const editContext = this.options.view.editContext
+    if (!editContext) return
+
+    const { rangeStart } = event as EditorCharacterBoundsUpdateEvent
+    const caret = this.options.view.inputElement.getBoundingClientRect()
+    editContext.updateControlBounds(this.options.el.getBoundingClientRect())
+    editContext.updateSelectionBounds(caret)
+    const drawn = this.options.view.compositionCharacterRects()
+    editContext.updateCharacterBounds(rangeStart, drawn.length > 0 ? drawn : [caret])
   }
 
   /**
@@ -1691,7 +1815,9 @@ export class InputSelectionController {
     // finally commits. Diffing those would type every candidate the reader passed through.
     if (this.inputState.compositionActive) return
 
-    const current = readHiddenInputState(this.options.view.inputElement)
+    const input = this.options.view.inputElement
+    if (!(input instanceof HTMLTextAreaElement)) return
+    const current = readHiddenInputState(input)
     const deduced = deduceHiddenInputEdit(this.hiddenInputContent, current)
     // Nothing is written back for either of these, so the element keeps whatever the browser put
     // there and the editor keeps the older text to measure the next event against.
@@ -3528,7 +3654,9 @@ function dropPlainText(event: DragEvent): string {
 }
 
 function beforeInputText(event: InputEvent): string | null {
+  // A textarea's Enter is insertLineBreak; an EditContext host's is insertParagraph.
   if (event.inputType === 'insertLineBreak') return '\n'
+  if (event.inputType === 'insertParagraph') return '\n'
   if (event.inputType === 'insertText') return event.data ?? ''
   if (event.inputType === 'insertFromComposition') return event.data ?? ''
   return null

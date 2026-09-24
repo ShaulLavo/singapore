@@ -507,6 +507,7 @@ export class Editor {
       scrollMode: options.scrollMode,
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
+      inputRoute: options.inputRoute,
       wrap: options.wordWrap ?? false,
       onFoldToggle: this.handleFoldToggle,
       onViewportChange: this.handleViewportChange,
@@ -1209,7 +1210,7 @@ export class Editor {
     return this.tabMovesFocus
   }
 
-  getInputElement(): HTMLTextAreaElement {
+  getInputElement(): HTMLElement {
     return this.view.inputElement
   }
 

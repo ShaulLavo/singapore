@@ -76,7 +76,7 @@ export interface VirtualizedTextViewInternal {
   readonly scrollElement: HTMLDivElement
   readonly viewport: ScrollViewport
   readonly contentElement: HTMLDivElement
-  readonly inputElement: HTMLTextAreaElement
+  readonly inputElement: HTMLElement
   readonly spacer: HTMLDivElement
   readonly gutterElement: HTMLDivElement
   gutterContributions: readonly EditorGutterContribution[]

@@ -159,7 +159,32 @@ export function createScrollElement(
   return scrollElement
 }
 
-export function createInputElement(container: HTMLElement): HTMLTextAreaElement {
+/**
+ * How typed text reaches the editor. EditContext hands over every edit with the range it replaced,
+ * where the textarea leaves some to be diffed back out of its value; only Chromium has it.
+ */
+export type EditorInputRoute = 'textarea' | 'edit-context'
+
+export function createInputElement(container: HTMLElement, route: EditorInputRoute): HTMLElement {
+  const view = container.ownerDocument.defaultView
+  if (route === 'edit-context' && view && 'EditContext' in view) {
+    return createEditContextInput(container)
+  }
+  return createTextareaInput(container)
+}
+
+function createEditContextInput(container: HTMLElement): HTMLDivElement {
+  const input = container.ownerDocument.createElement('div')
+  input.className = 'editor-virtualized-input'
+  input.tabIndex = 0
+  input.setAttribute('aria-label', 'Editor input')
+  input.setAttribute('role', 'textbox')
+  input.setAttribute('aria-multiline', 'true')
+  input.setAttribute('aria-readonly', 'true')
+  return input
+}
+
+function createTextareaInput(container: HTMLElement): HTMLTextAreaElement {
   const input = container.ownerDocument.createElement('textarea')
   input.className = 'editor-virtualized-input'
   input.autocapitalize = 'off'
