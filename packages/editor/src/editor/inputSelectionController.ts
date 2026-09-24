@@ -195,6 +195,8 @@ export type InputSelectionControllerOptions = {
    * all, so the document change neither says what was pressed nor always happens.
    */
   onDidType(text: string): void
+  /** True when a contribution took the press for itself; the editor then leaves it alone. */
+  claimPress(event: MouseEvent): boolean
 }
 
 // A run of occurrence presses owns its search settings, so that widening one to whole words never
@@ -1895,6 +1897,10 @@ export class InputSelectionController {
   private handleMouseDown = (event: MouseEvent): void => {
     if (!this.session) return
     if (event.defaultPrevented) return
+    if (this.options.claimPress(event)) {
+      event.preventDefault()
+      return
+    }
 
     this.options.view.focusInput()
     if (event.detail >= 4) {

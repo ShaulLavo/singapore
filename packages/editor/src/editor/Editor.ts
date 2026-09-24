@@ -168,6 +168,7 @@ import {
   type EditorLogInput,
   type EditorOverlaySide,
   type EditorPlugin,
+  type EditorPressParticipant,
   type EditorSelectionRange,
   type EditorTextAnchor,
   type EditorTrackedPoint,
@@ -245,7 +246,7 @@ const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 
 type SyntaxScrollDirection = -1 | 0 | 1
 type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
-type EditorContributionFailurePhase = EditorViewContributionFailurePhase | 'factory'
+type EditorContributionFailurePhase = EditorViewContributionFailurePhase | 'factory' | 'press'
 
 type TrackedAnchorRange = {
   readonly start: PieceTableAnchor
@@ -619,6 +620,7 @@ export class Editor {
       applySessionChange: (change, totalName, totalStart, options) =>
         this.applySessionChange(change, totalName, totalStart, options),
       onDidType: (text) => this.notifyTyped(text),
+      claimPress: (event) => this.claimPress(event),
       notifyChangeWithTiming: (change) => this.notifyChangeWithTiming(change),
       notifyViewContributions: (kind, change) => this.notifyViewContributions(kind, change),
     })
@@ -1064,17 +1066,23 @@ export class Editor {
     this.editBufferSession(session, 'setContent', [{ from: 0, to, text }], null)
   }
 
-  private renderContent(text: string | TextSnapshot): void {
+  private renderContent(
+    text: string | TextSnapshot,
+    tokens: EditorTokenStore = EditorTokenStore.empty(),
+  ): void {
     const savedFolds = editorBufferSession(this.session)?.view.getFoldState()
     this.fallbackFolds.reset()
     this.view.measureInitialViewport()
     const textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
     this.document.setRenderedTextSnapshot(textSnapshot)
     this.recordDetachedTextChange(null)
-    this.view.setText(textSnapshot)
-    this.retagDisplayProjectionSources()
-    this.syncInjectedTextRows()
-    this.setTokens(EditorTokenStore.empty())
+    // One render, or the view paints the new text under the outgoing document's tokens first.
+    this.view.runAtomicRender(() => {
+      this.view.setText(textSnapshot)
+      this.retagDisplayProjectionSources()
+      this.syncInjectedTextRows()
+      this.adoptTokens(tokens)
+    })
     this.dropManualFolds()
     this.clearSyntaxFolds()
     this.restoreViewFolds(savedFolds)
@@ -1186,8 +1194,7 @@ export class Editor {
   }
 
   private renderDocument(document: EditorDocument): void {
-    this.renderContent(document.text)
-    this.setTokens(document.tokens ?? EditorTokenStore.empty())
+    this.renderContent(document.text, toEditorTokenStore(document.tokens ?? []))
   }
 
   /** Turns soft wrap on or off. Returns the state actually in effect afterwards. */
@@ -1374,6 +1381,7 @@ export class Editor {
           text,
           documentMode: options.documentMode ?? this.documentMode,
           languageId: options.languageId,
+          tokens: options.tokens,
         },
         {
           documentId: null,
@@ -1395,24 +1403,29 @@ export class Editor {
         this.setText(text, options)
         return
       }
-      const edit = syncTextEdit(this.session.getTextSnapshot(), text)
-      if (edit.from === edit.to && edit.text.length === 0) return
-
-      const scrollPosition = preservedScrollPosition(
-        this.getScrollPosition(),
-        options.scrollPosition,
-      )
-      const change = this.session.applyEdits([edit], {
-        history: 'skip',
-      })
-      if (change.kind === 'none') return
-
-      this.applySessionChange(change, 'editor.syncText', nowMs(), {
-        syncDomSelection: false,
-      })
-      this.applyDocumentScrollPosition(scrollPosition)
-      this.lifecycleSummary.document.syncedTextCount += 1
+      this.syncSessionText(text, options)
+      // After the edit, which projects the old tokens through it; the host's own replace them.
+      if (options.tokens) this.setTokens(options.tokens)
     })
+  }
+
+  private syncSessionText(text: string, options: EditorSetTextOptions): void {
+    if (!this.session) return
+
+    const edit = syncTextEdit(this.session.getTextSnapshot(), text)
+    if (edit.from === edit.to && edit.text.length === 0) return
+
+    const scrollPosition = preservedScrollPosition(this.getScrollPosition(), options.scrollPosition)
+    const change = this.session.applyEdits([edit], {
+      history: 'skip',
+    })
+    if (change.kind === 'none') return
+
+    this.applySessionChange(change, 'editor.syncText', nowMs(), {
+      syncDomSelection: false,
+    })
+    this.applyDocumentScrollPosition(scrollPosition)
+    this.lifecycleSummary.document.syncedTextCount += 1
   }
 
   /**
@@ -1972,7 +1985,7 @@ export class Editor {
     this.adoptDocumentTabSize(attachment.textSnapshot)
     // Asked for before the text lands, so the replacement renders the restored viewport directly.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
-    this.renderContent(attachment.textSnapshot)
+    this.renderContent(attachment.textSnapshot, toEditorTokenStore(document.tokens ?? []))
     // After the text is in, so what is rebuilt here is measured against the document that arrived.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyRangeDecorations()
@@ -2912,6 +2925,7 @@ export class Editor {
       getSnapshot: () => this.createViewSnapshot(),
       requestViewUpdate: () => this.notifyViewContributions('layout', null),
       onDidType: (listener) => this.addTypedTextListener(listener),
+      registerPressParticipant: (participant) => this.registerPressParticipant(participant),
       getFeature: (key) => this.getFeature(key),
       getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
       registerProvider: (token, selector, provider) =>
@@ -3348,6 +3362,31 @@ export class Editor {
 
   private notifyTyped(text: string): void {
     for (const listener of [...this.typedTextListeners]) listener(text)
+  }
+
+  private readonly pressParticipants = new Set<EditorPressParticipant>()
+
+  private registerPressParticipant(participant: EditorPressParticipant): EditorDisposable {
+    this.pressParticipants.add(participant)
+    return this.claimForContribution(
+      disposableOnce(() => this.pressParticipants.delete(participant)),
+    )
+  }
+
+  private claimPress(event: MouseEvent): boolean {
+    for (const participant of [...this.pressParticipants]) {
+      if (this.pressClaimedBy(participant, event)) return true
+    }
+    return false
+  }
+
+  private pressClaimedBy(participant: EditorPressParticipant, event: MouseEvent): boolean {
+    try {
+      return participant(event)
+    } catch (error) {
+      this.logContributionFailure('view', 'press', error)
+      return false
+    }
   }
 
   private notifyViewContributions(
@@ -4540,6 +4579,7 @@ function editorLogError(error: unknown): EditorLogError {
 function editorContributionFailureAction(phase: EditorContributionFailurePhase): string {
   if (phase === 'factory') return 'editor.contribution.factory_failed'
   if (phase === 'dispose') return 'editor.contribution.dispose_failed'
+  if (phase === 'press') return 'editor.contribution.press_failed'
   if (phase === 'capture-visible-paint') return 'editor.contribution.capture_visible_paint_failed'
   return 'editor.contribution.update_failed'
 }

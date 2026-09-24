@@ -2046,7 +2046,8 @@ describe('Editor', () => {
 
       editor.setContent('abc')
 
-      expect(events).toEqual(['viewport', 'layout', 'tokens', 'layout', 'content', 'layout'])
+      // The tokens land in the same render as the text, so they arrive with its viewport update.
+      expect(events).toEqual(['viewport', 'layout', 'content', 'layout'])
     })
 
     it('disposes view contributions with the editor', () => {

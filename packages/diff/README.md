@@ -31,9 +31,8 @@ const editor = new Editor(host, {
 })
 
 const push = () => {
-  // Tokens go back on immediately: `setText` clears them on its way through
-  // `resetOwnedDocument` -> `setDocument` -> `setContent`, so a toggle would otherwise repaint
-  // uncoloured.
+  // The tokens travel with the text: `setText` replaces the document, and a toggle without them
+  // would repaint uncoloured until the next parse.
   //
   // `Editor.syncText` is the cheaper alternative — it computes the minimal prefix/suffix edit
   // rather than tearing the document down, and for an expansion that edit is exactly the inserted
@@ -41,8 +40,10 @@ const push = () => {
   // that have moved, and an expansion moves every row below the region: a reader holding a
   // selection would find it pointing at different text. Worth taking if your host has no selection
   // to lose.
-  editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
-  editor.setTokens(plugin.getTokens())
+  editor.setText(joinRenderLines(plugin.getRows()), {
+    languageId: null,
+    tokens: plugin.getTokens(),
+  })
 }
 plugin.onDidChangeRows(push)
 plugin.onDidChangeTokens(() => editor.setTokens(plugin.getTokens()))

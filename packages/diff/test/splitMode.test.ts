@@ -142,8 +142,10 @@ describe('split mode alignment (§C7)', () => {
     })
     mounted.push({ editor, host })
     plugin.onDidChangeRows(() => {
-      editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
-      editor.setTokens(plugin.getTokens())
+      editor.setText(joinRenderLines(plugin.getRows()), {
+        languageId: null,
+        tokens: plugin.getTokens(),
+      })
     })
     editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
     return { editor, host }
@@ -169,8 +171,10 @@ describe('split mode alignment (§C7)', () => {
     })
     mounted.push({ editor, host })
     plugin.onDidChangeRows(() => {
-      editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
-      editor.setTokens(plugin.getTokens())
+      editor.setText(joinRenderLines(plugin.getRows()), {
+        languageId: null,
+        tokens: plugin.getTokens(),
+      })
     })
     plugin.setFile(file)
     return { host, plugin }

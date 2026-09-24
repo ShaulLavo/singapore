@@ -70,6 +70,10 @@ walking a lazy `Proxy` array were 90%. Its execution plan has been removed.
 [E036](../docs/display/e036-monaco-geometry-comparison.md) is complete on 2026-09-24. Every candidate ended in a measured decision: monospace verification with demotion, re-measuring when the rendered face changes, and an EditContext input route went in; tabbed rows on the calculated path, merging the typing path's forced layouts, a measured-path cache and a JavaScript caret blink were measured and rejected. Its execution plan has been removed.
 The order below is a recommendation.
 
+[E050](e050-host-obligations-into-api.md) is in progress: all eleven rows were re-checked on
+2026-09-24, and rows 1 and 5 landed: `setText(text, { tokens })` paints text and tokens in one render, and
+`registerPressParticipant` lets a plugin claim a press before caret placement.
+
 E006 is in progress. [Automatic text reclamation](../docs/storage/e006-text-reclamation.md)
 now releases unused portions of append chunks and original text in live buffers, while preserving
 transaction identity and retained history. Measurement caches and worker descriptors follow the

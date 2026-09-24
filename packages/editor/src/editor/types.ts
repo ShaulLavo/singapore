@@ -21,6 +21,7 @@ import type { EditorInputRoute } from '../virtualization/virtualizedTextViewHelp
 import type { EditorKeymapOptions } from './keymap'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'
+import type { EditorTokenInput } from '../syntax/tokenStore'
 import type { SelectionAffinity } from '../selections'
 import type { EditorPreparedDocument, EditorPreparedTagValue } from './preparedDocument'
 
@@ -142,6 +143,8 @@ export type EditorSetTextOptions = {
   readonly documentMode?: EditorDocumentMode
   readonly languageId?: EditorSyntaxLanguageId | null
   readonly scrollPosition?: EditorScrollPosition
+  /** Painted with the text. Without them the text arrives uncoloured until a highlighter answers. */
+  readonly tokens?: EditorTokenInput
 }
 
 export type EditorOpenDocumentOptions = EditorSetTextOptions & {

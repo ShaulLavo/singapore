@@ -634,7 +634,7 @@
       "id": "E050",
       "file": "e050-host-obligations-into-api.md",
       "title": "Things every host must remember become things the API does",
-      "status": "Proposed",
+      "status": "In progress",
       "owner": "Cross-repo",
       "kind": "Design",
       "priority": "P2",

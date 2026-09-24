@@ -58,10 +58,8 @@ export type DiffPlugin = EditorPlugin & {
   setFile(file: DiffFile | null): void
   getRows(): readonly DiffRenderRow[]
   /**
-   * Projected syntax tokens for the current rows. `Editor.setText` clears tokens — via
-   * `resetOwnedDocument` -> `setDocument` -> `setContent`, which calls `setTokens([])` — so the
-   * host applies these immediately after every `setText`, or an expansion toggle repaints
-   * uncoloured (§C10).
+   * Projected syntax tokens for the current rows. The host passes them with the rows' text,
+   * `setText(text, { tokens })`, or an expansion toggle repaints uncoloured (§C10).
    */
   isSyntaxReady(): boolean
   getTokens(): readonly EditorToken[]
@@ -569,6 +567,7 @@ type DiffViewOptions = {
 /** Pointer handling and inline word-diff highlights. */
 class DiffViewContribution implements EditorViewContribution {
   readonly snapshotKey = 'diff-inline-v1'
+  private readonly pressParticipant: EditorDisposable
   private snapshot: EditorViewSnapshot | null = null
   private lastHighlightRows: readonly DiffRenderRow[] | null = null
   private lastHighlightTextVersion = -1
@@ -579,11 +578,7 @@ class DiffViewContribution implements EditorViewContribution {
   ) {
     this.context.scrollElement.dataset.editorDiffSide = options.side
     viewsByScrollElement.set(this.context.scrollElement, this)
-    // Registration order puts this ahead of the editor's own mousedown handler
-    // (Editor.ts:580 creates view contributions, :633 installs input handling), which is what lets
-    // a gutter-toggle click suppress caret placement. `stopImmediatePropagation` in the handler is
-    // what makes that ordering actually decisive.
-    this.context.scrollElement.addEventListener('mousedown', this.handleMouseDown)
+    this.pressParticipant = this.context.registerPressParticipant(this.claimSeparatorPress)
     this.context.scrollElement.addEventListener('click', this.handleClick)
     this.context.scrollElement.addEventListener('mousemove', this.handleMouseMove)
     this.context.scrollElement.addEventListener('mouseleave', this.handleMouseLeave)
@@ -646,7 +641,7 @@ class DiffViewContribution implements EditorViewContribution {
   }
 
   dispose(): void {
-    this.context.scrollElement.removeEventListener('mousedown', this.handleMouseDown)
+    this.pressParticipant.dispose()
     this.context.scrollElement.removeEventListener('click', this.handleClick)
     this.context.scrollElement.removeEventListener('mousemove', this.handleMouseMove)
     this.context.scrollElement.removeEventListener('mouseleave', this.handleMouseLeave)
@@ -697,20 +692,11 @@ class DiffViewContribution implements EditorViewContribution {
    * covers it, and always will while the label occupies offsets — giving these rows an offset
    * space of their own is the parallel coordinate system §C2 rules out.
    *
-   * Every click count, not just the first. `InputSelectionController.handleMouseDown` branches on
-   * `event.detail` before it looks at anything else — 2 selects a word, 3 selects the line, 4 or
-   * more selects the whole document — and it yields only to `defaultPrevented`. Letting the second
-   * press of a double-click through therefore selects a word of `Show 12 unmodified lines`, which
-   * is the same defect one press further in.
+   * Every click count, not just the first: a second press would select a word of the label, a
+   * third its line and a fourth the whole document.
    */
-  private readonly handleMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0) return
-    if (!this.hunkRowAt(event)) return
-
-    // Beats the editor's own mousedown, which would otherwise place a caret on the separator.
-    event.preventDefault()
-    event.stopImmediatePropagation()
-  }
+  private readonly claimSeparatorPress = (event: MouseEvent): boolean =>
+    event.button === 0 && this.hunkRowAt(event) !== null
 
   private readonly handleClick = (event: MouseEvent): void => {
     if (event.button !== 0) return
@@ -719,7 +705,6 @@ class DiffViewContribution implements EditorViewContribution {
     if (!row?.expandKey) return
 
     event.preventDefault()
-    event.stopImmediatePropagation()
     this.options.toggleRegion(row.expandKey)
   }
 

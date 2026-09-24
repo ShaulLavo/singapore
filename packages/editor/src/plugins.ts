@@ -531,6 +531,13 @@ export type EditorTrackedPoint = {
     | null
 }
 
+/**
+ * Asked about a mouse press before the editor turns it into a caret or a selection. Returning true
+ * claims it: the editor prevents its default and does nothing else with it, and no later
+ * participant is asked. A participant never has to beat the editor's own listener to the event.
+ */
+export type EditorPressParticipant = (event: MouseEvent) => boolean
+
 export type EditorViewContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
@@ -547,6 +554,8 @@ export type EditorViewContributionContext = {
    * `(` into a two-character `()`, and typing over the closer it inserted changes no text at all.
    */
   onDidType(listener: (text: string) => void): EditorDisposable
+  /** Participants are asked in the order they registered. */
+  registerPressParticipant(participant: EditorPressParticipant): EditorDisposable
   getFeature<T>(token: EditorCapabilityToken<T>): T | null
   /**
    * The sources registered for a language feature, best first. The language is the caller's to name

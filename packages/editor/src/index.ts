@@ -354,6 +354,7 @@ export type {
   EditorTokenStyleJSON,
   EditorViewContribution,
   EditorViewContributionContext,
+  EditorPressParticipant,
   EditorViewContributionProvider,
   EditorViewContributionUpdateKind,
   EditorViewportSnapshot,

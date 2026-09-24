@@ -101,8 +101,7 @@ function mountDocumentModeDiff(): MountedDocumentModeDiff {
     keymap: { defaultBindings: false, layers: [] },
     tabSize: 4,
   })
-  mounted.setText(joinRenderLines(rows), { languageId: null })
-  mounted.setTokens(rowTokens(rows))
+  mounted.setText(joinRenderLines(rows), { languageId: null, tokens: rowTokens(rows) })
   mounted.setRowDecorations(rowDecorations(rows))
 
   container = host

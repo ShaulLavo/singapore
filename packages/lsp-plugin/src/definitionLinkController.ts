@@ -1,4 +1,5 @@
 import type {
+  EditorDisposable,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
@@ -55,6 +56,7 @@ export class DefinitionLinkController {
   private lastPointerOffset: number | null = null
   private linkRange: OffsetRange | null = null
   private disposed = false
+  private pressParticipant: EditorDisposable | null = null
 
   public constructor(private readonly options: DefinitionLinkControllerOptions) {
     this.context = options.context
@@ -88,9 +90,7 @@ export class DefinitionLinkController {
   private installHandlers(): void {
     this.context.scrollElement.addEventListener('pointermove', this.handlePointerMove)
     this.context.scrollElement.addEventListener('pointerleave', this.handlePointerLeave)
-    this.context.scrollElement.addEventListener('mousedown', this.handleMouseDown, {
-      capture: true,
-    })
+    this.pressParticipant = this.context.registerPressParticipant(this.claimNavigationPress)
     this.context.container.ownerDocument.addEventListener('keydown', this.handleKeyDown)
     this.context.container.ownerDocument.addEventListener('keyup', this.handleKeyUp)
   }
@@ -98,9 +98,8 @@ export class DefinitionLinkController {
   private uninstallHandlers(): void {
     this.context.scrollElement.removeEventListener('pointermove', this.handlePointerMove)
     this.context.scrollElement.removeEventListener('pointerleave', this.handlePointerLeave)
-    this.context.scrollElement.removeEventListener('mousedown', this.handleMouseDown, {
-      capture: true,
-    })
+    this.pressParticipant?.dispose()
+    this.pressParticipant = null
     this.context.container.ownerDocument.removeEventListener('keydown', this.handleKeyDown)
     this.context.container.ownerDocument.removeEventListener('keyup', this.handleKeyUp)
   }
@@ -123,17 +122,16 @@ export class DefinitionLinkController {
     this.clearDefinitionLink()
   }
 
-  private readonly handleMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0) return
-    if (!isNavigationModifier(event)) return
+  private readonly claimNavigationPress = (event: MouseEvent): boolean => {
+    if (event.button !== 0) return false
+    if (!isNavigationModifier(event)) return false
 
     const offset = this.context.textOffsetFromPoint(event.clientX, event.clientY)
-    if (offset === null) return
+    if (offset === null) return false
 
-    event.preventDefault()
-    event.stopImmediatePropagation()
     this.context.focusEditor()
     this.requestNavigationAtOffset(offset, { kind: 'definition', openMode: 'default' })
+    return true
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {

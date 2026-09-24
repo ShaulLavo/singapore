@@ -147,8 +147,8 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
     // happy-dom gives every element a zero-sized rect, so the editor's word- and line-selection
     // paths resolve an offset at the end of the document no matter where the press was, with or
     // without this plugin. What IS decisive is that `InputSelectionController.handleMouseDown`
-    // calls `view.focusInput()` immediately after its `defaultPrevented` guard — so an editor that
-    // never took focus is an editor whose handler never ran.
+    // calls `view.focusInput()` as soon as no press participant claimed the press — so an editor
+    // that never took focus is one whose selection handling never ran.
     const { host } = mountDiff({ file: prefixSkippedDiff() })
     const view = queryScrollElement(host)
 
@@ -594,8 +594,10 @@ function mountDiff(options: MountOptions = {}): {
   mounted.push({ editor, host })
 
   const push = (): void => {
-    editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
-    editor.setTokens(plugin.getTokens())
+    editor.setText(joinRenderLines(plugin.getRows()), {
+      languageId: null,
+      tokens: plugin.getTokens(),
+    })
   }
   plugin.onDidChangeRows(push)
   plugin.onDidChangeTokens(() => editor.setTokens(plugin.getTokens()))

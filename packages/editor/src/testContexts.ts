@@ -91,6 +91,7 @@ export function createTestViewContributionContext(
     getSnapshot: () => missing('getSnapshot'),
     requestViewUpdate: () => undefined,
     onDidType: () => noDisposal,
+    registerPressParticipant: () => noDisposal,
     getFeature: () => null,
     getProviders: () => [],
     registerProvider: () => noDisposal,

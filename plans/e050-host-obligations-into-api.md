@@ -1,6 +1,6 @@
 # E050: Things every host must remember become things the API does
 
-- Status: Proposed
+- Status: In progress
 - Kind: Design
 - Owner: Cross-repo
 - Priority: P2
@@ -66,6 +66,54 @@ Handles:
   half-clipped. `decode` also waits on a `TOKENS_WAIT_MS` timer because contributions get no
   "initial highlight settled" signal.
 
+## Step 1 result, 2026-09-24
+
+Every row was re-checked at Editor `c9fb653`. All eleven describe a real workaround; five need their
+wording corrected, and three already have part of the proposed API.
+
+| Row                         | Verdict | Correction                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setTokens` after `setText` | Holds   | The clearing is in private `renderContent`, reached as `setText` → `resetOwnedDocument` → `renderContent`; `setContent` on a buffer session is now an undoable edit. `setText` also resets language, tab size, decorations, folds, selection and undo; only scroll carries over. Sticky scroll's `lineView` is a secondary view whose `setText` keeps its tokens, so it is not this obligation. |
+| Diff option traps           | Partly  | `languageId: null`, `tabSize` and `cursorLineHighlight` hold. `readonly` already blocks every mutating binding (`editor/keymap.ts:34`, `keymap/presets.ts:705`); only find, navigation and fold bindings get through. Platform passes `keymap: { enabled: false }`, not `defaultBindings: false`.                                                                                               |
+| Typography variables        | Partly  | `lineHeight` and `setLineHeight` exist; `fontSize` and `fontFamily` do not. The editor writes `--editor-row-height` and `--editor-tab-size` on its own element, which wins over Platform's `:root` values; it never writes `--editor-font-size` and hardcodes `13px`.                                                                                                                           |
+| `!important` theming        | Partly  | `EditorTheme` has `caretColor` and an open `colors` map (`hover.background` exists). Missing: the diff palette, selection colour (a literal in `style.css:297`) and inactive selection.                                                                                                                                                                                                         |
+| Pointer order               | Holds   | The core mousedown already returns on `defaultPrevented` (`inputSelectionController.ts:1873`), so `stopImmediatePropagation` only silences other plugins. Plugins added after construction register after the core, so "first" is not guaranteed. Same shape in `lsp-plugin/definitionLinkController.ts`, merge-conflict lenses and the fold gutter button.                                     |
+| Capture-phase `keydown`     | Holds   | Signature help is lazy-loaded, so it always registers after completion: Escape closes completion first and needs a second press; with only signature help open, Escape also runs the keymap's Escape bindings.                                                                                                                                                                                  |
+| Style `MutationObserver`    | Holds   | Three drop paths: re-entrant layout (`viewContributions.ts:224`), `committingPresentation`, and provisional paint.                                                                                                                                                                                                                                                                              |
+| Raw `scroll` listener       | Partly  | Plugins already have `updateViewport` after the fold and unthrottled (`plugins.ts:634`); hosts have no `onDidScroll`, and the contribution context has only `setScrollTop`.                                                                                                                                                                                                                     |
+| `pointer-events: auto`      | Holds   | The merge-conflict lens punches through the same way (`style.css:494`).                                                                                                                                                                                                                                                                                                                         |
+| Rows by selector            | Holds   | Programmatic scroll does not cancel a reveal.                                                                                                                                                                                                                                                                                                                                                   |
+| `TOKENS_WAIT_MS`            | Partly  | `EditorViewSnapshot.initialHighlightStatus` already reaches contributions on every change; `'plain'` means both "not started" and "settled", which is the real gap.                                                                                                                                                                                                                             |
+
+## Row 1, 2026-09-24: tokens travel with the text
+
+`EditorSetTextOptions.tokens` (and so `openDocument`) paints the given tokens with the text.
+`renderContent` swaps text and tokens inside one atomic render: before, the view published a
+`viewport` update showing the new text under the outgoing document's tokens, then an empty store,
+then the host's. `syncText` with `tokens` replaces the tokens it projected through the edit.
+`test/setTextTokens.test.ts` fails if any contribution update during `setText` sees other tokens.
+The diff README, plugin contract and tests pass tokens with the text; Platform's `diff-pane.tsx`
+does the same (scenario `git-diff-expand-tokens`). The host's `setPresentationReady` bracket stays:
+it also covers restoring selection and scroll, which `setText` drops.
+
+## Row 5, 2026-09-24: a press a plugin claims
+
+`EditorViewContributionContext.registerPressParticipant(participant)` registers a function the
+editor asks, in registration order, before it turns a mouse press into a caret or a selection and
+before it focuses. The first to return true claims the press: the editor prevents its default and
+stops. A participant that throws is logged as `editor.contribution.press_failed` and the press goes
+on. Registration order against the editor's own listener no longer matters, so a plugin added after
+construction claims presses too. The diff separator, LSP Ctrl/Cmd+click and Platform's diff
+Ctrl/Cmd+click use it; none calls `stopImmediatePropagation` or listens in the capture phase any
+more. `test/pressParticipants.test.ts`; Platform scenario `editor-press-participants` fails with
+the hook disabled (a double-click selects `lines` of the separator label).
+
+Not covered: the arrow keys still move the caret onto a separator (the "rows a plugin can mark
+non-caret" half of this row), and the fold gutter and merge-conflict buttons still stop propagation
+on their own elements, which is ordinary DOM ownership rather than an ordering trick. Platform's
+line-comment action observes presses on the pane host, so a Ctrl+click in a diff also offers
+"Ask the agent about these lines".
+
 ## Scope
 
 API design across `packages/editor` and the bundled plugins. Each section below ships on its own;
@@ -73,19 +121,19 @@ this document is the inventory and the contract, not one change.
 
 ## Design
 
-| Secret today                                   | API that replaces it                                                                                     |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `setTokens` after every `setText`              | `setText(text, { tokens })`, or a split between "replace text" and "reset presentation"                  |
-| Diff option traps                              | a `createDiffEditorOptions()` preset exported by `packages/diff`; `readonly` suppresses edit bindings    |
-| CSS variables for typography                   | `fontSize`, `fontFamily`, `lineHeight` options; the resolved row pitch on the view snapshot              |
-| `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                         |
-| Listener order plus `stopImmediatePropagation` | a pointer participant that can claim a press before selection handling; rows a plugin can mark non-caret |
-| Capture-phase `keydown`                        | plugin-contributed keymap context keys with a defined priority                                           |
-| `MutationObserver` on `style`                  | `onDidChangeReservedOverlayWidth(side)` that is not dropped when re-entrant                              |
-| Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                           |
-| `pointer-events: auto`                         | an `interactive` flag on a gutter cell contribution                                                      |
-| Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                    |
-| `TOKENS_WAIT_MS`                               | the initial-highlight terminal status exposed to contributions                                           |
+| Secret today                                   | API that replaces it                                                                                  |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `setTokens` after every `setText`              | done: `setText(text, { tokens })`                                                                     |
+| Diff option traps                              | a `createDiffEditorOptions()` preset exported by `packages/diff`; `readonly` suppresses edit bindings |
+| CSS variables for typography                   | `fontSize`, `fontFamily`, `lineHeight` options; the resolved row pitch on the view snapshot           |
+| `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                      |
+| Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                             |
+| Capture-phase `keydown`                        | plugin-contributed keymap context keys with a defined priority                                        |
+| `MutationObserver` on `style`                  | `onDidChangeReservedOverlayWidth(side)` that is not dropped when re-entrant                           |
+| Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                        |
+| `pointer-events: auto`                         | an `interactive` flag on a gutter cell contribution                                                   |
+| Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                 |
+| `TOKENS_WAIT_MS`                               | the initial-highlight terminal status exposed to contributions                                        |
 
 ## Steps
 
