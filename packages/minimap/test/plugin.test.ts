@@ -1,5 +1,6 @@
 import { documentRow } from './visibleRows'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
+import { createTestViewSnapshotSource } from '@singapore-editor/core/testing'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   EditorCapabilityContributionProvider,
@@ -710,7 +711,7 @@ function documentSnapshot(lineCount: number, clientHeight: number): EditorViewSn
 
   return {
     ...snapshot({ clientHeight, scrollHeight: lineCount * 20 }),
-    fullText: lines.join('\n'),
+    ...createTestViewSnapshotSource(lines.join('\n')),
     lineStarts,
     lineCount,
     totalHeight: lineCount * 20,
@@ -737,7 +738,7 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
   return {
     documentId: 'minimap-test',
     languageId: 'typescript',
-    fullText: '',
+    ...createTestViewSnapshotSource(''),
     textVersion: 1,
     initialHighlightStatus: 'painted',
     syntaxStatus: 'ready',
@@ -773,9 +774,6 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
       borderBoxWidth: 80,
       visibleRange: { start: 0, end: 1 },
       ...viewport,
-    },
-    toJSON() {
-      throw new Error('not used by this fixture')
     },
     toVisibleSnapshot() {
       return null

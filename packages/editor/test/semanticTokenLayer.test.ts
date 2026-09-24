@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { snapshotText } from './factories/snapshotText'
 
 import type {
   EditorViewContributionContext,
@@ -87,7 +88,7 @@ function baseSnapshot(): EditorViewSnapshot {
     documentId: 'src/index.ts',
     documentSyncPoint: TEST_DOCUMENT_SYNC_POINT,
     languageId: 'typescript',
-    fullText: TEXT,
+    ...snapshotText(TEXT),
     textVersion: 7,
     initialHighlightStatus: 'painted',
     syntaxStatus: 'ready',
@@ -114,9 +115,6 @@ function baseSnapshot(): EditorViewSnapshot {
       clientHeight: 0,
       clientWidth: 0,
       visibleRange: { start: 0, end: LINE_COUNT } as EditorViewSnapshot['viewport']['visibleRange'],
-    },
-    toJSON() {
-      throw new Error('not used by this fixture')
     },
     toVisibleSnapshot() {
       return null
@@ -342,31 +340,16 @@ describe('painting', () => {
     ])
   })
 
-  /**
-   * `fullText` is a lazy getter that walks the piece table and joins the whole document into a
-   * string, and `Editor.getSnapshot()` rebuilds the snapshot object — and so the memo — on every
-   * call. Reading `.length` off it cost one whole-document serialisation per push. `textSnapshot`
-   * carries the same number for free, so a snapshot that has one must never be asked for its text.
-   */
-  it('reads the document length without materialising the document', () => {
+  // A source that can report only its length proves a push reads no text.
+  it('reads the document length without reading the document', () => {
     const test = harness()
-    let materialised = 0
     test.setSnapshot({
       textSnapshot: { length: TEXT.length } as EditorViewSnapshot['textSnapshot'],
-    })
-    const snapshot = test.snapshot()
-    Object.defineProperty(snapshot, 'fullText', {
-      configurable: true,
-      get: () => {
-        materialised += 1
-        return TEXT
-      },
     })
 
     const result = test.layer.push(payload([span(0, 5, 'keyword')]))
 
     expect(result.status).toBe('painted')
-    expect(materialised).toBe(0)
   })
 
   /**

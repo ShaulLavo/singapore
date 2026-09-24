@@ -5,7 +5,7 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core'
-import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
+import { lspPositionToOffsetInSnapshot, offsetToLspPositionInSnapshot } from '@singapore-editor/lsp'
 
 import type { ActiveDocument } from './pluginTypes'
 import type { LanguageServerFeatureRouter } from './serverSet'
@@ -97,7 +97,7 @@ export class DocumentHighlightController {
       const highlights = await this.options.router.request<lsp.DocumentHighlight[] | null>(
         'textDocument/documentHighlight',
         {
-          position: offsetToLspPosition(active.fullText, offset),
+          position: offsetToLspPositionInSnapshot(active, offset),
           textDocument: { uri: active.uri },
         },
         { signal: abort.signal },
@@ -114,8 +114,8 @@ export class DocumentHighlightController {
 
   private paint(active: ActiveDocument, highlights: lsp.DocumentHighlight[] | null): void {
     const ranges = (highlights ?? []).map((highlight) => ({
-      end: lspPositionToOffset(active.fullText, highlight.range.end),
-      start: lspPositionToOffset(active.fullText, highlight.range.start),
+      end: lspPositionToOffsetInSnapshot(active, highlight.range.end),
+      start: lspPositionToOffsetInSnapshot(active, highlight.range.start),
     }))
     // A lone highlight is the symbol the caret is already in — painting it says nothing.
     if (ranges.length < 2) {

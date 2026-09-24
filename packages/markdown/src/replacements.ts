@@ -1,3 +1,4 @@
+import type { TextReadSnapshot } from '@singapore-editor/core/document'
 import type { EditorSyntaxCapture } from '@singapore-editor/core/syntax'
 import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
 
@@ -9,9 +10,10 @@ import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
  * link brackets. So constructs are recovered structurally instead: by containment for emphasis and
  * code spans, and by adjacency for links and images. Anything that does not match its expected shape
  * is left alone, so malformed markdown renders as plain text rather than losing characters.
+ * Only capture ranges are read from `text`, never the whole document.
  */
 export function markdownInlineReplacements(
-  text: string,
+  text: TextReadSnapshot,
   captures: readonly EditorSyntaxCapture[],
 ): readonly InlineReplacementSpec[] {
   const sorted = previewCaptures(captures)
@@ -86,7 +88,7 @@ const createCaptureIndex = (captures: readonly EditorSyntaxCapture[]): CaptureIn
  */
 const appendDelimitedSpanReplacements = (
   specs: InlineReplacementSpec[],
-  text: string,
+  text: TextReadSnapshot,
   captures: readonly EditorSyntaxCapture[],
   index: CaptureIndex,
 ): void => {
@@ -110,13 +112,13 @@ const appendDelimitedSpanReplacements = (
  */
 const appendBlockMarkerReplacements = (
   specs: InlineReplacementSpec[],
-  text: string,
+  text: TextReadSnapshot,
   captures: readonly EditorSyntaxCapture[],
 ): void => {
   for (const capture of captures) {
     if (capture.captureName !== 'punctuation.special') continue
 
-    const markerText = text.slice(capture.startIndex, capture.endIndex)
+    const markerText = text.readRange(capture.startIndex, capture.endIndex)
     if (HEADING_MARKER.test(markerText)) {
       const end = capture.endIndex + leadingSpaceCount(text, capture.endIndex)
       const kind = `heading-marker-${markerText.length}`
@@ -226,11 +228,20 @@ const hidden = (
   groupId,
 })
 
-const spansMultipleLines = (text: string, capture: EditorSyntaxCapture): boolean =>
-  text.slice(capture.startIndex, capture.endIndex).includes('\n')
+// A line break inside the span puts its end on a later row than its start.
+const spansMultipleLines = (text: TextReadSnapshot, capture: EditorSyntaxCapture): boolean =>
+  text.lineAt(capture.startIndex) !== text.lineAt(capture.endIndex)
 
-const leadingSpaceCount = (text: string, offset: number): number => {
+const SPACE_PROBE_LENGTH = 64
+
+const leadingSpaceCount = (text: TextReadSnapshot, offset: number): number => {
   let count = 0
-  while (text[offset + count] === ' ') count += 1
+  for (let start = offset; start < text.length; start += SPACE_PROBE_LENGTH) {
+    const window = text.readRange(start, Math.min(text.length, start + SPACE_PROBE_LENGTH))
+    let index = 0
+    while (window[index] === ' ') index += 1
+    count += index
+    if (index < window.length) break
+  }
   return count
 }

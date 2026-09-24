@@ -284,7 +284,7 @@ export function createSemanticTokenLayer(
     snapshot: EditorViewSnapshot,
     projectedThroughEdits: number,
   ): SemanticTokenPushResult {
-    const textLength = documentLength(snapshot)
+    const textLength = snapshot.textSnapshot.length
     const unresolved = new Set<string>()
     const groups = new Map<string, PaintedGroup>()
     let paintedSpans = 0
@@ -528,20 +528,6 @@ function innermostSpan(active: readonly SemanticTokenSpan[]): SemanticTokenSpan 
 function isInnerSpan(span: SemanticTokenSpan, incumbent: SemanticTokenSpan): boolean {
   if (span.start !== incumbent.start) return span.start > incumbent.start
   return span.end < incumbent.end
-}
-
-/**
- * How long the document is, without materialising it.
- *
- * `fullText` is a lazy getter that walks the piece table and joins the whole document into a
- * string, and its memo lives on the snapshot object — which `Editor.getSnapshot()` builds fresh on
- * every call, so nothing amortises it. Reading `.length` off it therefore cost one whole-document
- * serialisation per push: a megabyte-scale allocation and a full tree walk, to learn a number
- * `textSnapshot` holds directly. The fallback is for hosts and harnesses that supply a snapshot
- * without one.
- */
-function documentLength(snapshot: EditorViewSnapshot): number {
-  return snapshot.textSnapshot?.length ?? snapshot.fullText.length
 }
 
 function clampOffset(offset: number, textLength: number): number {

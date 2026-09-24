@@ -104,7 +104,6 @@ export type LanguageServerDocumentSnapshot = Pick<
   | 'documentId'
   | 'languageId'
   | 'textSnapshot'
-  | 'fullText'
   | 'textVersion'
   | 'documentSyncPoint'
   | 'changesSinceDocumentSyncPoint'

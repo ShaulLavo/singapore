@@ -132,7 +132,7 @@ test('real document waits independently for highlights and commits once with no 
   expect(inspected?.visibleRows).toEqual([])
   expect(inspected?.lineCount).toBe(3)
   expect(inspected?.lineStartsView?.length).toBe(3)
-  expect(inspected?.fullText).toBe(buffer.materializeFullText())
+  expect(inspected?.textSnapshot).toBe(buffer.getTextSnapshot())
   expect(restored.editor.captureSnapshot()).toBeNull()
   expect(restored.host.querySelectorAll('[data-editor-virtual-row]')).toHaveLength(0)
 

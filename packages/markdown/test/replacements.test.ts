@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { Language, Parser, Query } from 'web-tree-sitter'
 import type { EditorSyntaxCapture } from '@singapore-editor/core/syntax'
 import { createInlineMap, inlineRowForBufferRow } from '@singapore-editor/core/rendering'
-import { createPieceTableSnapshot } from '@singapore-editor/core/document'
+import { createPieceTableSnapshot, createStringTextSnapshot } from '@singapore-editor/core/document'
 import { markdownInlineReplacements } from '../src/replacements'
 
 /**
@@ -82,7 +82,7 @@ const inlineNodes = (node: SyntaxNode): SyntaxNode[] => {
  * anchoring plus overlap normalization are exercised on the way.
  */
 const preview = (text: string): string => {
-  const specs = markdownInlineReplacements(text, parseMarkdown(text))
+  const specs = markdownInlineReplacements(createStringTextSnapshot(text), parseMarkdown(text))
   const map = createInlineMap(createPieceTableSnapshot(text), specs)
   return inlineRowForBufferRow(map, 0, text).text
 }
@@ -124,7 +124,10 @@ describe('markdown inline replacements', () => {
   })
 
   it('carries the heading level in the marker kind', () => {
-    const specs = markdownInlineReplacements('## Two', parseMarkdown('## Two'))
+    const specs = markdownInlineReplacements(
+      createStringTextSnapshot('## Two'),
+      parseMarkdown('## Two'),
+    )
 
     expect(specs.map((spec) => spec.kind)).toEqual(['heading-marker-2'])
   })
@@ -136,14 +139,14 @@ describe('markdown inline replacements', () => {
 
   it('never collapses a fenced code block', () => {
     const text = '```js\nconst a = 1\n```'
-    const specs = markdownInlineReplacements(text, parseMarkdown(text))
+    const specs = markdownInlineReplacements(createStringTextSnapshot(text), parseMarkdown(text))
 
     expect(specs.filter((spec) => spec.text === '')).toEqual([])
   })
 
   it('groups both fences of one construct so they reveal together', () => {
     const text = 'a **bold** b'
-    const specs = markdownInlineReplacements(text, parseMarkdown(text))
+    const specs = markdownInlineReplacements(createStringTextSnapshot(text), parseMarkdown(text))
     const groups = new Set(specs.map((spec) => spec.groupId))
 
     expect(specs.length).toBeGreaterThan(1)
@@ -152,7 +155,7 @@ describe('markdown inline replacements', () => {
 
   it('gives each construct on a line its own group', () => {
     const text = '**a** and _b_'
-    const specs = markdownInlineReplacements(text, parseMarkdown(text))
+    const specs = markdownInlineReplacements(createStringTextSnapshot(text), parseMarkdown(text))
 
     expect(new Set(specs.map((spec) => spec.groupId)).size).toBe(2)
     expect(preview(text)).toBe('a and b')
@@ -160,7 +163,7 @@ describe('markdown inline replacements', () => {
 
   it('drops zero-width captures rather than emitting empty replacements', () => {
     const text = '- item\n- other'
-    const specs = markdownInlineReplacements(text, parseMarkdown(text))
+    const specs = markdownInlineReplacements(createStringTextSnapshot(text), parseMarkdown(text))
 
     for (const spec of specs) expect(spec.endIndex).toBeGreaterThan(spec.startIndex)
   })

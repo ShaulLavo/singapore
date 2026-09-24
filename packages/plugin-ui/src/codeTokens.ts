@@ -86,6 +86,8 @@ export function createTooltipCodeTokenizer(
 }
 
 function holdTimeout(): Promise<void> {
+  // @justification Caps how long a hover waits for tokens before painting plain; it only resolves
+  // the losing side of a race.
   return new Promise((resolve) => setTimeout(resolve, TOKEN_HOLD_MS))
 }
 

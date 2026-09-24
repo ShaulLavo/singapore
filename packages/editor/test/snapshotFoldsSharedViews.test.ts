@@ -151,9 +151,9 @@ function expectViews(
 
 function expectCoherentSnapshots(snapshots: readonly EditorViewSnapshot[]): void {
   for (const snapshot of snapshots) {
-    if (!snapshot.textSnapshot || snapshot.foldMarkers.length === 0) continue
+    if (snapshot.foldMarkers.length === 0) continue
     const folds = fallbackFoldRanges({
-      text: snapshot.textSnapshot.materializeFullText(),
+      text: snapshot.textSnapshot.readRange(0, snapshot.textSnapshot.length),
       languageId: snapshot.languageId,
       tabSize: snapshot.tabSize,
     })

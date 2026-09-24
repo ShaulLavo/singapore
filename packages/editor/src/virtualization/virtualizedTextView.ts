@@ -92,7 +92,6 @@ import {
   multiLineEditPatch,
   sourceEditPatch,
   setTextLayoutState,
-  setTextSnapshotLayoutState,
   setWrapEnabledLayout,
   updateVirtualizerRows,
   visualColumnForOffset,
@@ -667,10 +666,10 @@ export class VirtualizedTextView {
 
   public setText(
     text: string | TextSnapshot,
-    textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text,
     preparedLineStarts?: readonly number[],
     preparedTokens?: EditorTokenStore,
   ): void {
+    const textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
     const view = this.view
     this.pendingReveal = null
     view.sameLineTokenEdit = null
@@ -679,10 +678,7 @@ export class VirtualizedTextView {
       view.tokens = preparedTokens
       view.tokenPaletteDirty = true
     }
-    const { lineCountChanged } =
-      typeof text === 'string'
-        ? setTextLayoutState(view, textSnapshot, preparedLineStarts)
-        : setTextSnapshotLayoutState(view, textSnapshot)
+    const { lineCountChanged } = setTextLayoutState(view, textSnapshot, preparedLineStarts)
     this.finishTextReplacement(lineCountChanged)
   }
 

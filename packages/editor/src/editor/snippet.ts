@@ -7,6 +7,8 @@
  * put its characters in the document rather than lose them.
  */
 
+import type { TextReadSnapshot } from '../documentTextSnapshot'
+import { readLeadingWhitespace } from '../textWindows'
 import { leadingWhitespace } from './indentation'
 import { guessedTabSize } from './indentationGuess'
 
@@ -37,7 +39,7 @@ export type ParsedSnippet = {
 
 /** Where a snippet is landing, which is what decides how its continuation lines are indented. */
 export type SnippetInsertion = {
-  readonly documentText: string
+  readonly textSnapshot: TextReadSnapshot
   /** Offset of the snippet's first character, once whatever it replaces is gone. */
   readonly offset: number
 }
@@ -101,7 +103,7 @@ function reindented(parsed: ParsedSnippet, insertion: SnippetInsertion): ParsedS
 
   const base = insertionLineIndent(insertion)
   const written = writtenIndentUnit(lines)
-  const unit = documentIndentUnit(base, insertion.documentText, written)
+  const unit = documentIndentUnit(base, insertion.textSnapshot, written)
   if (base.length === 0 && unit === written) return parsed
 
   const shifts: LineShift[] = []
@@ -202,19 +204,19 @@ function writtenIndentUnit(lines: readonly string[]): string {
  * width is the document's, read off its text, because the file is the authority on how wide a level
  * is there and a host setting is the authority on some other file.
  */
-function documentIndentUnit(base: string, documentText: string, written: string): string {
+function documentIndentUnit(base: string, textSnapshot: TextReadSnapshot, written: string): string {
   if (base.includes('\t')) return '\t'
 
   // Zero is not a width, so it comes back only when the text held nothing to measure — and on no
   // evidence at all, rewriting what the server sent is worse than leaving it.
-  const guessed = guessedTabSize(documentText, 0)
+  const guessed = guessedTabSize(textSnapshot, 0)
   return guessed > 0 ? ' '.repeat(guessed) : written
 }
 
 function insertionLineIndent(insertion: SnippetInsertion): string {
-  const offset = Math.max(0, Math.min(insertion.offset, insertion.documentText.length))
-  const lineStart = offset === 0 ? 0 : insertion.documentText.lastIndexOf('\n', offset - 1) + 1
-  return leadingWhitespace(insertion.documentText.slice(lineStart, offset))
+  const source = insertion.textSnapshot
+  const offset = Math.max(0, Math.min(insertion.offset, source.length))
+  return readLeadingWhitespace(source, source.lineStart(source.lineAt(offset)), offset)
 }
 
 class SnippetParser {

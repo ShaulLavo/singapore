@@ -2,7 +2,7 @@ import type { EditorPointHit, EditorMarkerHit } from './pointQueries'
 import type { TextContent } from './textContent'
 import type { EditorDecorationRange, EditorDecorationStore } from './editor/decorationStore'
 import type { DocumentSessionChange } from './documentSession'
-import type { DocumentTextSnapshot, TextSnapshot } from './documentTextSnapshot'
+import type { DocumentTextSnapshot, TextReadSnapshot } from './documentTextSnapshot'
 import type { EditorCommandContext, EditorCommandId } from './editor/commands'
 import { EditorDisposableStore, MutableEditorDisposable } from './editor/disposables'
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
@@ -159,24 +159,36 @@ export type EditorHighlightResult = {
   readonly theme?: EditorTheme | null
 }
 
+// A highlighter is a protocol adapter: it owns the full immutable source and decides when a
+// transport needs the whole text.
 export type EditorHighlighterSessionOptions = {
   readonly documentId: string
   readonly runtimeSessionId?: string
   readonly languageId: EditorSyntaxLanguageId | null
-  readonly fullText: string
-  readonly textSnapshot?: DocumentTextSnapshot
+  readonly textSnapshot: DocumentTextSnapshot
   readonly snapshot: PieceTableSnapshot
 }
 
 export type EditorHighlighterSession = EditorDisposable & {
   onDidChangeTheme?(listener: () => void): (() => void) | void
-  refresh(snapshot: PieceTableSnapshot, fullText?: string): Promise<EditorHighlightResult>
+  refresh(textSnapshot: DocumentTextSnapshot): Promise<EditorHighlightResult>
   applyChange(change: DocumentSessionChange): Promise<EditorHighlightResult>
 }
 
 export type EditorHighlighterProvider = {
   loadTheme?(): Promise<EditorTheme | null | undefined>
   createSession(options: EditorHighlighterSessionOptions): EditorHighlighterSession | null
+}
+
+/**
+ * A change as a contribution receives it: the same object the document produced, typed so that its
+ * text is a read source and the piece table and transaction behind it stay with the owners.
+ */
+export type EditorContributionChange = Omit<
+  DocumentSessionChange,
+  'snapshot' | 'textSnapshot' | 'transaction'
+> & {
+  readonly textSnapshot: TextReadSnapshot
 }
 
 export type EditorResolvedSelection = {
@@ -451,8 +463,7 @@ export type EditorViewSnapshot = {
   readonly documentId: string | null
   readonly languageId: EditorSyntaxLanguageId | null
   readonly theme?: EditorTheme | null
-  readonly textSnapshot?: TextSnapshot
-  readonly fullText: string
+  readonly textSnapshot: TextReadSnapshot
   readonly textVersion: number
   readonly initialHighlightStatus: EditorInitialHighlightStatus
   readonly geometryCommitted?: boolean
@@ -467,7 +478,7 @@ export type EditorViewSnapshot = {
   // Materializes the full array on first read; prefer lineStartsView on
   // per-keystroke paths.
   readonly lineStarts: readonly number[]
-  readonly lineStartsView?: EditorLineStartsView
+  readonly lineStartsView: EditorLineStartsView
   readonly tokens: EditorTokenStore
   /** Bracket positions from the last structural parse, sorted by offset; empty when unavailable. */
   readonly brackets: readonly BracketInfo[]
@@ -482,8 +493,6 @@ export type EditorViewSnapshot = {
   readonly foldMarkers: readonly VirtualizedFoldMarker[]
   readonly visibleRows: readonly EditorVisibleRowSnapshot[]
   readonly viewport: EditorViewportSnapshot
-  /** Materializes full text and line starts; intentionally O(document size). */
-  toJSON(): EditorViewSnapshotJSON
   /**
    * Copies mounted vertical rows and horizontal chunks. Indexed built-in tokens stay viewport-bounded;
    * an unindexed external array may be scanned once. Unsupported mounted plugin paint returns null.
@@ -627,7 +636,7 @@ export type EditorViewContribution = EditorDisposable & {
   update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    change?: DocumentSessionChange | null,
+    change?: EditorContributionChange | null,
   ): void
 }
 
@@ -653,8 +662,15 @@ type EditorFeatureDomContributionContext = {
 type EditorDocumentContributionContext = {
   hasDocument(): boolean
   log(event: EditorLogInput): void
+  /** O(document length); for whole-document work such as a live diff, never per-row reads. */
   materializeFullText(): string
-  getTextSnapshot(): TextSnapshot | null
+  getTextSnapshot(): TextReadSnapshot | null
+  /** Changes reach a contribution coalesced; a point taken here recovers every edit since it. */
+  getDocumentSyncPoint(): DocumentSyncPoint
+  changesSinceDocumentSyncPoint(
+    point: DocumentSyncPoint,
+    scope: DocumentLogicalRevisionScope | null,
+  ): DocumentChangesSinceSyncPoint | null
 }
 
 type EditorSelectionContributionContext = {
@@ -826,7 +842,7 @@ export type EditorDecorationContributionContext = EditorDocumentContributionCont
   }
 
 export type EditorDecorationContribution = EditorDisposable & {
-  handleEditorChange?(change: DocumentSessionChange | null): void
+  handleEditorChange?(change: EditorContributionChange | null): void
 }
 
 export type EditorDecorationContributionProvider = {
@@ -836,7 +852,7 @@ export type EditorDecorationContributionProvider = {
 }
 
 export type EditorFeatureContribution = EditorDisposable & {
-  handleEditorChange?(change: DocumentSessionChange | null): void
+  handleEditorChange?(change: EditorContributionChange | null): void
 }
 
 export type EditorFeatureContributionProvider = {
@@ -870,7 +886,7 @@ export type EditorInjectedTextRow = InjectedTextRow
 
 export type EditorInjectedTextRowProviderContext = {
   readonly documentId: string | null
-  readonly text: string
+  readonly textSnapshot: TextReadSnapshot
   readonly lineCount: number
 }
 
@@ -896,7 +912,7 @@ export type EditorGutterContribution = {
 }
 
 export type EditorInlineReplacementContext = {
-  readonly text: string
+  readonly textSnapshot: TextReadSnapshot
   readonly languageId: EditorSyntaxLanguageId | null
   readonly captures: readonly EditorSyntaxCapture[]
 }
@@ -912,7 +928,7 @@ export type EditorInlineReplacementProvider = (
 ) => readonly InlineReplacementSpec[]
 
 export type EditorSelectionRangeContext = {
-  readonly text: string
+  readonly textSnapshot: TextReadSnapshot
   readonly languageId: EditorSyntaxLanguageId | null
   /** The caret the ladder is being built around; a provider that knows only a point uses this. */
   readonly offset: number

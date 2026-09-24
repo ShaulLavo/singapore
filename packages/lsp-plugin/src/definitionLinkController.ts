@@ -16,6 +16,7 @@ import {
   type DefinitionResult,
 } from './definitionNavigation'
 import { LINK_HIGHLIGHT_STYLE } from './plugin.styles'
+import { rangeAroundOffset } from './sourceText'
 import type { ActiveDocument, LanguageServerNavigationCommand } from './pluginTypes'
 import type { LanguageServerFeatureRouter } from './serverSet'
 import type {
@@ -161,7 +162,7 @@ export class DefinitionLinkController {
     this.definitionRequestId = requestId
     void requestNavigationTargets(this.router, {
       uri: active.uri,
-      text: active.fullText,
+      document: active,
       offset,
       kind: command.kind,
       includeDeclaration: command.includeDeclaration,
@@ -180,13 +181,13 @@ export class DefinitionLinkController {
 
     if (this.linkRange && offset >= this.linkRange.start && offset < this.linkRange.end) return
     this.clearDefinitionLink()
-    const range = hoverTargetRange(active.fullText, offset)
+    const range = rangeAroundOffset(active, offset, hoverTargetRange)
 
     const requestId = this.definitionHoverRequestId + 1
     this.definitionHoverRequestId = requestId
     void requestDefinition(this.router, {
       uri: active.uri,
-      text: active.fullText,
+      document: active,
       offset,
     })
       .then((result) => this.renderDefinitionLink(requestId, active, range, result))
@@ -202,12 +203,7 @@ export class DefinitionLinkController {
     if (requestId !== this.definitionHoverRequestId) return
     if (active !== this.options.getActiveDocument()) return
     const sourceRange = result.sourceRange ?? range
-    const target = preferredJumpableDefinitionTarget(
-      active.uri,
-      active.fullText,
-      sourceRange,
-      result,
-    )
+    const target = preferredJumpableDefinitionTarget(active.uri, active, sourceRange, result)
     if (!target) return this.clearDefinitionLink()
 
     this.linkRange = sourceRange
@@ -247,7 +243,7 @@ export class DefinitionLinkController {
     })
     if (handled) return
 
-    const target = preferredReferenceTarget(active.uri, active.fullText, offset, result)
+    const target = preferredReferenceTarget(active.uri, active, offset, result)
     if (!target) return
     this.openNavigationTarget(active, target, {
       kind: 'references',
@@ -268,7 +264,7 @@ export class DefinitionLinkController {
     navigateToTarget(
       target,
       {
-        text: active.fullText,
+        document: active,
         setSelection: this.context.setSelection.bind(this.context),
         focusEditor: this.context.focusEditor.bind(this.context),
       },

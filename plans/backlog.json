@@ -400,7 +400,7 @@
       "id": "E033",
       "file": "e033-explicit-full-text-boundary.md",
       "title": "Make full-document text reads an explicit boundary",
-      "status": "Proposed",
+      "status": "Implemented",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

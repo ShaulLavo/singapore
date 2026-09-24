@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Editor } from '../src/editor/Editor'
+import { createStringTextSnapshot } from '../src/documentTextSnapshot'
 import { guessedTabSize } from '../src/editor/indentationGuess'
 import { createDocumentSession } from '../src/public/document'
 import type { EditorPlugin, EditorViewSnapshot } from '../src/public/extensions'
@@ -174,14 +175,14 @@ describe('what a document votes for', () => {
     const head = ['x', '  y', ...Array.from({ length: 9_998 }, () => 'z')]
     const tail = Array.from({ length: 50 }, () => 'p\n        q')
 
-    expect(guessedTabSize(head.concat(tail).join('\n'), 4)).toBe(2)
+    expect(guessedTabSize(createStringTextSnapshot(head.concat(tail).join('\n')), 4)).toBe(2)
   })
 
   it('reads a step under a line that does not end mid-list as nesting', () => {
     // Both lines above leave a gap at column four, where the line below puts its first token, so
     // every part of the alignment shape but its last holds for the block as much as for the list.
-    expect(guessedTabSize('let x = 1,\n    y = 2', 2)).toBe(2)
-    expect(guessedTabSize('let f = () => {\n    body\n}', 2)).toBe(4)
+    expect(guessedTabSize(createStringTextSnapshot('let x = 1,\n    y = 2'), 2)).toBe(2)
+    expect(guessedTabSize(createStringTextSnapshot('let f = () => {\n    body\n}'), 2)).toBe(4)
   })
 
   it('gives a whitespace-only line neither a vote nor a turn as the line above', () => {
@@ -200,7 +201,7 @@ describe('what a document votes for', () => {
       '}',
     ].join('\n')
 
-    expect(guessedTabSize(text, 4)).toBe(2)
+    expect(guessedTabSize(createStringTextSnapshot(text), 4)).toBe(2)
   })
 
   it('counts alignment whose step is exactly the width already in effect', () => {
@@ -214,10 +215,31 @@ describe('what a document votes for', () => {
       '}',
     ].join('\n')
 
-    expect(guessedTabSize(text, 4)).toBe(4)
+    expect(guessedTabSize(createStringTextSnapshot(text), 4)).toBe(4)
     // Not a line of the text changed, only what a level is already worth: the four-space steps are
     // now alignment and nothing else, and the three-space ones are the only evidence left standing.
-    expect(guessedTabSize(text, 8)).toBe(3)
+    expect(guessedTabSize(createStringTextSnapshot(text), 8)).toBe(3)
+  })
+
+  it('reads a fragmented document no further than its sampled head, in bounded blocks', () => {
+    const head = [
+      'x',
+      '  y',
+      ...Array.from({ length: 9_998 }, (_, index) => `${'z'.repeat(index % 40)}`),
+    ]
+    const tail = Array.from({ length: 2_000 }, () => 'p\n        q')
+    const text = head.concat(tail).join('\n')
+    const session = createDocumentSession(text.slice(0, 5_000))
+    session.applyEdits([{ from: 5_000, to: 5_000, text: text.slice(5_000) }])
+    const source = session.getTextSnapshot()
+    const readRange = vi.spyOn(source, 'readRange')
+
+    expect(guessedTabSize(source, 4)).toBe(guessedTabSize(createStringTextSnapshot(text), 4))
+    const reads = readRange.mock.calls.map(([start, end]) => ({ start, end }))
+    expect(reads.every((read) => read.end - read.start <= 16_384)).toBe(true)
+    expect(Math.max(...reads.map((read) => read.end))).toBeLessThanOrEqual(
+      source.lineStart(10_000) + 16_384,
+    )
   })
 
   it('settles a tie on the even width', () => {
@@ -225,6 +247,6 @@ describe('what a document votes for', () => {
     // nothing between them and the answer rests on which was asked first.
     const text = ['if (a) {', '   b', '}', 'if (c) {', '    d', '}'].join('\n')
 
-    expect(guessedTabSize(text, 2)).toBe(4)
+    expect(guessedTabSize(createStringTextSnapshot(text), 2)).toBe(4)
   })
 })

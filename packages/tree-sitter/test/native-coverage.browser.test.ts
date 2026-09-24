@@ -1,6 +1,11 @@
 import { expect, it } from 'vitest'
 import { styleForTreeSitterCapture, type EditorSyntaxResult } from '@singapore-editor/core/syntax'
-import { createDocumentSession, createPieceTableSnapshot } from '@singapore-editor/core/document'
+import {
+  createDocumentSession,
+  createPieceTableSnapshot,
+  createDocumentTextSnapshot,
+  createStringTextSnapshot,
+} from '@singapore-editor/core/document'
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterSyntaxSession } from '../src/session'
@@ -44,9 +49,10 @@ browserTest(
       languageResolver: registry(loads),
       backend,
       snapshot,
+      textSnapshot: createDocumentTextSnapshot(snapshot),
     })
     try {
-      const result = await session.refresh(snapshot)
+      const result = await session.refresh(createDocumentTextSnapshot(snapshot))
       expect(loads).toEqual(['typescript'])
       expect(result.errors).toEqual([])
       expect(result.captures.some((capture) => capture.captureName === 'type.builtin')).toBe(true)
@@ -71,10 +77,11 @@ browserTest.each(['full', 'range'] as const)(
       languageResolver: registry(loads),
       backend,
       snapshot,
+      textSnapshot: createDocumentTextSnapshot(snapshot),
       syntaxMode,
     })
     try {
-      let result = await session.refresh(snapshot)
+      let result = await session.refresh(createDocumentTextSnapshot(snapshot))
       if (syntaxMode === 'range')
         result = await session.queryRange({ startIndex: 0, endIndex: snapshot.length })
       expect(result.degraded).toBeNull()
@@ -133,9 +140,10 @@ browserTest(
       languageResolver,
       backend,
       snapshot,
+      textSnapshot: createDocumentTextSnapshot(snapshot),
     })
     try {
-      await session.refresh(snapshot)
+      await session.refresh(createDocumentTextSnapshot(snapshot))
       for (const [before, after] of [
         ['plain', 'astro'],
         ['title', 'heading'],
@@ -156,8 +164,9 @@ browserTest(
           languageResolver,
           backend,
           snapshot,
+          textSnapshot: createDocumentTextSnapshot(snapshot),
         })
-        const expected = await fresh.refresh(snapshot)
+        const expected = await fresh.refresh(createDocumentTextSnapshot(snapshot))
         expect(incremental.captures).toEqual(expected.captures)
         expect(tokenValues(incremental)).toEqual(tokenValues(expected))
         expect(incremental.injections).toEqual(expected.injections)
@@ -184,9 +193,10 @@ browserTest.each(NATIVE_FIXTURES)(
       languageResolver,
       backend,
       snapshot: document.getSnapshot(),
+      textSnapshot: createDocumentTextSnapshot(document.getSnapshot()),
     })
     try {
-      const result = await session.refresh(document.getSnapshot())
+      const result = await session.refresh(createDocumentTextSnapshot(document.getSnapshot()))
       expect(result.degraded).toBeNull()
       expect(result.tokens.length).toBeGreaterThan(0)
       expect(result.captures.map((capture) => capture.captureName)).toEqual(
@@ -201,8 +211,9 @@ browserTest.each(NATIVE_FIXTURES)(
         languageResolver,
         backend,
         snapshot: change.snapshot,
+        textSnapshot: createDocumentTextSnapshot(change.snapshot),
       })
-      const expected = await fresh.refresh(change.snapshot)
+      const expected = await fresh.refresh(createDocumentTextSnapshot(change.snapshot))
       expect(incremental.captures).toEqual(expected.captures)
       expect(tokenValues(incremental)).toEqual(tokenValues(expected))
       expect(incremental.folds).toEqual(expected.folds)
@@ -232,9 +243,10 @@ browserTest.each(['full', 'range'] as const)(
       ...options,
       documentId: 'sql.md',
       snapshot: document.getSnapshot(),
+      textSnapshot: createDocumentTextSnapshot(document.getSnapshot()),
     })
     try {
-      const initial = await session.refresh(document.getSnapshot())
+      const initial = await session.refresh(createDocumentTextSnapshot(document.getSnapshot()))
       const result =
         syntaxMode === 'full'
           ? initial
@@ -291,9 +303,10 @@ browserTest.each([
       ...options,
       documentId: 'mixed.mdx',
       snapshot: document.getSnapshot(),
+      textSnapshot: createDocumentTextSnapshot(document.getSnapshot()),
     })
     try {
-      const initial = await session.refresh(document.getSnapshot())
+      const initial = await session.refresh(createDocumentTextSnapshot(document.getSnapshot()))
       const result =
         syntaxMode === 'full'
           ? initial
@@ -302,7 +315,9 @@ browserTest.each([
       expect(new Set(loads)).toEqual(new Set([...requiredLanguages('mdx'), 'sql']))
       assertPaint(result, text, MDX_CATEGORIES)
       if (languageId === 'markdown') {
-        expect(markdownInlineReplacements(text, result.captures)).toEqual([])
+        expect(markdownInlineReplacements(createStringTextSnapshot(text), result.captures)).toEqual(
+          [],
+        )
       }
       for (const [before, after] of [
         ['{title}', '{title.toUpperCase()}'],
@@ -360,9 +375,14 @@ async function assertFreshSyntax(
   actual: EditorSyntaxResult,
   length: number,
 ) {
-  const fresh = new TreeSitterSyntaxSession({ ...options, documentId: 'fresh-syntax', snapshot })
+  const fresh = new TreeSitterSyntaxSession({
+    ...options,
+    documentId: 'fresh-syntax',
+    snapshot,
+    textSnapshot: createDocumentTextSnapshot(snapshot),
+  })
   try {
-    const initial = await fresh.refresh(snapshot)
+    const initial = await fresh.refresh(createDocumentTextSnapshot(snapshot))
     const expected =
       options.syntaxMode === 'full'
         ? initial

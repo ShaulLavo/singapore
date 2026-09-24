@@ -1,6 +1,6 @@
 import type { DocumentSession, DocumentSessionChange } from '../documentSession'
 import type { DocumentEditChain, DocumentSyncPoint } from './editChain'
-import { defineLazyFullTextProperty, type DocumentTextSnapshot } from '../documentTextSnapshot'
+import type { DocumentTextSnapshot } from '../documentTextSnapshot'
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type {
   EditorHighlightResult,
@@ -741,7 +741,7 @@ export class EditorSyntaxController {
 
     const includeCaptures = this.options.needsSyntaxCaptures?.() ?? false
     this.syntaxSessionIncludesCaptures = includeCaptures
-    const options = {
+    const sessionOptions = {
       documentId: document.documentId,
       languageId: document.languageId,
       includeHighlights: !this.highlighterSession,
@@ -750,7 +750,6 @@ export class EditorSyntaxController {
       textSnapshot: document.textSnapshot,
       snapshot: document.snapshot,
     }
-    const sessionOptions = defineLazyFullTextProperty(options)
     const session =
       this.options.pluginHost.createSyntaxSession(sessionOptions) ??
       getEditorSyntaxSessionFactory()?.(sessionOptions) ??
@@ -925,14 +924,12 @@ export class EditorSyntaxController {
     textSnapshot: DocumentTextSnapshot,
     snapshot: PieceTableSnapshot,
   ): EditorHighlighterSession | null {
-    const session = this.options.pluginHost.createHighlighterSession(
-      defineLazyFullTextProperty({
-        documentId,
-        languageId,
-        textSnapshot,
-        snapshot,
-      }),
-    )
+    const session = this.options.pluginHost.createHighlighterSession({
+      documentId,
+      languageId,
+      textSnapshot,
+      snapshot,
+    })
     if (session) {
       recordEditorPerformanceDiagnostic('editor.syntax.session_created', {
         family: 'highlighter',
@@ -1105,7 +1102,7 @@ export class EditorSyntaxController {
     const chain = this.options.getDocumentEditChain()
     const point = this.structuralDispatchPoint
     this.structuralDispatchPoint = chain.point
-    if (!change) return this.syntaxSession.refresh(session.getSnapshot())
+    if (!change) return this.syntaxSession.refresh(session.getTextSnapshot())
 
     return this.syntaxSession.applyChange(composeSkippedChanges(session, chain, point, change))
   }
@@ -1172,7 +1169,7 @@ export class EditorSyntaxController {
     const chain = this.options.getDocumentEditChain()
     const point = this.highlightDispatchPoint
     this.highlightDispatchPoint = chain.point
-    if (!change) return this.highlighterSession.refresh(session.getSnapshot())
+    if (!change) return this.highlighterSession.refresh(session.getTextSnapshot())
 
     return this.highlighterSession.applyChange(composeSkippedChanges(session, chain, point, change))
   }

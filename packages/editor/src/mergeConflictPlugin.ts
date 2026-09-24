@@ -1,11 +1,13 @@
-import type { DocumentSessionChange } from './documentSession'
+import type { TextReadSnapshot } from './documentTextSnapshot'
 import {
+  carryMergeConflicts,
   parseMergeConflicts,
   resolveMergeConflict,
   type MergeConflictRegion,
   type MergeConflictResolution,
 } from './mergeConflicts'
 import type {
+  EditorContributionChange,
   EditorDisposable,
   EditorFeatureContribution,
   EditorFeatureContributionContext,
@@ -22,6 +24,7 @@ import type {
 } from './plugins'
 import { createEditorCapabilityToken, EDITOR_MINIMAP_FEATURE } from './plugins'
 import type { TextEdit } from './tokens'
+import type { DocumentChangesSinceSyncPoint, DocumentSyncPoint } from './editor/editChain'
 import type { VirtualizedTextRowDecoration } from './virtualization'
 import type { EditorSetSelectionOptions } from './editor/selectionReveal'
 
@@ -48,8 +51,12 @@ export type EditorMergeConflictPluginOptions = {
 }
 
 type MergeConflictHost = {
-  hasDocument(): boolean
-  materializeFullText(): string
+  getTextSnapshot(): TextReadSnapshot | null
+  getDocumentSyncPoint(): DocumentSyncPoint
+  changesSinceDocumentSyncPoint(
+    point: DocumentSyncPoint,
+    scope: null,
+  ): DocumentChangesSinceSyncPoint | null
   focusEditor(): void
   getSelections(): readonly EditorResolvedSelection[]
   setSelection(
@@ -77,7 +84,6 @@ type MergeConflictSideAtSelection = 'ours' | 'theirs' | 'base' | 'splitter' | nu
 const ROW_DECORATION_SOURCE_ID = 'editor.mergeConflicts'
 const LENS_ROW_ID_PREFIX = 'editor.mergeConflicts.lens:'
 const LENS_ROW_CLASS = 'editor-merge-conflict-lens-row'
-const MERGE_CONFLICT_MARKER_CHAR_PATTERN = /[<=>|\r\n]/
 // The overview-ruler marks. Literals, not tokens: the minimap paints on a canvas in a worker with
 // no element to resolve a custom property against.
 const CURRENT_MINIMAP_COLOR = 'rgba(64, 200, 174, 0.5)'
@@ -134,7 +140,7 @@ export function createMergeConflictPlugin(
       disposables.push(
         context.registerInjectedTextRowProvider({
           getInjectedTextRows: (rowContext) =>
-            controller ? lensRows(controller.conflictsForText(rowContext.text)) : [],
+            controller ? lensRows(controller.conflictsForSource(rowContext.textSnapshot)) : [],
           onDidChangeInjectedTextRows: (listener) =>
             controller ? controller.subscribe(listener) : { dispose() {} },
         }),
@@ -148,7 +154,9 @@ class EditorMergeConflictController {
   private readonly listeners = new Set<ConflictListener>()
   private conflicts: readonly MergeConflictRegion[] = []
   private signature = ''
-  private parsedText: string | null = null
+  // Held for identity: the regions describe this revision and no other.
+  private parsedSource: TextReadSnapshot | null = null
+  private parsedPoint: DocumentSyncPoint | null = null
 
   public constructor(private readonly host: MergeConflictHost) {}
 
@@ -164,12 +172,11 @@ class EditorMergeConflictController {
     }
   }
 
-  public handleEditorChange(change: DocumentSessionChange | null): void {
+  public handleEditorChange(change: EditorContributionChange | null): void {
     if (!change) return
     if (change.kind === 'selection' || change.kind === 'synchronize' || change.kind === 'none') {
       return
     }
-    if (this.canSkipRefreshForChange(change)) return
 
     this.refresh()
   }
@@ -183,11 +190,14 @@ class EditorMergeConflictController {
     return this.conflicts
   }
 
-  /** The injected-row provider is handed the text it lays out; parse that, not a stale read. */
-  public conflictsForText(text: string): readonly MergeConflictRegion[] {
-    if (text === this.parsedText) return this.conflicts
+  /** The injected-row provider is handed the source it lays out; parse that, not a stale read. */
+  public conflictsForSource(source: TextReadSnapshot): readonly MergeConflictRegion[] {
+    if (source === this.parsedSource) return this.conflicts
+    if (this.carryConflicts(source)) return this.conflicts
 
-    this.setConflicts(parseMergeConflicts(text), text)
+    const current = source === this.host.getTextSnapshot()
+    const point = current ? this.host.getDocumentSyncPoint() : null
+    this.setConflicts(parseMergeConflicts(source), source, point)
     return this.conflicts
   }
 
@@ -195,7 +205,7 @@ class EditorMergeConflictController {
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
   ): void {
-    if (kind === 'document' || kind === 'clear') this.setConflicts([], null)
+    if (kind === 'document' || kind === 'clear') this.setConflicts([], null, null)
     if (this.conflicts.length > 0) return
     if (!snapshotMayContainMergeConflict(snapshot)) return
 
@@ -203,12 +213,11 @@ class EditorMergeConflictController {
   }
 
   public resolveConflict(index: number, resolution: MergeConflictResolution): boolean {
-    this.refresh()
-    const text = this.host.materializeFullText()
+    const source = this.refresh()
     const conflict = this.conflicts[index]
-    if (!conflict) return false
+    if (!source || !conflict) return false
 
-    const resolved = resolveMergeConflict(text, conflict, resolution)
+    const resolved = resolveMergeConflict(source, conflict, resolution)
     if (!resolved) return false
 
     this.host.applyEdits(
@@ -229,11 +238,12 @@ class EditorMergeConflictController {
   }
 
   public resolveAllConflicts(resolution: MergeConflictResolution): boolean {
-    this.refresh()
-    const text = this.host.materializeFullText()
+    const source = this.refresh()
+    if (!source) return false
+
     const edits: TextEdit[] = []
     for (const conflict of this.conflicts) {
-      const resolved = resolveMergeConflict(text, conflict, resolution)
+      const resolved = resolveMergeConflict(source, conflict, resolution)
       if (!resolved) continue
       edits.push({
         from: resolved.range.start,
@@ -298,24 +308,38 @@ class EditorMergeConflictController {
     return this.host.getSelections()[0]?.headOffset ?? 0
   }
 
-  private refresh(): void {
-    if (!this.host.hasDocument()) {
-      this.setConflicts([], null)
-      return
+  private refresh(): TextReadSnapshot | null {
+    const source = this.host.getTextSnapshot()
+    if (!source) {
+      this.setConflicts([], null, null)
+      return null
     }
 
-    this.conflictsForText(this.host.materializeFullText())
+    this.conflictsForSource(source)
+    return source
   }
 
-  private canSkipRefreshForChange(change: DocumentSessionChange | null): boolean {
-    if (!change) return false
-    if (this.conflicts.length > 0) return false
+  /** Every edit since the last scan counts, including ones delivered coalesced. */
+  private carryConflicts(source: TextReadSnapshot): boolean {
+    const previous = this.parsedSource
+    if (!previous || !this.parsedPoint) return false
+    if (source !== this.host.getTextSnapshot()) return false
 
-    return change.edits.every(isMergeConflictNeutralInsertion)
+    const changes = this.host.changesSinceDocumentSyncPoint(this.parsedPoint, null)
+    const carried = changes?.edits ? carryMergeConflicts(previous, source, changes.edits) : null
+    if (!changes || !carried) return false
+
+    this.setConflicts(carried, source, changes.syncPointAfter)
+    return true
   }
 
-  private setConflicts(conflicts: readonly MergeConflictRegion[], text: string | null): void {
-    this.parsedText = text
+  private setConflicts(
+    conflicts: readonly MergeConflictRegion[],
+    source: TextReadSnapshot | null,
+    point: DocumentSyncPoint | null,
+  ): void {
+    this.parsedSource = source
+    this.parsedPoint = point
     const signature = conflictSignature(conflicts)
     if (this.signature === signature) return
 
@@ -360,7 +384,7 @@ class MergeConflictViewContribution implements EditorViewContribution {
   public update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    _change?: DocumentSessionChange | null,
+    _change?: EditorContributionChange | null,
   ): void {
     this.controller.activateFromSnapshot(snapshot, kind)
     this.render(snapshot)
@@ -505,8 +529,10 @@ function createMergeConflictFeatureContribution(
 
 function featureHost(context: EditorFeatureContributionContext): MergeConflictHost {
   return {
-    hasDocument: () => context.hasDocument(),
-    materializeFullText: () => context.materializeFullText(),
+    getTextSnapshot: () => context.getTextSnapshot(),
+    getDocumentSyncPoint: () => context.getDocumentSyncPoint(),
+    changesSinceDocumentSyncPoint: (point, scope) =>
+      context.changesSinceDocumentSyncPoint(point, scope),
     focusEditor: () => context.focusEditor(),
     getSelections: () => context.getSelections(),
     setSelection: (anchor, head, timingName, options) =>
@@ -668,11 +694,6 @@ function conflictSignature(conflicts: readonly MergeConflictRegion[]): string {
       ].join(':'),
     )
     .join('|')
-}
-
-function isMergeConflictNeutralInsertion(edit: TextEdit): boolean {
-  if (edit.from !== edit.to) return false
-  return !MERGE_CONFLICT_MARKER_CHAR_PATTERN.test(edit.text)
 }
 
 function snapshotMayContainMergeConflict(snapshot: EditorViewSnapshot): boolean {

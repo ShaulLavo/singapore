@@ -1,5 +1,5 @@
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
-import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import { createStringTextSnapshot, type TextReadSnapshot } from '@singapore-editor/core/document'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
 import type {
   DocumentSessionChange,
@@ -288,7 +288,7 @@ describe('createTypeScriptLspPlugin', () => {
       editorSnapshot({
         documentId: 'src/index.js',
         languageId: 'javascript',
-        fullText: 'const value = 1;',
+        text: 'const value = 1;',
       }),
     )
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -315,7 +315,7 @@ describe('createTypeScriptLspPlugin', () => {
       editorSnapshot({
         documentId: 'README.md',
         languageId: 'markdown',
-        fullText: '# Notes',
+        text: '# Notes',
       }),
     )
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -336,7 +336,7 @@ describe('createTypeScriptLspPlugin', () => {
     const minimap = minimapFeature()
     const context = viewContributionContext(
       editorSnapshot({
-        fullText: 'const value = 1;\nconst next: string = 2;\n',
+        text: 'const value = 1;\nconst next: string = 2;\n',
         lineCount: 3,
         lineStarts: [0, 17, 40],
       }),
@@ -477,7 +477,7 @@ describe('createTypeScriptLspPlugin', () => {
     const errors: unknown[] = []
     const context = viewContributionContext(
       editorSnapshot({
-        fullText: 'const va',
+        text: 'const va',
         selections: [collapsedSelection(8)],
       }),
     )
@@ -493,7 +493,7 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
     contribution.update(
       editorSnapshot({
-        fullText: 'const val',
+        text: 'const val',
         textVersion: 2,
         selections: [collapsedSelection(9)],
       }),
@@ -505,7 +505,7 @@ describe('createTypeScriptLspPlugin', () => {
     const firstRequest = latestMessage(worker.sent, 'textDocument/completion')
     contribution.update(
       editorSnapshot({
-        fullText: 'const valu',
+        text: 'const valu',
         textVersion: 3,
         selections: [collapsedSelection(10)],
       }),
@@ -527,7 +527,7 @@ describe('createTypeScriptLspPlugin', () => {
     FakeWebSocket.instances.length = 0
     const worker = new FakeWorker()
     const workerContext = viewContributionContext(
-      editorSnapshot({ fullText: 'export const value = 1;' }),
+      editorSnapshot({ text: 'export const value = 1;' }),
     )
     const workerPlugin = createTypeScriptLspPlugin({
       compilerOptions: { strict: true },
@@ -541,7 +541,7 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
 
     const socketContext = viewContributionContext(
-      editorSnapshot({ fullText: 'export const value = 1;' }),
+      editorSnapshot({ text: 'export const value = 1;' }),
     )
     const socketPlugin = createTypeScriptLspPlugin({
       compilerOptions: { strict: true },
@@ -646,7 +646,7 @@ describe('createTypeScriptLspPlugin', () => {
     worker.receive(initializeResponse(message(worker.sent[0])))
     await flushPromises()
     contribution.update(
-      editorSnapshot({ fullText: 'const value: string = 2;', textVersion: 2 }),
+      editorSnapshot({ text: 'const value: string = 2;', textVersion: 2 }),
       'content',
       documentChange([{ from: 22, to: 23, text: '2' }]),
     )
@@ -674,7 +674,7 @@ describe('createTypeScriptLspPlugin', () => {
     expect(context.setRangeHighlight).not.toHaveBeenCalled()
   })
 
-  it('syncs content updates from text snapshots without reading snapshot.fullText', async () => {
+  it('syncs content updates from text snapshots without reading the whole text', async () => {
     const worker = new FakeWorker()
     const context = viewContributionContext(editorSnapshot())
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -708,9 +708,7 @@ describe('createTypeScriptLspPlugin', () => {
 
   it('optimistically shortens diagnostic highlights through local deletion', async () => {
     const worker = new FakeWorker()
-    const context = viewContributionContext(
-      editorSnapshot({ fullText: 'const value: string = 123;' }),
-    )
+    const context = viewContributionContext(editorSnapshot({ text: 'const value: string = 123;' }))
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
     const provider = activatePlugin(plugin)
     const contribution = provider.createContribution(context)
@@ -728,7 +726,7 @@ describe('createTypeScriptLspPlugin', () => {
     )
 
     contribution.update(
-      editorSnapshot({ fullText: 'const value: string = 1;', textVersion: 2 }),
+      editorSnapshot({ text: 'const value: string = 1;', textVersion: 2 }),
       'content',
       documentChange([{ from: 23, to: 25, text: '' }]),
     )
@@ -740,9 +738,7 @@ describe('createTypeScriptLspPlugin', () => {
 
   it('optimistically clears diagnostic highlights when local deletion removes the range', async () => {
     const worker = new FakeWorker()
-    const context = viewContributionContext(
-      editorSnapshot({ fullText: 'const value: string = 123;' }),
-    )
+    const context = viewContributionContext(editorSnapshot({ text: 'const value: string = 123;' }))
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
     const provider = activatePlugin(plugin)
     const contribution = provider.createContribution(context)
@@ -760,7 +756,7 @@ describe('createTypeScriptLspPlugin', () => {
     )
 
     contribution.update(
-      editorSnapshot({ fullText: 'const value: string = ;', textVersion: 2 }),
+      editorSnapshot({ text: 'const value: string = ;', textVersion: 2 }),
       'content',
       documentChange([{ from: 22, to: 25, text: '' }]),
     )
@@ -1002,7 +998,7 @@ describe('createTypeScriptLspPlugin', () => {
     vi.useFakeTimers()
     const worker = new FakeWorker()
     const context = viewContributionContext(
-      editorSnapshot({ fullText: 'const source = value; const value = 1;' }),
+      editorSnapshot({ text: 'const source = value; const value = 1;' }),
     )
     vi.mocked(context.textOffsetFromPoint).mockReturnValue(15)
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -1063,7 +1059,7 @@ describe('createTypeScriptLspPlugin', () => {
     vi.useFakeTimers()
     const worker = new FakeWorker()
     const context = viewContributionContext(
-      editorSnapshot({ fullText: 'const source = value; const value = 1;' }),
+      editorSnapshot({ text: 'const source = value; const value = 1;' }),
     )
     vi.mocked(context.textOffsetFromPoint).mockReturnValue(15)
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -1239,7 +1235,7 @@ describe('createTypeScriptLspPlugin', () => {
     )
     const context = viewContributionContext(
       editorSnapshot({
-        fullText: 'const va',
+        text: 'const va',
         selections: [collapsedSelection(8)],
       }),
       { container, features },
@@ -1251,7 +1247,7 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
     contribution.update(
       editorSnapshot({
-        fullText: 'const val',
+        text: 'const val',
         textVersion: 2,
         selections: [collapsedSelection(9)],
       }),
@@ -1348,7 +1344,7 @@ describe('createTypeScriptLspPlugin', () => {
     const worker = new FakeWorker()
     const context = viewContributionContext(
       editorSnapshot({
-        fullText: 'const value = 1; console.log(value);',
+        text: 'const value = 1; console.log(value);',
         selections: [
           { anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6, affinity: 'after' },
         ],
@@ -1651,8 +1647,10 @@ function minimapFeature(): EditorMinimapFeature {
   }
 }
 
-function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSnapshot {
-  const fullText = options.fullText ?? 'const value: string = 1;'
+type SnapshotOptions = Partial<EditorViewSnapshot> & { readonly text?: string }
+
+function editorSnapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
+  const { text = 'const value: string = 1;', ...overrides } = options
   const textVersion = options.textVersion ?? 1
   const documentSyncPoint = options.documentSyncPoint ?? fixtureSyncPoint(textVersion)
   return {
@@ -1660,9 +1658,8 @@ function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSn
     paintLayers: [],
     documentId: 'src/index.ts',
     languageId: 'typescript',
-    fullText,
+    ...textFields(createStringTextSnapshot(text)),
     textVersion,
-    lineStarts: [0],
     tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [],
@@ -1683,15 +1680,10 @@ function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSn
       clientWidth: 0,
       visibleRange: { start: 0, end: 1 } as EditorViewSnapshot['viewport']['visibleRange'],
     },
-    ...options,
+    ...overrides,
     initialHighlightStatus: options.initialHighlightStatus ?? 'painted',
     gutterWidth: options.gutterWidth ?? 0,
     gutterLayout: options.gutterLayout ?? { fixedWidth: 0, lanes: [] },
-    toJSON:
-      options.toJSON ??
-      (() => {
-        throw new Error('not used by this fixture')
-      }),
     toVisibleSnapshot: options.toVisibleSnapshot ?? (() => null),
     documentSyncPoint,
     changesSinceDocumentSyncPoint:
@@ -1741,36 +1733,48 @@ function fixtureChangesSince(
   }
 }
 
-function snapshotWithThrowingText(
-  text: string,
-  options: Partial<EditorViewSnapshot> = {},
-): EditorViewSnapshot {
-  const snapshot = editorSnapshot({
-    ...options,
-    fullText: text,
-    textSnapshot: createStringTextSnapshot(text),
-    lineStarts: lineStarts(text),
-  })
-  Object.defineProperty(snapshot, 'fullText', {
-    configurable: true,
-    enumerable: true,
-    get: () => {
-      throw new Error('unexpected snapshot.fullText materialization')
+/** Incremental sync reads ranges; a whole-document read of this snapshot throws. */
+function snapshotWithThrowingText(text: string, options: SnapshotOptions = {}): EditorViewSnapshot {
+  const source = createStringTextSnapshot(text)
+  const textSnapshot: TextReadSnapshot = {
+    length: source.length,
+    get lineCount() {
+      return source.lineCount
     },
-  })
-  return snapshot
+    lineStart: (index) => source.lineStart(index),
+    lineRange: (index) => source.lineRange(index),
+    lineAt: (offset) => source.lineAt(offset),
+    readRange: (start, end) => {
+      if (start === 0 && end === text.length) throw new Error('unexpected whole-text read')
+      return source.readRange(start, end)
+    },
+    forEachTextChunk: () => {
+      throw new Error('unexpected whole-text scan')
+    },
+  }
+  return editorSnapshot({ ...options, text, ...textFields(textSnapshot) })
 }
 
-function lineStarts(text: string): number[] {
-  const starts = [0]
-  let index = text.indexOf('\n')
-
-  while (index !== -1) {
-    starts.push(index + 1)
-    index = text.indexOf('\n', index + 1)
+function textFields(
+  textSnapshot: TextReadSnapshot,
+): Pick<EditorViewSnapshot, 'textSnapshot' | 'lineStarts' | 'lineStartsView'> {
+  const starts = Array.from({ length: textSnapshot.lineCount }, (_, index) =>
+    textSnapshot.lineStart(index),
+  )
+  return {
+    textSnapshot,
+    lineStarts: starts,
+    lineStartsView: {
+      length: starts.length,
+      at: (index) => starts[index],
+      indexForOffset: (offset) => textSnapshot.lineAt(offset),
+      firstIndexAtOrAfter: (offset) => {
+        const index = starts.findIndex((start) => start >= offset)
+        return index === -1 ? starts.length : index
+      },
+      toArray: () => starts,
+    },
   }
-
-  return starts
 }
 
 function collapsedSelection(offset: number): EditorViewSnapshot['selections'][number] {

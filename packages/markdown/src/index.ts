@@ -40,5 +40,5 @@ const replacementsForContext = (
 ): readonly InlineReplacementSpec[] => {
   if (context.languageId === null) return []
   if (!languageIds.has(context.languageId)) return []
-  return markdownInlineReplacements(context.text, context.captures)
+  return markdownInlineReplacements(context.textSnapshot, context.captures)
 }

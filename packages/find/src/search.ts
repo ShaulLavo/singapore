@@ -3,7 +3,7 @@ import {
   compareTextOffsetRanges,
   isWholeWordRange,
   type TextOffsetRange,
-  type TextSnapshot,
+  type TextReadSnapshot,
 } from '@singapore-editor/core/document'
 
 // Bounds the match set the widget counts and paints, so a pathological query
@@ -49,7 +49,7 @@ export type FindTextSource = {
   readonly lineStartsView: FindLineStartsView
 }
 
-export function findTextSourceFromSnapshot(snapshot: TextSnapshot): FindTextSource {
+export function findTextSourceFromSnapshot(snapshot: TextReadSnapshot): FindTextSource {
   return {
     length: snapshot.length,
     readRange: (start, end) => snapshot.readRange(start, end),
@@ -177,16 +177,6 @@ export function findQueryPlan(query: FindQuery): FindQueryPlan | null {
   return compileFindQuery(query)?.plan ?? null
 }
 
-// Adapts a materialized line-start array for a source that has no view of its
-// own; searching only ever reaches line starts through the view.
-export function arrayFindLineStartsView(lineStarts: readonly number[]): FindLineStartsView {
-  return {
-    length: lineStarts.length,
-    at: (index) => lineStarts[index],
-    indexForOffset: (offset) => arrayLineIndexForOffset(lineStarts, offset),
-  }
-}
-
 /** The line holding `offset`, break excluded. */
 export function findLineRange(source: FindTextSource, offset: number): FindRange {
   const index = source.lineStartsView.indexForOffset(offset)
@@ -250,26 +240,6 @@ export function findMatchIndex(matches: readonly FindMatch[], range: FindRange):
 
 export function escapeRegExpCharacters(value: string): string {
   return value.replace(/[\\{}*+?|^$.[\]()]/g, '\\$&')
-}
-
-function arrayLineIndexForOffset(lineStarts: readonly number[], offset: number): number {
-  const clamped = Math.max(0, offset)
-  let low = 0
-  let high = lineStarts.length - 1
-  while (low <= high) {
-    const middle = (low + high) >> 1
-    if (clamped < (lineStarts[middle] ?? 0)) {
-      high = middle - 1
-      continue
-    }
-    if (clamped >= (lineStarts[middle + 1] ?? Number.POSITIVE_INFINITY)) {
-      low = middle + 1
-      continue
-    }
-    return middle
-  }
-
-  return Math.max(0, lineStarts.length - 1)
 }
 
 // The break belongs to no line: a query that cannot match one would otherwise be

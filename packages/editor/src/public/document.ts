@@ -156,7 +156,12 @@ export type {
   DocumentTextRoundTripIssue,
   DocumentTextRoundTripStatus,
 } from '@singapore-editor/textbuffer/internal/lineEndings'
-export type { DocumentTextSnapshot, TextSnapshot } from '../documentTextSnapshot'
+export type {
+  DocumentTextSnapshot,
+  TextLineRange,
+  TextReadSnapshot,
+  TextSnapshot,
+} from '../documentTextSnapshot'
 export type { SelectionAffinity } from '../selections'
 export type { EditorDocument, TextEdit } from '../tokens'
 export type { TextCharacterClass, TextOffsetRange } from '../textRanges'
@@ -170,4 +175,3 @@ export {
 } from '../selections'
 export type { AnchorSelection, SelectionSet } from '../selections'
 export { documentSessionChangeTextSnapshot } from '../documentSession'
-export { defineLazyFullTextProperty } from '../documentTextSnapshot'

@@ -5,7 +5,7 @@ import {
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
 
-import { createEditorViewSnapshot } from '../src/editor/viewSnapshot'
+import { createEditorViewSnapshot, serializeEditorViewSnapshot } from '../src/editor/viewSnapshot'
 import { EditorViewContributionController } from '../src/editor/viewContributions'
 import { MAX_VISIBLE_PAINT_RECTANGLES } from '../src/editor/visiblePaint'
 import { createInlineMap } from '../src/inlineMap'
@@ -42,9 +42,8 @@ describe('editor view snapshot serialization', () => {
     ])
     const harness = snapshotHarness({ tokens })
 
-    expect(Object.keys(harness.snapshot)).not.toContain('toJSON')
+    expect(harness.snapshot).not.toHaveProperty('toJSON')
     expect(Object.keys(harness.snapshot)).not.toContain('toVisibleSnapshot')
-    expect(Object.getOwnPropertyDescriptor(harness.snapshot, 'toJSON')?.enumerable).toBe(false)
 
     const visible = harness.snapshot.toVisibleSnapshot()
 
@@ -70,9 +69,10 @@ describe('editor view snapshot serialization', () => {
     expect(visible!.toJSON()).toEqual(visibleJSON)
     expect(() => structuredClone(visibleJSON)).not.toThrow()
 
-    const fullJSON = harness.snapshot.toJSON()
+    const fullJSON = serializeEditorViewSnapshot(harness.snapshot)
     expect(fullJSON.viewport.scrollRow).toBe(harness.snapshot.viewport.scrollRow)
-    expect(harness.materializeFullText).toHaveBeenCalledTimes(1)
+    expect(harness.materializeFullText).not.toHaveBeenCalled()
+    expect(harness.readRange).toHaveBeenLastCalledWith(0, TEXT.length)
     expect(harness.readLineStarts).toHaveBeenCalledTimes(1)
     expect(harness.lineStartsViewToArray).not.toHaveBeenCalled()
     expect(fullJSON).not.toHaveProperty('documentSyncPoint')
@@ -150,14 +150,21 @@ describe('editor view snapshot serialization', () => {
     ])
   })
 
-  it('delegates JSON.stringify and materializes each full-document field once', () => {
+  it('reads the captured text once through the named serializer and never on spread or stringify', () => {
     const harness = snapshotHarness()
 
-    const parsed = JSON.parse(JSON.stringify(harness.snapshot))
+    const spread = { ...harness.snapshot }
+    JSON.stringify(harness.snapshot)
+    expect(spread.textSnapshot).toBe(harness.snapshot.textSnapshot)
+    expect(harness.readRange).not.toHaveBeenCalled()
+    expect(harness.materializeFullText).not.toHaveBeenCalled()
+
+    const parsed = JSON.parse(JSON.stringify(serializeEditorViewSnapshot(harness.snapshot)))
 
     expect(parsed).toMatchObject({ kind: 'editor-view', schemaVersion: 1, fullText: TEXT })
-    expect(harness.materializeFullText).toHaveBeenCalledTimes(1)
-    expect(harness.readLineStarts).toHaveBeenCalledTimes(1)
+    expect(harness.readRange).toHaveBeenCalledTimes(1)
+    expect(harness.readRange).toHaveBeenCalledWith(0, TEXT.length)
+    expect(harness.materializeFullText).not.toHaveBeenCalled()
     expect(harness.lineStartsViewToArray).not.toHaveBeenCalled()
   })
 
@@ -170,7 +177,7 @@ describe('editor view snapshot serialization', () => {
     ])
     const harness = snapshotHarness({ tokens })
 
-    const json = JSON.parse(JSON.stringify(harness.snapshot)).tokens
+    const json = JSON.parse(JSON.stringify(serializeEditorViewSnapshot(harness.snapshot))).tokens
     expect(json).toEqual({
       starts: [0, 6, 14],
       ends: [5, 11, 15],
@@ -198,7 +205,7 @@ describe('editor view snapshot serialization', () => {
       ]),
     })
 
-    expect(() => harness.snapshot.toJSON()).toThrow(/fontWeight.*finite/)
+    expect(() => serializeEditorViewSnapshot(harness.snapshot)).toThrow(/fontWeight.*finite/)
   })
 
   it('checks same-length transformed paint before token work and keeps all fallbacks zero-work', () => {
@@ -525,8 +532,10 @@ describe('editor view snapshot serialization', () => {
     const visible = harness.snapshot.toVisibleSnapshot()!
     const visibleJSON = visible.toJSON()
 
-    expect(() => harness.snapshot.toJSON()).not.toThrow()
-    expect(harness.snapshot.toJSON().visibleRows[0]).not.toHaveProperty('metadata')
+    expect(() => serializeEditorViewSnapshot(harness.snapshot)).not.toThrow()
+    expect(serializeEditorViewSnapshot(harness.snapshot).visibleRows[0]).not.toHaveProperty(
+      'metadata',
+    )
     expect(JSON.parse(JSON.stringify(visible))).toEqual(visible.toJSON())
     expect(visible.rows).not.toBe(harness.snapshot.visibleRows)
     expect(visible.rows[0]?.chunks).not.toBe(harness.snapshot.visibleRows[0]?.chunks)
@@ -1135,9 +1144,6 @@ function snapshotHarness(
     languageId: 'typescript' as const,
     theme: options.theme ?? { foregroundColor: '#ffffff', syntax: { keyword: '#ff0000' } },
     textSnapshot,
-    get fullText() {
-      return materializeFullText()
-    },
     textVersion: 4,
     initialHighlightStatus: 'painted' as const,
     syntaxStatus: options.syntaxStatus ?? 'ready',

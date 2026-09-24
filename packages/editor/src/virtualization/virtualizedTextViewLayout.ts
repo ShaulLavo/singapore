@@ -76,7 +76,7 @@ function preparedLineStartsAreValid(
   return previous <= snapshotLength
 }
 
-export function setTextSnapshotLayoutState(
+function setTextSnapshotLayoutState(
   view: VirtualizedTextViewInternal,
   textSnapshot: TextSnapshot,
 ): { readonly lineCountChanged: boolean } {

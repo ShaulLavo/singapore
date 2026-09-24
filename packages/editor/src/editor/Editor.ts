@@ -196,7 +196,6 @@ import { EditorTokenStore, toEditorTokenStore, type EditorTokenInput } from '../
 import type { EditorDocument, TextEdit } from '../tokens'
 import {
   createStringTextSnapshot,
-  defineLazyFullTextProperty,
   getPieceTreeSnapshot,
   type TextSnapshot,
 } from '../documentTextSnapshot'
@@ -413,10 +412,6 @@ export class Editor {
   private committingPresentation = false
   private disposed = false
 
-  private get text(): string {
-    return this.document.text
-  }
-
   private get textSnapshot(): TextSnapshot {
     return this.document.textSnapshot
   }
@@ -617,7 +612,7 @@ export class Editor {
       getPasteHandlers: () => this.languageFeatures.ordered(EDITOR_PASTE_HANDLER, this.languageId),
       getSyntaxTokens: () => this.tokens,
       getEditorTheme: () => this.resolvedTheme(),
-      materializeFullText: () => this.materializeFullText(),
+      getTextSnapshot: () => this.getTextSnapshot(),
       canEditDocument: () => this.canEditDocument(),
       runInOperation: (run) => this.runInOperation(run),
       applySessionChange: (change, totalName, totalStart, options) =>
@@ -1091,8 +1086,11 @@ export class Editor {
     this.adoptTokens(toEditorTokenStore(tokens))
   }
 
-  /** On a buffer session the edit goes through the session, which supplies the text snapshot. */
-  applyEdit(edit: TextEdit, tokens: EditorTokenInput, textSnapshot?: TextSnapshot): void {
+  /**
+   * `textSnapshot` is the text after `edit`; a detached view renders it. On a buffer session the edit
+   * goes through the session, which supplies its own.
+   */
+  applyEdit(edit: TextEdit, tokens: EditorTokenInput, textSnapshot: TextSnapshot): void {
     const session = editorBufferSession(this.session)
     if (!session) {
       this.renderEdit(edit, toEditorTokenStore(tokens), textSnapshot)
@@ -1143,9 +1141,12 @@ export class Editor {
     })
   }
 
-  private renderEdit(edit: TextEdit, tokens: EditorTokenStore, textSnapshot?: TextSnapshot): void {
+  private renderEdit(
+    edit: TextEdit,
+    tokens: EditorTokenStore,
+    nextTextSnapshot: TextSnapshot,
+  ): void {
     this.view.runAtomicRender(() => {
-      const nextTextSnapshot = textSnapshot ?? this.legacyEditTextSnapshot(edit)
       const batch = createTextEditBatch(this.textSnapshot, nextTextSnapshot, [edit])
       this.document.setRenderedTextSnapshot(nextTextSnapshot)
       this.recordDetachedTextChange([edit])
@@ -1296,7 +1297,7 @@ export class Editor {
     suggestion: readonly InlineReplacementSpec[],
   ): readonly InlineReplacementSpec[] {
     const context = {
-      text: this.materializeFullText(),
+      textSnapshot: this.getTextSnapshot(),
       languageId: this.languageId,
       captures: this.syntaxCaptures,
     }
@@ -1393,14 +1394,14 @@ export class Editor {
         this.setText(text, options)
         return
       }
-      const currentText = this.session.materializeFullText()
-      if (currentText === text) return
+      const edit = syncTextEdit(this.session.getTextSnapshot(), text)
+      if (edit.from === edit.to && edit.text.length === 0) return
 
       const scrollPosition = preservedScrollPosition(
         this.getScrollPosition(),
         options.scrollPosition,
       )
-      const change = this.session.applyEdits([syncTextEdit(currentText, text)], {
+      const change = this.session.applyEdits([edit], {
         history: 'skip',
       })
       if (change.kind === 'none') return
@@ -1482,7 +1483,7 @@ export class Editor {
 
   getState(): EditorState {
     const snapshot = this.session?.getSnapshot()
-    const length = snapshot?.length ?? this.text.length
+    const length = snapshot?.length ?? this.textSnapshot.length
     const selection = this.session?.getSelections().selections[0]
     const resolved = snapshot && selection ? resolveSelection(snapshot, selection) : null
     const point = snapshot ? offsetToPoint(snapshot, resolved?.headOffset ?? length) : null
@@ -1505,8 +1506,9 @@ export class Editor {
     }
   }
 
+  /** O(document length) on every call, never cached; save and export are what it is for. */
   materializeFullText(): string {
-    return this.session?.materializeFullText() ?? this.text
+    return this.getTextSnapshot().materializeFullText()
   }
 
   // The buffer behind the open document, when the document is backed by one. Hosts
@@ -1520,17 +1522,17 @@ export class Editor {
   }
 
   getMergeConflicts(): readonly MergeConflictRegion[] {
-    return parseMergeConflicts(this.materializeFullText())
+    return parseMergeConflicts(this.getTextSnapshot())
   }
 
   resolveMergeConflict(index: number, resolution: MergeConflictResolution): boolean {
     if (!this.canEditDocument()) return false
 
-    const text = this.materializeFullText()
-    const conflict = parseMergeConflicts(text)[index]
+    const source = this.getTextSnapshot()
+    const conflict = parseMergeConflicts(source)[index]
     if (!conflict) return false
 
-    const resolved = resolveMergeConflictText(text, conflict, resolution)
+    const resolved = resolveMergeConflictText(source, conflict, resolution)
     if (!resolved) return false
 
     this.edit(
@@ -1550,7 +1552,7 @@ export class Editor {
   }
 
   revealMergeConflict(index: number): boolean {
-    const conflict = parseMergeConflicts(this.materializeFullText())[index]
+    const conflict = parseMergeConflicts(this.getTextSnapshot())[index]
     if (!conflict) return false
 
     this.setSelection(conflict.range.start)
@@ -1851,13 +1853,13 @@ export class Editor {
       this.lifecycleSummary.document.startedCount += 1
       this.syncViewEditability()
       if (prepared) this.adoptPreparedDocumentTabSize(prepared.tabSize)
-      else this.adoptDocumentTabSize(attachment.fullText)
+      else this.adoptDocumentTabSize(attachment.textSnapshot)
       // Asked for before the text lands so the replacement renders the restored viewport directly.
       // Setting it afterwards drew the outgoing offset first and every row twice.
       this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
       if (prepared) {
         this.view.runAtomicRender(() => {
-          this.renderPreparedDocument(attachment.fullText, attachment.textSnapshot, prepared)
+          this.renderPreparedDocument(attachment.textSnapshot, prepared)
           this.syntax.adoptPreparedReadyResults(prepared)
         })
       } else {
@@ -1965,7 +1967,7 @@ export class Editor {
     })
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
-    this.adoptDocumentTabSize(attachment.fullText)
+    this.adoptDocumentTabSize(attachment.textSnapshot)
     // Asked for before the text lands, so the replacement renders the restored viewport directly.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
     this.renderContent(attachment.textSnapshot)
@@ -2005,13 +2007,13 @@ export class Editor {
    *
    * A host that named a width has said something about intent that a file cannot argue with, so its
    * value stands; a host that named none would otherwise have every editor measure every file in the
-   * same width, which is wrong for all but the files that happen to use it. The text is already
-   * materialized for the view here, so reading it costs one pass over what is in hand.
+   * same width, which is wrong for all but the files that happen to use it. The guess reads a
+   * bounded sample of lines, so opening a large file does not scan it.
    */
-  private adoptDocumentTabSize(text: string): void {
+  private adoptDocumentTabSize(source: TextSnapshot): void {
     if (this.options.tabSize !== undefined) return
 
-    this.tabSize = guessedTabSize(text, this.configuredTabSize)
+    this.tabSize = guessedTabSize(source, this.configuredTabSize)
   }
 
   private adoptPreparedDocumentTabSize(tabSize: number): void {
@@ -2021,7 +2023,6 @@ export class Editor {
   }
 
   private renderPreparedDocument(
-    text: string,
     textSnapshot: TextSnapshot,
     prepared: EditorPreparedDocumentPayload,
   ): void {
@@ -2030,7 +2031,7 @@ export class Editor {
     this.document.setRenderedTextSnapshot(textSnapshot)
     this.recordDetachedTextChange(null)
     const tokens = this.syntax.stagePreparedReadyTokens(prepared)
-    this.view.setText(text, textSnapshot, prepared.lineStarts, tokens)
+    this.view.setText(textSnapshot, prepared.lineStarts, tokens)
     this.retagDisplayProjectionSources()
     this.syncInjectedTextRows()
     this.dropManualFolds()
@@ -2764,7 +2765,7 @@ export class Editor {
   private createInjectedTextRowProviderContext(): EditorInjectedTextRowProviderContext {
     return {
       documentId: this.documentId,
-      text: this.materializeFullText(),
+      textSnapshot: this.getTextSnapshot(),
       lineCount: this.view.getLineCount(),
     }
   }
@@ -3013,6 +3014,9 @@ export class Editor {
       log: (event) => this.log(event),
       materializeFullText: () => this.materializeFullText(),
       getTextSnapshot: () => this.session?.getTextSnapshot() ?? null,
+      getDocumentSyncPoint: () => this.currentDocumentEditChain().point,
+      changesSinceDocumentSyncPoint: (point, scope) =>
+        this.currentDocumentEditChain().changesSince(point, scope),
       getSelections: () => this.inputSelection.resolveViewSelections(),
       registerFeature: (key, feature) => this.registerFeature(key, feature),
       registerProvider: (token, selector, provider) =>
@@ -3031,6 +3035,9 @@ export class Editor {
       log: (event) => this.log(event),
       materializeFullText: () => this.materializeFullText(),
       getTextSnapshot: () => this.session?.getTextSnapshot() ?? null,
+      getDocumentSyncPoint: () => this.currentDocumentEditChain().point,
+      changesSinceDocumentSyncPoint: (point, scope) =>
+        this.currentDocumentEditChain().changesSince(point, scope),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
       clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
       setRowDecorations: (sourceId, decorations) =>
@@ -3052,6 +3059,9 @@ export class Editor {
       log: (event) => this.log(event),
       materializeFullText: () => this.materializeFullText(),
       getTextSnapshot: () => this.session?.getTextSnapshot() ?? null,
+      getDocumentSyncPoint: () => this.currentDocumentEditChain().point,
+      changesSinceDocumentSyncPoint: (point, scope) =>
+        this.currentDocumentEditChain().changesSince(point, scope),
       getSelections: () => this.inputSelection.resolveViewSelections(),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head, timingName, options) =>
@@ -3284,7 +3294,7 @@ export class Editor {
       return snapshotRow
     })
     return createEditorViewSnapshot(
-      defineLazyFullTextProperty({
+      {
         documentId: this.documentId,
         languageId: this.languageId,
         theme: this.resolvedTheme(),
@@ -3322,7 +3332,7 @@ export class Editor {
         },
         visibleRows,
         viewport,
-      }),
+      },
       { paintPending: true },
     )
   }
@@ -3977,13 +3987,6 @@ export class Editor {
     }
   }
 
-  private legacyEditTextSnapshot(edit: TextEdit): TextSnapshot {
-    const currentText = this.text
-    return createStringTextSnapshot(
-      `${currentText.slice(0, edit.from)}${edit.text}${currentText.slice(edit.to)}`,
-    )
-  }
-
   private notifyChange(change: DocumentSessionChange | null): void {
     this.notifyEditorFeatureContributions(change)
     this.options.onChange?.(this.getState(), change)
@@ -4352,7 +4355,7 @@ export class Editor {
   private primarySelectionHeadOffsetFromSession(): number {
     const snapshot = this.session?.getSnapshot()
     const selection = this.session?.getSelections().selections[0]
-    if (!snapshot || !selection) return this.materializeFullText().length
+    if (!snapshot || !selection) return this.getTextSnapshot().length
 
     return resolveSelection(snapshot, selection).headOffset
   }

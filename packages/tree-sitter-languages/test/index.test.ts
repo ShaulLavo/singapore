@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createPieceTableSnapshot } from '@singapore-editor/core/document'
+import {
+  createDocumentTextSnapshot,
+  createPieceTableSnapshot,
+} from '@singapore-editor/core/document'
 import type { EditorPluginContext } from '@singapore-editor/core/extensions'
 import type {
   TreeSitterLanguageAssets,
@@ -78,13 +81,14 @@ describe('Tree-sitter language contributions', () => {
     expect(registerSyntaxProvider).toHaveBeenCalledWith(
       expect.objectContaining({ createSession: expect.any(Function) }),
     )
+    const snapshot = createPieceTableSnapshot('const a = 1;')
     expect(
       registerSyntaxProvider.mock.calls[0]?.[0].createSession({
         documentId: 'main.ts',
         languageId: 'typescript',
         includeHighlights: true,
-        fullText: 'const a = 1;',
-        snapshot: createPieceTableSnapshot('const a = 1;'),
+        snapshot,
+        textSnapshot: createDocumentTextSnapshot(snapshot),
       }),
     ).not.toBeNull()
   })

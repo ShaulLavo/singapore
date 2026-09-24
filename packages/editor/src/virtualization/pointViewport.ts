@@ -20,6 +20,8 @@ export function pointViewport(element: HTMLElement) {
   if (cached) return cached
   const measured = measure(element)
   bounds.set(element, measured)
+  // @justification Expires a one-frame measurement cache at the next frame; it only deletes the
+  // entry, so a stale callback after disposal is harmless.
   element.ownerDocument.defaultView?.requestAnimationFrame(() => bounds.delete(element))
   return measured
 }

@@ -1,5 +1,5 @@
-import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type {
+  EditorContributionChange,
   EditorDisposable,
   EditorCapabilityContribution,
   EditorCapabilityContributionContext,
@@ -113,7 +113,7 @@ class MinimapContribution implements EditorViewContribution {
   public update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    change?: DocumentSessionChange | null,
+    change?: EditorContributionChange | null,
   ): void {
     if (this.disposed) return
 

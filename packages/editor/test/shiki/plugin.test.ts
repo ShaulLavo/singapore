@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestPluginContext } from '../../src/testContexts'
 
-import { createPieceTableSnapshot } from '../../src'
+import { createDocumentTextSnapshot, createPieceTableSnapshot } from '../../src'
 import type { EditorDisposable, EditorHighlighterProvider, EditorPlugin } from '../../src/plugins'
 import {
   createShikiHighlighterPlugin,
@@ -44,7 +44,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'App.tsx',
       languageId: 'typescript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -62,7 +62,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'App.tsx#diff-old',
       languageId: 'typescript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -76,7 +76,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'index.ts',
       languageId: 'typescript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -90,7 +90,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'App.jsx',
       languageId: 'javascript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -110,7 +110,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'App.tsx',
       languageId: 'typescript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -158,7 +158,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'index.ts',
       languageId: 'typescript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -199,7 +199,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'index.ts',
       languageId: 'typescript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -222,7 +222,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'index.ts',
       languageId: 'typescript',
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 

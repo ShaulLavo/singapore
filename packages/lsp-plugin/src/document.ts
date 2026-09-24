@@ -1,5 +1,6 @@
 import type { DocumentSessionChange, EditorTextBuffer } from '@singapore-editor/core/document'
 import type {
+  EditorContributionChange,
   EditorDisposable,
   EditorViewContributionUpdateKind,
 } from '@singapore-editor/core/extensions'
@@ -58,7 +59,7 @@ export class LanguageServerDocument {
   }
 
   synchronize(
-    change: DocumentSessionChange | null = null,
+    change: EditorContributionChange | null = null,
     kind: EditorViewContributionUpdateKind = 'content',
   ): void {
     if (this.disposed) return
@@ -201,7 +202,7 @@ export class DocumentLanguageServerLane {
   }
 
   synchronize(
-    change: DocumentSessionChange | null = null,
+    change: EditorContributionChange | null = null,
     kind: EditorViewContributionUpdateKind = 'content',
   ): void {
     if (this.disposed || !this.connection.isReady()) return

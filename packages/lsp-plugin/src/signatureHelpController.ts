@@ -6,7 +6,7 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core'
-import { offsetToLspPosition } from '@singapore-editor/lsp'
+import { offsetToLspPositionInSnapshot } from '@singapore-editor/lsp'
 
 import type { ActiveDocument } from './pluginTypes'
 import type { LanguageServerFeatureRouter } from './serverSet'
@@ -140,7 +140,7 @@ export class SignatureHelpController {
         'textDocument/signatureHelp',
         {
           context: { isRetrigger: false, triggerCharacter, triggerKind: 2 },
-          position: offsetToLspPosition(active.fullText, selection.headOffset),
+          position: offsetToLspPositionInSnapshot(active, selection.headOffset),
           textDocument: { uri: active.uri },
         },
         { signal: abort.signal },

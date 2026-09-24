@@ -1,5 +1,5 @@
 import { documentSessionChangeTextSnapshot, type DocumentSessionChange } from '../documentSession'
-import { createDocumentTextSnapshot, type DocumentTextSnapshot } from '../documentTextSnapshot'
+import type { DocumentTextSnapshot } from '../documentTextSnapshot'
 import {
   applyBatchToPieceTable,
   diffPieceTableSnapshots,
@@ -42,11 +42,7 @@ export type ShikiPreloadRegistrationSource =
   | Promise<ShikiPreloadRegistrations>
   | (() => Promise<ShikiPreloadRegistrations> | ShikiPreloadRegistrations)
 
-export type ShikiHighlighterSessionOptions = Omit<
-  EditorHighlighterSessionOptions,
-  'textSnapshot'
-> & {
-  readonly textSnapshot?: DocumentTextSnapshot
+export type ShikiHighlighterSessionOptions = EditorHighlighterSessionOptions & {
   readonly lang: string
   readonly theme: string
   readonly registrations: Promise<ShikiResolvedRegistrations> | ShikiResolvedRegistrations
@@ -381,22 +377,19 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     this.snapshot = options.snapshot
   }
 
-  public async refresh(
-    snapshot: ShikiHighlighterSessionOptions['snapshot'],
-    fullText?: string,
-  ): Promise<EditorHighlightResult> {
+  public async refresh(textSnapshot: DocumentTextSnapshot): Promise<EditorHighlightResult> {
     if (this.disposed) return emptyHighlightResult()
 
     return this.enqueueRequest(async () => {
       if (this.disposed) return emptyHighlightResult()
 
       await this.synchronizeTheme()
+      const snapshot = textSnapshot.snapshot
       if (this.opened && pieceTableSnapshotsHaveSameText(this.snapshot, snapshot)) {
         return { tokens: this.currentTokens(), theme: this.currentTheme }
       }
 
-      const textSnapshot = createDocumentTextSnapshot(snapshot, fullText)
-      const documentText = textSnapshot.materializeFullText()
+      const documentText = openPayloadText(textSnapshot)
       const documentOptions = await this.documentOptions(documentText)
       if (this.disposed) return emptyHighlightResult()
 
@@ -534,7 +527,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       return {
         type: 'open',
         ...(await this.documentOptions()),
-        text: nextTextSnapshot.materializeFullText(),
+        text: openPayloadText(nextTextSnapshot),
       }
     }
 
@@ -569,6 +562,11 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     const preload = scheduleRegistrationPreload(this.owner, this.preloadRegistrations)
     if (preload) this.trackTask(this.runtimeSessionId, preload)
   }
+}
+
+// The worker's open message is a whole-document protocol payload; edits after it are incremental.
+function openPayloadText(textSnapshot: DocumentTextSnapshot): string {
+  return textSnapshot.materializeFullText()
 }
 
 function emptyHighlightResult(): EditorHighlightResult {

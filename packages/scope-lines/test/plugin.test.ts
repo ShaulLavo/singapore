@@ -1,4 +1,5 @@
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
+import { createTestViewSnapshotSource } from '@singapore-editor/core/testing'
 import { describe, expect, it, vi } from 'vitest'
 import { createStringTextSnapshot, type TextSnapshot } from '@singapore-editor/core/document'
 import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
@@ -277,7 +278,7 @@ describe('createScopeLinesPlugin', () => {
     const text = 'function f() {\n    if (x) {\n        y()\n    }\n}\n'
     const testContext = context(
       snapshot({
-        fullText: text,
+        text,
         lineStarts: lineStarts(text),
         lineCount: 6,
         tabSize: 4,
@@ -300,7 +301,7 @@ describe('createScopeLinesPlugin', () => {
     const starts = lineStarts(text)
     const testContext = context(
       snapshot({
-        fullText: text,
+        text,
         lineStarts: starts,
         lineCount: starts.length,
         foldMarkers: [
@@ -332,7 +333,7 @@ describe('createScopeLinesPlugin', () => {
     const readRows: number[] = []
     const testContext = context(
       snapshot({
-        fullText: text,
+        text,
         textSnapshot: countingTextSnapshot(text, starts, readRows),
         lineStarts: starts,
         foldMarkers: foldMarkers(),
@@ -352,7 +353,7 @@ describe('createScopeLinesPlugin', () => {
     const readRows: number[] = []
     const testContext = context(
       snapshot({
-        fullText: text,
+        text,
         textSnapshot: countingTextSnapshot(text, starts, readRows),
         lineStarts: starts,
         lineCount: starts.length,
@@ -559,14 +560,16 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
   })
 }
 
-function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapshot {
-  const text = 'function f() {\n  if (x) {\n    y()\n  }\n}\n'
+function snapshot({
+  text = 'function f() {\n  if (x) {\n    y()\n  }\n}\n',
+  ...overrides
+}: Partial<EditorViewSnapshot> & { readonly text?: string } = {}): EditorViewSnapshot {
   return {
     documentId: 'scope-test',
     languageId: 'typescript',
     syntaxStatus: 'ready',
     paintLayers: [],
-    fullText: text,
+    ...createTestViewSnapshotSource(text),
     textVersion: 1,
     lineStarts: lineStarts(text),
     tokens: EditorTokenStore.empty(),
@@ -595,11 +598,6 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
     initialHighlightStatus: overrides.initialHighlightStatus ?? 'painted',
     gutterWidth: overrides.gutterWidth ?? 0,
     gutterLayout: overrides.gutterLayout ?? { fixedWidth: 0, lanes: [] },
-    toJSON:
-      overrides.toJSON ??
-      (() => {
-        throw new Error('not used by this fixture')
-      }),
     toVisibleSnapshot: overrides.toVisibleSnapshot ?? (() => null),
     documentSyncPoint: overrides.documentSyncPoint ?? {
       revision: overrides.textVersion ?? 1,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { snapshotText } from './factories/snapshotText'
 
 import type {
   EditorViewContributionContext,
@@ -130,7 +131,7 @@ function snapshot(): EditorViewSnapshot {
     documentId: 'src/index.ts',
     documentSyncPoint: TEST_DOCUMENT_SYNC_POINT,
     languageId: 'typescript',
-    fullText: TEXT,
+    ...snapshotText(TEXT),
     textVersion: 1,
     initialHighlightStatus: 'painted',
     syntaxStatus: 'ready',
@@ -157,9 +158,6 @@ function snapshot(): EditorViewSnapshot {
       clientHeight: 0,
       clientWidth: 0,
       visibleRange: { start: 0, end: 3 } as EditorViewSnapshot['viewport']['visibleRange'],
-    },
-    toJSON() {
-      throw new Error('not used by this fixture')
     },
     toVisibleSnapshot() {
       return null

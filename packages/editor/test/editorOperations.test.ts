@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createStringTextSnapshot } from '../src/documentTextSnapshot'
+import { readAll } from './factories/snapshotText'
 
 import { Editor } from '../src/editor'
 import { InputSelectionController } from '../src/editor/inputSelectionController'
@@ -273,9 +275,13 @@ describe('editor operations', () => {
     editor.attachSession(createEditorBufferSession(createEditorTextBuffer('abc')))
     const context = requireViewContributionContext(capture.context)
 
-    editor.applyEdit({ from: 0, to: 1, text: 'X' }, [{ start: 0, end: 3, style: { color: 'red' } }])
+    editor.applyEdit(
+      { from: 0, to: 1, text: 'X' },
+      [{ start: 0, end: 3, style: { color: 'red' } }],
+      createStringTextSnapshot('Xbc'),
+    )
 
-    expect(context.getSnapshot().fullText).toBe('Xbc')
+    expect(readAll(context.getSnapshot().textSnapshot)).toBe('Xbc')
     expect(context.getSnapshot().tokens.length).toBe(1)
   })
 
@@ -293,10 +299,14 @@ describe('editor operations', () => {
     editor.attachSession(createEditorBufferSession(createEditorTextBuffer('abc')))
     const context = requireViewContributionContext(capture.context)
 
-    editor.applyEdit({ from: 0, to: 1, text: 'X' }, [{ start: 0, end: 3, style: { color: 'red' } }])
+    editor.applyEdit(
+      { from: 0, to: 1, text: 'X' },
+      [{ start: 0, end: 3, style: { color: 'red' } }],
+      createStringTextSnapshot('Xbc'),
+    )
 
     expect(reopened).toBe(true)
-    expect(context.getSnapshot().fullText).toBe('other')
+    expect(readAll(context.getSnapshot().textSnapshot)).toBe('other')
     expect(context.getSnapshot().tokens.length).toBe(0)
   })
 

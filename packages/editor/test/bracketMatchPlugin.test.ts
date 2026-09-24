@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { snapshotText } from './factories/snapshotText'
 
 import { createBracketMatchPlugin } from '../src/bracketMatchPlugin'
 import type { EditorCommandId } from '../src/editor/commands'
@@ -134,7 +135,7 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
     documentId: 'bracket-test',
     documentSyncPoint: TEST_DOCUMENT_SYNC_POINT,
     foldMarkers: [],
-    fullText: TEXT,
+    ...snapshotText(TEXT),
     languageId: 'typescript',
     initialHighlightStatus: 'painted',
     syntaxStatus: 'ready',
@@ -166,9 +167,6 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
       visibleRange: { end: 1, start: 0 },
     },
     visibleRows: [],
-    toJSON() {
-      throw new Error('not used by this fixture')
-    },
     toVisibleSnapshot() {
       return null
     },

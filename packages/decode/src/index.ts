@@ -70,7 +70,7 @@ class DecodeViewContribution implements EditorViewContribution {
   private handleDocumentOpen(snapshot: EditorViewSnapshot): void {
     const documentId = snapshot.documentId
     if (!documentId || documentId === this.animatedDocumentId) return
-    if (snapshot.fullText.length === 0) return
+    if (snapshot.textSnapshot.length === 0) return
 
     // A fresh document supersedes any in-flight reveal.
     this.teardown()

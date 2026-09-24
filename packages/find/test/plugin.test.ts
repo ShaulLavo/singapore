@@ -1,5 +1,6 @@
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { describe, expect, it, vi } from 'vitest'
+import { createTestViewSnapshotSource } from '@singapore-editor/core/testing'
 import type {
   EditorCapabilityContributionProvider,
   EditorCommandContributionProvider,
@@ -286,7 +287,7 @@ function snapshot(): EditorViewSnapshot {
   return {
     documentId: 'find-test',
     languageId: null,
-    fullText: 'foo bar foo',
+    ...createTestViewSnapshotSource('foo bar foo'),
     textVersion: 1,
     initialHighlightStatus: 'painted',
     syntaxStatus: 'ready',
@@ -321,9 +322,6 @@ function snapshot(): EditorViewSnapshot {
       clientHeight: 20,
       clientWidth: 88,
       visibleRange: { start: 0, end: 1 },
-    },
-    toJSON() {
-      throw new Error('not used by this fixture')
     },
     toVisibleSnapshot() {
       return null

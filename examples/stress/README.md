@@ -38,6 +38,18 @@ Without a directory argument, that command prints only the manifest. Generated d
 belong in Git. `results/manifest.json` pins the seed, generator version, UTF-8 bytes, UTF-16 length,
 normalized line count, longest line, search count, and SHA-256 for every fixture.
 
+## Full-text boundary workload (E033)
+
+`node boundary.mjs --output /work/tmp/editor-e033/boundary/run.json` opens two views over a
+document fragmented by 32 replacements at 65,536, 4,194,304 and 50,331,648 units. The content above
+the filler is fixed, so the viewport, captures, caret and conflict stay the same as the size grows.
+`plain` has no plugins. `contributions` adds Markdown (fixed captures), scope-lines, decode and the
+merge-conflict plugin, with a conflict present and the caret typing inside it. Each configuration
+runs 20 warm-up and 200 measured native keys, then the same for undo. It records open, steady-state,
+export and disposal heap, and export time. `--diagnostics` adds read counters, taken before the
+probe's own full-text correctness check. Run the same files from a worktree of the control commit and
+alternate the two; `--configs` and `--sizes` narrow a rerun.
+
 ## Measurements and correctness
 
 Every fixture runs every scenario. The ordinary open also enables the real TypeScript Tree-sitter

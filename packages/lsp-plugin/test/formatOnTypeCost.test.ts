@@ -131,15 +131,7 @@ function countedSnapshot(
         count(Math.max(0, end - start))
         return text.slice(start, end)
       },
-      materializeFullText: () => {
-        count(text.length)
-        return text
-      },
       forEachTextChunk: vi.fn(),
-    },
-    get fullText() {
-      count(text.length)
-      return text
     },
   } as unknown as EditorViewSnapshot
 }

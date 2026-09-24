@@ -90,14 +90,11 @@ async function setup(size: number, instrumented: boolean) {
     theme: theme.name,
     snapshot,
     textSnapshot: createDocumentTextSnapshot(snapshot),
-    get fullText() {
-      return createDocumentTextSnapshot(snapshot).materializeFullText()
-    },
     registrations,
   })
   check(session, 'Shiki session was not created')
   globalThis.__EDITOR_PERFORMANCE_DIAGNOSTICS__ = instrumented ? diagnostic : null
-  const open = await measure('open', () => session.refresh(snapshot))
+  const open = await measure('open', () => session.refresh(createDocumentTextSnapshot(snapshot)))
   return { owner, session, snapshot, open, registrations }
 }
 
@@ -140,19 +137,19 @@ async function run(repetitions: number) {
 async function verifyTokens() {
   check(active, 'No active session')
   const { snapshot, registrations, owner, session } = active
-  const text = createDocumentTextSnapshot(snapshot).materializeFullText()
+  const source = createDocumentTextSnapshot(snapshot)
   const fresh = owner.createSession({
     documentId: 'reference',
     languageId: 'copy-proof',
     lang: 'copy-proof',
     theme: 'copy-proof',
     snapshot,
-    fullText: text,
+    textSnapshot: source,
     registrations,
   })
   check(fresh, 'Reference session was not created')
-  const expected = await fresh.refresh(snapshot, text)
-  const actual = await session.refresh(snapshot)
+  const expected = await fresh.refresh(source)
+  const actual = await session.refresh(createDocumentTextSnapshot(snapshot))
   check(
     JSON.stringify(actual.tokens.toTokens()) === JSON.stringify(expected.tokens.toTokens()),
     'Catch-up tokens differ from a fresh full tokenization',

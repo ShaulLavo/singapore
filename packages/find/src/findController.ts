@@ -1,11 +1,11 @@
 import {
   wordRangeAtOffset,
-  type DocumentSessionChange,
   type TextEdit,
-  type TextSnapshot,
+  type TextReadSnapshot,
 } from '@singapore-editor/core/document'
 import type { EditorSetSelectionOptions } from '@singapore-editor/core/editor'
 import type {
+  EditorContributionChange,
   EditorDisposable,
   EditorResolvedSelection,
   EditorSelectionRange,
@@ -109,7 +109,7 @@ export type EditorFindHost = {
   // Ranges rather than a string, so nothing find does can cost a copy of the
   // document — the reason there is no full-text accessor here to reach for.
   textSource(): FindTextSource
-  hasTextSnapshot(snapshot: TextSnapshot): boolean
+  hasTextSnapshot(snapshot: TextReadSnapshot): boolean
   // Followed wherever they end up, however far off screen: a scope decides where
   // Replace All rewrites, and one that stopped being followed would rewrite text
   // the user never marked.
@@ -140,7 +140,7 @@ export type EditorFindHost = {
 }
 
 export type EditorFindEditHost = {
-  textSnapshot(): TextSnapshot | null
+  textSnapshot(): TextReadSnapshot | null
   getSelections(): readonly EditorFindResolvedSelection[]
   applyEdits(
     edits: readonly TextEdit[],
@@ -467,7 +467,7 @@ export class EditorFindController {
 
   public handleViewUpdate(
     kind: EditorViewContributionUpdateKind,
-    change: DocumentSessionChange | null,
+    change: EditorContributionChange | null,
   ): void {
     if (!this.state.revealed) return
     if (!isFindDocumentUpdate(kind)) return

@@ -268,6 +268,7 @@ export type {
   SealDocumentTransactionResult,
   SelectionAffinity,
   TextEdit,
+  TextReadSnapshot,
   TextSnapshot,
 } from './public/document'
 export type {

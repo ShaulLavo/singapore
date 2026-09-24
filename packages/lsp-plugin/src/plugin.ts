@@ -1,8 +1,8 @@
 import { LanguageServerDocument, type DocumentLanguageServerLane } from './document'
 import type { LanguageServerDocumentPluginOptions } from './types'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
-import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type {
+  EditorContributionChange,
   EditorCapabilityToken,
   EditorCommandContributionContext,
   EditorDisposable,
@@ -55,7 +55,12 @@ import { createRenameWidgetController, type RenameWidgetController } from './ren
 import { parseWorkspaceEdit } from './workspaceEdit'
 import { currentWorkspaceEditOrigin } from './workspaceEditProvenance'
 import { wordRangeAtOffset } from '@singapore-editor/core/document'
-import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
+import {
+  lspPositionToOffsetInSnapshot,
+  offsetToLspPositionInSnapshot,
+  type LspTextDocumentSnapshot,
+} from '@singapore-editor/lsp'
+import { rangeAroundOffset } from './sourceText'
 import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
 import { resolveLanguageServerLaneOptions, type LanguageServerResolvedLaneOptions } from './lane'
 import {
@@ -551,7 +556,7 @@ class LanguageServerContribution implements EditorViewContribution {
   public update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    change?: DocumentSessionChange | null,
+    change?: EditorContributionChange | null,
   ): void {
     if (this.disposed) return
 
@@ -795,7 +800,7 @@ class LanguageServerContribution implements EditorViewContribution {
         'textDocument/rename',
         {
           newName: nextName,
-          position: offsetToLspPosition(active.fullText, offset),
+          position: offsetToLspPositionInSnapshot(active, offset),
           textDocument: { uri: active.uri },
         },
         { signal: abort.signal },
@@ -824,10 +829,10 @@ class LanguageServerContribution implements EditorViewContribution {
     owner: LanguageServerSetLane,
     signal: AbortSignal,
   ): Promise<{ readonly range: OffsetRange; readonly currentName: string } | null> {
-    const fallback = wordRangeAtOffset(active.fullText, offset)
+    const fallback = rangeAroundOffset(active, offset, wordRangeAtOffset)
     const provider = owner.connection.client.serverCapabilities?.renameProvider
     const supportsPrepare = typeof provider === 'object' && provider.prepareProvider === true
-    if (!supportsPrepare) return renameTarget(active.fullText, fallback)
+    if (!supportsPrepare) return renameTarget(active, fallback)
 
     const result = await this.servers.requestSingle<
       lsp.TextDocumentPositionParams,
@@ -836,21 +841,21 @@ class LanguageServerContribution implements EditorViewContribution {
       owner,
       'textDocument/prepareRename',
       {
-        position: offsetToLspPosition(active.fullText, offset),
+        position: offsetToLspPositionInSnapshot(active, offset),
         textDocument: { uri: active.uri },
       },
       { signal },
       null,
     )
     if (!result) return null
-    if ('defaultBehavior' in result) return renameTarget(active.fullText, fallback)
+    if ('defaultBehavior' in result) return renameTarget(active, fallback)
 
     const protocolRange = 'range' in result ? result.range : result
     const range = {
-      start: lspPositionToOffset(active.fullText, protocolRange.start),
-      end: lspPositionToOffset(active.fullText, protocolRange.end),
+      start: lspPositionToOffsetInSnapshot(active, protocolRange.start),
+      end: lspPositionToOffsetInSnapshot(active, protocolRange.end),
     }
-    const target = renameTarget(active.fullText, range)
+    const target = renameTarget(active, range)
     if (!target || !('placeholder' in result)) return target
 
     return { ...target, currentName: result.placeholder }
@@ -985,9 +990,9 @@ class LanguageServerContribution implements EditorViewContribution {
       // The document can change while the formatter runs; its edits describe the text it was given.
       if (active !== this.activeDocument()) return
 
-      const converted = prepareFormattingEdits(active.fullText, edits)
+      const converted = prepareFormattingEdits(active, edits)
       if (converted.length === 0) return
-      if (!formattingChangesText(active.fullText, converted)) return
+      if (!formattingChangesText(active.textSnapshot, converted)) return
 
       this.applyFormattingEdits(converted)
     } catch (error) {
@@ -1018,10 +1023,11 @@ class LanguageServerContribution implements EditorViewContribution {
 }
 
 function renameTarget(
-  text: string,
+  document: LspTextDocumentSnapshot,
   range: OffsetRange,
 ): { readonly range: OffsetRange; readonly currentName: string } | null {
-  const currentName = text.slice(range.start, range.end)
+  if (range.end <= range.start) return null
+  const currentName = document.textSnapshot.readRange(range.start, range.end)
   if (currentName.length === 0) return null
   return { currentName, range }
 }

@@ -25,6 +25,7 @@ import {
 } from '@singapore-editor/plugin-ui'
 import { connectedEditor, flushPromises, singleLineRange } from './connectedEditor'
 import { snapshotDocument } from './snapshotDocument'
+import { viewTextFields } from './documentSyncSnapshot'
 
 describe('hover timing and keyboard access', () => {
   afterEach(() => {
@@ -375,7 +376,7 @@ function hoverController(
   const element = document.createElement('div')
   document.body.append(element)
   let active = activeDocument(text)
-  const snapshot = hoverSnapshot(active)
+  const snapshot = hoverSnapshot(active, text)
   const request = vi.fn<LspClient['request']>()
   const onDefinitionLinkHover =
     vi.fn<NonNullable<DefinitionLinkControllerOptions['onDefinitionLinkHover']>>()
@@ -451,19 +452,17 @@ function activeDocument(text = 'const value = 1'): ActiveDocument {
     uri: 'file:///index.ts',
     languageId: 'typescript',
     ...snapshotDocument(text),
-    fullText: text,
     textVersion: 1,
     lspVersion: 1,
   }
 }
 
-function hoverSnapshot(active: ActiveDocument): EditorViewSnapshot {
+function hoverSnapshot(active: ActiveDocument, text: string): EditorViewSnapshot {
   return {
     documentId: 'index.ts',
     languageId: active.languageId,
-    fullText: active.fullText,
+    ...viewTextFields(text),
     textVersion: active.textVersion,
-    lineStarts: active.lineStarts.toArray(),
     tokens: [],
     selections: [{ anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6 }],
   } as unknown as EditorViewSnapshot

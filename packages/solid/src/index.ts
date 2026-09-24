@@ -25,10 +25,11 @@ import {
   type EditorState,
   type EditorSuspiciousCharactersOptions,
 } from '@singapore-editor/core/editor'
-import type { DocumentSessionChange, TextSnapshot } from '@singapore-editor/core/document'
+import type { TextReadSnapshot } from '@singapore-editor/core/document'
 import type { EditorSyntaxLanguageId } from '@singapore-editor/core/syntax'
 import type { EditorTheme, HiddenCharactersMode } from '@singapore-editor/core/rendering'
 import type {
+  EditorContributionChange,
   EditorPlugin,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
@@ -105,9 +106,10 @@ export type SolidEditorController = {
   editor: Accessor<Editor | null>
   state: Accessor<EditorState | null>
   snapshot: Accessor<EditorViewSnapshot | null>
-  textSnapshot: Accessor<TextSnapshot | null>
-  fullText: Accessor<string>
-  lastChange: Accessor<DocumentSessionChange | null>
+  textSnapshot: Accessor<TextReadSnapshot | null>
+  /** The whole text of the current revision: O(document length) on the first read of each one. */
+  materializeFullText: Accessor<string>
+  lastChange: Accessor<EditorContributionChange | null>
   updateKind: Accessor<EditorViewContributionUpdateKind | null>
   dispose(): void
   readonly commands: SolidEditorCommands
@@ -118,8 +120,8 @@ type SolidEditorRuntime = {
   readonly setEditor: (editor: Editor | null) => void
   readonly setState: (state: EditorState | null) => void
   readonly setSnapshot: (snapshot: EditorViewSnapshot | null) => void
-  readonly setTextSnapshot: (snapshot: TextSnapshot | null) => void
-  readonly setLastChange: (change: DocumentSessionChange | null) => void
+  readonly setTextSnapshot: (snapshot: TextReadSnapshot | null) => void
+  readonly setLastChange: (change: EditorContributionChange | null) => void
   readonly setUpdateKind: (kind: EditorViewContributionUpdateKind | null) => void
 }
 
@@ -129,9 +131,14 @@ export function createEditor(options: SolidEditorOptions = {}): SolidEditorContr
   const [editor, setEditor] = createSignal<Editor | null>(null)
   const [state, setState] = createSignal<EditorState | null>(null)
   const [snapshot, setSnapshot] = createSignal<EditorViewSnapshot | null>(null)
-  const [textSnapshot, setTextSnapshot] = createSignal<TextSnapshot | null>(null)
+  const [textSnapshot, setTextSource] = createSignal<TextReadSnapshot | null>(null)
   const fullText = createLazyFullTextAccessor(textSnapshot)
-  const [lastChange, setLastChange] = createSignal<DocumentSessionChange | null>(null)
+  // Any new source — an edit, a replaced or closed document — ends the cached pair's revision.
+  const setTextSnapshot = (next: TextReadSnapshot | null): void => {
+    fullText.release(next)
+    setTextSource(() => next)
+  }
+  const [lastChange, setLastChange] = createSignal<EditorContributionChange | null>(null)
   const [updateKind, setUpdateKind] = createSignal<EditorViewContributionUpdateKind | null>(null)
   const runtime = {
     getEditor: editor,
@@ -147,6 +154,7 @@ export function createEditor(options: SolidEditorOptions = {}): SolidEditorContr
 
   const dispose = (): void => {
     disposeEditor(runtime)
+    fullText.clear()
     documentState.clear()
     optionSync.reset()
   }
@@ -165,7 +173,7 @@ export function createEditor(options: SolidEditorOptions = {}): SolidEditorContr
     state,
     snapshot,
     textSnapshot,
-    fullText,
+    materializeFullText: fullText.read,
     lastChange,
     updateKind,
     dispose,
@@ -173,24 +181,36 @@ export function createEditor(options: SolidEditorOptions = {}): SolidEditorContr
   }
 }
 
-function createLazyFullTextAccessor(textSnapshot: Accessor<TextSnapshot | null>): Accessor<string> {
-  let cachedSnapshot: TextSnapshot | null = null
-  let cachedText: string | undefined
+type LazyFullTextAccessor = {
+  readonly read: Accessor<string>
+  readonly clear: () => void
+  /** Drops the cached pair unless it belongs to `next`; never reads `next` itself. */
+  readonly release: (next: TextReadSnapshot | null) => void
+}
 
-  return () => {
-    const snapshot = textSnapshot()
-    if (!snapshot) {
-      cachedSnapshot = null
-      cachedText = ''
-      return cachedText
-    }
+/** Holds at most the current source and its text, and lets go as soon as the source moves on. */
+function createLazyFullTextAccessor(
+  textSnapshot: Accessor<TextReadSnapshot | null>,
+): LazyFullTextAccessor {
+  let cachedSource: TextReadSnapshot | null = null
+  let cachedText = ''
 
-    if (snapshot === cachedSnapshot && cachedText !== undefined) return cachedText
+  const readWholeRevision = (): string => {
+    const source = textSnapshot()
+    if (source === cachedSource) return cachedText
 
-    cachedSnapshot = snapshot
-    cachedText = snapshot.materializeFullText()
+    cachedSource = source
+    cachedText = source ? source.readRange(0, source.length) : ''
     return cachedText
   }
+  const clear = (): void => {
+    cachedSource = null
+    cachedText = ''
+  }
+  const release = (next: TextReadSnapshot | null): void => {
+    if (next !== cachedSource) clear()
+  }
+  return { read: readWholeRevision, clear, release }
 }
 
 function mountEditor(
@@ -308,11 +328,11 @@ function syncSnapshot(
   runtime: SolidEditorRuntime,
   snapshot: EditorViewSnapshot,
   kind: EditorViewContributionUpdateKind,
-  change: DocumentSessionChange | null,
+  change: EditorContributionChange | null,
 ): void {
   batch(() => {
     runtime.setSnapshot(snapshot)
-    runtime.setTextSnapshot(snapshot.textSnapshot ?? null)
+    runtime.setTextSnapshot(snapshot.textSnapshot)
     runtime.setLastChange(change)
     runtime.setUpdateKind(kind)
   })
@@ -321,7 +341,7 @@ function syncSnapshot(
 function syncChange(
   runtime: SolidEditorRuntime,
   state: EditorState,
-  change: DocumentSessionChange | null,
+  change: EditorContributionChange | null,
 ): void {
   const editor = runtime.getEditor()
 

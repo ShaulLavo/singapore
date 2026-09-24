@@ -13,6 +13,7 @@ import {
   createCompletionWidgetController,
 } from '../src/completion'
 import { createTestEditContributionContext } from '@singapore-editor/core/testing'
+import { textDocument } from './snapshotDocument'
 
 describe('completion helpers', () => {
   it('detects identifier and trigger-character completion changes', () => {
@@ -207,7 +208,7 @@ describe('completion ranges', () => {
 
   it('grows the replacement over the characters typed since the request', () => {
     const application = completionApplication(
-      { text: 'const val', offset: 9, caretOffset: 11, caretAffinity: 'after' },
+      { document: textDocument('const val'), offset: 9, caretOffset: 11, caretAffinity: 'after' },
       item({ range: singleLineRange(6, 9), newText: 'value' }),
     )
 
@@ -217,7 +218,7 @@ describe('completion ranges', () => {
   it('follows the caret back when characters are removed after the request', () => {
     const removed = (caretOffset: number) =>
       completionApplication(
-        { text: 'const val', offset: 9, caretOffset, caretAffinity: 'after' },
+        { document: textDocument('const val'), offset: 9, caretOffset, caretAffinity: 'after' },
         item({ range: singleLineRange(6, 9), newText: 'value' }),
       )?.edits
 
@@ -228,7 +229,12 @@ describe('completion ranges', () => {
 
   it('moves an additional edit below the caret along with what was typed', () => {
     const application = completionApplication(
-      { text: 'const val\nend', offset: 9, caretOffset: 10, caretAffinity: 'after' },
+      {
+        document: textDocument('const val\nend'),
+        offset: 9,
+        caretOffset: 10,
+        caretAffinity: 'after',
+      },
       {
         label: 'value',
         textEdit: { range: singleLineRange(6, 9), newText: 'value' },
@@ -276,7 +282,7 @@ function atCaret(
   offset: number,
   caretAffinity: SelectionAffinity = 'after',
 ): Parameters<typeof completionApplication>[0] {
-  return { text, offset, caretOffset: offset, caretAffinity }
+  return { document: textDocument(text), offset, caretOffset: offset, caretAffinity }
 }
 
 function singleLineRange(start: number, end: number): lsp.Range {

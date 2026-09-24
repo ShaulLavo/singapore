@@ -1,6 +1,5 @@
 import {
   applyBatchToPieceTable,
-  createDocumentTextSnapshot,
   diffPieceTableSnapshots,
   type DocumentSessionChange,
   type DocumentTextSnapshot,
@@ -49,8 +48,7 @@ export type TreeSitterSyntaxSessionOptions = {
   readonly includeHighlights?: boolean
   readonly includeCaptures?: boolean
   readonly syntaxMode?: 'full' | 'range'
-  readonly fullText?: string
-  readonly textSnapshot?: DocumentTextSnapshot
+  readonly textSnapshot: DocumentTextSnapshot
   readonly snapshot: PieceTableSnapshot
   readonly backend?: TreeSitterBackend
 }
@@ -88,8 +86,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     this.includeHighlights = options.includeHighlights ?? true
     this.includeCaptures = options.includeCaptures ?? true
     this.syntaxMode = options.syntaxMode ?? 'full'
-    this.textSnapshot =
-      options.textSnapshot ?? createDocumentTextSnapshot(options.snapshot, options.fullText)
+    this.textSnapshot = options.textSnapshot
     this.snapshot = options.snapshot
     this.backend = options.backend ?? createTreeSitterWorkerBackend()
     this.result = this.createEmptyResult({ snapshot: options.snapshot, snapshotVersion: 0 })
@@ -99,14 +96,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     return this.currentFoldingSupport
   }
 
-  public async refresh(
-    snapshot: PieceTableSnapshot,
-    fullText?: string,
-  ): Promise<EditorSyntaxResult> {
+  public async refresh(textSnapshot: DocumentTextSnapshot): Promise<EditorSyntaxResult> {
     if (this.disposed) return this.result
 
     const snapshotVersion = ++this.snapshotVersion
-    const textSnapshot = createDocumentTextSnapshot(snapshot, fullText)
+    const snapshot = textSnapshot.snapshot
 
     if (!(await this.ensureLanguageRegistered())) {
       return this.updateFromUnavailableLanguage(textSnapshot, snapshot)
@@ -153,7 +147,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     }
 
     if (this.parsedSnapshotVersion === 0) {
-      return this.refresh(change.snapshot)
+      return this.refresh(documentSessionChangeTextSnapshot(change))
     }
 
     if (!(await this.ensureLanguageRegistered())) {
@@ -191,7 +185,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
         : createTreeSitterEditPayload({ ...editPayloadOptions, resultMode: 'full' })
 
     if (!payload) {
-      return this.refresh(change.snapshot)
+      return this.refresh(documentSessionChangeTextSnapshot(change))
     }
 
     return this.applyIncrementalEdit(payload, documentSessionChangeTextSnapshot(change))
@@ -254,11 +248,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
       }
 
       if (!result) {
-        return this.reparseAfterIncrementalFailure(payload.snapshot)
+        return this.reparseAfterIncrementalFailure(nextTextSnapshot)
       }
 
       if (result.snapshotVersion !== payload.snapshotVersion) {
-        return this.reparseAfterIncrementalFailure(payload.snapshot)
+        return this.reparseAfterIncrementalFailure(nextTextSnapshot)
       }
 
       if (
@@ -266,7 +260,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
       ) {
         if (this.disposed || !this.isCurrentSnapshotVersion(payload.snapshotVersion))
           return this.result
-        return this.refresh(payload.snapshot)
+        return this.refresh(nextTextSnapshot)
       }
 
       return this.updateFromTreeSitterResult(
@@ -281,12 +275,12 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
         return this.result
       }
 
-      return this.reparseAfterIncrementalFailure(payload.snapshot)
+      return this.reparseAfterIncrementalFailure(nextTextSnapshot)
     }
   }
 
   private reparseAfterIncrementalFailure(
-    snapshot: PieceTableSnapshot,
+    textSnapshot: DocumentTextSnapshot,
   ): Promise<EditorSyntaxResult> {
     if (this.disposed) return Promise.resolve(this.result)
 
@@ -294,7 +288,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     const disposedRuntimeSessionId = this.runtimeSessionId
     this.runtimeSessionId = createEditorRuntimeSessionId()
     this.backend.disposeDocument(disposedRuntimeSessionId)
-    return this.refresh(snapshot)
+    return this.refresh(textSnapshot)
   }
 
   private isCurrentSnapshotVersion(snapshotVersion: number): boolean {

@@ -9,11 +9,10 @@
 
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import {
-  createStringTextSnapshot,
   type DocumentSessionChange,
   type SelectionAffinity,
   type TextEdit,
-  type TextSnapshot,
+  type TextReadSnapshot,
 } from '@singapore-editor/core/document'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
 import type {
@@ -38,7 +37,12 @@ import type {
   LanguageServerPluginOptions,
   LanguageServerRenamePrompt,
 } from '../src/types'
-import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  documentSyncSnapshotFields,
+  viewSnapshotStructuralFields,
+  viewText,
+  viewTextFields,
+} from './documentSyncSnapshot'
 import {
   createTestEditContributionContext,
   createTestPluginContext,
@@ -118,7 +122,7 @@ export type ConnectedEditor = {
   initializeParams(): lsp.InitializeParams
   reportedErrors(): readonly unknown[]
   workspaceEditRequests(): readonly ApplyWorkspaceEditRequest[]
-  textSnapshot(): TextSnapshot
+  textSnapshot(): TextReadSnapshot
   /** The tab stops each accepted snippet handed the host, newest last. */
   startedSnippetSessions(): readonly (readonly SnippetStopRange[])[]
 }
@@ -249,7 +253,7 @@ export async function connectedEditor(
   }
 
   const applyChange = (edit: TextEdit, caretOffset: number): void => {
-    const next = `${snapshot.fullText.slice(0, edit.from)}${edit.text}${snapshot.fullText.slice(edit.to)}`
+    const next = `${viewText(snapshot).slice(0, edit.from)}${edit.text}${viewText(snapshot).slice(edit.to)}`
     snapshot = editorSnapshot(
       next,
       caretOffset,
@@ -275,7 +279,7 @@ export async function connectedEditor(
     editElsewhere: (edit) => applyChange(edit, caretOffsetOf(snapshot)),
     moveCaret: (offset) => {
       snapshot = editorSnapshot(
-        snapshot.fullText,
+        viewText(snapshot),
         offset,
         snapshot.textVersion,
         caretAffinityOf(snapshot),
@@ -284,7 +288,7 @@ export async function connectedEditor(
     },
     selectRange: (start, end) => {
       snapshot = editorSnapshot(
-        snapshot.fullText,
+        viewText(snapshot),
         end,
         snapshot.textVersion,
         caretAffinityOf(snapshot),
@@ -379,7 +383,7 @@ export async function connectedEditor(
     },
     reportedErrors: () => errors,
     workspaceEditRequests: () => workspaceEditRequests,
-    textSnapshot: () => snapshot.textSnapshot!,
+    textSnapshot: () => snapshot.textSnapshot,
     startedSnippetSessions: () => snippetSessions,
   }
 }
@@ -548,10 +552,8 @@ function editorSnapshot(
     ...viewSnapshotStructuralFields(),
     documentId: 'src/index.ts',
     languageId: 'typescript',
-    fullText,
-    textSnapshot: createStringTextSnapshot(fullText),
+    ...viewTextFields(fullText),
     textVersion,
-    lineStarts: lineStartsOf(fullText),
     tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [

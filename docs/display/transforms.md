@@ -79,9 +79,9 @@ text through shared measurements. These costs are separate from row/string mater
 Horizontal extent still follows observed rows rather than a whole-document maximum-width scan.
 
 Live snapshots retain content handles. `toVisibleSnapshot()` captures mounted paint parts and stays
-bounded to mounted content. The explicit full-document `toJSON()` export still materializes full text
-and source line starts, including its row strings. E033 owns that public full-text boundary; E034
-owns fallback indentation-fold discovery.
+bounded to mounted content. A live snapshot has no `toJSON()` or `fullText`: whole-view JSON comes
+only from `serializeEditorViewSnapshot(snapshot)`, which reads the captured revision's full text and
+source line starts on purpose (E033). E034 owns fallback indentation-fold discovery.
 
 Measurements and commands are recorded in [the E031 performance report](../performance/e031-projection.md).
 

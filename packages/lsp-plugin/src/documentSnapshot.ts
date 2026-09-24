@@ -30,9 +30,6 @@ export function bufferDocumentSnapshot({
     documentId: documentId ?? uri,
     languageId,
     textSnapshot,
-    get fullText() {
-      return textSnapshot.materializeFullText()
-    },
     textVersion: point.textVersion,
     documentSyncPoint: point,
     changesSinceDocumentSyncPoint: (previous, scope) =>

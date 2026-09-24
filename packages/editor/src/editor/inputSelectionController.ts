@@ -144,6 +144,7 @@ import {
   type SnippetStopRange,
 } from './snippetSession'
 import { GhostTextSession, type EditorInlineSuggestCommandId } from './ghostText'
+import type { TextReadSnapshot } from '../documentTextSnapshot'
 import type { InlineReplacementSpec } from '../inlineMap'
 
 import { lineBreakIndent } from './indentation'
@@ -167,7 +168,7 @@ export type InputSelectionControllerOptions = {
   /** The two inputs a copy needs to render the range it took as styled markup. */
   getSyntaxTokens(): EditorTokenStore
   getEditorTheme(): EditorTheme | null
-  materializeFullText(): string
+  getTextSnapshot(): TextReadSnapshot
   canEditDocument(): boolean
   runInOperation<T>(run: () => T): T
   applySessionChange(
@@ -932,7 +933,7 @@ export class InputSelectionController {
       return false
     }
 
-    return this.ghostText.show(snapshot, session.materializeFullText(), edit, caret)
+    return this.ghostText.show(snapshot, session.getTextSnapshot(), edit, caret)
   }
 
   /** The runs painting the suggestion that is showing, for the map the view renders from. */
@@ -1015,7 +1016,7 @@ export class InputSelectionController {
     // a copy that sits above it.
     const caret = this.primarySelectionHeadOffset(change) ?? acceptedCaret
     if (accepted.rest) {
-      this.ghostText.show(change.snapshot, session.materializeFullText(), accepted.rest, caret)
+      this.ghostText.show(change.snapshot, change.textSnapshot, accepted.rest, caret)
     }
     this.markSessionSelectionForNextInput()
     this.applyChange(
@@ -1115,7 +1116,7 @@ export class InputSelectionController {
     const selections = session
       .getSelections()
       .selections.map((selection) => resolveSelection(snapshot, selection))
-    const text = session.materializeFullText()
+    const text = commandDocumentText(session)
     const editOptions = {
       injections: this.options.getSyntaxInjections(),
       languageId: this.options.getLanguageId(),
@@ -1241,7 +1242,7 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
 
-    const text = session.materializeFullText()
+    const text = commandDocumentText(session)
     const query = this.occurrenceQueryForCurrentSelection(text)
     if (!query) return false
 
@@ -1267,7 +1268,7 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
 
-    const text = session.materializeFullText()
+    const text = commandDocumentText(session)
     const selectionSet = session.getSelections()
     const resolved = this.resolvedSelections()
     const preferredIndex = lastAddedSelectionIndex(selectionSet)
@@ -1638,10 +1639,6 @@ export class InputSelectionController {
 
   private get session(): DocumentSession | null {
     return this.options.getSession()
-  }
-
-  private get text(): string {
-    return this.options.materializeFullText()
   }
 
   private transitionInputState(transition: EditorInputStateTransition): void {
@@ -2743,7 +2740,7 @@ export class InputSelectionController {
   private deleteCaretLines(session: DocumentSession): DocumentSessionChange {
     const action = editActionForCommand(
       'editor.action.deleteLines',
-      session.materializeFullText(),
+      commandDocumentText(session),
       this.resolvedSelections(),
       { languageId: this.options.getLanguageId(), tabSize: this.options.tabSize },
     )
@@ -3093,7 +3090,7 @@ export class InputSelectionController {
     source: ResolvedSelection,
     wholeWord: boolean,
   ): OccurrenceSelectionChange | null {
-    const text = session.materializeFullText()
+    const text = commandDocumentText(session)
     if (resolved.length === 1 && source.collapsed) {
       return this.selectCurrentWordForOccurrence(text, source)
     }
@@ -3305,7 +3302,8 @@ export class InputSelectionController {
     const viewOffset = this.options.view.textOffsetFromDomBoundary(node, offset)
     if (viewOffset !== null) return viewOffset
 
-    if (node === this.options.el) return elementBoundaryToTextOffset(offset, this.text.length)
+    if (node === this.options.el)
+      return elementBoundaryToTextOffset(offset, this.options.getTextSnapshot().length)
     return this.externalBoundaryToTextOffset(node, offset)
   }
 
@@ -3318,12 +3316,16 @@ export class InputSelectionController {
       const child = childContainingNode(node, this.options.el)
       const childIndex = child ? childNodeIndex(node, child) : -1
       if (childIndex === -1) return null
-      return elementBoundaryToTextOffset(offset <= childIndex ? 0 : 1, this.text.length)
+      return elementBoundaryToTextOffset(
+        offset <= childIndex ? 0 : 1,
+        this.options.getTextSnapshot().length,
+      )
     }
 
     const position = node.compareDocumentPosition(this.options.el)
     if ((position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) return 0
-    if ((position & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return this.text.length
+    if ((position & Node.DOCUMENT_POSITION_PRECEDING) !== 0)
+      return this.options.getTextSnapshot().length
     return null
   }
 }
@@ -3488,6 +3490,14 @@ function survivingPrimarySelectionAffinity(
 function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {
   if (text.includes('\n') || text.includes('\r')) return 'end'
   return 'nearest'
+}
+
+/**
+ * Edit actions and exact-occurrence commands still take the document as one string. Each is a
+ * command the user asked for, so the O(document length) read is explicit and never on typing.
+ */
+function commandDocumentText(session: DocumentSession): string {
+  return session.materializeFullText()
 }
 
 function applyPasteText(session: DocumentSession, text: string): DocumentSessionChange {

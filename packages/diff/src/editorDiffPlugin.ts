@@ -1,4 +1,5 @@
 import type {
+  EditorContributionChange,
   EditorDecorationContribution,
   EditorDecorationContributionContext,
   EditorDisposable,
@@ -13,7 +14,6 @@ import type {
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
 import { EDITOR_SNIPPET_TOKENS_FEATURE } from '@singapore-editor/core/extensions'
-import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type { EditorToken } from '@singapore-editor/core/syntax'
 import { createDiffGutterContribution } from './diffGutter'
 import { diffInlineHighlightRanges, diffRowDecorations } from './diffRows'
@@ -411,7 +411,7 @@ class DiffPluginRuntime {
       oldFile: this.baseFile,
       newFile: {
         path: this.baseFile.path,
-        text: context.materializeFullText(),
+        text: liveDiffDocumentText(context),
         languageId: this.baseFile.languageId,
       },
     })
@@ -463,6 +463,11 @@ class DiffPluginRuntime {
   }
 }
 
+// A live diff compares whole documents, and the diff library takes strings: an explicit extraction.
+function liveDiffDocumentText(context: EditorDecorationContributionContext): string {
+  return context.materializeFullText()
+}
+
 function projectRows(
   file: DiffFile | null,
   side: DiffGutterSide,
@@ -496,14 +501,14 @@ class DiffDecorationContribution {
    *
    * Rebuilding an overlay projection materializes the whole document and runs `structuredPatch`
    * over it, synchronously. `handleEditorChange` also fires for selection-only changes —
-   * `DocumentSessionChange.kind` is one of edit/selection/undo/redo/none — and a caret move cannot
+   * `EditorContributionChange.kind` is one of edit/selection/undo/redo/none — and a caret move cannot
    * alter the diff, so paying for one is pure waste on the typing path. Text-snapshot identity is
    * the second guard, for the notification paths that carry no change object at all.
    *
    * Plugin-state changes (`setBaseFile`, `setEnabled`) call `refresh()` directly and are never
    * skipped: the text is the same but the diff it produces is not.
    */
-  handleEditorChange(change: DocumentSessionChange | null): void {
+  handleEditorChange(change: EditorContributionChange | null): void {
     if (this.options.mode === 'overlay') {
       if (change?.kind === 'selection') return
 
@@ -605,7 +610,7 @@ class DiffViewContribution implements EditorViewContribution {
     const ranges = snapshot.visibleRows.flatMap((visible) => {
       const row = rows[visible.bufferRow]
       if (!row) return []
-      const start = snapshot.lineStarts[visible.bufferRow] ?? visible.startOffset
+      const start = snapshot.lineStartsView.at(visible.bufferRow) ?? visible.startOffset
       return diffInlineHighlightRanges([row]).map((range) => ({
         start: range.start + start,
         end: range.end + start,

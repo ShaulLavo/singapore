@@ -16,6 +16,7 @@
  * and the narrow factory speaks WebSocket only.
  */
 
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type {
   DocumentChangesSinceSyncPoint,
@@ -377,6 +378,7 @@ class EditorFixture {
 
   public snapshot(): EditorViewSnapshot {
     const lineStarts = this.lineStarts()
+    const textSnapshot = createStringTextSnapshot(this.text)
     const rows: EditorVisibleRowSnapshot[] = lineStarts.map((startOffset, index) => ({
       index,
       bufferRow: index,
@@ -401,12 +403,22 @@ class EditorFixture {
     return {
       documentId: DOCUMENT_ID,
       languageId: 'typescript' as EditorViewSnapshot['languageId'],
-      fullText: this.text,
+      textSnapshot,
       textVersion: this.textVersion,
       initialHighlightStatus: 'painted',
       syntaxStatus: 'ready',
       paintLayers: [],
       lineStarts,
+      lineStartsView: {
+        length: lineStarts.length,
+        at: (index) => lineStarts[index],
+        indexForOffset: (offset) => textSnapshot.lineAt(offset),
+        firstIndexAtOrAfter: (offset) => {
+          const index = lineStarts.findIndex((start) => start >= offset)
+          return index === -1 ? lineStarts.length : index
+        },
+        toArray: () => lineStarts,
+      },
       documentSyncPoint: this.#chain.point(this.textVersion),
       changesSinceDocumentSyncPoint: (point, scope) =>
         this.#chain.changesSince(point, scope, this.textVersion),
@@ -436,9 +448,6 @@ class EditorFixture {
           start: 0,
           end: rows.length,
         } as EditorViewSnapshot['viewport']['visibleRange'],
-      },
-      toJSON() {
-        throw new Error('not used by this fixture')
       },
       toVisibleSnapshot() {
         return null

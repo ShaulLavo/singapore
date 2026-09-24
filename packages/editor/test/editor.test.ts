@@ -55,6 +55,8 @@ import { createFoldMap } from '../src/foldMap'
 import { SelectionGoal, resolveSelection } from '../src/selections'
 import type { VirtualizedTextView } from '../src/virtualization'
 import { createVisibleEditor } from './factories/visibleEditor'
+import { readAll } from './factories/snapshotText'
+import { createStringTextSnapshot } from '../src/documentTextSnapshot'
 
 // Mock HighlightRegistry backed by a Map, used to assert highlight state.
 const highlightsMap = new Map<string, Highlight>()
@@ -1762,7 +1764,8 @@ describe('Editor', () => {
       expect(events.some((event) => event.kind === 'content' && event.changeKind === 'edit')).toBe(
         true,
       )
-      expect(events.at(-1)?.snapshot?.fullText).toBe('const a = 1;!')
+      const last = events.at(-1)?.snapshot
+      expect(last && readAll(last.textSnapshot)).toBe('const a = 1;!')
     })
 
     it('reports a pass that ends on a caret move as the edit it made', () => {
@@ -2072,7 +2075,7 @@ describe('Editor', () => {
               providerContexts.push({
                 documentId: providerContext.documentId,
                 lineCount: providerContext.lineCount,
-                text: providerContext.text,
+                text: readAll(providerContext.textSnapshot),
               })
               return [
                 {
@@ -2210,7 +2213,7 @@ describe('Editor', () => {
             createContribution: () => ({
               handleEditorChange: (change) => {
                 if (change?.kind === 'edit')
-                  featureTexts.push(change.textSnapshot.materializeFullText())
+                  featureTexts.push(change.textSnapshot.readRange(0, change.textSnapshot.length))
               },
               dispose: () => undefined,
             }),
@@ -2252,7 +2255,7 @@ describe('Editor', () => {
             createContribution: () => ({
               handleEditorChange: (change) => {
                 if (change?.kind === 'edit')
-                  featureTexts.push(change.textSnapshot.materializeFullText())
+                  featureTexts.push(change.textSnapshot.readRange(0, change.textSnapshot.length))
               },
               dispose: () => undefined,
             }),
@@ -2361,9 +2364,12 @@ describe('Editor', () => {
       editor.setTokens([{ start: 4, end: 6, style: { color: '#ff0000' } }])
 
       // Insert "XX" at position 0 → delta = +2
-      editor.applyEdit({ from: 0, to: 0, text: 'XX' }, [
-        { start: 6, end: 8, style: { color: '#ff0000' } },
-      ])
+      const edit = { from: 0, to: 0, text: 'XX' }
+      editor.applyEdit(
+        edit,
+        [{ start: 6, end: 8, style: { color: '#ff0000' } }],
+        after('abcdef', edit),
+      )
 
       expect(editorRoot().textContent).toBe('XXabcdef')
     })
@@ -2374,10 +2380,8 @@ describe('Editor', () => {
       expect(highlightsMap.size).toBe(1)
 
       // Replace "cd" at positions 2-4 with "XY"
-      editor.applyEdit(
-        { from: 2, to: 4, text: 'XY' },
-        [], // No replacement tokens
-      )
+      const edit = { from: 2, to: 4, text: 'XY' }
+      editor.applyEdit(edit, [], after('abcdef', edit)) // No replacement tokens
 
       // The overlapping token should be removed, group cleaned up
       expect(highlightsMap.size).toBe(0)
@@ -2391,9 +2395,12 @@ describe('Editor', () => {
       ])
 
       // Edit in the middle (positions 2-4)
-      editor.applyEdit({ from: 2, to: 4, text: 'XX' }, [
-        { start: 2, end: 4, style: { color: '#0000ff' } },
-      ])
+      const edit = { from: 2, to: 4, text: 'XX' }
+      editor.applyEdit(
+        edit,
+        [{ start: 2, end: 4, style: { color: '#0000ff' } }],
+        after('abcdef', edit),
+      )
 
       // Token at 0-2 should be untouched, so its group persists
       expect(highlightsMap.size).toBeGreaterThanOrEqual(1)
@@ -2403,16 +2410,20 @@ describe('Editor', () => {
       editor.setContent('abcdef')
       editor.setTokens([])
 
-      editor.applyEdit({ from: 2, to: 4, text: 'XY' }, [
-        { start: 2, end: 4, style: { color: '#ff0000' } },
-      ])
+      const edit = { from: 2, to: 4, text: 'XY' }
+      editor.applyEdit(
+        edit,
+        [{ start: 2, end: 4, style: { color: '#ff0000' } }],
+        after('abcdef', edit),
+      )
 
       expect(highlightsMap.size).toBe(1)
     })
 
     it('updates text content correctly', () => {
       editor.setContent('hello world')
-      editor.applyEdit({ from: 5, to: 5, text: ' beautiful' }, [])
+      const edit = { from: 5, to: 5, text: ' beautiful' }
+      editor.applyEdit(edit, [], after('hello world', edit))
       expect(editorRoot().textContent).toBe('hello beautiful world')
     })
   })
@@ -2435,7 +2446,7 @@ describe('Editor', () => {
       const buffer = createEditorTextBuffer('abc')
       editor.attachSession(createEditorBufferSession(buffer))
 
-      editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])
+      editor.applyEdit({ from: 0, to: 1, text: 'X' }, [], createStringTextSnapshot('Xbc'))
 
       expect(buffer.materializeFullText()).toBe('Xbc')
       expect(editorRoot().textContent).toBe('Xbc')
@@ -2459,7 +2470,9 @@ describe('Editor', () => {
 
       const notEditable = expect.objectContaining({ code: 'EDITOR_NOT_EDITABLE' })
       expect(() => editor.setContent('bypass')).toThrow(notEditable)
-      expect(() => editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])).toThrow(notEditable)
+      expect(() =>
+        editor.applyEdit({ from: 0, to: 1, text: 'X' }, [], createStringTextSnapshot('Xbc')),
+      ).toThrow(notEditable)
       expect(buffer.materializeFullText()).toBe('abc')
     })
 
@@ -2476,7 +2489,9 @@ describe('Editor', () => {
 
       const leased = expect.objectContaining({ code: 'EDITOR_BUFFER_LEASED' })
       expect(() => editor.setContent('bypass')).toThrow(leased)
-      expect(() => editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])).toThrow(leased)
+      expect(() =>
+        editor.applyEdit({ from: 0, to: 1, text: 'X' }, [], createStringTextSnapshot('Xbc')),
+      ).toThrow(leased)
 
       expect(buffer.materializeFullText()).toBe('abc')
       expect(editorRoot().textContent).toBe('abc')
@@ -5923,9 +5938,9 @@ describe('Editor', () => {
           includeHighlights: true,
           languageId: 'typescript',
           syntaxMode: 'range',
-          fullText: 'const a = 1;',
         }),
       ])
+      expect(readAll(created[0]!.textSnapshot)).toBe('const a = 1;')
       expect(editor.getState().syntaxStatus).toBe('ready')
       expect(highlightsMap.size).toBe(1)
     })
@@ -7227,7 +7242,7 @@ describe('Editor', () => {
       const createdTexts: string[] = []
       let disposeCount = 0
       setEditorSyntaxSessionFactory((options) => {
-        createdTexts.push(options.fullText)
+        createdTexts.push(readAll(options.textSnapshot))
         const isInitialSession = createdTexts.length === 1
 
         return createMockSyntaxSession({
@@ -7645,7 +7660,7 @@ describe('Editor', () => {
         activate: (context) =>
           context.registerHighlighter({
             createSession: (options) => {
-              createdTexts.push(options.fullText)
+              createdTexts.push(readAll(options.textSnapshot))
               const isInitialSession = createdTexts.length === 1
 
               return createMockHighlighterSession({
@@ -7916,3 +7931,8 @@ describe('Editor', () => {
     })
   })
 })
+
+/** The text `edit` leaves behind, which a detached `applyEdit` is handed alongside the edit. */
+function after(text: string, edit: { from: number; to: number; text: string }) {
+  return createStringTextSnapshot(text.slice(0, edit.from) + edit.text + text.slice(edit.to))
+}

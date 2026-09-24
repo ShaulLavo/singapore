@@ -46,6 +46,7 @@ export { createHoverPlugin, type HoverPluginOptions } from './hoverPlugin'
 export { hoverControllerFor } from './hoverRegistry'
 export {
   hoverTargetRange,
+  hoverTargetRangeInSource,
   identifierRangeAtOffset,
   sameOffsetRange,
   unionOffsetRange,

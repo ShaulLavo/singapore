@@ -1,4 +1,4 @@
-import type { TextSnapshot } from '../documentTextSnapshot'
+import type { TextReadSnapshot } from '../documentTextSnapshot'
 import type {
   EditorLineStartsView,
   EditorResolvedSelection,
@@ -67,12 +67,11 @@ export function createEditorSecondaryTextView(
 }
 
 export type EditorSecondaryViewTextProjection = {
-  readonly snapshot: TextSnapshot | null
-  readonly length: number | null
+  readonly snapshot: TextReadSnapshot
+  readonly length: number
   readonly lineStarts: readonly number[]
-  readonly lineStartsView?: EditorLineStartsView
+  readonly lineStartsView: EditorLineStartsView
   readonly lineCount: number
-  materializeFullText(): string
 }
 
 export type EditorSecondaryViewLineModel = {
@@ -148,31 +147,15 @@ export function createEditorSecondaryViewProjection(
 }
 
 function createTextProjection(snapshot: EditorViewSnapshot): EditorSecondaryViewTextProjection {
-  const textSnapshot = snapshot.textSnapshot ?? null
-
   return {
-    snapshot: textSnapshot,
-    length: textProjectionLength(textSnapshot),
+    snapshot: snapshot.textSnapshot,
+    length: snapshot.textSnapshot.length,
     get lineStarts() {
       return snapshot.lineStarts
     },
     lineStartsView: snapshot.lineStartsView,
     lineCount: snapshot.lineCount,
-    materializeFullText: () => materializeProjectionText(snapshot, textSnapshot),
   }
-}
-
-function textProjectionLength(textSnapshot: TextSnapshot | null): number | null {
-  if (textSnapshot) return textSnapshot.length
-  return null
-}
-
-function materializeProjectionText(
-  snapshot: EditorViewSnapshot,
-  textSnapshot: TextSnapshot | null,
-): string {
-  if (textSnapshot) return textSnapshot.materializeFullText()
-  return snapshot.fullText
 }
 
 function foldSummaryFromMarker(marker: VirtualizedFoldMarker): EditorSecondaryViewFoldSummary {

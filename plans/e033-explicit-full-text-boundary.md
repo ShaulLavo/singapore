@@ -1,6 +1,6 @@
 # E033: Make full-document text reads an explicit boundary
 
-- Status: Proposed
+- Status: Implemented
 - Kind: Implementation
 - Owner: Editor
 - Priority: P1
@@ -291,3 +291,140 @@ runtime read evidence, and allocation measurements establish different parts of 
 If a dependency still needs whole text, finish its consumer design rather than add a renamed slow
 fallback. Acceptance requires correct output, zero hidden flattening on the agreed ordinary paths,
 working explicit export/full-sync recovery, and no p95 typing or retained-memory regression.
+
+## Implementation evidence, 2026-09-23
+
+Base: Editor `7aa3e6c` (E049 committed as `f715d11` during the work, `refs/e033/baseline`), Platform
+`a9a7158f`. The E033 diff is the Editor working tree against that base; Platform's paired changes are
+`312f4419` (another session, consumers) plus the uncommitted follow-ups below. Raw results are in
+`/work/tmp/editor-e033/`; the control was a worktree of the base, removed after the runs.
+
+- Contracts: `TextReadSnapshot` (length, lines, `readRange`, chunks) is exported from the document,
+  extensions and root entries; `TextSnapshot` adds `materializeFullText`. View snapshots carry a
+  required read source and `lineStartsView`, with no `fullText` or `toJSON`;
+  `serializeEditorViewSnapshot` is the named whole-view export. Inline replacement, injected-row and
+  selection-range contexts carry `textSnapshot` instead of `text`. Contributions receive
+  `EditorContributionChange` (the same object, typed without `snapshot`/`transaction`, text
+  read-only), and their contexts gained `getDocumentSyncPoint`/`changesSinceDocumentSyncPoint` so a
+  coalesced consumer can recover every edit. Syntax/highlighter sessions take a required
+  `DocumentTextSnapshot` and `refresh(textSnapshot)`. `applyEdit` requires its result snapshot.
+  `defineLazyFullTextProperty`, the private `text` getters and `legacyEditTextSnapshot` are gone.
+- Local reads: tab-size inference reads its 10,000-line sample through 16K blocks; snippets, ghost
+  text and selection expansion read their line or candidate ranges; `syncTextEdit` compares in 16K
+  windows (at most two passes, tested); the input controller reads lengths from the source.
+- Merge conflicts: `parseMergeConflicts(source)` scans the source's own chunks by index, touches only
+  marker lines, and caches regions per source (one index for the plugin and the Editor methods).
+  `carryMergeConflicts` moves regions across edits that touch no marker line (7 units per touched
+  line), and the plugin feeds it every edit since its last scan. Resolution reads the chosen sides;
+  the resolved-document string is gone.
+- Remaining explicit whole-text reads, each a named function in `scripts/full-text-boundary-allow.json`
+  with its reason: full-view serialization, Shiki's open payload, LSP didOpen/didSave and full-sync
+  recovery, the live diff, edit-action and exact-occurrence commands (`commandDocumentText`; those
+  helpers still take a string), React `useFullText`, Solid `materializeFullText`, save serialization.
+- Enforcement: `bun run check:full-text` (symbol-aware, follows import and destructuring aliases,
+  flags `readRange(0, x.length)` and `fullText` getters, fails stale or unexplained entries;
+  `--self-test` covers a renamed wrapper, an alias and a stale entry) runs first in `health`. The
+  architecture-health public-API baseline was already stale before E033 and was not rewritten.
+  `test/types/fullTextBoundary.types.ts` compiles against `dist` in the core `typecheck`.
+- `test/fullTextBoundary.test.ts`: two views over a buffer fragmented by 32 replacements, with
+  Markdown, scope-lines, decode, merge-conflict and captures. At 65,536 and 1,048,576 units every
+  operation read the same amount, with no full read and no conflict scan: type 902, peer undo 1,202,
+  select 411, scroll/state/spread-and-stringify 0 units (budgets 2,048/2,048/1,024/1,024/0/0).
+  Delivery with `materializeFullText` throwing on the source never reached it.
+
+### Measurements
+
+- Input latency (existing workload: ordinary 4.5K units with syntax, short-lines 12.8M, long-line
+  1.0M; single and multiple views; 3 repetitions): ten alternating control/candidate pairs, the
+  second five in reversed order. By the median of per-run p95 with limit
+  control + max(5%, 0.2 ms), short-lines and long-line pass; 28 of 108 keys had controls that
+  disagreed with each other past the limit. Five keys failed, all ordinary/single typing and undo by
+  +0.2 to +0.25 ms at the timer's 0.1 ms resolution. A focused rerun of those two groups with 20
+  repetitions (1,440 typing and 720 undo samples per build, three alternating pairs) gave per-run p95
+  medians of 1.2 vs 1.1 ms (typing) and 1.0 vs 1.0 ms (undo): within the limit.
+- Conflicts present, per-keystroke invalidation (`scan/`): control's materialize-and-parse took 2.0 ms
+  at 4M and 22 ms at 48M (median); the candidate's fresh scan 0.8 and 9.5 ms; a carried edit 0.01 ms
+  at both sizes. The first windowed-copy scanner was 1.7–2x slower than control and was replaced.
+- Retained heap (E007 `copies.mjs --consumers`, 64K/4M/48M, five alternating pairs, main-renderer CDP
+  heap after forced GC; worker heap not covered): open, live and post-disposal deltas equal control
+  within 0.06 MiB at every size, zero retained objects. Diagnostic runs: opening now performs one
+  whole-document materialization (Shiki open) instead of three; edits and undo read nothing in either.
+- The plan's workload (`examples/stress/boundary.mjs`, see its README section): two views over a
+  document fragmented by 32 replacements at 64K/4M/48M. `plain` and `contributions` (Markdown with
+  fixed captures, scope-lines, decode, merge conflicts, with a conflict present and the caret typing
+  inside it). Each run: 20 warm-up and 200 measured native keys, then the same for undo. The control
+  was a worktree of the base running the same workload files. There were ten alternating pairs per
+  configuration, the second five reversed, and reruns waited for load below 2.5: other processes
+  pushed the load to 24 during the first batch. Median of per-run p95 input-to-applied, control →
+  candidate:
+
+  | Configuration | Size | Typing          | Undo             |
+  | ------------- | ---- | --------------- | ---------------- |
+  | plain         | 64K  | 1.15 → 1.10 ms  | 1.00 → 1.00 ms   |
+  | plain         | 4M   | 0.95 → 0.90 ms  | 1.10 → 1.10 ms   |
+  | plain         | 48M  | 1.05 → 0.90 ms  | 0.85 → 1.05 ms   |
+  | contributions | 64K  | 2.15 → 1.90 ms  | 1.90 → 1.70 ms   |
+  | contributions | 4M   | 13.00 → 1.85 ms | 13.75 → 1.60 ms  |
+  | contributions | 48M  | 89.65 → 1.55 ms | 114.65 → 1.60 ms |
+
+  No key exceeds control + max(5%, 0.2 ms). Some controls failed the self-repeat check: the
+  contributions controls at 64K typing and 48M undo, and three plain undo keys. Of those, only 48M
+  undo is past its limit when the first pair, which the load spike reached, is dropped. Its control
+  swings between 106 and 117 ms against a candidate at 1.6 ms. The first, unstabilized batch had one
+  failing key, plain 4M typing dispatch (0.9 → 1.15 ms). It passed in the gated rerun (0.95 → 0.90).
+  Diagnostic runs: the candidate's typing and undo read 237,000 units with zero full reads at every
+  size. The control's contributions typing and undo did 600–880 full reads and read up to 44 billion
+  units at 48M. At 48M the contributions open heap went from 194 to 98 MiB, the live heap from 245 to
+  149 MiB and open time from 244 to 46 ms. Post-disposal heap matched control (3.4 MiB) and nothing
+  was retained. Export time was equal (6.5 ms at 48M). Full-sync recovery is not part of this
+  workload; the LSP tests cover it. Raw results are in `/work/tmp/editor-e033/boundary/`.
+
+### Tests and Platform
+
+- Core: 2,796 tests, 4 failing (Shiki worker-cache ×3, BiDi perf probe), the same as the control.
+  diff (4), typescript-lsp (5) and React (3) fail the same tests as the control; every other migrated
+  package passes. Workspace `typecheck` 40/40; knip reports one issue fewer than the control.
+- Platform: web typecheck clean against the linked candidate builds (`@singapore-editor/*` →
+  `/work/projects/Editor/packages/*`, dist rebuilt from this tree); `bun run gates` and the
+  feature-import lint pass; focused tests (search syntax, settings diagnostics, conflict resolution,
+  diff tokens, semantic tokens, workspace edits) 136/136. Follow-ups to `312f4419`:
+  `lib/text-snapshot-equality.ts` (chunk equality, now shared by editor, workspace and settings; the
+  workspace→editor allow entry is gone), UTF-8 size counted by chunks in the semantic-token cap, and
+  scenario `editor-conflict-merge`.
+- Mesh release `20260923T192600Z-a9a7158f-e033-full-text-boundary`: `editor-lsp-hover` (Unicode
+  confusable hover) and `editor-conflict-merge` (3/3) pass. The conflict toast closes after a `resolved` outcome. An earlier note said it stayed up, but that came from a screenshot taken before the dismissal animation, and from a timeout that was really the watcher race. The scenario now asserts that the toast closes. Settings with stale
+  diagnostics were not driven in the app: the workspace settings layer is bound to the server's
+  workspace root, so a disposable fixture cannot supply it; the diagnostics-plugin tests cover it.
+
+### Review follow-ups, 2026-09-23
+
+A review of the diff raised ten findings. Fixed:
+
+- UTF-8 cap: counts an unpaired surrogate as the 3 bytes U+FFFD takes. It matched `TextEncoder` at
+  every chunk split.
+- `carryMergeConflicts` rescans once a batch touches 1,024 lines or more.
+- `readLeadingWhitespace` probes 64-unit windows that grow. Ghost text stops at the line end.
+- `check:full-text` catches `readRange(0, length)` through a local or destructured length, and fails
+  when an `@singapore-editor/*` import does not resolve, since a missing `dist` hides references.
+- Cleanup: the React store identity alias, the unreachable `rangeAroundOffset` fallbacks, and an
+  orphan find comment.
+
+Not changed:
+
+- LSP positions past the last line: the snapshot and string converters give the same offsets (a
+  direct comparison), so there was no regression.
+- The merge-conflict plugin scans on its first edit when it has no parse point, once per document.
+  Control materialized and parsed on every edit that was not a neutral insertion.
+- `documentSessionChangeTextSnapshot` predates E033.
+
+Redeployed as `20260923T195754Z-a9a7158f-e033-review-fixes`; `editor-conflict-merge` and
+`editor-lsp-hover` pass on it.
+
+### Second review, 2026-09-24
+
+- Solid kept a closed or replaced document's text until the next read or controller disposal.
+  `setTextSnapshot` now drops the cached pair whenever the source changes, without reading the new
+  one. Tests `lets go of a replaced/closed document once its text was read` fail with the release
+  removed and pass with it. The GC probe collects before it calls `deref`, because `deref` keeps its
+  target alive until the current job ends.
+- The plan's workload now exists and ran, as recorded above.

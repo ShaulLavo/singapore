@@ -127,7 +127,7 @@ describe('VirtualizedTextView', () => {
     view.setScrollMetrics(0, 40)
     view.setText('before')
 
-    expect(() => view.setText('alpha\nbeta', undefined, [0, 6, 3])).toThrow(
+    expect(() => view.setText('alpha\nbeta', [0, 6, 3])).toThrow(
       'Prepared line starts do not match the attached document',
     )
     expect(view.getState()).toMatchObject({
@@ -253,10 +253,10 @@ describe('VirtualizedTextView', () => {
     view.setText('before')
     view.setScrollMetrics(0, 40, 240)
 
-    expect(() => view.setText('alpha\nbeta', undefined, [0, Number.NaN, 5])).toThrow(
+    expect(() => view.setText('alpha\nbeta', [0, Number.NaN, 5])).toThrow(
       'Prepared line starts do not match the attached document',
     )
-    expect(() => view.setText('alpha\nbeta', undefined, [0, 1.5, 5])).toThrow(
+    expect(() => view.setText('alpha\nbeta', [0, 1.5, 5])).toThrow(
       'Prepared line starts do not match the attached document',
     )
     expect(view.getState()).toMatchObject({
@@ -266,10 +266,10 @@ describe('VirtualizedTextView', () => {
   })
 
   it('validates prepared line starts against snapshot length without rescanning text', () => {
-    expect(() => view.setText('alpha\nbeta', undefined, [0, 5])).not.toThrow()
+    expect(() => view.setText('alpha\nbeta', [0, 5])).not.toThrow()
 
     const shortSnapshot = throwingFullTextSnapshot('alpha')
-    expect(() => view.setText('alpha\nbeta', shortSnapshot, [0, 6])).toThrow(
+    expect(() => view.setText(shortSnapshot, [0, 6])).toThrow(
       'Prepared line starts do not match the attached document',
     )
     expect(view.getLineStarts()).toEqual([0, 6])

@@ -25,15 +25,16 @@ import {
 import {
   createEditorBufferSession,
   type DocumentSession,
-  type DocumentSessionChange,
   type EditorBufferSession,
   type EditorTextBuffer,
   type EditorViewSession,
+  type TextReadSnapshot,
   type TextSnapshot,
 } from '@singapore-editor/core/document'
 import type { EditorSyntaxLanguageId } from '@singapore-editor/core/syntax'
 import type { EditorTheme, HiddenCharactersMode } from '@singapore-editor/core/rendering'
 import type {
+  EditorContributionChange,
   EditorInitialPaintEvent,
   EditorPlugin,
   EditorViewContributionUpdateKind,
@@ -109,9 +110,8 @@ export type ReactEditorStoreSnapshot = {
   readonly editor: Editor | null
   readonly state: EditorState | null
   readonly snapshot: EditorViewSnapshot | null
-  readonly textSnapshot: TextSnapshot | null
-  readonly fullText: string
-  readonly lastChange: DocumentSessionChange | null
+  readonly textSnapshot: TextReadSnapshot | null
+  readonly lastChange: EditorContributionChange | null
   readonly updateKind: EditorViewContributionUpdateKind | null
 }
 
@@ -126,14 +126,15 @@ export type ReactEditorController = {
   getSnapshot(): EditorViewSnapshot | null
   getTextSnapshot(): TextSnapshot | null
   materializeFullText(): string
-  getLastChange(): DocumentSessionChange | null
+  getLastChange(): EditorContributionChange | null
   getUpdateKind(): EditorViewContributionUpdateKind | null
   useEditorInstance(): Editor | null
   useState(): EditorState | null
   useSnapshot(): EditorViewSnapshot | null
-  useTextSnapshot(): TextSnapshot | null
+  useTextSnapshot(): TextReadSnapshot | null
+  /** Re-renders with the whole text on every text revision: O(document length) each time. */
   useFullText(): string
-  useLastChange(): DocumentSessionChange | null
+  useLastChange(): EditorContributionChange | null
   useUpdateKind(): EditorViewContributionUpdateKind | null
   readonly commands: ReactEditorCommands
 }
@@ -144,9 +145,7 @@ export type EditorHostProps = {
   readonly style?: CSSProperties
 }
 
-type ReactEditorStoreSnapshotFields = Omit<ReactEditorStoreSnapshot, 'fullText'>
-
-type ReactEditorStorePatch = Partial<ReactEditorStoreSnapshotFields>
+type ReactEditorStorePatch = Partial<ReactEditorStoreSnapshot>
 
 type ReactEditorSelectorSubscription<T> = {
   selector: ReactEditorSelector<T>
@@ -190,10 +189,9 @@ const selectEditor = (snapshot: ReactEditorStoreSnapshot): Editor | null => snap
 const selectState = (snapshot: ReactEditorStoreSnapshot): EditorState | null => snapshot.state
 const selectSnapshot = (snapshot: ReactEditorStoreSnapshot): EditorViewSnapshot | null =>
   snapshot.snapshot
-const selectTextSnapshot = (snapshot: ReactEditorStoreSnapshot): TextSnapshot | null =>
+const selectTextSnapshot = (snapshot: ReactEditorStoreSnapshot): TextReadSnapshot | null =>
   snapshot.textSnapshot
-const selectFullText = (snapshot: ReactEditorStoreSnapshot): string => snapshot.fullText
-const selectLastChange = (snapshot: ReactEditorStoreSnapshot): DocumentSessionChange | null =>
+const selectLastChange = (snapshot: ReactEditorStoreSnapshot): EditorContributionChange | null =>
   snapshot.lastChange
 const selectUpdateKind = (
   snapshot: ReactEditorStoreSnapshot,
@@ -262,7 +260,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   private mountedElement: HTMLElement | null = null
   private scheduledDisposeGeneration: number | null = null
   private nextDisposeGeneration = 0
-  private suspendedStoreFields: ReactEditorStoreSnapshotFields | null = null
+  private suspendedStoreFields: ReactEditorStoreSnapshot | null = null
   private options: ReactEditorOptions
 
   public constructor(options: ReactEditorOptions) {
@@ -299,6 +297,8 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     const generation = this.nextDisposeGeneration
     this.scheduledDisposeGeneration = generation
     this.suspendEditor()
+    // @justification Waits out React's synchronous StrictMode unmount and remount; the generation
+    // guard drops the disposal when the component came straight back.
     queueMicrotask(() => {
       if (this.scheduledDisposeGeneration !== generation) return
 
@@ -325,8 +325,8 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     const snapshot = this.store.read()
     if (!snapshot.editor) return
 
-    this.suspendedStoreFields = storeSnapshotFields(snapshot)
-    this.store.update(createEmptyStoreSnapshotFields())
+    this.suspendedStoreFields = snapshot
+    this.store.update(createEmptyStoreSnapshot())
   }
 
   private resumeSuspendedEditor(): void {
@@ -354,14 +354,14 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   }
 
   public getTextSnapshot(): TextSnapshot | null {
-    return this.store.read().textSnapshot ?? this.getEditor()?.getTextSnapshot() ?? null
+    return this.getEditor()?.getTextSnapshot() ?? null
   }
 
   public materializeFullText(): string {
     return this.getEditor()?.materializeFullText() ?? ''
   }
 
-  public getLastChange(): DocumentSessionChange | null {
+  public getLastChange(): EditorContributionChange | null {
     return this.store.read().lastChange
   }
 
@@ -373,10 +373,14 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   public readonly useState = (): EditorState | null => useEditorSelector(this, selectState)
   public readonly useSnapshot = (): EditorViewSnapshot | null =>
     useEditorSelector(this, selectSnapshot)
-  public readonly useTextSnapshot = (): TextSnapshot | null =>
+  public readonly useTextSnapshot = (): TextReadSnapshot | null =>
     useEditorSelector(this, selectTextSnapshot)
-  public readonly useFullText = (): string => useEditorSelector(this, selectFullText)
-  public readonly useLastChange = (): DocumentSessionChange | null =>
+  public readonly useFullText = (): string => {
+    // Per hook, so the string is retained by this subscriber alone and released on unmount.
+    const [selectFullText] = useState(createFullTextSelector)
+    return useEditorSelector(this, selectFullText)
+  }
+  public readonly useLastChange = (): EditorContributionChange | null =>
     useEditorSelector(this, selectLastChange)
   public readonly useUpdateKind = (): EditorViewContributionUpdateKind | null =>
     useEditorSelector(this, selectUpdateKind)
@@ -409,14 +413,14 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   public syncSnapshot(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    change: DocumentSessionChange | null,
+    change: EditorContributionChange | null,
   ): void {
     if (!this.shouldSyncStore()) return
     if (this.getEditor()?.getPresentationState() === 'provisional') return
 
     const patch = {
       snapshot,
-      textSnapshot: snapshot.textSnapshot ?? null,
+      textSnapshot: snapshot.textSnapshot,
       lastChange: change,
       updateKind: kind,
       ...(kind === 'selection' ? { state: this.getEditor()?.getState() ?? null } : {}),
@@ -425,7 +429,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     this.store.update(patch)
   }
 
-  public syncChange(state: EditorState, change: DocumentSessionChange | null): void {
+  public syncChange(state: EditorState, change: EditorContributionChange | null): void {
     if (!this.shouldSyncStore()) return
 
     this.store.update({
@@ -527,6 +531,8 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     if (state === 'provisional') this.clearPresentedSnapshot()
     const requestedDocumentKey = this.options.documentKey
     const requestedDocumentGeneration = this.requestedDocumentGeneration
+    // @justification Defers the callback past StrictMode's synchronous replay; the incarnation,
+    // document and state guards drop it when the editor moved on, and no editor work is scheduled.
     queueMicrotask(() => {
       if (editorIncarnation !== this.editorIncarnation) return
       if (requestedDocumentKey !== this.options.documentKey) return
@@ -584,7 +590,7 @@ class ReactEditorStore {
   public update(patch: ReactEditorStorePatch): void {
     if (!hasStorePatchChange(this.snapshot, patch)) return
 
-    this.snapshot = createStoreSnapshot(mergeStorePatch(this.snapshot, patch))
+    this.snapshot = mergeStorePatch(this.snapshot, patch)
     this.version += 1
     this.queueNotify()
   }
@@ -812,7 +818,7 @@ function samePlugins(
 function disposeEditor(store: ReactEditorStore): void {
   const editor = store.read().editor
   editor?.dispose()
-  store.update(createEmptyStoreSnapshotFields())
+  store.update(createEmptyStoreSnapshot())
 }
 
 function createCommands(
@@ -1075,10 +1081,6 @@ function bufferViewSession(buffer: EditorTextBuffer, view: EditorViewSession): E
 }
 
 function createEmptyStoreSnapshot(): ReactEditorStoreSnapshot {
-  return createStoreSnapshot(createEmptyStoreSnapshotFields())
-}
-
-function createEmptyStoreSnapshotFields(): ReactEditorStoreSnapshotFields {
   return {
     editor: null,
     state: null,
@@ -1089,37 +1091,23 @@ function createEmptyStoreSnapshotFields(): ReactEditorStoreSnapshotFields {
   }
 }
 
-function storeSnapshotFields(snapshot: ReactEditorStoreSnapshot): ReactEditorStoreSnapshotFields {
-  return {
-    editor: snapshot.editor,
-    state: snapshot.state,
-    snapshot: snapshot.snapshot,
-    textSnapshot: snapshot.textSnapshot,
-    lastChange: snapshot.lastChange,
-    updateKind: snapshot.updateKind,
+/** Reads the captured revision whole, once per revision, keeping only the latest pair. */
+function createFullTextSelector(): ReactEditorSelector<string> {
+  let source: TextReadSnapshot | null = null
+  let text = ''
+  return (snapshot) => {
+    if (snapshot.textSnapshot === source) return text
+
+    source = snapshot.textSnapshot
+    text = source ? source.readRange(0, source.length) : ''
+    return text
   }
-}
-
-function createStoreSnapshot(fields: ReactEditorStoreSnapshotFields): ReactEditorStoreSnapshot {
-  let textCache: string | undefined
-  const snapshot: ReactEditorStoreSnapshotFields = { ...fields }
-
-  Object.defineProperty(snapshot, 'fullText', {
-    configurable: true,
-    enumerable: true,
-    get: () => {
-      textCache ??= snapshot.textSnapshot?.materializeFullText() ?? ''
-      return textCache
-    },
-  })
-
-  return snapshot as ReactEditorStoreSnapshot
 }
 
 function mergeStorePatch(
   snapshot: ReactEditorStoreSnapshot,
   patch: ReactEditorStorePatch,
-): ReactEditorStoreSnapshotFields {
+): ReactEditorStoreSnapshot {
   return {
     editor: patchValue(snapshot, patch, 'editor'),
     state: patchValue(snapshot, patch, 'state'),
@@ -1130,13 +1118,13 @@ function mergeStorePatch(
   }
 }
 
-function patchValue<K extends keyof ReactEditorStoreSnapshotFields>(
+function patchValue<K extends keyof ReactEditorStoreSnapshot>(
   snapshot: ReactEditorStoreSnapshot,
   patch: ReactEditorStorePatch,
   key: K,
-): ReactEditorStoreSnapshotFields[K] {
+): ReactEditorStoreSnapshot[K] {
   if (Object.prototype.hasOwnProperty.call(patch, key)) {
-    return patch[key] as ReactEditorStoreSnapshotFields[K]
+    return patch[key] as ReactEditorStoreSnapshot[K]
   }
   return snapshot[key]
 }
@@ -1145,7 +1133,7 @@ function hasStorePatchChange(
   snapshot: ReactEditorStoreSnapshot,
   patch: ReactEditorStorePatch,
 ): boolean {
-  for (const key of Object.keys(patch) as (keyof ReactEditorStoreSnapshotFields)[]) {
+  for (const key of Object.keys(patch) as (keyof ReactEditorStoreSnapshot)[]) {
     if (!Object.is(snapshot[key], patch[key])) return true
   }
 

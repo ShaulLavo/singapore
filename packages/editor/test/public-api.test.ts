@@ -97,6 +97,8 @@ import {
   projectDecorationRangeThroughEdits,
   reindentEditsForRanges,
 } from '@singapore-editor/core/extensions'
+import { serializeEditorViewSnapshot } from '@singapore-editor/core/extensions'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import { applyEditorTheme, type EditorTheme } from '@singapore-editor/core/rendering'
 import {
   createEditorSecondaryTextView,
@@ -139,7 +141,7 @@ describe('public API facade', () => {
     ]
     const contracts = null as unknown as SnapshotContracts
     const fullJSON = (snapshot: core.EditorViewSnapshot): core.EditorViewSnapshotJSON =>
-      snapshot.toJSON()
+      serializeEditorViewSnapshot(snapshot)
     const visibleJSON = (
       snapshot: core.EditorViewSnapshot,
     ): core.EditorVisibleSnapshotJSON | null => snapshot.toVisibleSnapshot()?.toJSON() ?? null
@@ -226,7 +228,7 @@ describe('public API facade', () => {
         remoteText: 'abc',
       }),
     ).toBe('abc')
-    expect(parseMergeConflicts('')).toEqual([])
+    expect(parseMergeConflicts(createStringTextSnapshot(''))).toEqual([])
     expect(EDITOR_MERGE_CONFLICT_FEATURE.id).toBe('editor.mergeConflicts')
     expect(materializePieceTableFullText(snapshot)).toBe('abc')
     expect(readPieceTableTextRange(snapshot, 1, 3)).toBe('bc')
@@ -324,7 +326,7 @@ describe('public API facade', () => {
 
     expect(
       structural({
-        text: 'fn main() {}',
+        textSnapshot: createStringTextSnapshot('fn main() {}'),
         languageId: 'rust',
         offset: 11,
         selection: { start: 11, end: 11 },

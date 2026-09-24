@@ -17,7 +17,12 @@ import {
   type EditorCompletionSource,
 } from '../src/completionProviders'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
-import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  documentSyncSnapshotFields,
+  viewSnapshotStructuralFields,
+  viewText,
+  viewTextFields,
+} from './documentSyncSnapshot'
 import {
   createTestEditContributionContext,
   createTestPluginContext,
@@ -252,7 +257,7 @@ async function connectedEditor(options: {
     applyEdits,
     type: (character) => {
       const at = snapshot.selections[0]?.headOffset ?? 0
-      const next = `${snapshot.fullText.slice(0, at)}${character}${snapshot.fullText.slice(at)}`
+      const next = `${viewText(snapshot).slice(0, at)}${character}${viewText(snapshot).slice(at)}`
       snapshot = editorSnapshot(next, at + character.length, snapshot.textVersion + 1)
       contribution.update(
         snapshot,
@@ -372,9 +377,8 @@ function editorSnapshot(
     ...viewSnapshotStructuralFields(),
     documentId: 'src/index.ts',
     languageId: 'typescript',
-    fullText,
+    ...viewTextFields(fullText),
     textVersion,
-    lineStarts: [0],
     tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [

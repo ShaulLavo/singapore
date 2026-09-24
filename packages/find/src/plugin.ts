@@ -1,10 +1,8 @@
+import { compareTextOffsetRanges, type DocumentSyncPoint } from '@singapore-editor/core/document'
 import {
-  compareTextOffsetRanges,
-  createStringTextSnapshot,
-  type DocumentSessionChange,
-  type DocumentSyncPoint,
-} from '@singapore-editor/core/document'
-import { projectDecorationRangeThroughEdits } from '@singapore-editor/core/extensions'
+  type EditorContributionChange,
+  projectDecorationRangeThroughEdits,
+} from '@singapore-editor/core/extensions'
 import type {
   EditorCapabilityContribution,
   EditorCapabilityContributionContext,
@@ -41,12 +39,7 @@ import {
   type FindTrackedRanges,
 } from './findController'
 import { EditorFindWidget, type EditorFindWidgetOptions } from './findWidget'
-import {
-  arrayFindLineStartsView,
-  type FindLineStartsView,
-  type FindRange,
-  type FindTextSource,
-} from './search'
+import { type FindLineStartsView, type FindRange, type FindTextSource } from './search'
 import type { EditorFindOptions } from './types'
 
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID }
@@ -116,7 +109,7 @@ class EditorFindViewContribution implements EditorViewContribution {
   public update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    change?: DocumentSessionChange | null,
+    change?: EditorContributionChange | null,
   ): void {
     if (
       kind === 'layout' ||
@@ -559,11 +552,11 @@ function snapshotTextSource(): (snapshot: EditorViewSnapshot) => FindTextSource 
 }
 
 function findTextSource(snapshot: EditorViewSnapshot): FindTextSource {
-  const text = snapshot.textSnapshot ?? createStringTextSnapshot(snapshot.fullText)
+  const text = snapshot.textSnapshot
   return {
     length: text.length,
     readRange: (start, end) => text.readRange(start, end),
-    lineStartsView: snapshot.lineStartsView ?? arrayFindLineStartsView(snapshot.lineStarts),
+    lineStartsView: snapshot.lineStartsView,
   }
 }
 

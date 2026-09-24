@@ -1,5 +1,6 @@
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { describe, expect, it, vi } from 'vitest'
+import { createTestViewSnapshotSource } from '@singapore-editor/core/testing'
 import type {
   EditorMinimapDecoration,
   EditorMinimapFeature,
@@ -204,7 +205,7 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
   return {
     documentId: 'find-minimap-test',
     languageId: null,
-    fullText: text,
+    ...createTestViewSnapshotSource(text),
     textVersion: 1,
     initialHighlightStatus: 'painted',
     syntaxStatus: 'ready',
@@ -245,9 +246,6 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
       clientHeight: 200,
       clientWidth: 88,
       visibleRange: { start: 0, end: lineStarts.length },
-    },
-    toJSON() {
-      throw new Error('not used by this fixture')
     },
     toVisibleSnapshot() {
       return null

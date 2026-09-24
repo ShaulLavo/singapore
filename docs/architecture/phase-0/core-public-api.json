@@ -274,6 +274,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorCollapsedRegion",
+          "source": "packages/editor/src/viewFolds.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorColorDefaults",
           "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
@@ -538,6 +544,24 @@
         },
         {
           "kind": "type",
+          "name": "EditorHistoryBarrier",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorHistoryGraph",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorHistoryGraphNode",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorIndentationRules",
           "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
@@ -652,6 +676,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorManualFold",
+          "source": "packages/editor/src/viewFolds.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorMarkerHit",
+          "source": "packages/editor/src/pointQueries.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorMergeConflictFeature",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -760,6 +796,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorPointHit",
+          "source": "packages/editor/src/pointQueries.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorPreparedDocument",
           "source": "packages/editor/src/editor/preparedDocument.ts",
           "via": "packages/editor/src/index.ts"
@@ -858,18 +900,6 @@
           "kind": "type",
           "name": "EditorSelectionRange",
           "source": "packages/editor/src/public/extensions.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorSelectionRevealOptions",
-          "source": "packages/editor/src/editor.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorSelectionRevealTarget",
-          "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1054,6 +1084,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorTextBufferOptions",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorTheme",
           "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
@@ -1080,6 +1116,18 @@
           "kind": "type",
           "name": "EditorToken",
           "source": "packages/editor/src/tokens.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorTokenInput",
+          "source": "packages/editor/src/syntax/tokenStore.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorTokenStoreOrigin",
+          "source": "packages/editor/src/syntax/tokenStore.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1122,6 +1170,12 @@
           "kind": "type",
           "name": "EditorViewContributionUpdateKind",
           "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorViewFoldState",
+          "source": "packages/editor/src/viewFolds.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1260,6 +1314,60 @@
           "kind": "type",
           "name": "HighlightRegistry",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryComparison",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryComparisonSide",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryGraphLayout",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryGraphLayoutEdge",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryGraphLayoutNode",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryNodeId",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryViewer",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryViewerOptions",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryViewerState",
+          "source": "packages/editor/src/historyViewer.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1456,6 +1564,24 @@
         },
         {
           "kind": "type",
+          "name": "SerializedEditorHistory",
+          "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SerializedEditorHistoryNode",
+          "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SerializedEditorHistorySelection",
+          "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "SuspiciousCharacterKind",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -1482,6 +1608,12 @@
           "kind": "type",
           "name": "TextOffsetRange",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "TextReadSnapshot",
+          "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1710,6 +1842,12 @@
           "kind": "unknown",
           "name": "createEmptySyntaxSession",
           "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createHistoryViewer",
+          "source": "packages/editor/src/historyViewer.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1966,6 +2104,12 @@
         },
         {
           "kind": "unknown",
+          "name": "EditorTokenStore",
+          "source": "packages/editor/src/syntax/tokenStore.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "filterEditorKeymapLayersByCommandPacks",
           "source": "packages/editor/src/editor/keymap.ts",
           "via": "packages/editor/src/index.ts"
@@ -2010,6 +2154,12 @@
           "kind": "unknown",
           "name": "isEditorSyntaxLanguage",
           "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "layoutHistoryGraph",
+          "source": "packages/editor/src/historyViewer.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -2188,6 +2338,12 @@
         },
         {
           "kind": "unknown",
+          "name": "SERIALIZED_EDITOR_HISTORY_VERSION",
+          "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "styleForTreeSitterCapture",
           "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
@@ -2202,6 +2358,12 @@
           "kind": "unknown",
           "name": "suspiciousCharacterRanges",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "toEditorTokenStore",
+          "source": "packages/editor/src/syntax/tokenStore.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -2296,6 +2458,12 @@
         },
         {
           "kind": "unknown",
+          "name": "forEachBufferSpan",
+          "source": "@singapore-editor/textbuffer/internal/buffers",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "formatPieceInspectionNode",
           "source": "@singapore-editor/textbuffer/debug",
           "via": "packages/editor/src/debug.ts"
@@ -2346,6 +2514,12 @@
           "kind": "type",
           "name": "AnchorLiveness",
           "source": "@singapore-editor/textbuffer",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "AnchorSelection",
+          "source": "packages/editor/src/selections.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2530,8 +2704,38 @@
         },
         {
           "kind": "type",
+          "name": "EditorCollapsedRegion",
+          "source": "packages/editor/src/viewFolds.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorDocument",
           "source": "packages/editor/src/tokens.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorHistoryBarrier",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorHistoryGraph",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorHistoryGraphNode",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorManualFold",
+          "source": "packages/editor/src/viewFolds.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2554,8 +2758,20 @@
         },
         {
           "kind": "type",
+          "name": "EditorTextBufferOptions",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorTimingMeasurement",
           "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorViewFoldState",
+          "source": "packages/editor/src/viewFolds.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2574,6 +2790,60 @@
           "kind": "type",
           "name": "EditorViewSession",
           "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryComparison",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryComparisonSide",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryGraphLayout",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryGraphLayoutEdge",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryGraphLayoutNode",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryNodeId",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryViewer",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryViewerOptions",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HistoryViewerState",
+          "source": "packages/editor/src/historyViewer.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2692,6 +2962,30 @@
         },
         {
           "kind": "type",
+          "name": "SelectionSet",
+          "source": "packages/editor/src/selections.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SerializedEditorHistory",
+          "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SerializedEditorHistoryNode",
+          "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SerializedEditorHistorySelection",
+          "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "TextCharacterClass",
           "source": "packages/editor/src/textRanges.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -2704,14 +2998,32 @@
         },
         {
           "kind": "type",
+          "name": "TextLineRange",
+          "source": "packages/editor/src/documentTextSnapshot.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "TextOffsetRange",
           "source": "packages/editor/src/textRanges.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
           "kind": "type",
+          "name": "TextReadSnapshot",
+          "source": "packages/editor/src/documentTextSnapshot.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "TextSnapshot",
           "source": "packages/editor/src/documentTextSnapshot.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "TextStorageMaintenanceStats",
+          "source": "packages/editor/src/textStorageMaintenance.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2812,6 +3124,12 @@
         },
         {
           "kind": "unknown",
+          "name": "createAnchorSelection",
+          "source": "packages/editor/src/selections.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "createDocumentLogicalRevisionScope",
           "source": "packages/editor/src/editor/editChain.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -2848,6 +3166,12 @@
         },
         {
           "kind": "unknown",
+          "name": "createHistoryViewer",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "createPieceTableSnapshot",
           "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
@@ -2856,6 +3180,12 @@
           "kind": "unknown",
           "name": "createPieceTableWalker",
           "source": "@singapore-editor/textbuffer",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createSelectionSet",
+          "source": "packages/editor/src/selections.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2880,6 +3210,12 @@
           "kind": "unknown",
           "name": "diffPieceTableSnapshots",
           "source": "@singapore-editor/textbuffer",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "documentSessionChangeTextSnapshot",
+          "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2932,6 +3268,12 @@
         },
         {
           "kind": "unknown",
+          "name": "layoutHistoryGraph",
+          "source": "packages/editor/src/historyViewer.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "lineRangeAtOffset",
           "source": "packages/editor/src/textRanges.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -2952,6 +3294,12 @@
           "kind": "unknown",
           "name": "nextWordOffset",
           "source": "packages/editor/src/textRanges.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "normalizeSelectionSet",
+          "source": "packages/editor/src/selections.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -3046,6 +3394,12 @@
         },
         {
           "kind": "unknown",
+          "name": "resolveSelection",
+          "source": "packages/editor/src/selections.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "reverseDocumentTransaction",
           "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -3066,6 +3420,12 @@
           "kind": "unknown",
           "name": "sealDocumentTransactionReceipt",
           "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SERIALIZED_EDITOR_HISTORY_VERSION",
+          "source": "packages/editor/src/historySerialization.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -3430,6 +3790,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorMarkerHit",
+          "source": "packages/editor/src/pointQueries.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorMergeConflictFeature",
           "source": "packages/editor/src/mergeConflictPlugin.ts",
           "via": "packages/editor/src/editor.ts"
@@ -3486,6 +3852,12 @@
           "kind": "type",
           "name": "EditorPluginLifecycleState",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPointHit",
+          "source": "packages/editor/src/pointQueries.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -3576,18 +3948,6 @@
           "kind": "type",
           "name": "EditorSelectionRange",
           "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorSelectionRevealOptions",
-          "source": "packages/editor/src/editor/selectionReveal.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorSelectionRevealTarget",
-          "source": "packages/editor/src/editor/selectionReveal.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -4168,6 +4528,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorContributionChange",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorDecoration",
           "source": "packages/editor/src/editor/decorationStore.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4360,6 +4726,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorLineStartsView",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorLogEditorContext",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4392,6 +4764,12 @@
           "kind": "type",
           "name": "EditorLogLevel",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorMarkerHit",
+          "source": "packages/editor/src/pointQueries.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -4480,6 +4858,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorPointHit",
+          "source": "packages/editor/src/pointQueries.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorReindentOptions",
           "source": "packages/editor/src/editor/reindent.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4518,6 +4902,18 @@
           "kind": "type",
           "name": "EditorSnippetStop",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSnippetTokensFeature",
+          "source": "packages/editor/src/editor/snippetTokensFeature.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSnippetTokenSource",
+          "source": "packages/editor/src/editor/snippetTokensFeature.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -4678,6 +5074,12 @@
         },
         {
           "kind": "type",
+          "name": "ParsedSnippet",
+          "source": "packages/editor/src/editor/snippet.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "SemanticTokenDropReason",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4704,6 +5106,18 @@
           "kind": "type",
           "name": "SemanticTokenSpan",
           "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SnippetRange",
+          "source": "packages/editor/src/editor/snippet.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "TextReadSnapshot",
+          "source": "packages/editor/src/documentTextSnapshot.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -4762,6 +5176,18 @@
         },
         {
           "kind": "unknown",
+          "name": "EDITOR_SNIPPET_TOKENS_FEATURE_ID",
+          "source": "packages/editor/src/editor/snippetTokensFeature.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "EDITOR_SNIPPET_TOKENS_FEATURE",
+          "source": "packages/editor/src/editor/snippetTokensFeature.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "EditorDecorationStore",
           "source": "packages/editor/src/editor/decorationStore.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4770,6 +5196,12 @@
           "kind": "unknown",
           "name": "editorLanguageConfiguration",
           "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "parseSnippet",
+          "source": "packages/editor/src/editor/snippet.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -4825,244 +5257,22 @@
           "name": "SemanticTokenLayerOptions",
           "source": "packages/editor/src/semanticTokenLayer.ts",
           "via": "packages/editor/src/public/extensions.ts"
-        }
-      ],
-      "source": "packages/editor/src/public/extensions.ts",
-      "specifier": "./extensions"
-    },
-    {
-      "exports": [
-        {
-          "kind": "type",
-          "name": "AnchorSelection",
-          "source": "packages/editor/src/selections.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorDocumentContributionContext",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorFeatureContribution",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorFeatureContributionContext",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorFeatureContributionProvider",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorFeatureDomContributionContext",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorInternalPluginContext",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorRangeHighlightContributionContext",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorRowDecorationContributionContext",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorScheduledWorkHandle",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorScheduleWorkOptions",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorSelectionContributionContext",
-          "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorWorkContext",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorWorkEvent",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorWorkEventType",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorWorkPriority",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorWorkSchedulerOptions",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorWorkTags",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorWorkTaskClass",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ParsedSnippet",
-          "source": "packages/editor/src/editor/snippet.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "PieceTableAnchor",
-          "source": "@singapore-editor/textbuffer",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "SelectionAffinity",
-          "source": "packages/editor/src/selections.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "SelectionSet",
-          "source": "packages/editor/src/selections.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "SnippetRange",
-          "source": "packages/editor/src/editor/snippet.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "SnippetStop",
-          "source": "packages/editor/src/editor/snippet.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "type",
-          "name": "VirtualizedTextViewState",
-          "source": "packages/editor/src/virtualization/index.ts",
-          "via": "packages/editor/src/internal.ts"
         },
         {
           "kind": "unknown",
-          "name": "createAnchorSelection",
-          "source": "packages/editor/src/selections.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "createSelectionSet",
-          "source": "packages/editor/src/selections.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "defineLazyFullTextProperty",
-          "source": "packages/editor/src/documentTextSnapshot.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "documentSessionChangeTextSnapshot",
-          "source": "packages/editor/src/documentSession.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "EditorWorkScheduler",
-          "source": "packages/editor/src/editor/workScheduler.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "normalizeSelectionSet",
-          "source": "packages/editor/src/selections.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "parseSnippet",
-          "source": "packages/editor/src/editor/snippet.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "resolveSelection",
-          "source": "packages/editor/src/selections.ts",
-          "via": "packages/editor/src/internal.ts"
+          "name": "serializeEditorViewSnapshot",
+          "source": "packages/editor/src/editor/viewSnapshot.ts",
+          "via": "packages/editor/src/public/extensions.ts"
         },
         {
           "kind": "unknown",
           "name": "snippetInitialSelection",
           "source": "packages/editor/src/editor/snippet.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "VirtualizedTextView",
-          "source": "packages/editor/src/virtualization/index.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "withDocumentSessionChangeTimings",
-          "source": "packages/editor/src/documentSession.ts",
-          "via": "packages/editor/src/internal.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "wordRangeAtOffset",
-          "source": "packages/editor/src/textRanges.ts",
-          "via": "packages/editor/src/internal.ts"
+          "via": "packages/editor/src/public/extensions.ts"
         }
       ],
-      "source": "packages/editor/src/internal.ts",
-      "specifier": "./internal"
+      "source": "packages/editor/src/public/extensions.ts",
+      "specifier": "./extensions"
     },
     {
       "exports": [
@@ -5674,6 +5884,18 @@
         },
         {
           "kind": "unknown",
+          "name": "ScheduledFrame",
+          "source": "packages/editor/src/editor/scheduleFrame.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "scheduleFrame",
+          "source": "packages/editor/src/editor/scheduleFrame.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "transparentEditorColor",
           "source": "packages/editor/src/theme.ts",
           "via": "packages/editor/src/public/rendering.ts"
@@ -5704,14 +5926,14 @@
         },
         {
           "kind": "type",
-          "name": "EditorSecondaryTextViewOptions",
-          "source": "packages/editor/src/virtualization/index.ts",
+          "name": "EditorSecondaryTextView",
+          "source": "packages/editor/src/public/secondaryViews.ts",
           "via": "packages/editor/src/public/secondaryViews.ts"
         },
         {
           "kind": "type",
-          "name": "EditorSecondaryTextViewState",
-          "source": "packages/editor/src/virtualization/index.ts",
+          "name": "EditorSecondaryTextViewOptions",
+          "source": "packages/editor/src/public/secondaryViews.ts",
           "via": "packages/editor/src/public/secondaryViews.ts"
         },
         {
@@ -5800,14 +6022,14 @@
         },
         {
           "kind": "unknown",
-          "name": "EditorSecondaryTextView",
-          "source": "packages/editor/src/virtualization/index.ts",
+          "name": "EditorSecondaryViewScheduler",
+          "source": "packages/editor/src/editor/workScheduler.ts",
           "via": "packages/editor/src/public/secondaryViews.ts"
         },
         {
-          "kind": "unknown",
-          "name": "EditorSecondaryViewScheduler",
-          "source": "packages/editor/src/editor/workScheduler.ts",
+          "kind": "value",
+          "name": "createEditorSecondaryTextView",
+          "source": "packages/editor/src/public/secondaryViews.ts",
           "via": "packages/editor/src/public/secondaryViews.ts"
         },
         {
@@ -6237,6 +6459,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorTokenInput",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorTokenStoreOrigin",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorTokenStyle",
           "source": "packages/editor/src/tokens.ts",
           "via": "packages/editor/src/public/syntax.ts"
@@ -6244,6 +6478,12 @@
         {
           "kind": "type",
           "name": "FoldRange",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PackedEditorTokenPatch",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
         },
@@ -6351,6 +6591,12 @@
         },
         {
           "kind": "unknown",
+          "name": "EditorTokenStore",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "isEditorSyntaxLanguage",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
@@ -6370,6 +6616,12 @@
         {
           "kind": "unknown",
           "name": "styleForTreeSitterCapture",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "toEditorTokenStore",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
         },
@@ -6399,6 +6651,42 @@
         },
         {
           "kind": "unknown",
+          "name": "createTestCapabilityContributionContext",
+          "source": "packages/editor/src/testContexts.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createTestEditContributionContext",
+          "source": "packages/editor/src/testContexts.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createTestLineStartsView",
+          "source": "packages/editor/src/testContexts.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createTestPluginContext",
+          "source": "packages/editor/src/testContexts.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createTestViewContributionContext",
+          "source": "packages/editor/src/testContexts.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createTestViewSnapshotSource",
+          "source": "packages/editor/src/testContexts.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "EditorPluginHost",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/testing.ts"
@@ -6407,6 +6695,12 @@
           "kind": "unknown",
           "name": "observeEditorMountTiming",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "reclaimPieceTableText",
+          "source": "@singapore-editor/textbuffer/internal/reclamation",
           "via": "packages/editor/src/public/testing.ts"
         },
         {
@@ -6425,6 +6719,12 @@
           "kind": "unknown",
           "name": "setHighlightRegistry",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "VirtualizedTextView",
+          "source": "packages/editor/src/virtualization/index.ts",
           "via": "packages/editor/src/public/testing.ts"
         }
       ],

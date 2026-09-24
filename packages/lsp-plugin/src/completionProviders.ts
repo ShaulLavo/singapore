@@ -4,7 +4,11 @@ import {
   type EditorViewContributionContext,
   type EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
-import { offsetToLspPosition, type LspClient } from '@singapore-editor/lsp'
+import {
+  offsetToLspPositionInSnapshot,
+  type LspClient,
+  type LspTextDocumentSnapshot,
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { completionNeedsResolve, type LanguageServerCompletionTrigger } from './completion'
@@ -19,7 +23,7 @@ export const EDITOR_COMPLETION_SOURCE_ID = 'editor.completionSource'
 /** What is being completed, in the text the caller has, not in a protocol position. */
 export type EditorCompletionRequest = {
   readonly uri: string
-  readonly text: string
+  readonly document: LspTextDocumentSnapshot
   readonly offset: number
   readonly trigger: LanguageServerCompletionTrigger
   readonly signal: AbortSignal
@@ -74,7 +78,7 @@ export function createLanguageServerCompletionSource(
           'textDocument/completion',
           {
             textDocument: { uri: request.uri },
-            position: offsetToLspPosition(request.text, request.offset),
+            position: offsetToLspPositionInSnapshot(request.document, request.offset),
             context: request.trigger,
           } satisfies lsp.CompletionParams,
           { signal: request.signal },

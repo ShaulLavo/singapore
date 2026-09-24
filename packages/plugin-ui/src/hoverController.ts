@@ -17,7 +17,7 @@ import type {
   HoverRequest,
 } from './hoverParticipant'
 import { EDITOR_HOVER_PARTICIPANT } from './hoverToken'
-import { hoverTargetRange, sameOffsetRange, unionOffsetRange } from './offsetRange'
+import { hoverTargetRangeInSource, sameOffsetRange, unionOffsetRange } from './offsetRange'
 import {
   createTooltipController,
   HOVER_ASYNC_DISPATCH_DELAY_MS,
@@ -241,7 +241,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   const scheduleAt = (offset: number, point: HoverAnchor['point']): void => {
     tooltip.cancelHide()
     const snapshot = context.getSnapshot()
-    const range = hoverTargetRange(snapshot.fullText, offset)
+    const range = hoverTargetRangeInSource(snapshot.textSnapshot, offset)
     const current = operation
     if (
       current &&
@@ -300,7 +300,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     },
     showAtOffset: (offset, showOptions = {}) => {
       if (disposed || !context.hasDocument()) return false
-      const range = hoverTargetRange(context.getSnapshot().fullText, offset)
+      const range = hoverTargetRangeInSource(context.getSnapshot().textSnapshot, offset)
       return start({ offset, range, source: 'keyboard' }, showOptions.focus ?? false)
     },
     hide,

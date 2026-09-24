@@ -3,7 +3,6 @@ import { createLanguageServerDocument } from '../src/document'
 import { createEditorTextBuffer, createEditorBufferSession } from '@singapore-editor/core/document'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type { EditorCommandId } from '@singapore-editor/core/editor'
-import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import {
   createEditorCapabilityToken,
   type EditorCommandContributionContext,
@@ -38,7 +37,11 @@ import type {
   LanguageServerRenamePrompt,
 } from '../src/types'
 import { connectedEditor, DOCUMENT_URI } from './connectedEditor'
-import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  documentSyncSnapshotFields,
+  viewSnapshotStructuralFields,
+  viewTextFields,
+} from './documentSyncSnapshot'
 import {
   createTestEditContributionContext,
   createTestPluginContext,
@@ -979,10 +982,8 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
     ...viewSnapshotStructuralFields(),
     documentId,
     languageId: 'markdown',
-    fullText,
+    ...viewTextFields(fullText),
     textVersion: 1,
-    lineStarts,
-    textSnapshot: createStringTextSnapshot(fullText),
     tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [

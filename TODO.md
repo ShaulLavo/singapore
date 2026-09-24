@@ -590,3 +590,19 @@ found the shape again:
 - fast paths with no test pinning them to the slow path they replace.
 
 Each is a backlog entry (E047 to E051). Platform's halves are Platform plans 130 to 133.
+
+## Edit commands without a whole-document string
+
+Left over from E033. Edit actions (delete/move/copy/join/sort lines, comment toggles, indent,
+case transforms, trim trailing whitespace) and the exact-occurrence commands (Ctrl+D, select all
+occurrences, cut of whole lines) still take the document as one string. They reach it through
+`commandDocumentText` in `packages/editor/src/editor/inputSelectionController.ts`, which is
+allowlisted in `scripts/full-text-boundary-allow.json`. Each run costs a full copy of the
+document; on a 48M-unit file that is tens of milliseconds per keypress of these commands.
+
+Most of them only need the lines around the selections: `createLineMap` and `applyTextEdits` in
+`packages/editor/src/editor/editActions.ts`, and the `indexOf` scans in `occurrences.ts`. Move them
+onto `TextReadSnapshot` line queries and bounded reads, like selection expansion and ghost text
+after E033. Occurrence search can scan chunks forward from the selection. Trim trailing whitespace
+is genuinely whole-document and can walk chunks. Once no caller is left, delete
+`commandDocumentText` and its allowlist entry, so `check:full-text` keeps it gone.

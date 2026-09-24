@@ -299,20 +299,15 @@ describe('prepared editor documents', () => {
     expect(claimed?.structural?.runtimeSessionId).not.toBe(claimed?.highlighter?.runtimeSessionId)
     expect(claimed?.structural?.readyResult).toBe(structuralSession.getResult())
     expect(claimed?.highlighter?.readyResult?.tokens.toTokens()).toEqual([])
+    const source = buffer.getTextSnapshot()
     expect(structuralProvider.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ fullText: 'const value = 1;\n' }),
+      expect.objectContaining({ textSnapshot: source }),
     )
-    expect(structuralSession.refresh).toHaveBeenCalledWith(
-      buffer.getSnapshot(),
-      'const value = 1;\n',
-    )
+    expect(structuralSession.refresh).toHaveBeenCalledWith(source)
     expect(highlighterProvider.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ fullText: 'const value = 1;\n' }),
+      expect.objectContaining({ textSnapshot: source }),
     )
-    expect(highlighterSession.refresh).toHaveBeenCalledWith(
-      buffer.getSnapshot(),
-      'const value = 1;\n',
-    )
+    expect(highlighterSession.refresh).toHaveBeenCalledWith(source)
     expect(prepared.take(match(buffer, structuralProvider, highlighterProvider))).toBeNull()
 
     prepared.dispose()

@@ -1,5 +1,6 @@
-import type { DocumentSessionChange, SelectionAffinity } from '@singapore-editor/core/document'
+import type { SelectionAffinity } from '@singapore-editor/core/document'
 import type {
+  EditorContributionChange,
   EditorCapabilityToken,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
@@ -126,7 +127,7 @@ export class CompletionController {
   public update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    change: DocumentSessionChange | null,
+    change: EditorContributionChange | null,
   ): void {
     // A session's offsets are all read from these snapshots, and the distance between the request
     // and the acceptance is only a distance if both ends were measured on the same clock.
@@ -303,7 +304,7 @@ export class CompletionController {
     const sources = this.options.completionSources.forLanguage(this.languageId)
     const request: EditorCompletionRequest = {
       uri: active.uri,
-      text: active.fullText,
+      document: active,
       offset,
       trigger,
       signal: abort.signal,
@@ -373,7 +374,7 @@ export class CompletionController {
 
     // Judged once, here, rather than at every acceptance: what an item can be applied against is the
     // text the request went out with, and that text is the session's for as long as it lives.
-    const requestDocument = { text: active.fullText, offset }
+    const requestDocument = { document: active, offset }
     const items = result.items.filter((item) => completionItemApplies(requestDocument, item))
     const ranked = rankCompletionItems(items, caret.prefix)
     if (ranked.length === 0) return this.hide()
@@ -463,7 +464,7 @@ export class CompletionController {
   ): boolean {
     const application = completionApplication(
       {
-        text: acceptance.session.active.fullText,
+        document: acceptance.session.active,
         offset: acceptance.session.offset,
         caretOffset: acceptance.caretOffset,
         caretAffinity: acceptance.caretAffinity,
@@ -589,10 +590,8 @@ function completionCaret(snapshot: EditorViewSnapshot): CompletionCaret | null {
   // A word ends where the caret is, so the window behind it is the whole of what a prefix can be
   // read from. No identifier reaches the end of it.
   const windowStart = Math.max(0, offset - COMPLETION_PREFIX_WINDOW)
-  const before = source
-    ? source.readRange(windowStart, offset)
-    : snapshot.fullText.slice(windowStart, offset)
-  const length = source ? source.length : snapshot.fullText.length
+  const before = source.readRange(windowStart, offset)
+  const length = source.length
   const prefix = completionPrefix(before, before.length)
   return {
     length,
@@ -617,7 +616,7 @@ function completionSessionSurvives(session: CompletionSession, caret: Completion
   if (caret.wordStart !== session.wordStart) return false
   if (caret.prefix.length === 0 && caret.offset < session.offset) return false
 
-  return caret.length - session.active.fullText.length === caret.offset - session.offset
+  return caret.length - session.active.textSnapshot.length === caret.offset - session.offset
 }
 
 function isCompletionManualTrigger(event: KeyboardEvent): boolean {

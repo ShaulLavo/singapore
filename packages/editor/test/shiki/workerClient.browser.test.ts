@@ -43,10 +43,12 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
-    const result = await fresh!.refresh(createPieceTableSnapshot(text), text)
+    const result = await fresh!.refresh(
+      createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
+    )
     fresh!.dispose()
     return result.tokens.toTokens()
   }
@@ -71,14 +73,16 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       languageId: 'typescript',
       snapshot,
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(snapshot, text),
       ...selected,
       resolveTheme: () => selected,
     })!
     const requests = vi.spyOn(workerOwner, 'request')
-    const initial = (await session.refresh(snapshot)).tokens.toTokens()
+    const initial = (await session.refresh(createDocumentTextSnapshot(snapshot))).tokens.toTokens()
     selected = { theme: 'github-light', registrations: light }
-    const recolored = (await session.refresh(snapshot)).tokens.toTokens()
+    const recolored = (
+      await session.refresh(createDocumentTextSnapshot(snapshot))
+    ).tokens.toTokens()
     expect(recolored).not.toEqual(initial)
     const editedText = text.replace('42', 'value')
     const edited = await session.applyChange(
@@ -98,14 +102,16 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       languageId: 'typescript',
       snapshot: createPieceTableSnapshot(editedText),
-      fullText: editedText,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(editedText), editedText),
       ...selected,
     })!
     expect(edited.tokens.toTokens()).toEqual(
-      (await fresh.refresh(createPieceTableSnapshot(editedText))).tokens.toTokens(),
+      (
+        await fresh.refresh(createDocumentTextSnapshot(createPieceTableSnapshot(editedText)))
+      ).tokens.toTokens(),
     )
     selected = { theme: 'github-dark', registrations: dark }
-    await session.refresh(createPieceTableSnapshot(editedText))
+    await session.refresh(createDocumentTextSnapshot(createPieceTableSnapshot(editedText)))
     expect(requests.mock.calls.at(-1)?.[0].type).toBe('recolor')
     session.dispose()
     fresh.dispose()
@@ -119,13 +125,15 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
     expect(session).not.toBeNull()
 
-    const result = await session!.refresh(createPieceTableSnapshot(text), text)
+    const result = await session!.refresh(
+      createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
+    )
 
     expect(result.tokens.length).toBeGreaterThan(0)
     expect(
@@ -153,13 +161,15 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: initialText,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(initialText), initialText),
       snapshot: createPieceTableSnapshot(initialText),
     })
 
     expect(session).not.toBeNull()
 
-    await session!.refresh(createPieceTableSnapshot(initialText), initialText)
+    await session!.refresh(
+      createDocumentTextSnapshot(createPieceTableSnapshot(initialText), initialText),
+    )
     const result = await session!.applyChange(
       createChange(nextText, { from: 6, to: 7, text: 'answer' }),
     )
@@ -180,13 +190,15 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: initialText,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(initialText), initialText),
       snapshot: createPieceTableSnapshot(initialText),
     })
 
     expect(session).not.toBeNull()
 
-    await session!.refresh(createPieceTableSnapshot(initialText), initialText)
+    await session!.refresh(
+      createDocumentTextSnapshot(createPieceTableSnapshot(initialText), initialText),
+    )
     const result = await session!.applyChange(
       createChange(nextText, { from: 11, to: 11, text: 'r' }),
     )
@@ -207,9 +219,9 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       theme: 'github-dark',
       registrations: resolveRegistrations(),
       snapshot: initial,
-      fullText: original,
+      textSnapshot: createDocumentTextSnapshot(initial, original),
     })!
-    await session.refresh(initial, original)
+    await session.refresh(createDocumentTextSnapshot(initial, original))
     const requests = vi.spyOn(workerOwner, 'request')
     const intermediate = applyBatchToPieceTable(initial, [{ from: 6, to: 11, text: 'answer' }])
     const next = applyBatchToPieceTable(intermediate, [{ from: 12, to: 12, text: 'X' }])
@@ -239,7 +251,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       theme: 'github-dark',
       registrations: resolveRegistrations(),
       snapshot: createPieceTableSnapshot(text),
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
     })!
     const result = await session.applyChange(createChange(nextText))
     expect(result.tokens.toTokens()).toEqual(await fullTokens(nextText))
@@ -269,16 +281,16 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
         theme: 'github-dark',
         registrations,
         snapshot: initial,
-        fullText: text,
+        textSnapshot: createDocumentTextSnapshot(initial, text),
       })!
-      await session.refresh(initial, text)
+      await session.refresh(createDocumentTextSnapshot(initial, text))
       workers[0]!.dispatchEvent(new ErrorEvent('error', { message: 'controlled worker loss' }))
       // Another consumer can restart the owner before this session next runs.
       await workerOwner.loadTheme({ theme: 'github-dark', registrations })
       const requests = vi.spyOn(workerOwner, 'request')
       const result =
         operation === 'refresh'
-          ? await session.refresh(initial)
+          ? await session.refresh(createDocumentTextSnapshot(initial))
           : await session.applyChange(createChange(text))
       expect(requests.mock.calls[0]?.[0]).toMatchObject({ type: 'open', text })
       expect(result.tokens.toTokens()).toEqual(await fullTokens(text))
@@ -296,9 +308,9 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       theme: 'github-dark',
       registrations: resolveRegistrations(),
       snapshot: initial,
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(initial, text),
     })!
-    await session.refresh(initial, text)
+    await session.refresh(createDocumentTextSnapshot(initial, text))
     const firstEdit = { from: 6, to: 11, text: 'answer' }
     const firstSnapshot = applyBatchToPieceTable(initial, [firstEdit])
     const request = workerOwner.request.bind(workerOwner)
@@ -331,13 +343,15 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: initialText,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(initialText), initialText),
       snapshot: createPieceTableSnapshot(initialText),
     })
 
     expect(session).not.toBeNull()
 
-    await session!.refresh(createPieceTableSnapshot(initialText), initialText)
+    await session!.refresh(
+      createDocumentTextSnapshot(createPieceTableSnapshot(initialText), initialText),
+    )
     const result = await session!.applyChange(
       createChange(
         nextText,
@@ -364,13 +378,13 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: text,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(text), text),
       snapshot: createPieceTableSnapshot(text),
     })
 
     expect(session).not.toBeNull()
 
-    await session!.refresh(createPieceTableSnapshot(text), text)
+    await session!.refresh(createDocumentTextSnapshot(createPieceTableSnapshot(text), text))
     session!.dispose()
 
     const nextText = 'const nextValue = 1;'
@@ -380,13 +394,15 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: nextText,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(nextText), nextText),
       snapshot: createPieceTableSnapshot(nextText),
     })
 
     expect(nextSession).not.toBeNull()
 
-    const next = await nextSession!.refresh(createPieceTableSnapshot(nextText), nextText)
+    const next = await nextSession!.refresh(
+      createDocumentTextSnapshot(createPieceTableSnapshot(nextText), nextText),
+    )
 
     expect(next.tokens.length).toBeGreaterThan(0)
     nextSession!.dispose()
@@ -402,7 +418,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: firstText,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(firstText), firstText),
       snapshot: createPieceTableSnapshot(firstText),
     })
     const second = workerOwner.createSession({
@@ -412,7 +428,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       lang: 'typescript',
       theme: 'github-dark',
       registrations: resolveRegistrations(),
-      fullText: secondText,
+      textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot(firstText), secondText),
       snapshot: createPieceTableSnapshot(secondText),
     })
 
@@ -420,8 +436,8 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     expect(second).not.toBeNull()
 
     await Promise.all([
-      first!.refresh(createPieceTableSnapshot(firstText), firstText),
-      second!.refresh(createPieceTableSnapshot(secondText), secondText),
+      first!.refresh(createDocumentTextSnapshot(createPieceTableSnapshot(firstText), firstText)),
+      second!.refresh(createDocumentTextSnapshot(createPieceTableSnapshot(secondText), secondText)),
     ])
     first!.dispose()
     await workerOwner.awaitRuntimeSessionIdle('runtime-shiki-first')

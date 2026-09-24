@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createTestViewSnapshotSource } from '@singapore-editor/core/testing'
 import { Editor } from '@singapore-editor/core/editor'
 import { VirtualizedTextView } from '@singapore-editor/core/testing'
 import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
@@ -443,7 +444,7 @@ function snapshot(): EditorViewSnapshot {
     languageId: 'typescript',
     syntaxStatus: 'ready',
     paintLayers: [],
-    fullText: TEXT,
+    ...createTestViewSnapshotSource(TEXT),
     textVersion: 1,
     initialHighlightStatus: 'painted',
     documentSyncPoint: {
@@ -476,9 +477,6 @@ function snapshot(): EditorViewSnapshot {
       borderBoxHeight: 100,
       borderBoxWidth: 320,
       visibleRange: { start: 0, end: LINES.length },
-    },
-    toJSON() {
-      throw new Error('not used by this fixture')
     },
     toVisibleSnapshot() {
       return null
@@ -577,7 +575,7 @@ function deepSnapshot(): EditorViewSnapshot {
 
   return {
     ...snapshot(),
-    fullText: DEEP_TEXT,
+    ...createTestViewSnapshotSource(DEEP_TEXT),
     lineStarts: starts,
     lineCount: DEEP_LINES.length,
     foldMarkers: Array.from({ length: DEEP_DEPTH }, (_, level) => ({

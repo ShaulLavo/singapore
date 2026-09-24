@@ -136,12 +136,10 @@ export function createEditorPreparedDocument(
 ): EditorPreparedDocument {
   const snapshot = options.buffer.getSnapshot()
   const textSnapshot = options.buffer.getTextSnapshot()
-  let fullTextCache: string | undefined
-  const fullText = () => (fullTextCache ??= textSnapshot.materializeFullText())
   const lineStarts = computeLineStarts(textSnapshot)
   const tabSize =
     options.tabSizePolicy === 'detect-indentation'
-      ? guessedTabSize(fullText(), options.configuredTabSize)
+      ? guessedTabSize(textSnapshot, options.configuredTabSize)
       : options.configuredTabSize
   const documentConfigurationTag = checkedTag(options.documentConfigurationTag)
   let structural: PreparedStructuralStage | null = null
@@ -176,12 +174,12 @@ export function createEditorPreparedDocument(
       if (consumed || disposed) return null
       if (request.family === 'structural') {
         if (structural) return null
-        structural = createStructuralStage(options, snapshot, textSnapshot, fullText(), request)
+        structural = createStructuralStage(options, snapshot, textSnapshot, request)
         observePreparedStructuralOwnership(structural, fallback, options.languageId)
         return structural.outcome
       }
       if (highlighter) return null
-      highlighter = createHighlighterStage(options, snapshot, textSnapshot, fullText(), request)
+      highlighter = createHighlighterStage(options, snapshot, textSnapshot, request)
       return highlighter.outcome
     },
     runtimeSessionIds() {
@@ -366,7 +364,6 @@ function createStructuralStage(
   options: CreateEditorPreparedDocumentOptions,
   snapshot: PieceTableSnapshot,
   textSnapshot: ReturnType<EditorTextBuffer['getTextSnapshot']>,
-  fullText: string,
   request: Extract<EditorPreparedStageRequest, { readonly family: 'structural' }>,
 ) {
   if (request.abortSignal.aborted) {
@@ -384,14 +381,13 @@ function createStructuralStage(
     syntaxMode: request.configuration.syntaxMode,
     snapshot,
     textSnapshot,
-    fullText,
   })
   if (!session) return createMissingStructuralStage(request.abortSignal, 'failed')
 
   const stage = createStageOwner<EditorSyntaxResult>(session, request.abortSignal)
   if (stage.disposed()) return createMissingStructuralStage(request.abortSignal, 'aborted')
 
-  const result = session.refresh(snapshot, fullText).then(() => {
+  const result = session.refresh(textSnapshot).then(() => {
     if (!session.queryRange) return session.getResult()
     return session.queryRange(request.range)
   })
@@ -413,7 +409,6 @@ function createHighlighterStage(
   options: CreateEditorPreparedDocumentOptions,
   snapshot: PieceTableSnapshot,
   textSnapshot: ReturnType<EditorTextBuffer['getTextSnapshot']>,
-  fullText: string,
   request: Extract<EditorPreparedStageRequest, { readonly family: 'highlighter' }>,
 ) {
   if (request.abortSignal.aborted) {
@@ -428,14 +423,13 @@ function createHighlighterStage(
     languageId: options.languageId,
     snapshot,
     textSnapshot,
-    fullText,
   })
   if (!session) return createMissingHighlighterStage(request.abortSignal, 'failed')
 
   const stage = createStageOwner<EditorHighlightResult>(session, request.abortSignal)
   if (stage.disposed()) return createMissingHighlighterStage(request.abortSignal, 'aborted')
 
-  const tracked = stage.track(session.refresh(snapshot, fullText))
+  const tracked = stage.track(session.refresh(textSnapshot))
   return {
     ...stage,
     configurationTag,

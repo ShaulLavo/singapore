@@ -145,4 +145,7 @@ export type {
 } from '../plugins'
 export { registerWheelScrollTarget } from '../virtualization/wheelScrollTarget'
 export { parseSnippet, snippetInitialSelection } from '../editor/snippet'
+export { serializeEditorViewSnapshot } from '../editor/viewSnapshot'
+export type { TextReadSnapshot } from '../documentTextSnapshot'
+export type { EditorContributionChange, EditorLineStartsView } from '../plugins'
 export type { ParsedSnippet, SnippetRange } from '../editor/snippet'

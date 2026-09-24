@@ -1,5 +1,6 @@
 import {
   createDocumentTextSnapshot,
+  type DocumentTextSnapshot,
   createPieceTableSnapshot,
 } from '@singapore-editor/core/document'
 import type {
@@ -290,6 +291,7 @@ type DiffSyntaxDocument = DiffSyntaxSource & {
   readonly documentId: string
   readonly languageId: string | null
   readonly request: EditorSyntaxServiceRequest
+  readonly textSnapshot: DocumentTextSnapshot
 }
 
 type DiffSyntaxService = {
@@ -347,7 +349,7 @@ function treeSitterDiffSyntaxSession(
 
   return {
     dispose: () => session.dispose(),
-    refresh: () => session.refresh(document.request.snapshot, document.text),
+    refresh: () => session.refresh(document.textSnapshot),
   }
 }
 
@@ -359,7 +361,7 @@ function tokenHighlighterDiffSyntaxSession(
     onDidChangeTheme: session.onDidChangeTheme,
     dispose: () => session.dispose(),
     refresh: async () => {
-      const result = await session.refresh(document.request.snapshot, document.text)
+      const result = await session.refresh(document.textSnapshot)
       return syntaxResultFromTokens(document.request, result.tokens)
     },
   }
@@ -368,13 +370,12 @@ function tokenHighlighterDiffSyntaxSession(
 function syntaxSessionOptions(document: DiffSyntaxDocument): EditorSyntaxSessionOptions {
   return {
     documentId: document.documentId,
-    fullText: document.text,
     includeCaptures: document.request.language.includeCaptures,
     includeHighlights: document.request.language.includeHighlights,
     languageId: document.languageId,
     snapshot: document.request.snapshot,
     syntaxMode: document.request.language.mode === 'range' ? 'range' : 'full',
-    textSnapshot: document.request.textSnapshot,
+    textSnapshot: document.textSnapshot,
   }
 }
 
@@ -383,10 +384,9 @@ function highlighterSessionOptions(
 ): Omit<EditorSyntaxSessionOptions, 'includeCaptures' | 'includeHighlights' | 'syntaxMode'> {
   return {
     documentId: document.documentId,
-    fullText: document.text,
     languageId: document.languageId,
     snapshot: document.request.snapshot,
-    textSnapshot: document.request.textSnapshot,
+    textSnapshot: document.textSnapshot,
   }
 }
 
@@ -457,7 +457,7 @@ function syntaxDocument(file: DiffFile, source: DiffSyntaxSource): DiffSyntaxDoc
     }),
     textSnapshot,
   }
-  return { ...source, documentId, languageId, request }
+  return { ...source, documentId, languageId, request, textSnapshot }
 }
 
 function diffSyntaxLanguageId(file: DiffFile): string | null {

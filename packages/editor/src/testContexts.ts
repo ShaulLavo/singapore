@@ -1,10 +1,14 @@
+import { createStringTextSnapshot, type TextReadSnapshot } from './documentTextSnapshot'
 import { createError } from './logging/evlog'
+import { LineStartsView } from './virtualization/lineStartIndex'
 import type {
   EditorCapabilityContributionContext,
   EditorDisposable,
   EditorEditContributionContext,
   EditorPluginContext,
+  EditorLineStartsView,
   EditorViewContributionContext,
+  EditorViewSnapshot,
 } from './plugins'
 
 // The hand-written contexts every test double is built from. Each default object is typed as the
@@ -60,6 +64,8 @@ export function createTestEditContributionContext(
     log: () => undefined,
     materializeFullText: () => missing('materializeFullText'),
     getTextSnapshot: () => null,
+    getDocumentSyncPoint: () => missing('getDocumentSyncPoint'),
+    changesSinceDocumentSyncPoint: () => null,
     getSelections: () => [],
     focusEditor: () => undefined,
     applyEdits: () => undefined,
@@ -108,4 +114,17 @@ export function createTestViewContributionContext(
     clearRangeHighlight: () => undefined,
   }
   return { ...defaults, ...overrides }
+}
+
+/** The line queries a hand-built view snapshot carries, read off `source`. */
+export function createTestLineStartsView(source: TextReadSnapshot): EditorLineStartsView {
+  return new LineStartsView(source)
+}
+
+/** The two source fields every hand-built view snapshot needs, from one string. */
+export function createTestViewSnapshotSource(
+  text: string,
+): Pick<EditorViewSnapshot, 'textSnapshot' | 'lineStartsView'> {
+  const textSnapshot = createStringTextSnapshot(text)
+  return { textSnapshot, lineStartsView: createTestLineStartsView(textSnapshot) }
 }

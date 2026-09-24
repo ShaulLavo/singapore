@@ -371,14 +371,13 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
     expect(sessionOptions).toContainEqual(
       expect.objectContaining({
         documentId: 'note.ts#diff-old',
-        fullText: 'keep\nold\nskip\n',
         includeCaptures: true,
         includeHighlights: true,
         languageId: 'typescript',
         syntaxMode: 'full',
       }),
     )
-    expect(sessionOptions[0]?.textSnapshot?.readRange(0, 4)).toBe('keep')
+    expect(sessionOptions[0]?.textSnapshot.materializeFullText()).toBe('keep\nold\nskip\n')
   })
 
   it('uses a host-owned highlighter provider instead of constructing a diff worker', async () => {
@@ -398,12 +397,11 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
     await flushUntil(() => createSession.mock.calls.length >= 2)
 
     expect(createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        documentId: 'note.ts#diff-old',
-        fullText: 'keep\nold\nskip\n',
-        languageId: 'typescript',
-      }),
+      expect.objectContaining({ documentId: 'note.ts#diff-old', languageId: 'typescript' }),
     )
+    const calls = createSession.mock.calls as unknown as [EditorSyntaxSessionOptions][]
+    const old = calls.find(([options]) => options.documentId === 'note.ts#diff-old')?.[0]
+    expect(old?.textSnapshot.materializeFullText()).toBe('keep\nold\nskip\n')
   })
 
   it('recolors existing diff sessions and releases theme subscriptions on close', async () => {
@@ -732,7 +730,7 @@ function createRecordingSyntaxBackend(
     provider: {
       createSession(options) {
         sessionOptions.push(options)
-        parsedTexts.push(options.fullText)
+        parsedTexts.push(options.textSnapshot.materializeFullText())
         return {
           foldingSupport: 'supported',
           applyChange: async () => createEmptySyntaxResult(),
@@ -768,7 +766,7 @@ function createTokenSyntaxBackend(): DiffSyntaxBackend {
 
 function syntaxResultForOptions(options: EditorSyntaxSessionOptions) {
   const target = options.documentId.endsWith('#diff-old') ? 'old' : 'new'
-  const start = options.fullText.indexOf(target)
+  const start = options.textSnapshot.materializeFullText().indexOf(target)
   const tokens: EditorToken[] =
     start === -1 ? [] : [{ end: start + target.length, start, style: { color: 'rgb(1, 2, 3)' } }]
 

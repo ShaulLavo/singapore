@@ -1,8 +1,8 @@
-import type { DocumentSessionChange, TextSnapshot } from '@singapore-editor/core/document'
-import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import type { TextReadSnapshot } from '@singapore-editor/core/document'
 import type { EditorTheme, VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
 import type { EditorToken, EditorTokenStore } from '@singapore-editor/core/syntax'
 import type {
+  EditorContributionChange,
   EditorPlugin,
   EditorViewContribution,
   EditorViewContributionContext,
@@ -116,7 +116,7 @@ class StickyScrollContribution implements EditorViewContribution {
   public update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
-    _change?: DocumentSessionChange | null,
+    _change?: EditorContributionChange | null,
   ): void {
     // Which scopes the viewport hides is the whole input, and moving the caret changes none of it.
     if (kind === 'selection') return
@@ -425,7 +425,7 @@ function stickyScrollContent(
   snapshot: EditorViewSnapshot,
   rows: readonly number[],
 ): StickyScrollContent {
-  const textSnapshot = snapshot.textSnapshot ?? createStringTextSnapshot(snapshot.fullText)
+  const textSnapshot = snapshot.textSnapshot
   const lines: string[] = []
   const tokens: EditorToken[] = []
   let base = 0
@@ -459,7 +459,7 @@ function appendRowTokens(
 
 function rowTextRange(
   snapshot: EditorViewSnapshot,
-  textSnapshot: TextSnapshot,
+  textSnapshot: TextReadSnapshot,
   row: number,
 ): StickyScrollRowRange | null {
   const start = lineStartOffset(snapshot, row)
@@ -470,8 +470,5 @@ function rowTextRange(
 }
 
 function lineStartOffset(snapshot: EditorViewSnapshot, row: number): number | undefined {
-  const lineStarts = snapshot.lineStartsView
-  if (lineStarts) return lineStarts.at(row)
-
-  return snapshot.lineStarts[row]
+  return snapshot.lineStartsView.at(row)
 }

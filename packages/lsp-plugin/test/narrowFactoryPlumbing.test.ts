@@ -19,7 +19,11 @@ import { createLanguageServerPlugin, type LanguageServerConnectionContext } from
 import { LanguageServerDocumentSyncController } from '../src/documentSyncController'
 import type { LanguageServerPluginOptions } from '../src/types'
 import { flushPromises } from './connectedEditor'
-import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  documentSyncSnapshotFields,
+  viewSnapshotStructuralFields,
+  viewTextFields,
+} from './documentSyncSnapshot'
 import {
   createTestPluginContext,
   createTestViewContributionContext,
@@ -509,9 +513,8 @@ function snapshot(): EditorViewSnapshot {
     ...viewSnapshotStructuralFields(),
     documentId: 'src/index.ts',
     languageId: 'typescript',
-    fullText,
+    ...viewTextFields(fullText),
     textVersion: 1,
-    lineStarts: [0, fullText.indexOf('\n') + 1],
     tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
@@ -711,9 +714,8 @@ function layerSnapshot(
     ...viewSnapshotStructuralFields(),
     documentId,
     languageId: languageId as EditorViewSnapshot['languageId'],
-    fullText,
+    ...viewTextFields(fullText),
     textVersion,
-    lineStarts: [0, lineLength],
     tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createAnchorSelection,
   createPieceTableSnapshot,
+  createStringTextSnapshot,
   createSelectionSet,
   resolveSelection,
 } from '@singapore-editor/core/document'
@@ -278,7 +279,7 @@ type SelectionRangeProvider = Parameters<
 
 function ladderContext(folds: readonly FoldRange[]): Parameters<SelectionRangeProvider>[0] {
   return {
-    text: TEXT,
+    textSnapshot: createStringTextSnapshot(TEXT),
     languageId: 'typescript',
     offset: 7,
     selection: { start: 7, end: 7 },

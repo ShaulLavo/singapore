@@ -1,4 +1,5 @@
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
+import { createTestViewSnapshotSource } from '@singapore-editor/core/testing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   EditorPluginContext,
@@ -183,7 +184,7 @@ describe('createDecodePlugin', () => {
     )
 
     const empty = mount()
-    empty.contribution.update(snapshot({ fullText: '', visibleRows: [] }), 'document')
+    empty.contribution.update(snapshot({ text: '', visibleRows: [] }), 'document')
     expect(empty.context.scrollElement.classList.contains('editor-decode-active')).toBe(false)
   })
 
@@ -411,14 +412,16 @@ function viewContext(): EditorViewContributionContext {
   })
 }
 
-function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapshot {
-  const text = overrides.fullText ?? SAMPLE
+function snapshot({
+  text = SAMPLE,
+  ...overrides
+}: Partial<EditorViewSnapshot> & { readonly text?: string } = {}): EditorViewSnapshot {
   return {
     documentId: 'decode-test',
     languageId: 'typescript',
     syntaxStatus: 'ready',
     paintLayers: [],
-    fullText: text,
+    ...createTestViewSnapshotSource(text),
     textVersion: 1,
     lineStarts: lineStarts(text),
     tokens: EditorTokenStore.empty(),
@@ -447,11 +450,6 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
     initialHighlightStatus: overrides.initialHighlightStatus ?? 'painted',
     gutterWidth: overrides.gutterWidth ?? 0,
     gutterLayout: overrides.gutterLayout ?? { fixedWidth: 0, lanes: [] },
-    toJSON:
-      overrides.toJSON ??
-      (() => {
-        throw new Error('not used by this fixture')
-      }),
     toVisibleSnapshot: overrides.toVisibleSnapshot ?? (() => null),
     documentSyncPoint: overrides.documentSyncPoint ?? {
       revision: overrides.textVersion ?? 1,

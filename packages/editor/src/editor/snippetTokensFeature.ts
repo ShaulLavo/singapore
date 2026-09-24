@@ -65,12 +65,12 @@ async function tokenizeSnippet(
   if (text.length === 0) return []
 
   const snapshot = createPieceTableSnapshot(text)
+  const textSnapshot = createDocumentTextSnapshot(snapshot, text)
   const document = {
     documentId: `editor-snippet-${nextSnippetId}`,
-    fullText: text,
     languageId,
     snapshot,
-    textSnapshot: createDocumentTextSnapshot(snapshot, text),
+    textSnapshot,
   }
   nextSnippetId += 1
 
@@ -84,7 +84,7 @@ async function tokenizeSnippet(
   if (!session) return []
 
   try {
-    const result = await session.refresh(snapshot, text)
+    const result = await session.refresh(textSnapshot)
     return toEditorTokenStore(result.tokens).toTokens()
   } finally {
     session.dispose()

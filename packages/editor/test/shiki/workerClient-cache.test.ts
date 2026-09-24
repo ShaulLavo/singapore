@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createPieceTableSnapshot } from '../../src/public/document'
+import { createDocumentTextSnapshot, createPieceTableSnapshot } from '../../src/public/document'
 
 type WorkerClientModule = typeof import('../../src/shiki/workerClient')
 type ShikiWorkerOwner = ReturnType<WorkerClientModule['createShikiWorkerOwner']>
@@ -187,11 +187,11 @@ describe('Shiki worker client theme cache', () => {
       registrations: resolvedRegistrations(),
       preloadRegistrations: resolvePreload,
       snapshot,
-      fullText: 'const value = 1;',
+      textSnapshot: createDocumentTextSnapshot(snapshot, 'const value = 1;'),
     })
     if (!session) throw new Error('missing Shiki highlighter session')
 
-    const highlight = session.refresh(snapshot, 'const value = 1;')
+    const highlight = session.refresh(createDocumentTextSnapshot(snapshot, 'const value = 1;'))
     await flushMicrotasks()
 
     const openRequest = requestOfType('open')
@@ -220,11 +220,11 @@ describe('Shiki worker client theme cache', () => {
       theme: 'github-dark',
       registrations: resolvedRegistrations(),
       snapshot,
-      fullText: 'const value = 1;',
+      textSnapshot: createDocumentTextSnapshot(snapshot, 'const value = 1;'),
     })
     if (!session) throw new Error('missing Shiki highlighter session')
 
-    const highlight = session.refresh(snapshot, 'const value = 1;')
+    const highlight = session.refresh(createDocumentTextSnapshot(snapshot, 'const value = 1;'))
     await flushMicrotasks()
 
     fakeWorkerAt(0).resolveRequest(requestOfType('open'), {
@@ -260,11 +260,11 @@ describe('Shiki worker client theme cache', () => {
       theme: 'github-dark',
       registrations: resolvedRegistrations(),
       snapshot,
-      fullText: 'const value = 1;',
+      textSnapshot: createDocumentTextSnapshot(snapshot, 'const value = 1;'),
     })
     if (!session) throw new Error('missing Shiki highlighter session')
 
-    const highlight = session.refresh(snapshot, 'const value = 1;')
+    const highlight = session.refresh(createDocumentTextSnapshot(snapshot, 'const value = 1;'))
     await flushMicrotasks()
 
     const worker = fakeWorkerAt(0)
@@ -343,11 +343,11 @@ describe('Shiki worker client theme cache', () => {
       theme: 'github-dark',
       registrations: registrations.promise,
       snapshot,
-      fullText: 'const value = 1;',
+      textSnapshot: createDocumentTextSnapshot(snapshot, 'const value = 1;'),
     })
     if (!session) throw new Error('missing Shiki highlighter session')
 
-    const highlight = session.refresh(snapshot, 'const value = 1;')
+    const highlight = session.refresh(createDocumentTextSnapshot(snapshot, 'const value = 1;'))
     session.dispose()
     let idle = false
     const fence = owner.awaitIdleFence().then(() => {

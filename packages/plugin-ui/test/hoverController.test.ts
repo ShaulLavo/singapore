@@ -1,3 +1,4 @@
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import type {
   EditorViewContributionContext,
   EditorViewSnapshot,
@@ -164,7 +165,7 @@ function mount(participants: readonly EditorHoverParticipant[]) {
   const snapshot = {
     documentId: 'index.ts',
     languageId: 'typescript',
-    fullText: TEXT,
+    textSnapshot: createStringTextSnapshot(TEXT),
     textVersion: 1,
     tokens: [],
     selections: [{ anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6 }],

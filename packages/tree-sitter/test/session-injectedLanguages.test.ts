@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { createPieceTableSnapshot } from '@singapore-editor/core/document'
+import {
+  createPieceTableSnapshot,
+  createDocumentTextSnapshot,
+} from '@singapore-editor/core/document'
 import { TreeSitterSyntaxSession } from '../src/session.ts'
 import type { TreeSitterLanguageDescriptor } from '../src/treeSitter/registry.ts'
 import type { TreeSitterBackend } from '../src/treeSitter/workerClient.ts'
@@ -28,7 +31,7 @@ describe('injected language registration', () => {
     const registered: string[][] = []
     const session = createSession('markdown', registered)
 
-    await session.refresh(createPieceTableSnapshot('# Title\n'))
+    await session.refresh(createDocumentTextSnapshot(createPieceTableSnapshot('# Title\n')))
 
     expect(registered).toEqual([['markdown', 'markdown_inline', 'html']])
   })
@@ -37,7 +40,7 @@ describe('injected language registration', () => {
     const registered: string[][] = []
     const session = createSession('html', registered)
 
-    await session.refresh(createPieceTableSnapshot('<p>hi</p>'))
+    await session.refresh(createDocumentTextSnapshot(createPieceTableSnapshot('<p>hi</p>')))
 
     expect(registered).toEqual([['html']])
   })
@@ -52,6 +55,7 @@ function createSession(languageId: string, registered: string[][]): TreeSitterSy
     },
     backend: recordingBackend(registered),
     snapshot: createPieceTableSnapshot(''),
+    textSnapshot: createDocumentTextSnapshot(createPieceTableSnapshot('')),
   })
 }
 
@@ -109,6 +113,7 @@ it('does not register or parse a delayed injection after disposal', async () => 
     documentId: 'delayed',
     languageId: 'markdown',
     snapshot,
+    textSnapshot: createDocumentTextSnapshot(snapshot),
     backend,
     syntaxMode: 'range',
     languageResolver: {
@@ -119,7 +124,7 @@ it('does not register or parse a delayed injection after disposal', async () => 
       },
     },
   })
-  const refresh = session.refresh(snapshot)
+  const refresh = session.refresh(createDocumentTextSnapshot(snapshot))
   await requestedPromise
   session.dispose()
   release(descriptor('astro'))
@@ -156,6 +161,7 @@ it('shares a delayed language load with the newer document version', async () =>
     documentId: 'delayed',
     languageId: 'markdown',
     snapshot,
+    textSnapshot: createDocumentTextSnapshot(snapshot),
     backend,
     syntaxMode: 'range',
     languageResolver: {
@@ -167,9 +173,11 @@ it('shares a delayed language load with the newer document version', async () =>
       },
     },
   })
-  const first = session.refresh(snapshot)
+  const first = session.refresh(createDocumentTextSnapshot(snapshot))
   await requestedPromise
-  const second = session.refresh(createPieceTableSnapshot('```astro\n<NewCard />\n```'))
+  const second = session.refresh(
+    createDocumentTextSnapshot(createPieceTableSnapshot('```astro\n<NewCard />\n```')),
+  )
   release(descriptor('astro'))
   await Promise.all([first, second])
   expect(loads).toBe(1)

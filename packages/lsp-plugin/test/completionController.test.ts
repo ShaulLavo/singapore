@@ -14,7 +14,13 @@ import { LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE } from '../src/completion'
 import { CompletionController } from '../src/completionController'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
 import type { ActiveDocument } from '../src/pluginTypes'
-import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
+import {
+  documentSyncSnapshotFields,
+  viewSnapshotStructuralFields,
+  viewText,
+  viewTextFields,
+} from './documentSyncSnapshot'
+import { textDocument } from './snapshotDocument'
 import {
   createTestEditContributionContext,
   createTestPluginContext,
@@ -688,10 +694,10 @@ function openDocument(uri: string, fullText: string): ActiveDocument {
   return {
     uri,
     languageId: 'typescript',
-    fullText,
+    ...textDocument(fullText),
     textVersion: 2,
     lspVersion: 1,
-  } as ActiveDocument
+  }
 }
 
 function completionMatchRuns(): readonly string[] {
@@ -768,7 +774,7 @@ async function connectedEditor(
   }
 
   const applyChange = (edit: TextEdit, caretOffset: number): void => {
-    const next = `${snapshot.fullText.slice(0, edit.from)}${edit.text}${snapshot.fullText.slice(edit.to)}`
+    const next = `${viewText(snapshot).slice(0, edit.from)}${edit.text}${viewText(snapshot).slice(edit.to)}`
     snapshot = editorSnapshot(next, caretOffset, snapshot.textVersion + 1)
     contribution.update(snapshot, 'content', documentChange([edit]))
   }
@@ -789,11 +795,11 @@ async function connectedEditor(
     },
     editElsewhere: (edit) => applyChange(edit, caretOffsetOf(snapshot)),
     moveCaret: (offset) => {
-      snapshot = editorSnapshot(snapshot.fullText, offset, snapshot.textVersion)
+      snapshot = editorSnapshot(viewText(snapshot), offset, snapshot.textVersion)
       contribution.update(snapshot, 'selection', null)
     },
     selectRange: (start, end) => {
-      snapshot = editorSnapshot(snapshot.fullText, end, snapshot.textVersion, start)
+      snapshot = editorSnapshot(viewText(snapshot), end, snapshot.textVersion, start)
       contribution.update(snapshot, 'selection', null)
     },
     scroll: (by) => {
@@ -908,9 +914,8 @@ function editorSnapshot(
     ...viewSnapshotStructuralFields(),
     documentId: 'src/index.ts',
     languageId: 'typescript',
-    fullText,
+    ...viewTextFields(fullText),
     textVersion,
-    lineStarts: [0],
     tokens: EditorTokenStore.empty(),
     brackets: [],
     selections: [
