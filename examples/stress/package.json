@@ -22,7 +22,9 @@
     "bench:input": "node run.mjs --suite input-latency",
     "input:compare": "node input-compare.mjs",
     "input:proof": "node test/verify-input-results.mjs results/input-latency",
-    "bench:reclamation-live": "node reclamation-live.mjs"
+    "bench:reclamation-live": "node reclamation-live.mjs",
+    "bench:geometry": "node geometry.mjs",
+    "bench:blink": "node blink.mjs"
   },
   "dependencies": {
     "@singapore-editor/core": "workspace:*",

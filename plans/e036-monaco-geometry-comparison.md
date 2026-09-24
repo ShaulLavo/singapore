@@ -1,12 +1,38 @@
 # E036: Measure Monaco's view mechanisms against the calculated geometry path
 
-- Status: Proposed
+- Status: In progress
 - Kind: Research
 - Owner: Editor
 - Priority: P1
 - Effort: M
 - Dependencies: [E001](../examples/stress/README.md), [E002](../docs/performance/input-latency.md)
 - Inspected baseline: `5f68ce6ae086bea10d9708ed56580e173d4dfee2`, 2026-09-14; references/vscode read at the same time.
+
+## Execution update, 2026-09-24
+
+Steps 1, 3, 4 and 6 ran on `10b0ac4` in Chromium 148 (Playwright, headless). Runners:
+`examples/stress/geometry.mjs` (row mix, clicks, caret moves, typing, `--font-check`) and
+`examples/stress/blink.mjs` (idle CPU). The geometry module now reports each row build's path
+(`view.rowGeometry`) and each sweep (`view.rowGeometry.sweep`) as diagnostics.
+Raw results are in `/work/tmp/editor-e036/` (`step1-b.json`, `fonts.json`, `blink-headless.json`,
+`layout-trace*`).
+
+Row mix is not rare. On disk, tab-indented codebases have a tab on 69% (Go, crush) to 77% (VS Code
+`.ts`) of lines, and Markdown has 8–10% non-ASCII lines before counting inline replacements.
+Mounted rows on measured geometry: go-tabs 71%, markdown 33%, unicode 100%. The 5% gate
+therefore does not close candidates 1 and 4 on its own; their cost does.
+
+| Candidate                            | Measured                                                                                                                                                                                                                                                                                                                                                                    | Decision                                                                                                                                                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Tabbed rows calculated            | 3,000-line Go, same text tab- vs space-indented, 5 runs. Short rows: click 0.83 vs 0.85 ms, arrow-down 0.64 vs 0.61 ms (applied, mean). 180-column rows: click 1.13 vs 0.77 ms, arrow-down 0.86 vs 0.54 ms. A tab row sweeps its geometry on a click (47.6 vs 3.6 rect reads).                                                                                              | No-go. The measured path costs about 3 µs per swept boundary; +0.35 ms at 180 columns is the worst ordinary case. Step 2's prototype is not warranted.                                                          |
+| 2. Monospace verification            | Hit test at every third column's DOM x: monospace, JetBrains Mono NF (ligatures on) and iA Writer Mono S: 0 of 339 wrong. Liberation Sans and Noto Sans: 339 of 339 wrong, up to 37 and 39 columns off. Probe (`\|/-_ilm%` + digits, 3 styles, 54 reads): 0.2 ms. It misreports iA Writer Mono S as proportional, so it must probe only the weights and styles rows render. | Go, as correctness. Platform's `editor.fontFamily` accepts any font. Follow-up: probe regular weight at metrics time, demote calculated geometry when advances disagree, browser test with a proportional font. |
+| 3. Typing-path forced layout         | Every keystroke forces 2 layouts from script, none in the frame: `refreshHiddenInputContent` (`setSelectionRange` on the focused textarea) and `readRowClientRectScale`. Writing the input after the caret read alone: still 2. Also keeping the row scale across operations: 1 layout, but layout time 3.10 → 2.94 ms per 24 keys.                                         | No-go. The second layout was the same dirty region laid out in two parts; merging saves about 0.007 ms per key.                                                                                                 |
+| 4. Measured-path cache, snap-to-grid | Bounded by candidate 1: the whole measured path is ≤0.35 ms per query on 180-column rows; unicode rows cost +0.3 ms per click.                                                                                                                                                                                                                                              | No-go.                                                                                                                                                                                                          |
+| 5. Caret blink                       | Idle 20 s, 3 interleaved rounds, whole-browser CPU above a no-blink floor (0.23%): CSS `steps()` +0.50 points of one core, JS interval +0.25.                                                                                                                                                                                                                               | Go at low priority, conditional: headless compositing is software. Confirm with a headed GPU run before changing it; the change itself is an interval plus a 500 ms solid hold after caret moves.               |
+| 6. EditContext                       | Not run. It is an implementation spike, not a measurement.                                                                                                                                                                                                                                                                                                                  | Open.                                                                                                                                                                                                           |
+
+The Markdown fixture's typing cost (3.1 ms applied, 2.9 ms script per key) comes from the test's
+capture session returning every capture on each change, not from geometry; it is not a finding.
 
 ## Outcome
 

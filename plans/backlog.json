@@ -449,7 +449,7 @@
       "id": "E036",
       "file": "e036-monaco-geometry-comparison.md",
       "title": "Measure Monaco's view mechanisms against the calculated geometry path",
-      "status": "Proposed",
+      "status": "In progress",
       "owner": "Editor",
       "kind": "Research",
       "priority": "P1",

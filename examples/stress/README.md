@@ -50,6 +50,21 @@ export and disposal heap, and export time. `--diagnostics` adds read counters, t
 probe's own full-text correctness check. Run the same files from a worktree of the control commit and
 alternate the two; `--configs` and `--sizes` narrow a rerun.
 
+## Row geometry workload (E036)
+
+`node geometry.mjs --output /work/tmp/editor-e036/run.json` opens one 900x600 view over 3,000-line
+fixtures: Go indented with tabs and the same text with four spaces, both again padded to 180 columns,
+Markdown with inline replacements, and Unicode. Each fixture runs one counting pass (geometry
+diagnostics and rect-read counters on) and `--repetitions` timing passes (both off), each in a fresh
+context. Workloads are 60 clicks over three screens, 60 ArrowDown, 60 ArrowRight and 24 typed keys.
+The summary reports mounted rows per geometry path, builds and sweeps per operation, rect reads,
+CDP layout, script and task time, and dispatch-to-applied latency. `--font-check "a,b"` instead
+hit-tests every third column of the space-indented fixture in each font and times a monospace probe.
+
+`node blink.mjs --output /work/tmp/editor-e036/blink.json` measures whole-browser CPU from `/proc`
+while a focused view sits idle: CSS blink, a JS interval, and no blink, interleaved per round.
+Headless compositing is software; pass `--headed` for a GPU reading.
+
 ## Measurements and correctness
 
 Every fixture runs every scenario. The ordinary open also enables the real TypeScript Tree-sitter

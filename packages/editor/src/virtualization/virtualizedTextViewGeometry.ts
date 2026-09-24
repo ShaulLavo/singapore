@@ -23,6 +23,7 @@ import {
   type TextSegment,
 } from '../graphemes'
 import type { SelectionAffinity } from '../selections'
+import { recordEditorPerformanceDiagnostic } from '../editor/performanceDiagnostics'
 import { clamp } from '../style-utils'
 import { RTL_BIDI_CHARACTER } from './bidiClassData'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
@@ -310,6 +311,9 @@ const inlineWidgetWidths = new WeakMap<HTMLElement, number>()
 let inlineWidgetWidthRevision = 0
 let rowGeometrySweepCount = 0
 let rtlTextClassificationScanCount = 0
+
+/** Why a row's geometry is built the way it is; every value but `calculated` measures the DOM. */
+type RowGeometryPath = 'calculated' | 'inline-mapping' | 'non-simple-text' | 'tab'
 
 export function createTextChunkParts(
   node: Text,
@@ -1537,8 +1541,17 @@ function buildRowGeometry(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): RowGeometry {
-  if (rowUsesCalculatedGeometry(row)) return buildCalculatedRowGeometry(view, row)
+  const path = rowGeometryPath(row)
+  recordEditorPerformanceDiagnostic('view.rowGeometry', () => ({
+    path,
+    length: row.text.length,
+  }))
+  if (path === 'calculated') return buildCalculatedRowGeometry(view, row)
   return buildMeasuredRowGeometry(view, row)
+}
+
+function rowUsesCalculatedGeometry(row: MountedVirtualizedTextRow): boolean {
+  return rowGeometryPath(row) === 'calculated'
 }
 
 /**
@@ -1546,11 +1559,13 @@ function buildRowGeometry(
  * editor's base font. Rows with inline replacements can be restyled per replacement kind — a
  * markdown heading row is bold and larger — so their advance widths only exist in the DOM.
  */
-function rowUsesCalculatedGeometry(row: MountedVirtualizedTextRow): boolean {
-  if (row.inlineMapping) return false
-  if (!isSimpleRowText(row)) return false
+function rowGeometryPath(row: MountedVirtualizedTextRow): RowGeometryPath {
+  if (row.inlineMapping) return 'inline-mapping'
+  if (!isSimpleRowText(row)) return 'non-simple-text'
   // CSS tab stops can disagree with the estimated cell grid after a horizontal spacer.
-  return !(row.measurements?.hasTabs ?? (typeof row.text === 'string' && row.text.includes('\t')))
+  const hasTabs =
+    row.measurements?.hasTabs ?? (typeof row.text === 'string' && row.text.includes('\t'))
+  return hasTabs ? 'tab' : 'calculated'
 }
 
 function buildCalculatedRowGeometry(
@@ -2564,6 +2579,9 @@ function resolveRowGeometry(geometry: RowGeometry): RowGeometry {
   if (!plan) return geometry
 
   rowGeometrySweepCount += 1
+  recordEditorPerformanceDiagnostic('view.rowGeometry.sweep', () => ({
+    boundaries: geometry.offsets.length,
+  }))
 
   const { offsets, xs } = geometry
   let ascending = true
