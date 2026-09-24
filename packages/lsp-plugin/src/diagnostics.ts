@@ -3,8 +3,11 @@ import type * as lsp from 'vscode-languageserver-protocol'
 
 export type LanguageServerDiagnosticSeverity = 'error' | 'warning' | 'information' | 'hint'
 
+/** A tag layer paints on top of the severity wash, so a deprecated hint is still a hint. */
+export type LanguageServerDiagnosticHighlightLayer = LanguageServerDiagnosticSeverity | 'deprecated'
+
 export type LanguageServerDiagnosticHighlightGroups = Readonly<
-  Record<LanguageServerDiagnosticSeverity, readonly DiagnosticHighlightRange[]>
+  Record<LanguageServerDiagnosticHighlightLayer, readonly DiagnosticHighlightRange[]>
 >
 
 type DiagnosticHighlightRange = {
@@ -16,6 +19,8 @@ const ERROR = 1
 const WARNING = 2
 const INFORMATION = 3
 const HINT = 4
+
+const DIAGNOSTIC_TAG_DEPRECATED = 2
 
 export function summarizeDiagnostics(
   uri: lsp.DocumentUri | null,
@@ -56,6 +61,7 @@ export function diagnosticHighlightGroups(
     const range = highlightRangeForDiagnostic(document, diagnostic)
     if (!range) continue
     groups[severityForDiagnostic(diagnostic)].push(range)
+    if (diagnostic.tags?.includes(DIAGNOSTIC_TAG_DEPRECATED)) groups.deprecated.push(range)
   }
 
   return groups
@@ -79,7 +85,7 @@ function expandEmptyRange(length: number, offset: number): DiagnosticHighlightRa
 }
 
 function emptyHighlightGroups(): Record<
-  LanguageServerDiagnosticSeverity,
+  LanguageServerDiagnosticHighlightLayer,
   DiagnosticHighlightRange[]
 > {
   return {
@@ -87,6 +93,7 @@ function emptyHighlightGroups(): Record<
     warning: [],
     information: [],
     hint: [],
+    deprecated: [],
   }
 }
 

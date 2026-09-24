@@ -5,14 +5,20 @@ import {
   type EditorViewContributionContext,
 } from '@singapore-editor/core/extensions'
 import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
+import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
   diagnosticHighlightGroups,
   summarizeDiagnostics,
+  type LanguageServerDiagnosticHighlightLayer,
   type LanguageServerDiagnosticSeverity,
 } from './diagnostics'
-import { DIAGNOSTIC_MARKER_COLORS, DIAGNOSTIC_STYLES } from './plugin.styles'
+import {
+  DEPRECATED_DIAGNOSTIC_STYLE,
+  DIAGNOSTIC_MARKER_COLORS,
+  DIAGNOSTIC_STYLES,
+} from './plugin.styles'
 import type { OffsetRange } from '@singapore-editor/plugin-ui/offset-range'
 import type {
   LanguageServerDiagnosticMarkerClaim,
@@ -27,12 +33,21 @@ const LSP_DIAGNOSTIC_WARNING = 2
 const LSP_DIAGNOSTIC_INFORMATION = 3
 const LSP_DIAGNOSTIC_HINT = 4
 
-const DIAGNOSTIC_SEVERITIES: readonly LanguageServerDiagnosticSeverity[] = [
+const DIAGNOSTIC_LAYERS: readonly LanguageServerDiagnosticHighlightLayer[] = [
   'error',
   'warning',
   'information',
   'hint',
+  'deprecated',
 ]
+
+const DIAGNOSTIC_LAYER_STYLES: Record<
+  LanguageServerDiagnosticHighlightLayer,
+  VirtualizedTextHighlightStyle
+> = {
+  ...DIAGNOSTIC_STYLES,
+  deprecated: DEPRECATED_DIAGNOSTIC_STYLE,
+}
 
 const DIAGNOSTIC_MINIMAP_Z_INDEX: Record<LanguageServerDiagnosticSeverity, number> = {
   error: 40,
@@ -60,7 +75,7 @@ export type DiagnosticsPresenterOptions = {
 }
 
 export class DiagnosticsPresenter {
-  private readonly highlightNames: Record<LanguageServerDiagnosticSeverity, string>
+  private readonly highlightNames: Record<LanguageServerDiagnosticHighlightLayer, string>
   private markerClaim: Extract<LanguageServerDiagnosticMarkerClaim, { kind: 'claimed' }> | null =
     null
 
@@ -146,11 +161,11 @@ export class DiagnosticsPresenter {
     diagnostics: readonly lsp.Diagnostic[],
   ): void {
     const groups = diagnosticHighlightGroups(document, diagnostics)
-    for (const severity of DIAGNOSTIC_SEVERITIES) {
+    for (const layer of DIAGNOSTIC_LAYERS) {
       this.context.setRangeHighlight(
-        this.highlightNames[severity],
-        groups[severity],
-        DIAGNOSTIC_STYLES[severity],
+        this.highlightNames[layer],
+        groups[layer],
+        DIAGNOSTIC_LAYER_STYLES[layer],
       )
     }
   }
@@ -316,12 +331,13 @@ export class CompositeDiagnosticsPresenter {
 function createHighlightNames(
   prefix: string,
   namespace: string,
-): Record<LanguageServerDiagnosticSeverity, string> {
+): Record<LanguageServerDiagnosticHighlightLayer, string> {
   return {
     error: `${prefix}-${namespace}-error`,
     warning: `${prefix}-${namespace}-warning`,
     information: `${prefix}-${namespace}-information`,
     hint: `${prefix}-${namespace}-hint`,
+    deprecated: `${prefix}-${namespace}-deprecated`,
   }
 }
 

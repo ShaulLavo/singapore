@@ -37,6 +37,17 @@ const plugin = createLanguageServerAdapterPlugin({
 - Diagnostic, path, markdown tooltip, completion, and document-sync helpers are available through
   subpath exports.
 
+## Keys
+
+The completion list and the signature hint are driven by editor commands, not by listening to
+keys: `editor.action.triggerSuggest` (Ctrl+Space), `selectNextSuggestion`, `selectPrevSuggestion`,
+`selectNextPageSuggestion`, `selectPrevPageSuggestion`, `acceptSelectedSuggestion`,
+`hideSuggestWidget`, `closeParameterHints`, `showNextParameterHint` and `showPrevParameterHint`.
+The core's `suggest` keymap pack binds them under the context keys this plugin registers
+(`suggestWidgetVisible`, `parameterHintsVisible`, `parameterHintsMultipleSignatures`). A host that
+turns the editor's keymap off, or drops that pack, binds these commands itself or the list cannot
+be driven from the keyboard. They are part of `commands`, so `commands: []` registers none of them.
+
 ## Document lifetime
 
 The connection-only API owns its document session automatically. Dispose the editor to close it:

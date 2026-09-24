@@ -11,10 +11,11 @@ textbuffer attribution benchmark in `packages/textbuffer/bench`.
 E036 was inspected at `5f68ce6ae086bea10d9708ed56580e173d4dfee2` (2026-09-14).
 E041 was inspected at `b6a265a786b08c61318a3e02b666f17cb7ef50fc` (2026-09-16), after E038 landed.
 E052 was inspected at `40d841583659d2889fc03f61979e607f56df4c86` (2026-09-24), after E036 landed.
+E053 was inspected at `206bc32eca5fd02a2d4573952312367c96500192` (2026-09-24).
 Recheck source before execution; these dates record planning, not feature completion.
 
-There are **43 Editor-owned entries, 8 requiring both repositories, and 1 Platform-owned entry**.
-By deliverable, there are **37 implementation entries, 12 research entries, and 3 design entries**.
+There are **44 Editor-owned entries, 8 requiring both repositories, and 1 Platform-owned entry**.
+By deliverable, there are **38 implementation entries, 12 research entries, and 3 design entries**.
 Editor ownership describes where the work lands; dependencies can still include shared work.
 [Platform's roadmap](../../platform/PLAN.md) remains the execution scheduler.
 [E002](../docs/performance/input-latency.md) is complete, with a verified local latency gate.
@@ -71,8 +72,9 @@ walking a lazy `Proxy` array were 90%. Its execution plan has been removed.
 The order below is a recommendation.
 
 [E050](e050-host-obligations-into-api.md) is in progress: all eleven rows were re-checked on
-2026-09-24, and rows 1 and 5 landed: `setText(text, { tokens })` paints text and tokens in one render, and
-`registerPressParticipant` lets a plugin claim a press before caret placement.
+2026-09-24, and rows 1, 5 and 6 landed: `setText(text, { tokens })` paints text and tokens in one render, and
+`registerPressParticipant` lets a plugin claim a press before caret placement. Row 6 opened the keymap
+context to plugin keys; completion and signature help keys are commands in a `suggest` pack.
 
 E006 is in progress. [Automatic text reclamation](../docs/storage/e006-text-reclamation.md)
 now releases unused portions of append chunks and original text in live buffers, while preserving
@@ -93,8 +95,8 @@ Following E034 acceptance on 2026-09-13, eight completed entries retain permanen
 the review; they require substantive implementation, design, or research deliverables.
 E036–E040 were added on 2026-09-14 and 2026-09-16, and E037, E038, E017 and E019 completed on
 2026-09-16. E041 was added on 2026-09-16 and completed on 2026-09-17, and E042, E043 and E044
-were added and completed the same day, and E040 completed and E045 was added and completed on 2026-09-17, and E046 was added and completed the same day, and E035 completed on 2026-09-17, and E007 completed on 2026-09-20, and E008 completed on 2026-09-21, and E048 completed on 2026-09-21, and E036 completed and E052 was added on 2026-09-24, so 25 completed entries
-retain permanent references and 27 execution plans remain.
+were added and completed the same day, and E040 completed and E045 was added and completed on 2026-09-17, and E046 was added and completed the same day, and E035 completed on 2026-09-17, and E007 completed on 2026-09-20, and E008 completed on 2026-09-21, and E048 completed on 2026-09-21, and E036 completed and E052 and E053 were added on 2026-09-24, so 25 completed entries
+retain permanent references and 28 execution plans remain.
 
 ## How to read the plans
 
@@ -229,10 +231,11 @@ that passes over the path, not height, were the tree's cost.
 
 ## Inspectors and diagnostics
 
-| Plan                                                                              | Kind           | Owner  | Priority | Size | Needs                                |
-| --------------------------------------------------------------------------------- | -------------- | ------ | -------- | ---- | ------------------------------------ |
-| [E023 — Inspect editor timing and retained memory](e023-instrumentation-panel.md) | Implementation | Editor | P2       | M    | [E001](../examples/stress/README.md) |
-| [E024 — Inspect the live syntax tree](e024-syntax-tree-inspector.md)              | Implementation | Editor | P2       | M    | —                                    |
+| Plan                                                                                        | Kind           | Owner  | Priority | Size | Needs                                |
+| ------------------------------------------------------------------------------------------- | -------------- | ------ | -------- | ---- | ------------------------------------ |
+| [E023 — Inspect editor timing and retained memory](e023-instrumentation-panel.md)           | Implementation | Editor | P2       | M    | [E001](../examples/stress/README.md) |
+| [E024 — Inspect the live syntax tree](e024-syntax-tree-inspector.md)                        | Implementation | Editor | P2       | M    | —                                    |
+| [E053 — Unnecessary code fades in the colour it already has](e053-unnecessary-code-fade.md) | Implementation | Editor | P2       | M    | —                                    |
 
 ## Commands and extensions
 
@@ -296,6 +299,7 @@ verifiable plans. This table preserves the source wording; current behavior is r
 | Packed tokens end to end (drop the per-edit unpack)                   | [E035](../docs/performance/e035-packed-token-store.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Workaround audit: ask the owner, do not model it                      | [E047](e047-point-and-row-queries.md), [E048](../docs/display/e048-minimap-document-space.md), [E049](e049-no-silent-misses.md), [E050](e050-host-obligations-into-api.md), [E051](e051-fast-path-equivalence.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Proportional fonts: wrap and horizontal extent from measured advances | [E052](e052-proportional-font-extents.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Unnecessary code: fade in each token's own colour                     | [E053](e053-unnecessary-code-fade.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ## Maintaining the backlog
 

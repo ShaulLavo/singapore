@@ -2,11 +2,13 @@ import type { SelectionAffinity } from '@singapore-editor/core/document'
 import type {
   EditorContributionChange,
   EditorCapabilityToken,
+  EditorDisposable,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
 import type * as lsp from 'vscode-languageserver-protocol'
+import type { CompletionKeyCommand } from './keyCommands'
 
 import {
   COMPLETION_REQUEST_DEBOUNCE_MS,
@@ -90,6 +92,13 @@ export type CompletionControllerOptions = {
   onRequestError(error: unknown): void
 }
 
+const COMPLETION_MOVES = {
+  next: 1,
+  previous: -1,
+  nextPage: 8,
+  previousPage: -8,
+} as const satisfies Partial<Record<CompletionKeyCommand, number>>
+
 export class CompletionController {
   private readonly context: EditorViewContributionContext
   private readonly completion: CompletionWidgetController
@@ -107,6 +116,7 @@ export class CompletionController {
   private caret: CompletionCaret | null = null
   private languageId: EditorViewSnapshot['languageId'] = null
   private disposed = false
+  private visibleKey: EditorDisposable | null = null
 
   public constructor(private readonly options: CompletionControllerOptions) {
     this.context = options.context
@@ -182,9 +192,10 @@ export class CompletionController {
   }
 
   private installHandlers(): void {
-    this.context.scrollElement.addEventListener('keydown', this.handleCompletionKeyDown, {
-      capture: true,
-    })
+    this.visibleKey = this.context.registerKeymapContextKey('suggestWidgetVisible', () =>
+      this.completion.isVisible(),
+    )
+    this.context.scrollElement.addEventListener('keydown', this.handleCommitCharacterKeyDown)
     this.context.container.ownerDocument.addEventListener(
       'pointerdown',
       this.handleDocumentPointerDown,
@@ -193,9 +204,9 @@ export class CompletionController {
   }
 
   private uninstallHandlers(): void {
-    this.context.scrollElement.removeEventListener('keydown', this.handleCompletionKeyDown, {
-      capture: true,
-    })
+    this.visibleKey?.dispose()
+    this.visibleKey = null
+    this.context.scrollElement.removeEventListener('keydown', this.handleCommitCharacterKeyDown)
     this.context.container.ownerDocument.removeEventListener(
       'pointerdown',
       this.handleDocumentPointerDown,
@@ -497,66 +508,44 @@ export class CompletionController {
     this.hide()
   }
 
-  private readonly handleCompletionKeyDown = (event: KeyboardEvent): void => {
-    if (isCompletionManualTrigger(event)) {
-      this.consumeCompletionKey(event)
+  /**
+   * The keymap's commands. False when there is no list for them to act on, and an acceptance that
+   * could not be applied is false too, so its Enter or Tab still reaches the next binding.
+   */
+  public runKeyCommand(command: CompletionKeyCommand): boolean {
+    if (command === 'trigger') {
       this.requestManualCompletion()
-      return
+      return true
     }
+    if (!this.completion.isVisible()) return false
+    if (command === 'accept') return this.acceptCompletion()
+    if (command === 'hide') {
+      this.hide()
+      return true
+    }
+
+    this.moveSelection(COMPLETION_MOVES[command])
+    return true
+  }
+
+  // Any typed character can commit, so this is a listener rather than a binding. Swallowed only once
+  // the item is in: a failed acceptance still owes the reader the character they typed.
+  private readonly handleCommitCharacterKeyDown = (event: KeyboardEvent): void => {
     if (!this.completion.isVisible()) return
 
-    if (event.key === 'ArrowDown') {
-      this.consumeCompletionKey(event)
-      this.moveSelection(1)
-      return
-    }
-    if (event.key === 'ArrowUp') {
-      this.consumeCompletionKey(event)
-      this.moveSelection(-1)
-      return
-    }
-    if (event.key === 'PageDown') {
-      this.consumeCompletionKey(event)
-      this.moveSelection(8)
-      return
-    }
-    if (event.key === 'PageUp') {
-      this.consumeCompletionKey(event)
-      this.moveSelection(-8)
-      return
-    }
-    if (event.key === 'Escape') {
-      this.consumeCompletionKey(event)
-      this.hide()
-      return
-    }
     const commitCharacter = completionCommitCharacter(
       event,
       this.completion.selectedItem(),
       this.options.completionAcceptOnCommitCharacter === true,
     )
-    if (commitCharacter !== null) {
-      // Swallowed only once the item is in: an acceptance that could not be applied still owes the
-      // reader the character they typed, and taking the key first would eat it on the way out.
-      if (this.acceptCompletion(commitCharacter)) this.consumeCompletionKey(event)
-      return
-    }
-    if (event.key !== 'Enter' && event.key !== 'Tab') return
-
-    // Swallowed only once the item is in, as a commit character is: an Enter taken for an acceptance
-    // that never happened is a newline the reader pressed for and did not get.
-    if (this.acceptCompletion()) this.consumeCompletionKey(event)
+    if (commitCharacter === null) return
+    if (this.acceptCompletion(commitCharacter)) event.preventDefault()
   }
 
   /** Moving the focus is the reader claiming the row, which a rebuilt list has to honour. */
   private moveSelection(delta: number): void {
     this.selectionChosen = true
     this.completion.moveSelection(delta)
-  }
-
-  private consumeCompletionKey(event: KeyboardEvent): void {
-    event.preventDefault()
-    event.stopImmediatePropagation()
   }
 }
 
@@ -617,9 +606,4 @@ function completionSessionSurvives(session: CompletionSession, caret: Completion
   if (caret.prefix.length === 0 && caret.offset < session.offset) return false
 
   return caret.length - session.active.textSnapshot.length === caret.offset - session.offset
-}
-
-function isCompletionManualTrigger(event: KeyboardEvent): boolean {
-  if (!event.ctrlKey && !event.metaKey) return false
-  return event.key === ' ' || event.code === 'Space'
 }

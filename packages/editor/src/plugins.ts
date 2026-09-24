@@ -556,6 +556,11 @@ export type EditorViewContributionContext = {
   onDidType(listener: (text: string) => void): EditorDisposable
   /** Participants are asked in the order they registered. */
   registerPressParticipant(participant: EditorPressParticipant): EditorDisposable
+  /**
+   * Names state this contribution owns for key bindings' `when` conditions, such as a widget being
+   * open. Read at the moment a key is matched, so it is never stale; unregistered, it reads false.
+   */
+  registerKeymapContextKey(key: string, read: () => boolean): EditorDisposable
   getFeature<T>(token: EditorCapabilityToken<T>): T | null
   /**
    * The sources registered for a language feature, best first. The language is the caller's to name

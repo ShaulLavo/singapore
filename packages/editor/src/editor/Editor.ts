@@ -1223,14 +1223,35 @@ export class Editor {
 
   getKeymapContext(): EditorKeymapContext {
     return {
+      ...this.contributedKeymapContext(),
       writable: this.canEditDocument(),
       hasSelection: this.inputSelection
         .resolveViewSelections()
         .some((selection) => selection.startOffset !== selection.endOffset),
       tabFocusMode: this.tabMovesFocus,
-      findVisible: this.findFeature()?.isVisible() ?? false,
       inlineSuggestionVisible: this.inputSelection.inlineSuggestionSpecs().length > 0,
     }
+  }
+
+  /** A key is true while any of the contributions that registered it says so. */
+  private contributedKeymapContext(): Record<string, boolean> {
+    const context: Record<string, boolean> = {}
+    for (const [key, readers] of this.keymapContextKeys) context[key] = anyReaderHolds(readers)
+    return context
+  }
+
+  private readonly keymapContextKeys = new Map<string, Set<() => boolean>>()
+
+  private registerKeymapContextKey(key: string, read: () => boolean): EditorDisposable {
+    const readers = this.keymapContextKeys.get(key) ?? new Set()
+    readers.add(read)
+    this.keymapContextKeys.set(key, readers)
+    return this.claimForContribution(
+      disposableOnce(() => {
+        readers.delete(read)
+        if (readers.size === 0) this.keymapContextKeys.delete(key)
+      }),
+    )
   }
 
   isTabMovesFocusEnabled(): boolean {
@@ -1403,9 +1424,16 @@ export class Editor {
         this.setText(text, options)
         return
       }
-      this.syncSessionText(text, options)
-      // After the edit, which projects the old tokens through it; the host's own replace them.
-      if (options.tokens) this.setTokens(options.tokens)
+      const tokens = options.tokens
+      if (tokens === undefined) {
+        this.syncSessionText(text, options)
+        return
+      }
+      // One render: the edit alone would paint the old tokens projected through it first.
+      this.view.runAtomicRender(() => {
+        this.syncSessionText(text, options)
+        this.setTokens(tokens)
+      })
     })
   }
 
@@ -2926,6 +2954,7 @@ export class Editor {
       requestViewUpdate: () => this.notifyViewContributions('layout', null),
       onDidType: (listener) => this.addTypedTextListener(listener),
       registerPressParticipant: (participant) => this.registerPressParticipant(participant),
+      registerKeymapContextKey: (key, read) => this.registerKeymapContextKey(key, read),
       getFeature: (key) => this.getFeature(key),
       getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
       registerProvider: (token, selector, provider) =>
@@ -4574,6 +4603,13 @@ function editorLogError(error: unknown): EditorLogError {
   }
 
   return { message: String(error) }
+}
+
+function anyReaderHolds(readers: ReadonlySet<() => boolean>): boolean {
+  for (const read of readers) {
+    if (read()) return true
+  }
+  return false
 }
 
 function editorContributionFailureAction(phase: EditorContributionFailurePhase): string {

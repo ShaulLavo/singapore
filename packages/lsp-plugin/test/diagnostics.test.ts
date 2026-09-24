@@ -32,6 +32,19 @@ describe('language server diagnostics', () => {
     expect(groups.warning).toEqual([{ start: 2, end: 3 }])
   })
 
+  it('adds a deprecated-tagged diagnostic to the deprecated layer on top of its severity', () => {
+    const groups = diagnosticHighlightGroups(snapshotDocument('abcdef'), [
+      { ...diagnostic(4, 0, 0, 3), tags: [2] },
+      { ...diagnostic(4, 0, 3, 6), tags: [1] },
+    ])
+
+    expect(groups.hint).toEqual([
+      { start: 0, end: 3 },
+      { start: 3, end: 6 },
+    ])
+    expect(groups.deprecated).toEqual([{ start: 0, end: 3 }])
+  })
+
   it('does not create highlights for empty diagnostics in empty files', () => {
     const groups = diagnosticHighlightGroups(snapshotDocument(''), [diagnostic(1, 0, 0, 0)])
 

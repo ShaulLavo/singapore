@@ -31,6 +31,7 @@ import { vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
+import { createTestKeymap } from '@singapore-editor/core/testing'
 import type {
   ApplyWorkspaceEditRequest,
   ApplyWorkspaceEditResult,
@@ -148,6 +149,8 @@ export type ConnectedEditorOptions = {
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
   readonly onDefinitionLinkHover?: LanguageServerPluginOptions['onDefinitionLinkHover']
   readonly onConnectionCreated?: LanguageServerPluginOptions['onConnectionCreated']
+  /** Commands another contribution would have registered, reachable through the same keymap. */
+  readonly commands?: ReadonlyMap<EditorCommandId, EditorCommandHandler>
 }
 
 /**
@@ -167,7 +170,7 @@ export async function connectedEditor(
   let snapshot = editorSnapshot(text, caretOffset, 1, options.affinity ?? 'after')
   let anchorRect = new DOMRect(10, 20, 40, 18)
 
-  const commands = new Map<EditorCommandId, EditorCommandHandler>()
+  const commands = new Map<EditorCommandId, EditorCommandHandler>(options.commands)
   const errors: unknown[] = []
   const workspaceEditRequests: ApplyWorkspaceEditRequest[] = []
   const snippetSessions: (readonly SnippetStopRange[])[] = []
@@ -184,8 +187,10 @@ export async function connectedEditor(
   // The editor reports the keystroke separately from the edit it caused, because auto-closing and
   // typing over a closer both make the edit a poor stand-in for it.
   const typedTextListeners = new Set<(text: string) => void>()
+  const keymap = createTestKeymap(element, commands)
   const context = viewContributionContext({
     element,
+    registerKeymapContextKey: keymap.registerKeymapContextKey,
     getSnapshot: () => snapshot,
     getRangeClientRect: () => anchorRect,
     getFeature: (token) => features.get(token) ?? null,
@@ -266,7 +271,10 @@ export async function connectedEditor(
   return {
     applyEdits,
     focusEditor,
-    dispose: () => contribution.dispose(),
+    dispose: () => {
+      contribution.dispose()
+      keymap.dispose()
+    },
     type: (character) => {
       const at = caretOffsetOf(snapshot)
       applyChange({ from: at, to: at, text: character }, at + character.length)
@@ -524,9 +532,11 @@ function viewContributionContext(options: {
   getFeature(token: unknown): unknown
   focusEditor(): void
   onDidType(listener: (text: string) => void): () => void
+  registerKeymapContextKey: EditorViewContributionContext['registerKeymapContextKey']
 }): EditorViewContributionContext {
   return createTestViewContributionContext({
     ...providerRegistry(),
+    registerKeymapContextKey: options.registerKeymapContextKey,
     onDidType: (listener) => ({ dispose: options.onDidType(listener) }),
     container: options.element,
     scrollElement: options.element,

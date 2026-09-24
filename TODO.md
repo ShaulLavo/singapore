@@ -615,3 +615,11 @@ estimates before a row is measured still multiplies a column count by one charac
 wrap breaks, the left spacer of windowed long rows, and the horizontal scroll width. Measure glyph
 advances once per face and use them on those paths when the font is not monospace, without
 costing monospace fonts anything.
+
+## Unnecessary code: fade in each token's own colour
+
+Added 2026-09-24. Language servers tag unused imports, locals and parameters as Unnecessary, and
+VS Code fades them with `opacity` on an inline span. Highlights cannot set `opacity`, and Chrome
+resolves `currentColor` inside `color-mix()` in a highlight to transparent, so one fade rule over
+the token layer paints nothing. Fade each colour producer's own colour under a shared dim mask
+instead, keeping every producer's priority.

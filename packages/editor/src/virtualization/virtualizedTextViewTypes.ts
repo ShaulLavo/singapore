@@ -1,4 +1,3 @@
-import type { EditorInputRoute } from './virtualizedTextViewHelpers'
 import type { TextContent } from '../textContent'
 import type {
   EditorGutterContribution,
@@ -90,6 +89,12 @@ export type VirtualizedTextViewOptions = {
   /** Defaults to the textarea; EditContext is taken only where the engine has it. */
   readonly inputRoute?: EditorInputRoute
 }
+
+/**
+ * How typed text reaches the editor. EditContext hands over every edit with the range it replaced,
+ * where the textarea leaves some to be diffed back out of its value; only Chromium has it.
+ */
+export type EditorInputRoute = 'textarea' | 'edit-context'
 
 export type VirtualizedTextViewScrollMode = 'virtualized' | 'static'
 

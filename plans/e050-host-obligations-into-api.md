@@ -90,7 +90,8 @@ wording corrected, and three already have part of the proposed API.
 `EditorSetTextOptions.tokens` (and so `openDocument`) paints the given tokens with the text.
 `renderContent` swaps text and tokens inside one atomic render: before, the view published a
 `viewport` update showing the new text under the outgoing document's tokens, then an empty store,
-then the host's. `syncText` with `tokens` replaces the tokens it projected through the edit.
+then the host's. `syncText` with `tokens` renders the edit and the host's tokens in one atomic
+render too: the buffer publishes the edit inside `applyEdits`, so the tokens cannot ride the change.
 `test/setTextTokens.test.ts` fails if any contribution update during `setText` sees other tokens.
 The diff README, plugin contract and tests pass tokens with the text; Platform's `diff-pane.tsx`
 does the same (scenario `git-diff-expand-tokens`). The host's `setPresentationReady` bracket stays:
@@ -114,6 +115,30 @@ on their own elements, which is ordinary DOM ownership rather than an ordering t
 line-comment action observes presses on the pane host, so a Ctrl+click in a diff also offers
 "Ask the agent about these lines".
 
+## Row 6, 2026-09-24: keys a plugin contributes
+
+`EditorKeymapContext` is open: `registerKeymapContextKey(key, read)` on the view contribution
+context adds a key read at match time, an unregistered key reads false, and a condition is any key
+or `!key`. The editor's own four keys cannot be shadowed. The core no longer builds `findVisible`;
+the find plugin registers it, and `EditorFindFeature.isVisible` is gone: a find provider registers
+the key. A test holds every condition in the shipped presets to a known key. Completion and signature help register `suggestWidgetVisible`,
+`parameterHintsVisible` and `parameterHintsMultipleSignatures`, and their keys are commands with
+VS Code's ids (`editor.action.triggerSuggest`, `selectNextSuggestion`, `acceptSelectedSuggestion`,
+`hideSuggestWidget`, `closeParameterHints`, `showNextParameterHint`, …) bound in a `suggest` pack
+that is last in the layer order, so it outranks caret movement, inline suggestions and find. The
+defined priority is that order: one Escape closes the list, the next the hint, and only then does
+Escape reach find or secondary cursors. Before, signature help's capture listener closed the hint
+without claiming the key, so the same Escape also cleared secondary cursors. Every LSP command,
+rename and format included, now goes to the views of the editor that dispatched it rather than to
+every editor sharing the plugin object, and the widget commands are ordinary entries in
+`commands`, so `commands: []` still lets a second LSP plugin share an editor. Only commit
+characters keep a keydown listener, in the bubble phase: any character can commit, so it cannot be
+a binding. Ctrl+Space is Ctrl on every platform (it used to accept Cmd too); Shift+Enter and
+Shift+Tab accept, as before, while Ctrl+Enter stays insert-line-after. A host without the editor's
+keymap binds the commands itself (lsp-plugin README, Keys).
+`test/keymapContextKeys.test.ts`, lsp `test/widgetKeys.test.ts` (fails with the hint's Escape
+unclaimed); Platform registers the ten commands, scenario `editor-widget-keys`.
+
 ## Scope
 
 API design across `packages/editor` and the bundled plugins. Each section below ships on its own;
@@ -128,7 +153,7 @@ this document is the inventory and the contract, not one change.
 | CSS variables for typography                   | `fontSize`, `fontFamily`, `lineHeight` options; the resolved row pitch on the view snapshot           |
 | `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                      |
 | Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                             |
-| Capture-phase `keydown`                        | plugin-contributed keymap context keys with a defined priority                                        |
+| Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                  |
 | `MutationObserver` on `style`                  | `onDidChangeReservedOverlayWidth(side)` that is not dropped when re-entrant                           |
 | Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                        |
 | `pointer-events: auto`                         | an `interactive` flag on a gutter cell contribution                                                   |

@@ -89,6 +89,8 @@ class DocumentLinkController implements EditorViewContribution {
    * text that happens to contain a URL becomes impossible.
    */
   private readonly handleClick = (event: MouseEvent): void => {
+    // Something inside the editor already acted on this click, such as a diff separator expanding.
+    if (event.defaultPrevented) return
     if (!event.metaKey && !event.ctrlKey) return
     if (this.links.length === 0) return
 

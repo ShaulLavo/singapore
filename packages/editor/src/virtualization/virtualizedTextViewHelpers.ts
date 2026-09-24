@@ -6,6 +6,7 @@ import type { EditorTokenStyle } from '../tokens'
 import { clamp } from '../style-utils'
 import type { FixedRowVirtualizerOptions, FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
 import type {
+  EditorInputRoute,
   DocumentWithCaretHitTesting,
   HighlightRegistry,
   MountedVirtualizedTextRow,
@@ -158,12 +159,6 @@ export function createScrollElement(
   container.appendChild(scrollElement)
   return scrollElement
 }
-
-/**
- * How typed text reaches the editor. EditContext hands over every edit with the range it replaced,
- * where the textarea leaves some to be diffed back out of its value; only Chromium has it.
- */
-export type EditorInputRoute = 'textarea' | 'edit-context'
 
 export function createInputElement(container: HTMLElement, route: EditorInputRoute): HTMLElement {
   const view = container.ownerDocument.defaultView

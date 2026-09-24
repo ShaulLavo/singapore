@@ -203,6 +203,8 @@ function applied() {
   const event = pending
   if (!event || event.appliedAt !== null) return
   event.appliedAt = performance.now()
+  // @justification Benchmark observation of the first animation frame after an applied key; it
+  // records a timestamp only and schedules no editor work.
   requestAnimationFrame(() => {
     event.frameAt = performance.now()
   })

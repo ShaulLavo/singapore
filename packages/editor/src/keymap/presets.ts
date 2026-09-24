@@ -14,6 +14,7 @@ export type EditorCommandPack =
   | 'lsp-navigation'
   | 'lsp-editing'
   | 'inline-suggest'
+  | 'suggest'
 
 export type EditorKeymapLayerSource = 'core' | 'app'
 
@@ -76,6 +77,8 @@ export const defaultEditorCommandPacks = [
   'lsp-navigation',
   'lsp-editing',
   'inline-suggest',
+  // Last, so it outranks every other layer: its keys are the arrows, Enter, Tab and Escape.
+  'suggest',
 ] as const satisfies readonly EditorCommandPack[]
 
 export const readonlySafeEditorCommandPacks = [
@@ -158,6 +161,7 @@ export function editorCommandPackForCommand(command: EditorCommandId): EditorCom
   if (LSP_NAVIGATION_COMMANDS.has(command)) return 'lsp-navigation'
   if (LSP_EDITING_COMMANDS.has(command)) return 'lsp-editing'
   if (INLINE_SUGGEST_COMMANDS.has(command)) return 'inline-suggest'
+  if (SUGGEST_COMMANDS.has(command)) return 'suggest'
 
   return null
 }
@@ -176,6 +180,7 @@ function editorKeyBindingsForCommandPack(
   if (pack === 'lsp-navigation') return lspNavigationBindings()
   if (pack === 'lsp-editing') return lspEditingBindings(platform)
   if (pack === 'inline-suggest') return inlineSuggestBindings(platform)
+  if (pack === 'suggest') return suggestBindings()
 
   return []
 }
@@ -341,6 +346,46 @@ const INLINE_SUGGEST_COMMANDS = new Set<EditorCommandId>([
   'editor.action.inlineSuggest.commit',
   'editor.action.inlineSuggest.acceptNextWord',
 ])
+
+const SUGGEST_COMMANDS = new Set<EditorCommandId>([
+  'editor.action.triggerSuggest',
+  'selectNextSuggestion',
+  'selectPrevSuggestion',
+  'selectNextPageSuggestion',
+  'selectPrevPageSuggestion',
+  'acceptSelectedSuggestion',
+  'hideSuggestWidget',
+  'closeParameterHints',
+  'showNextParameterHint',
+  'showPrevParameterHint',
+])
+
+/**
+ * The completion list before the signature hint, and both before whatever else owns the key: one
+ * Escape closes the list, the next the hint. A command that finds nothing to do declines, so Enter
+ * with no item accepted still types a newline.
+ */
+function suggestBindings(): readonly EditorKeyBinding[] {
+  const list = ['suggestWidgetVisible']
+  const hints = ['parameterHintsVisible', 'parameterHintsMultipleSignatures']
+  return [
+    { chord: [key('Space', { ctrl: true })], command: 'editor.action.triggerSuggest' },
+    { chord: [key('ArrowDown')], command: 'selectNextSuggestion', when: list },
+    { chord: [key('ArrowUp')], command: 'selectPrevSuggestion', when: list },
+    { chord: [key('PageDown')], command: 'selectNextPageSuggestion', when: list },
+    { chord: [key('PageUp')], command: 'selectPrevPageSuggestion', when: list },
+    { chord: [key('Enter')], command: 'acceptSelectedSuggestion', when: list },
+    { chord: [key('Tab')], command: 'acceptSelectedSuggestion', when: list },
+    // VS Code's alternative acceptance; this list has one way to accept, and Shift+Tab must not
+    // outdent the line under an open list.
+    { chord: [key('Enter', { shift: true })], command: 'acceptSelectedSuggestion', when: list },
+    { chord: [key('Tab', { shift: true })], command: 'acceptSelectedSuggestion', when: list },
+    { chord: [key('Escape')], command: 'hideSuggestWidget', when: list },
+    { chord: [key('Escape')], command: 'closeParameterHints', when: ['parameterHintsVisible'] },
+    { chord: [key('ArrowDown')], command: 'showNextParameterHint', when: hints },
+    { chord: [key('ArrowUp')], command: 'showPrevParameterHint', when: hints },
+  ]
+}
 
 function navigationBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   return horizontalNavigationBindings(platform).concat(verticalNavigationBindings(platform))
@@ -756,8 +801,14 @@ export function vscodeEditorKeyBindings(
   const replaced = new Set(overrides.map((binding) => binding.command))
   // The line-comment single stroke remains an alias of its chord.
   replaced.delete('editor.action.commentLine')
+  const defaults = defaultEditorKeyBindings(platform).filter(
+    (binding) => !replaced.has(binding.command),
+  )
+  // The suggest pack outranks the overrides as it outranks every default layer.
+  const suggest = defaults.filter((binding) => SUGGEST_COMMANDS.has(binding.command))
   return [
+    ...suggest,
     ...overrides.map(withEditorConditions),
-    ...defaultEditorKeyBindings(platform).filter((binding) => !replaced.has(binding.command)),
+    ...defaults.filter((binding) => !SUGGEST_COMMANDS.has(binding.command)),
   ]
 }

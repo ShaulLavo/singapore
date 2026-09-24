@@ -598,6 +598,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorInputRoute",
+          "source": "packages/editor/src/virtualization/index.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorKeyBinding",
           "source": "packages/editor/src/editor/keymap.ts",
           "via": "packages/editor/src/index.ts"
@@ -858,6 +864,12 @@
           "kind": "type",
           "name": "EditorPreparedTagValue",
           "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPressParticipant",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -4864,6 +4876,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorPressParticipant",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorReindentOptions",
           "source": "packages/editor/src/editor/reindent.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -6650,6 +6668,12 @@
           "via": "packages/editor/src/public/testing.ts"
         },
         {
+          "kind": "type",
+          "name": "TestKeymap",
+          "source": "packages/editor/src/testKeymap.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
           "kind": "unknown",
           "name": "createTestCapabilityContributionContext",
           "source": "packages/editor/src/testContexts.ts",
@@ -6659,6 +6683,12 @@
           "kind": "unknown",
           "name": "createTestEditContributionContext",
           "source": "packages/editor/src/testContexts.ts",
+          "via": "packages/editor/src/public/testing.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createTestKeymap",
+          "source": "packages/editor/src/testKeymap.ts",
           "via": "packages/editor/src/public/testing.ts"
         },
         {

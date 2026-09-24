@@ -294,6 +294,26 @@ describe('createLanguageServerAdapterPlugin', () => {
     })
     expect(statuses).toEqual(['loading', 'ready'])
   })
+
+  // The editor refuses a second handler for an id, so `commands` is how a second plugin in the same
+  // editor stays out of the first one's way; the completion list's keys are commands like any other.
+  it('registers every command it has, list and hint keys included, only from `commands`', () => {
+    const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
+    const plugin = (commands?: []) =>
+      createLanguageServerAdapterPlugin({
+        name: 'editor.test-lsp',
+        createTransport: () => new FakeTransport(),
+        commands,
+      })
+
+    const defaults = activatePlugin(plugin(), { applyEdits }).commands
+    const none = activatePlugin(plugin([]), { applyEdits }).commands
+
+    expect([...defaults.keys()]).toEqual(
+      expect.arrayContaining(['editor.action.triggerSuggest', 'closeParameterHints']),
+    )
+    expect(none.size).toBe(0)
+  })
 })
 
 type ActivationOptions = {

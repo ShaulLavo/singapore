@@ -31,6 +31,12 @@ import { CodeActionController } from './codeActions'
 import type { OffsetRange } from '@singapore-editor/plugin-ui/offset-range'
 import { CompletionController } from './completionController'
 import {
+  COMPLETION_KEY_COMMANDS,
+  SIGNATURE_HELP_KEY_COMMANDS,
+  type CompletionKeyCommand,
+  type SignatureHelpKeyCommand,
+} from './keyCommands'
+import {
   createLanguageServerCompletionSource,
   LanguageServerCompletionSources,
 } from './completionProviders'
@@ -115,6 +121,8 @@ export type LanguageServerCommandTarget = {
   formatDocument(): boolean
   renameSymbol(): boolean
   applyAutoFix(): boolean
+  completionCommand(command: CompletionKeyCommand): boolean
+  signatureHelpCommand(command: SignatureHelpKeyCommand): boolean
 }
 
 export type LanguageServerCommandSpec = {
@@ -274,19 +282,20 @@ export function createLanguageServerAdapterPlugin(
 function createResolvedLanguageServerPlugin(
   resolved: LanguageServerResolvedAdapterOptions,
 ): LanguageServerPlugin {
-  const state = new LanguageServerPluginState()
-
   return {
     name: resolved.name,
     activate(context) {
+      // This editor's views only: a command reached this editor's router, so a rename or a list
+      // open in another editor sharing the plugin is not what it is about.
+      const views = new LanguageServerViews()
       return [
         context.registerViewContribution({
           createContribution: (contributionContext) =>
-            new LanguageServerContribution(contributionContext, state, resolved),
+            new LanguageServerContribution(contributionContext, views, resolved),
         }),
         context.registerCommandContribution({
           createContribution: (contributionContext) =>
-            new LanguageServerCommandContribution(contributionContext, state, resolved.commands),
+            new LanguageServerCommandContribution(contributionContext, views, resolved.commands),
         }),
         context.registerEditContribution({
           createContribution: (contributionContext) =>
@@ -297,61 +306,54 @@ function createResolvedLanguageServerPlugin(
   }
 }
 
-class LanguageServerPluginState implements LanguageServerCommandTarget {
-  private readonly contributions = new Set<LanguageServerContribution>()
+/** The views of one editor, answering its commands: the first view that acts claims the key. */
+class LanguageServerViews implements LanguageServerCommandTarget {
+  private readonly views = new Set<LanguageServerContribution>()
 
-  public register(contribution: LanguageServerContribution): void {
-    this.contributions.add(contribution)
+  public register(view: LanguageServerContribution): void {
+    this.views.add(view)
   }
 
-  public unregister(contribution: LanguageServerContribution): void {
-    this.contributions.delete(contribution)
+  public unregister(view: LanguageServerContribution): void {
+    this.views.delete(view)
   }
 
   public goToDefinitionFromSelection(): boolean {
-    return this.runNavigationCommand({
-      kind: 'definition',
-      openMode: 'default',
-    })
+    return this.runNavigationCommand({ kind: 'definition', openMode: 'default' })
   }
 
   public runNavigationCommand(command: LanguageServerNavigationCommand): boolean {
-    for (const contribution of this.contributions) {
-      if (contribution.runNavigationCommand(command)) return true
-    }
-
-    return false
+    return this.some((view) => view.runNavigationCommand(command))
   }
 
   public moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean {
-    for (const contribution of this.contributions) {
-      if (contribution.moveDiagnosticMarker(direction)) return true
-    }
-
-    return false
+    return this.some((view) => view.moveDiagnosticMarker(direction))
   }
 
   public formatDocument(): boolean {
-    for (const contribution of this.contributions) {
-      if (contribution.formatDocument()) return true
-    }
-
-    return false
+    return this.some((view) => view.formatDocument())
   }
 
   public renameSymbol(): boolean {
-    for (const contribution of this.contributions) {
-      if (contribution.renameSymbol()) return true
-    }
-
-    return false
+    return this.some((view) => view.renameSymbol())
   }
 
   public applyAutoFix(): boolean {
-    for (const contribution of this.contributions) {
-      if (contribution.applyAutoFix()) return true
-    }
+    return this.some((view) => view.applyAutoFix())
+  }
 
+  public completionCommand(command: CompletionKeyCommand): boolean {
+    return this.some((view) => view.completionCommand(command))
+  }
+
+  public signatureHelpCommand(command: SignatureHelpKeyCommand): boolean {
+    return this.some((view) => view.signatureHelpCommand(command))
+  }
+
+  private some(run: (view: LanguageServerContribution) => boolean): boolean {
+    for (const view of this.views) {
+      if (run(view)) return true
+    }
     return false
   }
 }
@@ -361,11 +363,11 @@ class LanguageServerCommandContribution implements EditorDisposable {
 
   public constructor(
     context: EditorCommandContributionContext,
-    private readonly state: LanguageServerPluginState,
+    views: LanguageServerViews,
     commands: readonly LanguageServerCommandSpec[],
   ) {
     this.commands = commands.map((command) =>
-      context.registerCommand(command.id, () => command.run(this.state)),
+      context.registerCommand(command.id, () => command.run(views)),
     )
   }
 
@@ -443,7 +445,7 @@ class LanguageServerContribution implements EditorViewContribution {
 
   public constructor(
     private readonly context: EditorViewContributionContext,
-    private readonly state: LanguageServerPluginState,
+    private readonly views: LanguageServerViews,
     private readonly options: LanguageServerResolvedAdapterOptions,
   ) {
     const presenter = new DiagnosticsPresenter(context, context.highlightPrefix, {
@@ -549,7 +551,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.formatOnType = options.formatOnType
       ? new FormatOnTypeController({ context, editFeature: options.completion.editFeature })
       : null
-    this.state.register(this)
+    this.views.register(this)
     this.update(context.getSnapshot(), 'document', null)
   }
 
@@ -577,7 +579,7 @@ class LanguageServerContribution implements EditorViewContribution {
     if (this.disposed) return
 
     this.disposed = true
-    this.state.unregister(this)
+    this.views.unregister(this)
     this.definitionLink.dispose()
     this.hoverParticipantRegistration?.dispose()
     this.completion.hide()
@@ -609,6 +611,15 @@ class LanguageServerContribution implements EditorViewContribution {
 
   public runNavigationCommand(command: LanguageServerNavigationCommand): boolean {
     return this.definitionLink.runNavigationCommand(command)
+  }
+
+  public completionCommand(command: CompletionKeyCommand): boolean {
+    return this.completion.runKeyCommand(command)
+  }
+
+  /** Before the first `(` there is no controller, and so no hint for these to act on. */
+  public signatureHelpCommand(command: SignatureHelpKeyCommand): boolean {
+    return this.signatureHelp?.runKeyCommand(command) ?? false
   }
 
   public moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean {
@@ -1238,7 +1249,22 @@ const LANGUAGE_SERVER_COMMANDS: readonly LanguageServerCommandSpec[] = [
     id: 'editor.action.marker.prev',
     run: (state) => state.moveDiagnosticMarker('previous'),
   },
+  ...keyCommandSpecs(COMPLETION_KEY_COMMANDS, (target, command) =>
+    target.completionCommand(command),
+  ),
+  ...keyCommandSpecs(SIGNATURE_HELP_KEY_COMMANDS, (target, command) =>
+    target.signatureHelpCommand(command),
+  ),
 ]
+
+/** The completion list and signature hint, driven by the keymap rather than by raw keys. */
+function keyCommandSpecs<Command extends string>(
+  ids: Readonly<Record<Command, EditorCommandId>>,
+  run: (target: LanguageServerCommandTarget, command: Command) => boolean,
+): readonly LanguageServerCommandSpec[] {
+  const commands = Object.keys(ids) as Command[]
+  return commands.map((command) => ({ id: ids[command], run: (target) => run(target, command) }))
+}
 
 function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === 'AbortError') return true

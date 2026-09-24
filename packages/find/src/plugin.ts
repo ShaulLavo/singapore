@@ -89,6 +89,7 @@ export function createEditorFindContributionProviders(
 class EditorFindViewContribution implements EditorViewContribution {
   private readonly hostRegistration: EditorDisposable
   private readonly subscription: EditorDisposable
+  private readonly visibleKey: EditorDisposable
   private latestSnapshot: EditorViewSnapshot
   private widget: EditorFindWidget | null = null
   private reservationObserver: MutationObserver | null = null
@@ -104,6 +105,7 @@ class EditorFindViewContribution implements EditorViewContribution {
       context.highlightPrefix,
     )
     this.subscription = controller.subscribe(this.handleUiEvent)
+    this.visibleKey = context.registerKeymapContextKey('findVisible', () => controller.isVisible())
   }
 
   public update(
@@ -131,6 +133,7 @@ class EditorFindViewContribution implements EditorViewContribution {
   }
 
   public dispose(): void {
+    this.visibleKey.dispose()
     this.subscription.dispose()
     this.reservationObserver?.disconnect()
     this.reservationObserver = null
@@ -293,7 +296,6 @@ class EditorFindEditContribution implements EditorEditContribution {
 
 function createFindFeature(controller: EditorFindController): EditorFindFeature {
   return {
-    isVisible: () => controller.isVisible(),
     openFind: () => controller.openFind(),
     toggleFind: () => controller.toggleFind(),
     openFindReplace: () => controller.openFindReplace(),

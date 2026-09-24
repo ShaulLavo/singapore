@@ -54,6 +54,7 @@ export {
   diagnosticHighlightGroups,
   summarizeDiagnostics,
   type LanguageServerDiagnosticHighlightGroups,
+  type LanguageServerDiagnosticHighlightLayer,
   type LanguageServerDiagnosticSeverity,
 } from './diagnostics'
 export { viewDocumentSnapshot } from './viewDocumentSnapshot'

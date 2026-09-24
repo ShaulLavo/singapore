@@ -17,7 +17,7 @@ import type {
   VirtualizedTextViewScrollMode,
 } from '../virtualization/virtualizedTextViewTypes'
 import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
-import type { EditorInputRoute } from '../virtualization/virtualizedTextViewHelpers'
+import type { EditorInputRoute } from '../virtualization/virtualizedTextViewTypes'
 import type { EditorKeymapOptions } from './keymap'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'

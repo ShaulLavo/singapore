@@ -78,3 +78,20 @@ test('syncText takes the host’s tokens over the ones it projected through the 
   expect(editor.materializeFullText()).toBe('head\nbody\ntail')
   expect(editor['tokens'].toTokens()).toEqual([{ start: 5, end: 9, style: red }])
 })
+
+test('syncText with tokens never shows the new text under the projected ones', () => {
+  const { plugin, snapshots } = snapshotRecorder()
+  const editor = mountEditor({ plugins: [plugin] })
+  editor.setText('head\ntail', { languageId: null, tokens: [{ start: 0, end: 4, style: red }] })
+  snapshots.length = 0
+
+  editor.syncText('head\nbody\ntail', {
+    languageId: null,
+    tokens: [{ start: 5, end: 9, style: red }],
+  })
+
+  expect(snapshots.length).toBeGreaterThan(0)
+  for (const snapshot of snapshots) {
+    expect(snapshot.tokens.toTokens()).toEqual([{ start: 5, end: 9, style: red }])
+  }
+})

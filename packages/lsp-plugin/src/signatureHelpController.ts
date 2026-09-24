@@ -1,6 +1,7 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type {
+  EditorDisposable,
   EditorTheme,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
@@ -9,6 +10,7 @@ import type {
 import { offsetToLspPositionInSnapshot } from '@singapore-editor/lsp'
 
 import type { ActiveDocument } from './pluginTypes'
+import type { SignatureHelpKeyCommand } from './keyCommands'
 import type { LanguageServerFeatureRouter } from './serverSet'
 import {
   formatSignatureHelp,
@@ -47,6 +49,7 @@ export class SignatureHelpController {
   private lastHelp: lsp.SignatureHelp | null = null
   private display: SignatureHelpDisplay | null = null
   private disposed = false
+  private readonly keymapKeys: readonly EditorDisposable[]
 
   public constructor(private readonly options: SignatureHelpControllerOptions) {
     this.context = options.context
@@ -56,7 +59,13 @@ export class SignatureHelpController {
       reentryElement: this.context.scrollElement,
       themeSource: this.context.scrollElement,
     })
-    this.context.scrollElement.addEventListener('keydown', this.handleKeyDown, { capture: true })
+    this.keymapKeys = [
+      this.context.registerKeymapContextKey('parameterHintsVisible', () => this.display !== null),
+      this.context.registerKeymapContextKey(
+        'parameterHintsMultipleSignatures',
+        () => (this.display?.signatureCount ?? 0) > 1,
+      ),
+    ]
   }
 
   public update(snapshot: EditorViewSnapshot, kind: EditorViewContributionUpdateKind): void {
@@ -96,28 +105,24 @@ export class SignatureHelpController {
     if (this.disposed) return
 
     this.disposed = true
-    this.context.scrollElement.removeEventListener('keydown', this.handleKeyDown, { capture: true })
+    for (const key of this.keymapKeys) key.dispose()
     this.hide()
     this.tooltip.dispose()
   }
 
-  /** Escape dismisses; Up/Down cycle overloads while the widget is showing several. */
-  private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (!this.display) return
-
-    if (event.key === 'Escape') {
+  /** The keymap's commands; false when there is nothing on screen for them to act on. */
+  public runKeyCommand(command: SignatureHelpKeyCommand): boolean {
+    const display = this.display
+    if (!display) return false
+    if (command === 'close') {
       this.hide()
-      return
+      return true
     }
-    if (this.display.signatureCount < 2) return
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    if (display.signatureCount < 2) return false
 
-    const delta = event.key === 'ArrowDown' ? 1 : -1
-    event.preventDefault()
-    event.stopPropagation()
-    this.showSignature(
-      nextSignatureIndex(this.display.activeSignature, this.display.signatureCount, delta),
-    )
+    const delta = command === 'next' ? 1 : -1
+    this.showSignature(nextSignatureIndex(display.activeSignature, display.signatureCount, delta))
+    return true
   }
 
   private async request(triggerCharacter: '(' | ','): Promise<void> {

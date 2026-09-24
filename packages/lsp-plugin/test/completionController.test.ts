@@ -1,6 +1,7 @@
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import type {
+  EditorCommandHandler,
   EditorEditContributionContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
@@ -9,10 +10,13 @@ import type {
 import type { LspManagedTransport, LspTransportHandler } from '@singapore-editor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
+import type { EditorCommandId } from '@singapore-editor/core/editor'
 
 import { LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE } from '../src/completion'
 import { CompletionController } from '../src/completionController'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
+import { completionCommandHandlers } from './completionCommandHandlers'
+import { createTestKeymap, type TestKeymap } from '@singapore-editor/core/testing'
 import type { ActiveDocument } from '../src/pluginTypes'
 import {
   documentSyncSnapshotFields,
@@ -26,6 +30,21 @@ import {
   createTestPluginContext,
   createTestViewContributionContext,
 } from '@singapore-editor/core/testing'
+
+// Each harness's keymap listens on the document too, so it goes with the test that made it.
+const keymaps: TestKeymap[] = []
+afterEach(() => {
+  for (const keymap of keymaps.splice(0)) keymap.dispose()
+})
+
+function testKeymap(
+  root: HTMLElement,
+  commands: ReadonlyMap<EditorCommandId, EditorCommandHandler>,
+): TestKeymap {
+  const keymap = createTestKeymap(root, commands)
+  keymaps.push(keymap)
+  return keymap
+}
 
 type JsonMessage = Record<string, unknown>
 
@@ -654,10 +673,13 @@ async function standaloneCompletion(
   const applyCompletion = vi.fn(() => true)
   const snapshot = editorSnapshot('const val', 9, 2)
   let active = openDocument('file:///src/index.ts', 'const val')
+  const commands = new Map<EditorCommandId, EditorCommandHandler>()
+  const keymap = testKeymap(element, commands)
 
   const controller = new CompletionController({
     context: viewContributionContext({
       element,
+      registerKeymapContextKey: keymap.registerKeymapContextKey,
       getSnapshot: () => snapshot,
       getRangeClientRect: () => new DOMRect(10, 20, 40, 18),
       getFeature: (token) =>
@@ -673,6 +695,7 @@ async function standaloneCompletion(
     onRequestError: () => undefined,
   })
 
+  for (const [id, handler] of completionCommandHandlers(controller)) commands.set(id, handler)
   controller.update(snapshot, 'content', documentChange([{ from: 8, to: 8, text: 'l' }]))
   await vi.advanceTimersByTimeAsync(90)
 
@@ -743,10 +766,13 @@ async function connectedEditor(
   let snapshot = editorSnapshot(text, caretOffset, 1)
   let anchorRect = new DOMRect(10, 20, 40, 18)
 
-  const provider = activateProvider(transport, features, applyEdits)
+  const commands = new Map<EditorCommandId, EditorCommandHandler>()
+  const provider = activateProvider(transport, features, applyEdits, commands)
+  const keymap = testKeymap(element, commands)
   const contribution = provider.createContribution(
     viewContributionContext({
       element,
+      registerKeymapContextKey: keymap.registerKeymapContextKey,
       getSnapshot: () => snapshot,
       getRangeClientRect: () => anchorRect,
       getFeature: (token) => features.get(token) ?? null,
@@ -849,6 +875,7 @@ function activateProvider(
   transport: LspManagedTransport,
   features: Map<unknown, unknown>,
   applyEdits: EditorEditContributionContext['applyEdits'],
+  commands: Map<EditorCommandId, EditorCommandHandler>,
 ): EditorViewContributionProvider {
   let provider: EditorViewContributionProvider | null = null
   const disposable = { dispose: () => undefined }
@@ -863,6 +890,15 @@ function activateProvider(
     createTestPluginContext({
       registerViewContribution: (value) => {
         provider = value
+        return disposable
+      },
+      registerCommandContribution: (value) => {
+        value.createContribution({
+          registerCommand: (commandId, handler) => {
+            commands.set(commandId, handler)
+            return { dispose: () => commands.delete(commandId) }
+          },
+        })
         return disposable
       },
       registerEditContribution: (value) => {
@@ -890,8 +926,10 @@ function viewContributionContext(options: {
   getSnapshot(): EditorViewSnapshot
   getRangeClientRect(): DOMRect
   getFeature(token: unknown): unknown
+  registerKeymapContextKey: EditorViewContributionContext['registerKeymapContextKey']
 }): EditorViewContributionContext {
   return createTestViewContributionContext({
+    registerKeymapContextKey: options.registerKeymapContextKey,
     container: options.element,
     scrollElement: options.element,
     contentElement: options.element,

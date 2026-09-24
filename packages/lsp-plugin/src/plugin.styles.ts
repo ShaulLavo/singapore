@@ -136,6 +136,14 @@ export const DIAGNOSTIC_STYLES: Record<
   hint: { backgroundColor: DIAGNOSTIC_HINT_BACKGROUND },
 }
 
+/**
+ * The `Deprecated` diagnostic tag. No colour and no z-index: the stroke takes the text's own colour,
+ * so it never contends with syntax or error colouring for the glyphs it crosses out.
+ */
+export const DEPRECATED_DIAGNOSTIC_STYLE: VirtualizedTextHighlightStyle = {
+  textDecoration: 'line-through',
+}
+
 // Opacity descends with severity, so a line carrying several diagnostics still reads as its worst
 // one once the marks overlap.
 const DIAGNOSTIC_MARKER_ALPHA = {

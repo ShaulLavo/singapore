@@ -34,6 +34,7 @@ import type * as lsp from 'vscode-languageserver-protocol'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
 import {
   createTestEditContributionContext,
+  createTestKeymap,
   createTestPluginContext,
   createTestViewContributionContext,
 } from '@singapore-editor/core/testing'
@@ -1229,16 +1230,18 @@ describe('createTypeScriptLspPlugin', () => {
     const worker = new FakeWorker()
     const container = document.createElement('div')
     const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
-    const { provider, features } = activatePluginWithCommands(
+    const { provider, features, commands } = activatePluginWithCommands(
       createTypeScriptLspPlugin({ workerFactory: () => worker }),
       { container, applyEdits },
     )
+    // Enter reaches the list the way an editor delivers it: through the keymap to a command.
+    const keymap = createTestKeymap(container, commands)
     const context = viewContributionContext(
       editorSnapshot({
         text: 'const va',
         selections: [collapsedSelection(8)],
       }),
-      { container, features },
+      { container, features, registerKeymapContextKey: keymap.registerKeymapContextKey },
     )
     const contribution = provider.createContribution(context)
     if (!contribution) throw new Error('missing contribution')
@@ -1298,6 +1301,7 @@ describe('createTypeScriptLspPlugin', () => {
       'typescriptLsp.completion.accept',
       { affinity: 'after', anchor: 11, head: 11 },
     )
+    keymap.dispose()
     expect(completionElement().hidden).toBe(true)
   })
 
@@ -1615,6 +1619,7 @@ function viewContributionContext(
   options: {
     readonly container?: HTMLDivElement
     readonly features?: ReadonlyMap<unknown, unknown>
+    readonly registerKeymapContextKey?: EditorViewContributionContext['registerKeymapContextKey']
   } = {},
 ): EditorViewContributionContext {
   const element = options.container ?? document.createElement('div')
@@ -1635,6 +1640,9 @@ function viewContributionContext(
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
     setRangeHighlight: vi.fn(),
     clearRangeHighlight: vi.fn(),
+    ...(options.registerKeymapContextKey
+      ? { registerKeymapContextKey: options.registerKeymapContextKey }
+      : {}),
   })
 }
 

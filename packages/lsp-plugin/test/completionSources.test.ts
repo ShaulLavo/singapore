@@ -2,6 +2,7 @@ import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import { createEditorLanguageFeatureToken } from '@singapore-editor/core/extensions'
 import type {
+  EditorCommandHandler,
   EditorDisposable,
   EditorEditContributionContext,
   EditorViewContributionContext,
@@ -17,6 +18,8 @@ import {
   type EditorCompletionSource,
 } from '../src/completionProviders'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
+import { createTestKeymap, type TestKeymap } from '@singapore-editor/core/testing'
+import type { EditorCommandId } from '@singapore-editor/core/editor'
 import {
   documentSyncSnapshotFields,
   viewSnapshotStructuralFields,
@@ -67,10 +70,14 @@ class FakeTransport implements LspManagedTransport {
   }
 }
 
+// Each harness's keymap listens on the document too, so it goes with the test that made it.
+const keymaps: TestKeymap[] = []
+
 describe('a completion list built from several sources', () => {
   afterEach(() => {
     vi.useRealTimers()
     document.body.replaceChildren()
+    for (const keymap of keymaps.splice(0)) keymap.dispose()
   })
 
   it('keeps ambient providers when the server set contributes no completion lane', () => {
@@ -217,9 +224,13 @@ async function connectedEditor(options: {
     channel.registerProvider(COMPLETION_SOURCES, { language: '*' }, source),
   )
 
-  const provider = activateProvider(transport, features, applyEdits, options.onError)
+  const commands = new Map<EditorCommandId, EditorCommandHandler>()
+  const provider = activateProvider(transport, features, applyEdits, commands, options.onError)
+  const keymap = createTestKeymap(element, commands)
+  keymaps.push(keymap)
   const contribution = provider.createContribution(
     createTestViewContributionContext({
+      registerKeymapContextKey: keymap.registerKeymapContextKey,
       container: element,
       scrollElement: element,
       contentElement: element,
@@ -322,6 +333,7 @@ function activateProvider(
   transport: LspManagedTransport,
   features: Map<unknown, unknown>,
   applyEdits: EditorEditContributionContext['applyEdits'],
+  commands: Map<EditorCommandId, EditorCommandHandler>,
   onError?: (error: unknown) => void,
 ): EditorViewContributionProvider {
   let provider: EditorViewContributionProvider | null = null
@@ -342,7 +354,15 @@ function activateProvider(
         provider = value
         return disposable
       },
-      registerCommandContribution: () => disposable,
+      registerCommandContribution: (value) => {
+        value.createContribution({
+          registerCommand: (commandId, handler) => {
+            commands.set(commandId, handler)
+            return { dispose: () => commands.delete(commandId) }
+          },
+        })
+        return disposable
+      },
       registerCapabilityContribution: () => disposable,
       registerEditContribution: (value) => {
         value.createContribution(
