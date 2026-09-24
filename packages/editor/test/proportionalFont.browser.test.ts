@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import '../src/style.css'
+import { Editor } from '../src/editor'
+import type { EditorLogEvent, EditorPlugin } from '../src/public/extensions'
 import { VirtualizedTextView } from '../src/virtualization'
 import { clearBrowserTextMetricsCache } from '../src/virtualization/browserMetrics'
 
@@ -91,5 +93,102 @@ describe('font advances', () => {
     result = hitColumns(row)
     expect(reads).toBe(0)
     expect(result.actual).toEqual(result.expected)
+  })
+})
+
+describe('a font change on a mounted editor', () => {
+  let host: HTMLDivElement
+  let style: HTMLStyleElement
+  let editor: Editor
+  let remeasured = 0
+
+  const remeasureLog: EditorPlugin = {
+    activate: (context) =>
+      context.registerLogger((event: EditorLogEvent) => {
+        if (event.action === 'editor.layout.text_metrics_remeasured') remeasured += 1
+      }) ?? [],
+  }
+
+  function setFont(fontFamily: string) {
+    style.textContent = `.font-under-test * { font-family: ${fontFamily} !important; }`
+  }
+
+  // The face observer reports after layout; two frames put both the report and the re-render behind us.
+  const frames = () =>
+    new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    )
+
+  function wrongColumns(): number[] {
+    const row = host.querySelector<HTMLElement>('.editor-virtualized-row')!
+    const node = Array.from(row.childNodes).find((child) => child.nodeType === Node.TEXT_NODE)!
+    const rowRect = row.getBoundingClientRect()
+    const range = document.createRange()
+    const wrong: number[] = []
+    for (let column = 0; column < LINE.length; column++) {
+      range.setStart(node, column)
+      range.setEnd(node, column + 1)
+      const hit = editor.rowAtPoint(range.getBoundingClientRect().left + 1, rowRect.top + 10)
+      if (hit?.offset !== column) wrong.push(column)
+    }
+    return wrong
+  }
+
+  beforeEach(async () => {
+    remeasured = 0
+    style = document.createElement('style')
+    document.head.append(style)
+    setFont('monospace')
+    host = document.createElement('div')
+    host.className = 'font-under-test'
+    host.style.cssText = 'width: 600px; height: 160px; display: flex'
+    document.body.append(host)
+    clearBrowserTextMetricsCache()
+    editor = new Editor(host, { defaultText: LINE, plugins: [remeasureLog] })
+    await frames()
+  })
+
+  afterEach(() => {
+    editor.dispose()
+    host.remove()
+    style.remove()
+    clearBrowserTextMetricsCache()
+  })
+
+  it('re-measures when the host swaps the font with nothing loading', async () => {
+    setFont('sans-serif')
+    await frames()
+    expect(wrongColumns()).toEqual([])
+
+    setFont('monospace')
+    await frames()
+    expect(wrongColumns()).toEqual([])
+    expect(remeasured).toBe(2)
+  })
+
+  it('re-measures when a face the font names finishes loading after mount', async () => {
+    // Until the face loads, the stack falls back to monospace and the first reading is right for it.
+    setFont("'Late Proportional', monospace")
+    await frames()
+    const face = new FontFace(
+      'Late Proportional',
+      'local("Liberation Sans"), local("DejaVu Sans"), local("Noto Sans"), local("Arial")',
+    )
+    document.fonts.add(await face.load())
+    await frames()
+
+    expect(remeasured).toBeGreaterThan(0)
+    expect(wrongColumns()).toEqual([])
+    document.fonts.delete(face)
+  })
+
+  it('does not re-measure for being hidden and shown again', async () => {
+    host.style.display = 'none'
+    await frames()
+    host.style.display = 'flex'
+    await frames()
+
+    expect(remeasured).toBe(0)
+    expect(wrongColumns()).toEqual([])
   })
 })

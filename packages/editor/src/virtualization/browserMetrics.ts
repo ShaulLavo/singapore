@@ -26,9 +26,10 @@ const DEFAULT_WHITESPACE_DOT_GLYPH: WhitespaceDotGlyph = '·'
 const WHITESPACE_DOT_GLYPHS: readonly WhitespaceDotGlyph[] = [DEFAULT_WHITESPACE_DOT_GLYPH, '⸱']
 // Monaco's set: narrow, wide and punctuation glyphs, digits, in every style a theme may paint a
 // token with. A font whose bold or italic advance differs still breaks column arithmetic there.
-const MONOSPACE_PROBE_TEXTS = ['i', 'l', '|', '/', '-', '_', '%', 'W', '0', '1'].map((glyph) =>
-  glyph.repeat(PROBE_LENGTH),
-)
+const MONOSPACE_PROBE_GLYPHS = ['i', 'l', '|', '/', '-', '_', '%', 'W', '0', '1']
+const MONOSPACE_PROBE_TEXTS = MONOSPACE_PROBE_GLYPHS.map((glyph) => glyph.repeat(PROBE_LENGTH))
+// One of every measured glyph: its box moves when any advance or the line box does.
+const WATCHED_PROBE_TEXT = `m ${MONOSPACE_PROBE_GLYPHS.join('')}`
 const MONOSPACE_PROBE_STYLES = ['regular', 'bold', 'italic'] as const
 // Layout reports 1/64 px; over the 16-glyph probe that bounds one advance to about 0.001 px.
 const MONOSPACE_EPSILON = 0.002
@@ -57,10 +58,9 @@ export function measureMonospaceAdvances(element: HTMLElement): boolean {
 }
 
 /**
- * Drops the cache and re-measures on the two events that silently invalidate a reading: a font that
- * arrives after the first measurement (until then we measured the fallback face) and a change of
- * display scaling. Neither surfaces as an error, and both leave every column position in every
- * mounted editor wrong for the rest of the session.
+ * Drops the cache and re-measures when a reading goes stale without an error: the face the element
+ * draws with changes (a font setting, a late web font, a size) or the display scaling does. Either
+ * leaves every column position in the editor wrong for the rest of the session.
  */
 export function observeBrowserTextMetricsInvalidation(
   element: HTMLElement,
@@ -71,13 +71,62 @@ export function observeBrowserTextMetricsInvalidation(
 
   const source = invalidationSources.get(view) ?? createInvalidationSource(view)
   source.listeners.add(onInvalidated)
+  const face = observeRenderedFace(element, () => {
+    clearBrowserTextMetricsCache()
+    onInvalidated()
+  })
   return {
     dispose: () => {
+      face.dispose()
       if (!source.listeners.delete(onInvalidated)) return
       if (source.listeners.size > 0) return
 
       invalidationSources.delete(view)
       source.dispose()
+    },
+  }
+}
+
+/**
+ * Watches a sample of the measured glyphs in each probed style instead of guessing at causes: the
+ * host may change the font through any stylesheet or variable, and nothing announces a system face.
+ * A hidden element reports no size, which says nothing about the font, so it is skipped; showing it
+ * again re-measures through the view's reveal path.
+ */
+function observeRenderedFace(element: HTMLElement, onChange: () => void): EditorDisposable {
+  if (typeof ResizeObserver === 'undefined') return NO_INVALIDATION
+
+  // A shadow root inherits the font but keeps the sample out of the editor's own text content.
+  const host = appendProbe(element, '')
+  host.setAttribute('aria-hidden', 'true')
+  const shadow = host.attachShadow({ mode: 'open' })
+  const probes = MONOSPACE_PROBE_STYLES.map((probeStyle) => {
+    const probe = element.ownerDocument.createElement('span')
+    probe.textContent = WATCHED_PROBE_TEXT
+    // Observers see no inline box, and a plain block would stretch to its widest sibling.
+    probe.style.cssText = 'display: block; width: max-content'
+    shadow.append(styledProbe(probe, probeStyle))
+    return probe
+  })
+  const sizes = new Map<Element, string>()
+  const observer = new ResizeObserver((entries) => {
+    let changed = false
+    for (const entry of entries) {
+      const box = entry.borderBoxSize[0]
+      if (!box || box.inlineSize <= 0) continue
+
+      const size = `${box.inlineSize}x${box.blockSize}`
+      const previous = sizes.get(entry.target)
+      sizes.set(entry.target, size)
+      if (previous !== undefined && previous !== size) changed = true
+    }
+    if (changed) onChange()
+  })
+  for (const probe of probes) observer.observe(probe)
+  return {
+    dispose: () => {
+      observer.disconnect()
+      host.remove()
     },
   }
 }
@@ -273,7 +322,6 @@ function createInvalidationSource(view: Window): BrowserTextMetricsInvalidationS
     for (const listener of listeners) listener()
   }
 
-  registrations.add(observeFontLoading(view, invalidate))
   registrations.add(observeDevicePixelRatio(view, invalidate))
   const source = {
     listeners,
@@ -284,29 +332,6 @@ function createInvalidationSource(view: Window): BrowserTextMetricsInvalidationS
   }
   invalidationSources.set(view, source)
   return source
-}
-
-function observeFontLoading(view: Window, invalidate: () => void): EditorDisposable {
-  const fonts: FontFaceSet | undefined = view.document.fonts
-  if (!fonts) return NO_INVALIDATION
-
-  let observing = true
-  fonts.addEventListener('loadingdone', invalidate)
-  // A face already in flight is the one that produces a wrong reading, so it gets a second signal
-  // in case the load ends without an event. A document with nothing pending was measured against
-  // the faces it keeps and needs no second reading.
-  if (fonts.status === 'loading') {
-    void fonts.ready.then(() => {
-      if (observing) invalidate()
-    })
-  }
-
-  return {
-    dispose: () => {
-      observing = false
-      fonts.removeEventListener('loadingdone', invalidate)
-    },
-  }
 }
 
 function observeDevicePixelRatio(view: Window, invalidate: () => void): EditorDisposable {
