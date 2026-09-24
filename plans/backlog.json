@@ -655,6 +655,19 @@
       "dependsOn": [],
       "topics": ["Workaround audit: ask the owner, do not model it"],
       "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
+    },
+    {
+      "id": "E052",
+      "file": "e052-proportional-font-extents.md",
+      "title": "Wrap and horizontal extent from measured advances when the font is not monospace",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P3",
+      "effort": "L",
+      "dependsOn": ["E036"],
+      "topics": ["Proportional fonts: wrap and horizontal extent from measured advances"],
+      "baseline": "40d841583659d2889fc03f61979e607f56df4c86"
     }
   ]
 }

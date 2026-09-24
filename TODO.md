@@ -606,3 +606,12 @@ onto `TextReadSnapshot` line queries and bounded reads, like selection expansion
 after E033. Occurrence search can scan chunks forward from the selection. Trim trailing whitespace
 is genuinely whole-document and can walk chunks. Once no caller is left, delete
 `commandDocumentText` and its allowlist entry, so `check:full-text` keeps it gone.
+
+## Proportional fonts: wrap and horizontal extent from measured advances
+
+Added 2026-09-24, from E036. A proportional editor font now places clicks and carets correctly,
+because rows whose font fails the monospace check are measured in the DOM. Everything the view
+estimates before a row is measured still multiplies a column count by one character width: soft
+wrap breaks, the left spacer of windowed long rows, and the horizontal scroll width. Measure glyph
+advances once per face and use them on those paths when the font is not monospace, without
+costing monospace fonts anything.
