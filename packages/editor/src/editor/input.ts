@@ -163,21 +163,6 @@ export function isEmptyDeducedInput(edit: DeducedInputEdit, previous: HiddenInpu
 }
 
 /**
- * The slice of the document the hidden input carries: the page before the selection, the page it
- * starts on, the selection, the page it ends on, and the page after.
- *
- * Paging is what keeps this affordable on a large file — the alternative, handing over the whole
- * document, is what makes a naive implementation hang on open. The neighbouring pages are what make
- * the window an interval around the caret rather than one that can end at it: standing on the first
- * character of a page, the element would hold nothing in front of the caret, and a backward delete
- * the browser performs on the element itself finds nothing to take and raises no event at all — so
- * the keystroke would be lost rather than merely unread.
- *
- * A selection spanning more than the two pages it touches is spliced with an ellipsis rather than
- * materialized whole: what is read then says a stretch was skipped, which is true, instead of taking
- * a second to say nothing.
- */
-/**
  * An EditContext update, which names the range it replaced in the window last written, said around
  * the caret the way a deduced edit is. A range that stops short of the caret (a word corrected behind
  * it) rewrites the text between the two as itself, so every caret keeps what stood before it.
@@ -198,6 +183,21 @@ export function textUpdateEdit(
   }
 }
 
+/**
+ * The slice of the document the hidden input carries: the page before the selection, the page it
+ * starts on, the selection, the page it ends on, and the page after.
+ *
+ * Paging is what keeps this affordable on a large file — the alternative, handing over the whole
+ * document, is what makes a naive implementation hang on open. The neighbouring pages are what make
+ * the window an interval around the caret rather than one that can end at it: standing on the first
+ * character of a page, the element would hold nothing in front of the caret, and a backward delete
+ * the browser performs on the element itself finds nothing to take and raises no event at all — so
+ * the keystroke would be lost rather than merely unread.
+ *
+ * A selection spanning more than the two pages it touches is spliced with an ellipsis rather than
+ * materialized whole: what is read then says a stretch was skipped, which is true, instead of taking
+ * a second to say nothing.
+ */
 export function pagedHiddenInputContent(
   snapshot: PieceTableSnapshot,
   selection: {

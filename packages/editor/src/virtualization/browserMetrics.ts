@@ -24,13 +24,12 @@ const SPACE_PROBE_TEXT = ' '.repeat(PROBE_LENGTH)
 // answer whenever the comparison cannot be made.
 const DEFAULT_WHITESPACE_DOT_GLYPH: WhitespaceDotGlyph = '·'
 const WHITESPACE_DOT_GLYPHS: readonly WhitespaceDotGlyph[] = [DEFAULT_WHITESPACE_DOT_GLYPH, '⸱']
-// Monaco's set: narrow, wide and punctuation glyphs, digits, in every style a theme may paint a
-// token with. A font whose bold or italic advance differs still breaks column arithmetic there.
+// Monaco's set of narrow, wide and punctuation glyphs and digits, in the regular face only: rows
+// never draw bold or italic, because `::highlight()` cannot set font properties.
 const MONOSPACE_PROBE_GLYPHS = ['i', 'l', '|', '/', '-', '_', '%', 'W', '0', '1']
 const MONOSPACE_PROBE_TEXTS = MONOSPACE_PROBE_GLYPHS.map((glyph) => glyph.repeat(PROBE_LENGTH))
 // One of every measured glyph: its box moves when any advance or the line box does.
 const WATCHED_PROBE_TEXT = `m ${MONOSPACE_PROBE_GLYPHS.join('')}`
-const MONOSPACE_PROBE_STYLES = ['regular', 'bold', 'italic'] as const
 // Layout reports 1/64 px; over the 16-glyph probe that bounds one advance to about 0.001 px.
 const MONOSPACE_EPSILON = 0.002
 const NO_INVALIDATION: EditorDisposable = { dispose: () => {} }
@@ -50,11 +49,13 @@ export function measureWhitespaceDotGlyph(element: HTMLElement): WhitespaceDotGl
 }
 
 /**
- * Whether every probed glyph, space included, advances by the measured character width. When it
- * does not, column arithmetic lands clicks and carets on the wrong character.
+ * The metrics, and whether every probed glyph, space included, advances by the measured character
+ * width. When it does not, column arithmetic lands clicks and carets on the wrong character.
  */
-export function measureMonospaceAdvances(element: HTMLElement): boolean {
-  return measureTextMetrics(element).monospace
+export function measureBrowserTextFace(
+  element: HTMLElement,
+): BrowserTextMetrics & { readonly monospace: boolean } {
+  return measureTextMetrics(element)
 }
 
 /**
@@ -71,10 +72,7 @@ export function observeBrowserTextMetricsInvalidation(
 
   const source = invalidationSources.get(view) ?? createInvalidationSource(view)
   source.listeners.add(onInvalidated)
-  const face = observeRenderedFace(element, () => {
-    clearBrowserTextMetricsCache()
-    onInvalidated()
-  })
+  const face = source.faces?.watch(element, onInvalidated) ?? NO_INVALIDATION
   return {
     dispose: () => {
       face.dispose()
@@ -83,50 +81,6 @@ export function observeBrowserTextMetricsInvalidation(
 
       invalidationSources.delete(view)
       source.dispose()
-    },
-  }
-}
-
-/**
- * Watches a sample of the measured glyphs in each probed style instead of guessing at causes: the
- * host may change the font through any stylesheet or variable, and nothing announces a system face.
- * A hidden element reports no size, which says nothing about the font, so it is skipped; showing it
- * again re-measures through the view's reveal path.
- */
-function observeRenderedFace(element: HTMLElement, onChange: () => void): EditorDisposable {
-  if (typeof ResizeObserver === 'undefined') return NO_INVALIDATION
-
-  // A shadow root inherits the font but keeps the sample out of the editor's own text content.
-  const host = appendProbe(element, '')
-  host.setAttribute('aria-hidden', 'true')
-  const shadow = host.attachShadow({ mode: 'open' })
-  const probes = MONOSPACE_PROBE_STYLES.map((probeStyle) => {
-    const probe = element.ownerDocument.createElement('span')
-    probe.textContent = WATCHED_PROBE_TEXT
-    // Observers see no inline box, and a plain block would stretch to its widest sibling.
-    probe.style.cssText = 'display: block; width: max-content'
-    shadow.append(styledProbe(probe, probeStyle))
-    return probe
-  })
-  const sizes = new Map<Element, string>()
-  const observer = new ResizeObserver((entries) => {
-    let changed = false
-    for (const entry of entries) {
-      const box = entry.borderBoxSize[0]
-      if (!box || box.inlineSize <= 0) continue
-
-      const size = `${box.inlineSize}x${box.blockSize}`
-      const previous = sizes.get(entry.target)
-      sizes.set(entry.target, size)
-      if (previous !== undefined && previous !== size) changed = true
-    }
-    if (changed) onChange()
-  })
-  for (const probe of probes) observer.observe(probe)
-  return {
-    dispose: () => {
-      observer.disconnect()
-      host.remove()
     },
   }
 }
@@ -146,9 +100,7 @@ function measureTextMetrics(element: HTMLElement): MeasuredTextMetrics {
   const dotProbes = WHITESPACE_DOT_GLYPHS.map((glyph) =>
     appendProbe(element, glyph.repeat(PROBE_LENGTH)),
   )
-  const monospaceProbes = MONOSPACE_PROBE_STYLES.flatMap((probeStyle) =>
-    MONOSPACE_PROBE_TEXTS.map((text) => styledProbe(appendProbe(element, text), probeStyle)),
-  )
+  const monospaceProbes = MONOSPACE_PROBE_TEXTS.map((text) => appendProbe(element, text))
 
   // Every probe is attached before the first read, so the whole set costs one layout.
   const rect = probe.getBoundingClientRect()
@@ -176,15 +128,6 @@ function appendProbe(element: HTMLElement, text: string): HTMLSpanElement {
   probe.className = 'editor-virtualized-metric-probe'
   probe.textContent = text
   element.appendChild(probe)
-  return probe
-}
-
-function styledProbe(
-  probe: HTMLSpanElement,
-  style: (typeof MONOSPACE_PROBE_STYLES)[number],
-): HTMLSpanElement {
-  if (style === 'bold') probe.style.fontWeight = 'bold'
-  if (style === 'italic') probe.style.fontStyle = 'italic'
   return probe
 }
 
@@ -307,8 +250,16 @@ function browserTextMetricsCacheKey(element: HTMLElement): string | null {
 
 type BrowserTextMetricsInvalidationSource = {
   readonly listeners: Set<() => void>
+  readonly faces: FaceObserver | null
   dispose(): void
 }
+
+type FaceObserver = {
+  watch(element: HTMLElement, onChange: () => void): EditorDisposable
+  dispose(): void
+}
+
+type WatchedFace = { size: string | null; readonly onChange: () => void }
 
 const invalidationSources = new WeakMap<Window, BrowserTextMetricsInvalidationSource>()
 
@@ -323,15 +274,84 @@ function createInvalidationSource(view: Window): BrowserTextMetricsInvalidationS
   }
 
   registrations.add(observeDevicePixelRatio(view, invalidate))
+  const faces = createFaceObserver()
   const source = {
     listeners,
+    faces,
     dispose: () => {
       listeners.clear()
+      faces?.dispose()
       registrations.dispose()
     },
   }
   invalidationSources.set(view, source)
   return source
+}
+
+/**
+ * Watches a sample of the measured glyphs in each editor instead of guessing at causes: a host may
+ * change the font through any stylesheet or variable, and nothing announces a system face. One
+ * observer serves the window, so a change several editors share clears the cache once.
+ */
+function createFaceObserver(): FaceObserver | null {
+  if (typeof ResizeObserver === 'undefined') return null
+
+  const watched = new Map<Element, WatchedFace>()
+  const observer = new ResizeObserver((entries) => {
+    const stale = entries.flatMap((entry) => staleFace(watched.get(entry.target), entry))
+    if (stale.length === 0) return
+
+    clearBrowserTextMetricsCache()
+    // Checked again at the call: a listener can dispose another editor before its turn comes.
+    for (const [probe, face] of stale) {
+      if (watched.get(probe) === face) face.onChange()
+    }
+  })
+  return {
+    watch: (element, onChange) => {
+      const { host, probe } = appendWatchedProbe(element)
+      watched.set(probe, { size: null, onChange })
+      observer.observe(probe)
+      return {
+        dispose: () => {
+          observer.unobserve(probe)
+          watched.delete(probe)
+          host.remove()
+        },
+      }
+    },
+    dispose: () => observer.disconnect(),
+  }
+}
+
+/**
+ * A face whose box moved since it was last seen, or that is seen for the first time: the metrics
+ * were read when the editor was built, and a font can land before the first frame. A hidden element
+ * reports no size, which says nothing about the font; the view re-measures when it is shown.
+ */
+function staleFace(
+  face: WatchedFace | undefined,
+  entry: ResizeObserverEntry,
+): (readonly [Element, WatchedFace])[] {
+  const box = entry.borderBoxSize[0]
+  if (!face || !box || box.inlineSize <= 0) return []
+
+  const size = `${box.inlineSize}x${box.blockSize}`
+  if (face.size === size) return []
+  face.size = size
+  return [[entry.target, face]]
+}
+
+// A shadow root inherits the font but keeps the sample out of the editor's own text content.
+function appendWatchedProbe(element: HTMLElement): { host: HTMLElement; probe: HTMLElement } {
+  const host = appendProbe(element, '')
+  host.setAttribute('aria-hidden', 'true')
+  const probe = element.ownerDocument.createElement('span')
+  probe.textContent = WATCHED_PROBE_TEXT
+  // Observers see no inline box.
+  probe.style.display = 'inline-block'
+  host.attachShadow({ mode: 'open' }).append(probe)
+  return { host, probe }
 }
 
 function observeDevicePixelRatio(view: Window, invalidate: () => void): EditorDisposable {

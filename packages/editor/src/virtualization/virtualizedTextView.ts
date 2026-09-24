@@ -22,11 +22,7 @@ import type { SelectionAffinity, SelectionGoal } from '../selections'
 import { EditorTokenStore, type EditorTokenInput } from '../syntax/tokenStore'
 import type { TextEdit } from '../tokens'
 import { applyEditorTheme } from '../theme'
-import {
-  measureBrowserTextMetrics,
-  measureMonospaceAdvances,
-  type BrowserTextMetrics,
-} from './browserMetrics'
+import { measureBrowserTextFace, type BrowserTextMetrics } from './browserMetrics'
 import { FixedRowVirtualizer, type FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
 import {
   DEFAULT_OVERSCAN,
@@ -271,6 +267,16 @@ function setScrollModeAttribute(
   element.dataset.editorScrollMode = scrollMode
 }
 
+/** Host-given metrics are taken as they are, monospace included; otherwise the font is measured. */
+function measuredTextFace(
+  element: HTMLElement,
+  textMetrics: BrowserTextMetrics | null,
+): { readonly metrics: BrowserTextMetrics; readonly monospace: boolean } {
+  if (textMetrics) return { metrics: textMetrics, monospace: true }
+  const face = measureBrowserTextFace(element)
+  return { metrics: face, monospace: face.monospace }
+}
+
 export class VirtualizedTextView {
   public readonly scrollElement: HTMLDivElement
   public readonly contentElement: HTMLDivElement
@@ -303,7 +309,8 @@ export class VirtualizedTextView {
     const highlightScope = `editor-highlight-${nextHighlightScope++}`
     scrollElement.setAttribute('data-editor-highlight-scope', highlightScope)
     const textMetrics = options.textMetrics ?? null
-    const measuredMetrics = textMetrics ?? measureBrowserTextMetrics(scrollElement)
+    const measuredFace = measuredTextFace(scrollElement, textMetrics)
+    const measuredMetrics = measuredFace.metrics
     const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null
     const rowHeight = normalizeRowHeight(lineHeightOverride ?? measuredMetrics.rowHeight)
     const rowGap = normalizeRowGap(options.rowGap)
@@ -410,7 +417,7 @@ export class VirtualizedTextView {
       lineHeightOverride,
       rowGap,
       metrics: { ...measuredMetrics, rowHeight },
-      monospace: textMetrics ? true : measureMonospaceAdvances(scrollElement),
+      monospace: measuredFace.monospace,
       textMetrics,
       hiddenCharacters: normalizeHiddenCharactersMode(options.hiddenCharacters),
       suspiciousCharacters: DEFAULT_SUSPICIOUS_SETTINGS,
@@ -773,10 +780,26 @@ export class VirtualizedTextView {
 
   public refreshMetrics(): BrowserTextMetrics {
     const view = this.view
-    const measured = view.textMetrics ?? measureBrowserTextMetrics(this.scrollElement)
-    view.monospace = view.textMetrics ? true : measureMonospaceAdvances(this.scrollElement)
-    const rowHeightValue = normalizeRowHeight(view.lineHeightOverride ?? measured.rowHeight)
-    this.applyMetrics({ rowHeight: rowHeightValue, characterWidth: measured.characterWidth })
+    const face = measuredTextFace(this.scrollElement, view.textMetrics)
+    view.monospace = face.monospace
+    const rowHeightValue = normalizeRowHeight(view.lineHeightOverride ?? face.metrics.rowHeight)
+    this.applyMetrics({ rowHeight: rowHeightValue, characterWidth: face.metrics.characterWidth })
+    return view.metrics
+  }
+
+  /** Re-measures and applies a reading that differs from the one in use; null when none does. */
+  public remeasureMetrics(): BrowserTextMetrics | null {
+    const view = this.view
+    const face = measuredTextFace(this.scrollElement, view.textMetrics)
+    const rowHeight = normalizeRowHeight(view.lineHeightOverride ?? face.metrics.rowHeight)
+    const unchanged =
+      rowHeight === view.metrics.rowHeight &&
+      face.metrics.characterWidth === view.metrics.characterWidth &&
+      face.monospace === view.monospace
+    if (unchanged) return null
+
+    view.monospace = face.monospace
+    this.applyMetrics({ rowHeight, characterWidth: face.metrics.characterWidth })
     return view.metrics
   }
 

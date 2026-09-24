@@ -1749,7 +1749,8 @@ export class Editor {
   }
 
   private remeasureTextMetrics(): void {
-    const metrics = this.view.refreshMetrics()
+    const metrics = this.view.remeasureMetrics()
+    if (!metrics) return
 
     this.notifyViewContributions('layout', null)
     this.log({

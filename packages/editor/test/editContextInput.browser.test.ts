@@ -93,6 +93,37 @@ describe.each<EditorInputRoute>(['edit-context', 'textarea'])('%s input route', 
     expect(editor.materializeFullText()).toBe('Hello world')
   })
 
+  it('draws the candidate of a composition started over a selection', async () => {
+    await open('hello world', 0)
+    editor.setSelection(0, 5)
+    await frames()
+    await commands.proofImeComposition('k')
+    await frames()
+    const preedit = host.querySelector('.editor-virtualized-composition')?.textContent
+    await commands.proofInsertText('K')
+    await frames()
+    expect({ preedit, text: editor.materializeFullText() }).toEqual({
+      preedit: 'k',
+      text: 'K world',
+    })
+  })
+
+  it('keeps the selection and the input in step when a composition over it is abandoned', async () => {
+    await open('hello world', 0)
+    editor.setSelection(0, 5)
+    await frames()
+    await commands.proofImeComposition('か')
+    await commands.proofImeComposition('')
+    await frames()
+    const abandoned = editor.materializeFullText()
+    await commands.proofType('x')
+    await frames()
+    expect({ abandoned, typed: editor.materializeFullText() }).toEqual({
+      abandoned: 'hello world',
+      typed: 'x world',
+    })
+  })
+
   it('closes a typed bracket but not a composed one', async () => {
     // Auto-close fires before whitespace, as in VS Code.
     await open('a b', 1)

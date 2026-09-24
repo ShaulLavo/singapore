@@ -1676,7 +1676,12 @@ export class InputSelectionController {
       if (editContext.text !== content.value) {
         editContext.updateText(0, editContext.text.length, content.value)
       }
-      editContext.updateSelection(content.selectionStart, content.selectionEnd)
+      // A backward selection is given end first, as EditContext takes one.
+      const backward = content.direction === 'backward'
+      editContext.updateSelection(
+        backward ? content.selectionEnd : content.selectionStart,
+        backward ? content.selectionStart : content.selectionEnd,
+      )
       writeAccessibleWindow(input, content)
       return
     }
@@ -1762,7 +1767,7 @@ export class InputSelectionController {
     const current = this.editContextComposition ?? {
       rangeStart: update.updateRangeStart,
       rangeEnd: update.updateRangeEnd,
-      spanEnd: update.updateRangeStart,
+      spanEnd: update.updateRangeEnd,
     }
     const spanEnd =
       current.spanEnd + update.text.length - (update.updateRangeEnd - update.updateRangeStart)
@@ -1840,6 +1845,7 @@ export class InputSelectionController {
     'input.compositionstart',
     (_event: CompositionEvent): void => {
       this.transitionInputState({ type: 'composition-start' })
+      this.editContextComposition = null
       // A textarea selects what the composition is about to replace, which is how a correction
       // reaching back over a word says so: the event itself carries only the new text.
       const input = this.options.view.inputElement
@@ -1865,6 +1871,8 @@ export class InputSelectionController {
     (event: CompositionEvent): void => {
       const text = event.data || this.inputState.compositionText
       const shouldCommit = shouldCommitCompositionEnd(this.inputState, text)
+      const range = this.compositionRange
+      this.compositionRange = null
       // Taken down for every way a composition can end, including the ones below that return: text
       // already committed through beforeinput is the document's to draw, and text abandoned mid-word
       // was never the document's at all.
@@ -1880,8 +1888,6 @@ export class InputSelectionController {
         return
       }
 
-      const range = this.compositionRange
-      this.compositionRange = null
       this.commitComposition(text, range, eventStartMs(event))
     },
   )
@@ -3131,7 +3137,15 @@ export class InputSelectionController {
     start: number,
   ): void {
     const written = this.hiddenInputContent
-    if (!range || (range.start === written.selectionStart && range.end === written.selectionEnd)) {
+    const plain =
+      !range || (range.start === written.selectionStart && range.end === written.selectionEnd)
+    // Nothing to write, but the input may no longer hold what the document does: an abandoned
+    // composition over a selection took that selection out of the EditContext's text.
+    if (plain && text.length === 0) {
+      this.refreshHiddenInputContent()
+      return
+    }
+    if (plain) {
       this.applyCompositionText(text, start)
       return
     }

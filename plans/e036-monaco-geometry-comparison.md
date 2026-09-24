@@ -32,16 +32,23 @@ therefore does not close candidates 1 and 4 on its own; their cost does.
 | 6. EditContext                       | Event map from a bare page (`examples/stress/edit-context-probe.mjs`, Chromium 148): every text change arrives as `textupdate` with its replaced range, IME candidates included; Enter is `insertParagraph`; a prevented keydown or beforeinput withholds the update; paste still fires `paste`. Handler cost per event, same fixtures, alternated: typing 0.31–0.35 vs 0.30–0.38 ms (textarea), composition commit 0.48–0.55 vs 0.47–0.65 ms. | Go, as an opt-in route (`inputRoute: 'edit-context'`, see below). Not the default until the element carries text for screen readers.                                          |
 
 Candidate 2 is implemented. `measureTextMetrics` also measures `i l | / - _ % W 0 1` and the
-space in regular, bold and italic, in the same single layout, and records whether every advance
-equals the `m` advance within 0.002 px. The view carries that as `monospace`, re-read with the
-metrics on every font load or scale change, and `rowGeometryPath` returns `proportional-font` for
-rows it would otherwise calculate. Bold and italic stay in the probe although iA Writer Mono S fails
-them: a theme may paint tokens bold, and a false demotion costs at most the measured path's
-0.35 ms per query, where a missed one misplaces clicks. After the change all five fonts hit-test
-0 of 339 wrong. Measuring metrics costs 0.21 ms instead of 0.045 ms (mean of 400, alternated
-twice), once per font and style. `test/proportionalFont.browser.test.ts` fails without the
-demotion. Proportional fonts still misplace what is estimated from `characterWidth` outside row
-geometry: soft-wrap column counts and the spacers of windowed long rows.
+space, in the same single layout, and records whether every advance equals the `m` advance within
+0.002 px. Only the regular face is probed: rows never draw bold or italic, because `::highlight()`
+cannot set font properties, so a bold advance that differs (synthetic bold, iA Writer Mono S)
+would only demote rows for nothing. The view carries the verdict as `monospace`, and
+`rowGeometryPath` returns `proportional-font` for rows it would otherwise calculate. After the
+change all five fonts hit-test 0 of 339 wrong. Measuring metrics costs 0.09 ms instead of
+0.045 ms (mean of 400), once per font and style. `test/proportionalFont.browser.test.ts` fails
+without the demotion.
+
+Metrics are re-read whenever the rendered face changes. One `ResizeObserver` per window watches a
+sample of the probed glyphs in each editor, inside a shadow root so it stays out of the editor's
+text; a delivery clears the metrics cache once and re-measures each editor it reached. A first
+sighting counts as a change, because a font can land between the reading taken at construction
+and the first frame; the re-measure applies only a reading that differs, so an ordinary mount
+costs one probe pass and no re-render. This replaced the `loadingdone` listener. Proportional
+fonts still misplace what is estimated from `characterWidth` outside row geometry: soft-wrap
+column counts and the spacers of windowed long rows.
 
 Candidate 6 is prototyped as `inputRoute: 'edit-context'`. On Chromium the input element is a
 focusable `div` holding an EditContext; elsewhere the option falls back to the textarea. The editor
@@ -56,7 +63,7 @@ The textarea route fails one: a composition that replaces a range behind the car
 an autocorrection) is inserted beside the word, because a textarea's `insertFromComposition` has
 no target range. On Chromium the route retires the value diff (`deduceHiddenInputEdit` and its
 guards) and the textarea composition commit; nothing can be deleted while other engines need
-them. Screen readers read the window as the `div`'s text, with the caret mirrored into the document selection while it has focus (Monaco's approach); the Platform scenario checks the accessibility tree's value on both routes. A textarea composition now commits over the range the textarea selects at `compositionstart`, so that route applies a correction too, and both routes commit composed text without auto-closing it.
+them. Screen readers read the window as the `div`'s text, with the caret mirrored into the document selection while it has focus (Monaco's approach); the Platform scenario checks the accessibility tree's value on both routes. A textarea composition now commits over the range the textarea selects at `compositionstart`, so that route applies a correction too, and both routes commit composed text without auto-closing it. A composition over a selection tracks its candidate from the end of the replaced range, and one abandoned without text resynchronizes the window.
 
 The Markdown fixture's typing cost (3.1 ms applied, 2.9 ms script per key) comes from the test's
 capture session returning every capture on each change, not from geometry; it is not a finding.

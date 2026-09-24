@@ -182,6 +182,44 @@ describe('a font change on a mounted editor', () => {
     document.fonts.delete(face)
   })
 
+  it('re-measures when a face lands between the first reading and the first frame', async () => {
+    editor.dispose()
+    host.replaceChildren()
+    setFont("'Early Proportional', monospace")
+    const face = new FontFace(
+      'Early Proportional',
+      'local("Liberation Sans"), local("DejaVu Sans"), local("Noto Sans"), local("Arial")',
+    )
+    await face.load()
+    clearBrowserTextMetricsCache()
+    // Built while the face is not yet in the document, so the reading is the monospace fallback;
+    // the face is in before anything is painted, so the observer's first sighting is already it.
+    editor = new Editor(host, { defaultText: LINE, plugins: [remeasureLog] })
+    document.fonts.add(face)
+    await frames()
+
+    expect(wrongColumns()).toEqual([])
+    document.fonts.delete(face)
+  })
+
+  it('re-measures every editor a shared font change reaches', async () => {
+    const second = document.createElement('div')
+    second.style.cssText = 'width: 600px; height: 160px; display: flex'
+    host.after(second)
+    second.className = 'font-under-test'
+    const other = new Editor(second, { defaultText: LINE, plugins: [remeasureLog] })
+    await frames()
+    remeasured = 0
+
+    setFont('sans-serif')
+    await frames()
+
+    expect(remeasured).toBe(2)
+    expect(wrongColumns()).toEqual([])
+    other.dispose()
+    second.remove()
+  })
+
   it('does not re-measure for being hidden and shown again', async () => {
     host.style.display = 'none'
     await frames()
