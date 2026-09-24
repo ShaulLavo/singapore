@@ -618,8 +618,9 @@ costing monospace fonts anything.
 
 ## Unnecessary code: fade in each token's own colour
 
-Added 2026-09-24. Language servers tag unused imports, locals and parameters as Unnecessary, and
-VS Code fades them with `opacity` on an inline span. Highlights cannot set `opacity`, and Chrome
-resolves `currentColor` inside `color-mix()` in a highlight to transparent, so one fade rule over
-the token layer paints nothing. Fade each colour producer's own colour under a shared dim mask
-instead, keeping every producer's priority.
+Added 2026-09-24. Language servers tag unused code Unnecessary and deprecated code Deprecated; VS
+Code fades the first with `opacity` on an inline span and strikes the second. Highlights cannot set
+`opacity`, and the engines disagree about colourless highlights: Chromium resolves `currentColor`
+inside `color-mix()` to transparent, and Firefox and WebKit draw an uncoloured decoration in the
+element's colour, WebKit repainting the text too. Paint both marks as twins that carry each
+producer's own colour, and keep colourless layers below the tokens.

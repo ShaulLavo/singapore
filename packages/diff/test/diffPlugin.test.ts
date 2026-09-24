@@ -252,7 +252,7 @@ describe('diff plugin — gutter (§3.3)', () => {
     const { host } = mountDiff({ file: singleHunkDiff(), side: 'stacked' })
     const columns = queryScrollElement(host).style.getPropertyValue('--editor-diff-gutter-columns')
 
-    // Three lanes, all in px: two number lanes from `ceil(chars * charWidth + 6)` and a 12px
+    // Three lanes, all in px: two number lanes from `max(chars, 3) * charWidth + 8` and a 12px
     // indicator. A `1fr` anywhere here means the geometry was guessed.
     expect(columns.split(' ')).toHaveLength(3)
     expect(columns).not.toContain('fr')
@@ -260,7 +260,7 @@ describe('diff plugin — gutter (§3.3)', () => {
   })
 
   it('republishes columns when the lane split changes but the total does not', () => {
-    // The stacked total is `ceil(old*cw + 6) + ceil(new*cw + 6) + 12`, which is SYMMETRIC in the
+    // The stacked total is `max(old, 3)*cw + 8 + max(new, 3)*cw + 8 + 12`, which is SYMMETRIC in the
     // two lane character counts — so a file whose old/new digit widths are transposed has an
     // identical total and a different split. Memoizing the publish on the total therefore keeps
     // serving the previous columns, and since lanes are `overflow: hidden; text-align: right`, the
@@ -283,7 +283,7 @@ describe('diff plugin — gutter (§3.3)', () => {
     const second = width()
 
     expect(second).toBe(first)
-    expect(published).toEqual(['38,22,12', '22,38,12'])
+    expect(published).toEqual(['40,32,12', '32,40,12'])
   })
 
   it('never queries the DOM to update a cell (§3.3, trap 3)', () => {

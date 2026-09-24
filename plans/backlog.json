@@ -672,7 +672,7 @@
     {
       "id": "E053",
       "file": "e053-unnecessary-code-fade.md",
-      "title": "Unnecessary code fades in the colour it already has",
+      "title": "Diagnostic tags paint in each token's own colour, in every engine",
       "status": "Proposed",
       "owner": "Editor",
       "kind": "Implementation",

@@ -1505,7 +1505,28 @@ function activateViewProvider(plugin: {
   )
 
   if (!provider) throw new Error('missing provider')
-  return provider
+  return followingSnapshots(provider)
+}
+
+// A real context answers getSnapshot() with the snapshot of the update in flight, and the plugin's
+// document sync reads the text there rather than from the update's argument.
+const currentSnapshots = new WeakMap<EditorViewContributionContext, EditorViewSnapshot>()
+
+function followingSnapshots(
+  provider: EditorViewContributionProvider,
+): EditorViewContributionProvider {
+  return {
+    createContribution: (context) => {
+      const contribution = provider.createContribution(context)
+      if (!contribution) return null
+      const update = contribution.update.bind(contribution)
+      contribution.update = (snapshot, kind, change) => {
+        currentSnapshots.set(context, snapshot)
+        update(snapshot, kind, change)
+      }
+      return contribution
+    },
+  }
 }
 
 function activatePluginWithCommands(
@@ -1545,7 +1566,7 @@ function activatePluginWithCommands(
   )
 
   if (!provider) throw new Error('missing provider')
-  return { provider: withHover(provider, {}), commands, features }
+  return { provider: withHover(followingSnapshots(provider), {}), commands, features }
 }
 
 /** The core registry, reduced to what a single-document harness needs: order of registration. */
@@ -1623,17 +1644,18 @@ function viewContributionContext(
   } = {},
 ): EditorViewContributionContext {
   const element = options.container ?? document.createElement('div')
+  let context: EditorViewContributionContext | null = null
   const getFeature = vi.fn((token: unknown): unknown | null => {
     const feature = options.features?.get(token)
     return feature === undefined ? null : feature
   }) as EditorViewContributionContext['getFeature']
-  return createTestViewContributionContext({
+  context = createTestViewContributionContext({
     ...providerRegistry(),
     container: element,
     scrollElement: element,
     contentElement: element,
     highlightPrefix: 'editor-test',
-    getSnapshot: () => snapshot,
+    getSnapshot: () => (context && currentSnapshots.get(context)) ?? snapshot,
     getFeature,
     setSelection: vi.fn(),
     textOffsetFromPoint: vi.fn(() => 22),
@@ -1644,6 +1666,7 @@ function viewContributionContext(
       ? { registerKeymapContextKey: options.registerKeymapContextKey }
       : {}),
   })
+  return context
 }
 
 function minimapFeature(): EditorMinimapFeature {
@@ -1946,8 +1969,11 @@ function tooltipBody(): HTMLElement | null {
   return document.querySelector<HTMLElement>('.editor-typescript-lsp-hover-body')
 }
 
+/** The quick info's copy button; a diagnostic note above it carries its own. */
 function copyButton(): HTMLButtonElement {
-  const element = document.querySelector<HTMLButtonElement>('.editor-typescript-lsp-hover-copy')
+  const element = document.querySelector<HTMLButtonElement>(
+    '[data-hover-part-index] .editor-typescript-lsp-hover-copy',
+  )
   if (!element) throw new Error('missing copy button')
   return element
 }

@@ -7,6 +7,9 @@ const editors: Editor[] = []
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(640)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(240)
+  // Paint admission compares the outer box, which happy-dom otherwise reports as 0 by 0.
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(640)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(240)
 })
 afterEach(() => {
   for (const editor of editors.splice(0)) editor.dispose()

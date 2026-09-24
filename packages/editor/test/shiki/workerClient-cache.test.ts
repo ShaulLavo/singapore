@@ -192,7 +192,7 @@ describe('Shiki worker client theme cache', () => {
     if (!session) throw new Error('missing Shiki highlighter session')
 
     const highlight = session.refresh(createDocumentTextSnapshot(snapshot, 'const value = 1;'))
-    await flushMicrotasks()
+    await untilRequested('open')
 
     const openRequest = requestOfType('open')
     expect(openRequest.payload.languageRegistrations).toEqual(
@@ -225,7 +225,7 @@ describe('Shiki worker client theme cache', () => {
     if (!session) throw new Error('missing Shiki highlighter session')
 
     const highlight = session.refresh(createDocumentTextSnapshot(snapshot, 'const value = 1;'))
-    await flushMicrotasks()
+    await untilRequested('open')
 
     fakeWorkerAt(0).resolveRequest(requestOfType('open'), {
       documentId: 'file.ts',
@@ -265,7 +265,7 @@ describe('Shiki worker client theme cache', () => {
     if (!session) throw new Error('missing Shiki highlighter session')
 
     const highlight = session.refresh(createDocumentTextSnapshot(snapshot, 'const value = 1;'))
-    await flushMicrotasks()
+    await untilRequested('open')
 
     const worker = fakeWorkerAt(0)
     const openRequest = requestOfType('open')
@@ -422,6 +422,15 @@ function requestsOfType(type: string): FakeWorkerRequest[] {
 
 function defaultResult(message: FakeWorkerRequest): unknown {
   return { theme: { backgroundColor: message.payload.theme } }
+}
+
+/** A refresh reaches the worker after however many turns its text reads take; count on the post. */
+async function untilRequested(type: string): Promise<void> {
+  for (let turn = 0; turn < 100; turn += 1) {
+    if (requestsOfType(type).length > 0) return
+    await Promise.resolve()
+  }
+  throw new Error(`No ${type} request reached the worker`)
 }
 
 async function flushMicrotasks(): Promise<void> {

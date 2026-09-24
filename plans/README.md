@@ -231,11 +231,11 @@ that passes over the path, not height, were the tree's cost.
 
 ## Inspectors and diagnostics
 
-| Plan                                                                                        | Kind           | Owner  | Priority | Size | Needs                                |
-| ------------------------------------------------------------------------------------------- | -------------- | ------ | -------- | ---- | ------------------------------------ |
-| [E023 — Inspect editor timing and retained memory](e023-instrumentation-panel.md)           | Implementation | Editor | P2       | M    | [E001](../examples/stress/README.md) |
-| [E024 — Inspect the live syntax tree](e024-syntax-tree-inspector.md)                        | Implementation | Editor | P2       | M    | —                                    |
-| [E053 — Unnecessary code fades in the colour it already has](e053-unnecessary-code-fade.md) | Implementation | Editor | P2       | M    | —                                    |
+| Plan                                                                                                      | Kind           | Owner  | Priority | Size | Needs                                |
+| --------------------------------------------------------------------------------------------------------- | -------------- | ------ | -------- | ---- | ------------------------------------ |
+| [E023 — Inspect editor timing and retained memory](e023-instrumentation-panel.md)                         | Implementation | Editor | P2       | M    | [E001](../examples/stress/README.md) |
+| [E024 — Inspect the live syntax tree](e024-syntax-tree-inspector.md)                                      | Implementation | Editor | P2       | M    | —                                    |
+| [E053 — Diagnostic tags paint in each token's own colour, in every engine](e053-unnecessary-code-fade.md) | Implementation | Editor | P2       | M    | —                                    |
 
 ## Commands and extensions
 

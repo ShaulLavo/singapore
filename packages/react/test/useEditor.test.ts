@@ -1140,6 +1140,9 @@ async function flushInitialPaintCallbacks(): Promise<void> {
 function mountSnapshotEditor(options: ReactEditorOptions): MountedEditor {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(80)
+  // Paint admission compares the outer box, which happy-dom otherwise reports as 0 by 0.
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(320)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(80)
   const mounted = mountReactEditor(options)
   const editor = mounted.controller.getEditor()
   const view: unknown = editor && Reflect.get(editor, 'view')
