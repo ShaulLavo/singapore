@@ -280,6 +280,8 @@ export class InputSelectionController {
   // advances it — an event the editor decides not to act on leaves the element holding text it can
   // still be diffed against next time.
   private hiddenInputContent: HiddenInputState = EMPTY_HIDDEN_INPUT_STATE
+  /** What a textarea composition replaces in the written window, read when it starts. */
+  private compositionRange: { readonly start: number; readonly end: number } | null = null
   /** The window range an EditContext composition replaces, and where its candidate now ends. */
   private editContextComposition: {
     readonly rangeStart: number
@@ -1675,6 +1677,7 @@ export class InputSelectionController {
         editContext.updateText(0, editContext.text.length, content.value)
       }
       editContext.updateSelection(content.selectionStart, content.selectionEnd)
+      writeAccessibleWindow(input, content)
       return
     }
     if (!(input instanceof HTMLTextAreaElement)) return
@@ -1688,6 +1691,7 @@ export class InputSelectionController {
 
     const editContext = this.options.view.editContext
     if (editContext) {
+      this.options.view.inputElement.addEventListener('focus', this.handleEditContextFocus)
       editContext.addEventListener('textupdate', this.handleTextUpdate)
       editContext.addEventListener('compositionstart', this.handleCompositionStart as EventListener)
       editContext.addEventListener('compositionend', this.handleEditContextCompositionEnd)
@@ -1705,6 +1709,7 @@ export class InputSelectionController {
 
     const editContext = this.options.view.editContext
     if (editContext) {
+      this.options.view.inputElement.removeEventListener('focus', this.handleEditContextFocus)
       editContext.removeEventListener('textupdate', this.handleTextUpdate)
       editContext.removeEventListener(
         'compositionstart',
@@ -1718,6 +1723,11 @@ export class InputSelectionController {
       })
     }
     this.nativeInputHandlersInstalled = false
+  }
+
+  /** The caret only goes into the document selection while the element has focus; this puts it there. */
+  private handleEditContextFocus = (): void => {
+    writeAccessibleWindow(this.options.view.inputElement, this.hiddenInputContent)
   }
 
   /**
@@ -1777,12 +1787,11 @@ export class InputSelectionController {
         return
       }
 
-      const edit = textUpdateEdit(this.hiddenInputContent, {
+      this.commitComposition(
         text,
-        rangeStart: composition.rangeStart,
-        rangeEnd: composition.rangeEnd,
-      })
-      this.applyDeducedInput(session, edit, eventStartMs(event))
+        { start: composition.rangeStart, end: composition.rangeEnd },
+        eventStartMs(event),
+      )
     },
   )
 
@@ -1831,6 +1840,13 @@ export class InputSelectionController {
     'input.compositionstart',
     (_event: CompositionEvent): void => {
       this.transitionInputState({ type: 'composition-start' })
+      // A textarea selects what the composition is about to replace, which is how a correction
+      // reaching back over a word says so: the event itself carries only the new text.
+      const input = this.options.view.inputElement
+      this.compositionRange =
+        input instanceof HTMLTextAreaElement
+          ? { start: input.selectionStart, end: input.selectionEnd }
+          : null
     },
   )
 
@@ -1864,7 +1880,9 @@ export class InputSelectionController {
         return
       }
 
-      this.applyCompositionText(text, eventStartMs(event))
+      const range = this.compositionRange
+      this.compositionRange = null
+      this.commitComposition(text, range, eventStartMs(event))
     },
   )
 
@@ -3102,6 +3120,34 @@ export class InputSelectionController {
     return session.applyEdits(edits, { selections })
   }
 
+  /**
+   * A composition commits over the range it started from. Only the written selection is plain
+   * composed text; a range behind the caret is a correction, rewritten around every caret, and
+   * neither is typed text, so neither closes a bracket.
+   */
+  private commitComposition(
+    text: string,
+    range: { readonly start: number; readonly end: number } | null,
+    start: number,
+  ): void {
+    const written = this.hiddenInputContent
+    if (!range || (range.start === written.selectionStart && range.end === written.selectionEnd)) {
+      this.applyCompositionText(text, start)
+      return
+    }
+
+    const session = this.session
+    if (!session) return
+    if (!this.options.canEditDocument()) return
+
+    this.transitionInputState({ text, type: 'composition-pending' })
+    const selectionChange = this.selectionChangeBeforeEdit()
+    const edit = textUpdateEdit(written, { text, rangeStart: range.start, rangeEnd: range.end })
+    const textChange = this.replaceAroundSelections(session, edit)
+    this.transitionInputState({ type: 'transaction-committed' })
+    this.applyChange(mergeChangeTimings(textChange, selectionChange), 'input.composition', start)
+  }
+
   private applyCompositionText(text: string, start: number): void {
     const session = this.session
     if (!session) return
@@ -3651,6 +3697,28 @@ function dropPlainText(event: DragEvent): string {
   const plainText = transfer.getData('text/plain')
   if (plainText.length > 0) return plainText
   return transfer.getData('text')
+}
+
+/**
+ * An EditContext host has no value for a screen reader, so the window is written into it as text and
+ * the caret into the document selection: the two things a textarea shows a reader on its own.
+ * Taking the document selection is only right while the element holds focus.
+ */
+function writeAccessibleWindow(input: HTMLElement, content: HiddenInputState): void {
+  if (input.textContent !== content.value) input.textContent = content.value
+  if (input.ownerDocument.activeElement !== input) return
+
+  const selection = input.ownerDocument.getSelection()
+  const node = input.firstChild
+  if (!selection) return
+  if (!node) {
+    selection.collapse(input, 0)
+    return
+  }
+  const backward = 'direction' in content && content.direction === 'backward'
+  const anchor = backward ? content.selectionEnd : content.selectionStart
+  const focus = backward ? content.selectionStart : content.selectionEnd
+  selection.setBaseAndExtent(node, anchor, node, focus)
 }
 
 function beforeInputText(event: InputEvent): string | null {

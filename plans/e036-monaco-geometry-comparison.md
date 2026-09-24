@@ -56,7 +56,7 @@ The textarea route fails one: a composition that replaces a range behind the car
 an autocorrection) is inserted beside the word, because a textarea's `insertFromComposition` has
 no target range. On Chromium the route retires the value diff (`deduceHiddenInputEdit` and its
 guards) and the textarea composition commit; nothing can be deleted while other engines need
-them. Open: the `div` has no accessible text, so screen readers read nothing on this route.
+them. Screen readers read the window as the `div`'s text, with the caret mirrored into the document selection while it has focus (Monaco's approach); the Platform scenario checks the accessibility tree's value on both routes. A textarea composition now commits over the range the textarea selects at `compositionstart`, so that route applies a correction too, and both routes commit composed text without auto-closing it.
 
 The Markdown fixture's typing cost (3.1 ms applied, 2.9 ms script per key) comes from the test's
 capture session returning every capture on each change, not from geometry; it is not a finding.

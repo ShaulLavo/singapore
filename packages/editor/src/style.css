@@ -368,6 +368,8 @@
   resize: none;
   top: 0;
   -webkit-text-fill-color: transparent;
+  /* An EditContext host shows the window as text; its breaks are the document's lines. */
+  white-space: pre;
   width: 1px;
 }
 

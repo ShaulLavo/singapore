@@ -7,6 +7,8 @@ import type { EditorInputRoute } from '../src/virtualization'
 declare module 'vitest/browser' {
   interface BrowserCommands {
     proofKeyPress: (key: string) => Promise<void>
+    proofKeyDown: (key: string) => Promise<void>
+    proofKeyUp: (key: string) => Promise<void>
     proofType: (text: string) => Promise<void>
     proofImeComposition: (
       text: string,
@@ -83,10 +85,7 @@ describe.each<EditorInputRoute>(['edit-context', 'textarea'])('%s input route', 
     expect(editor.materializeFullText()).toBe('hello world')
   })
 
-  // A textarea's insertFromComposition carries only the text and no target range, so that route
-  // inserts the correction beside the word it was meant to replace.
-  const replacing = route === 'textarea' ? it.fails : it
-  replacing('replaces the word a correction reaches back over', async () => {
+  it('replaces the word a correction reaches back over', async () => {
     await open('hello world', 5)
     await commands.proofImeComposition('Hello', [0, 5])
     await commands.proofInsertText('Hello')
@@ -94,10 +93,126 @@ describe.each<EditorInputRoute>(['edit-context', 'textarea'])('%s input route', 
     expect(editor.materializeFullText()).toBe('Hello world')
   })
 
+  it('closes a typed bracket but not a composed one', async () => {
+    // Auto-close fires before whitespace, as in VS Code.
+    await open('a b', 1)
+    await commands.proofType('(')
+    await frames()
+    const typed = editor.materializeFullText()
+    await commands.proofKeyPress('Delete')
+    await commands.proofKeyPress('Backspace')
+    await commands.proofImeComposition('(')
+    await commands.proofInsertText('(')
+    await frames()
+    expect({ typed, composed: editor.materializeFullText() }).toEqual({
+      typed: 'a() b',
+      composed: 'a( b',
+    })
+  })
+
   it('inserts text that arrives with no key behind it', async () => {
     await open('hello world', 5)
     await commands.proofInsertText(' there')
     await frames()
     expect(editor.materializeFullText()).toBe('hello there world')
+  })
+})
+
+describe('what a screen reader reads on the EditContext route', () => {
+  let host: HTMLDivElement
+  let editor: Editor
+
+  beforeEach(async () => {
+    host = document.createElement('div')
+    host.style.cssText = 'width: 600px; height: 200px; display: flex'
+    document.body.append(host)
+    editor = new Editor(host, {
+      defaultText: 'first line\nsecond line',
+      inputRoute: 'edit-context',
+    })
+    await frames()
+    editor.focus()
+  })
+
+  afterEach(() => {
+    editor.dispose()
+    host.remove()
+  })
+
+  function readerView() {
+    const input = editor.getInputElement()
+    const selection = document.getSelection()!
+    return {
+      text: input.textContent,
+      inside: selection.anchorNode === input.firstChild && selection.focusNode === input.firstChild,
+      anchor: selection.anchorOffset,
+      focus: selection.focusOffset,
+    }
+  }
+
+  it('holds the lines around the caret and the caret inside them', async () => {
+    editor.setSelection(13, 13)
+    await frames()
+    expect(readerView()).toEqual({
+      text: 'first line\nsecond line',
+      inside: true,
+      anchor: 13,
+      focus: 13,
+    })
+  })
+
+  it('keeps a backward selection backward', async () => {
+    editor.setSelection(9, 2)
+    await frames()
+    expect(readerView()).toMatchObject({ inside: true, anchor: 9, focus: 2 })
+  })
+
+  it('follows the text as it is typed', async () => {
+    editor.setSelection(5, 5)
+    await frames()
+    await commands.proofType('!')
+    await frames()
+    expect(readerView()).toEqual({
+      text: 'first! line\nsecond line',
+      inside: true,
+      anchor: 6,
+      focus: 6,
+    })
+  })
+
+  it('leaves mouse and keyboard selection to the editor', async () => {
+    const row = host.querySelector<HTMLElement>('.editor-virtualized-row')!
+    const text = Array.from(row.childNodes).find((node) => node.nodeType === Node.TEXT_NODE)!
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.setEnd(text, 1)
+    const start = range.getBoundingClientRect()
+    range.setStart(text, 5)
+    range.setEnd(text, 6)
+    const end = range.getBoundingClientRect()
+    const y = start.top + start.height / 2
+    row.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        clientX: start.left + 1,
+        clientY: y,
+        detail: 1,
+      }),
+    )
+    document.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: end.left + 1, clientY: y, buttons: 1 }),
+    )
+    document.dispatchEvent(
+      new MouseEvent('mouseup', { bubbles: true, clientX: end.left + 1, clientY: y }),
+    )
+    await frames()
+    // The window starts at the document's start here, so its offsets are the editor's.
+    expect(readerView()).toMatchObject({ inside: true, anchor: 0, focus: 5 })
+
+    await commands.proofKeyDown('Shift')
+    await commands.proofKeyPress('ArrowRight')
+    await commands.proofKeyUp('Shift')
+    await frames()
+    expect(readerView()).toMatchObject({ inside: true, anchor: 0, focus: 6 })
   })
 })
