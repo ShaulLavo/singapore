@@ -673,8 +673,8 @@ class LanguageServerContribution implements EditorViewContribution {
       {
         clear: () => diagnostics.clear(),
         render: (document, items) => diagnostics.render(document, items),
-        publishSummary: (uri, version, items) => {
-          diagnostics.publishSummary(uri, version, items)
+        publishSummary: (uri, version, items, freshness) => {
+          diagnostics.publishSummary(uri, version, items, freshness)
           this.codeActions?.diagnosticsChanged()
         },
       },

@@ -51,6 +51,7 @@ export {
   type LanguageServerDocumentUriTransition,
 } from './documentSyncController'
 export {
+  combineDiagnosticsFreshness,
   diagnosticHighlightGroups,
   summarizeDiagnostics,
   type LanguageServerDiagnosticHighlightGroups,
@@ -86,6 +87,7 @@ export type {
   LanguageServerDiagnosticMarkerEvent,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticSummary,
+  LanguageServerDiagnosticsFreshness,
   LanguageServerDocumentSyncOptions,
   LanguageServerNavigationKind,
   LanguageServerNavigationOpenMode,

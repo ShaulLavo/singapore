@@ -26,6 +26,9 @@ import type { ActiveDocument, DocumentDescriptor } from './pluginTypes'
 import type { LanguageServerDocumentSyncOptions } from './types'
 import { viewDocumentSnapshot } from './viewDocumentSnapshot'
 
+/** `result` came from the server; `reset` is the client emptying the list itself. */
+export type DocumentSyncSummaryKind = 'result' | 'reset'
+
 export type DocumentSyncDiagnosticsPresenter = {
   clear(): void
   render(document: LspTextDocumentSnapshot, diagnostics: readonly lsp.Diagnostic[]): void
@@ -33,6 +36,7 @@ export type DocumentSyncDiagnosticsPresenter = {
     uri: lsp.DocumentUri,
     version: number | null,
     diagnostics: readonly lsp.Diagnostic[],
+    kind: DocumentSyncSummaryKind,
   ): void
 }
 
@@ -127,7 +131,7 @@ export class DocumentSync {
 
     this.presenter.clear()
     if (attachment) this.workspace.closeDocument(attachment)
-    this.presenter.publishSummary(active.uri, active.lspVersion, [])
+    this.presenter.publishSummary(active.uri, active.lspVersion, [], 'reset')
   }
 
   private matchesTransitionSource(
@@ -194,7 +198,7 @@ export class DocumentSync {
     this.presenter.clear()
     if (!active) return
 
-    this.presenter.publishSummary(active.uri, active.lspVersion, [])
+    this.presenter.publishSummary(active.uri, active.lspVersion, [], 'reset')
   }
 
   private openOrUpdateDocument(
@@ -227,7 +231,7 @@ export class DocumentSync {
   ): void {
     this.diagnosticItems = diagnostics
     this.presenter.render(active, diagnostics)
-    this.presenter.publishSummary(active.uri, version, diagnostics)
+    this.presenter.publishSummary(active.uri, version, diagnostics, 'result')
   }
 
   private openDocument(descriptor: DocumentDescriptor, syncPoint: DocumentSyncPoint): void {
@@ -336,7 +340,7 @@ export class DocumentSync {
 
     this.diagnosticItems = []
     this.presenter.clear()
-    this.presenter.publishSummary(active.uri, active.lspVersion, [])
+    this.presenter.publishSummary(active.uri, active.lspVersion, [], 'reset')
     this.pendingUriProjection = {
       fromUri: active.uri,
       toUri: transition.document.uri,

@@ -1,6 +1,8 @@
 import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
+import type { LanguageServerDiagnosticSummary, LanguageServerDiagnosticsFreshness } from './types'
+
 export type LanguageServerDiagnosticSeverity = 'error' | 'warning' | 'information' | 'hint'
 
 /** A tag layer paints on top of the severity wash, so a deprecated hint is still a hint. */
@@ -26,18 +28,8 @@ export function summarizeDiagnostics(
   uri: lsp.DocumentUri | null,
   version: number | null,
   diagnostics: readonly lsp.Diagnostic[],
-): {
-  readonly uri: lsp.DocumentUri | null
-  readonly version: number | null
-  readonly diagnostics: readonly lsp.Diagnostic[]
-  readonly counts: {
-    readonly error: number
-    readonly warning: number
-    readonly information: number
-    readonly hint: number
-    readonly total: number
-  }
-} {
+  freshness: LanguageServerDiagnosticsFreshness = 'current',
+): LanguageServerDiagnosticSummary {
   const counts = { error: 0, warning: 0, information: 0, hint: 0 }
   for (const diagnostic of diagnostics) counts[severityForDiagnostic(diagnostic)] += 1
   return {
@@ -48,7 +40,24 @@ export function summarizeDiagnostics(
       ...counts,
       total: diagnostics.length,
     },
+    freshness,
   }
+}
+
+const FRESHNESS_PRECEDENCE: readonly LanguageServerDiagnosticsFreshness[] = [
+  'awaiting',
+  'refreshing',
+  'current',
+  'silent',
+  'unavailable',
+]
+
+/** Several servers on one document: any answer still coming outranks the ones that arrived. */
+export function combineDiagnosticsFreshness(
+  values: readonly LanguageServerDiagnosticsFreshness[],
+): LanguageServerDiagnosticsFreshness {
+  for (const freshness of FRESHNESS_PRECEDENCE) if (values.includes(freshness)) return freshness
+  return 'silent'
 }
 
 export function diagnosticHighlightGroups(

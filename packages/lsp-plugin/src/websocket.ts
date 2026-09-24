@@ -13,6 +13,7 @@ export { acquireLanguageServerLane, type AcquiredLanguageServerLane } from './la
 export type {
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticSummary,
+  LanguageServerDiagnosticsFreshness,
   LanguageServerPlugin,
   LanguageServerLaneOptions,
   LanguageServerPluginOptions,

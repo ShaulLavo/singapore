@@ -56,11 +56,26 @@ export type LanguageServerDiagnosticCounts = {
   readonly total: number
 }
 
+/**
+ * How far a summary's diagnostics can be trusted, so an empty list is never mistaken for a clean
+ * file. `awaiting`: a first result is being asked for. `refreshing`: a result is shown and a newer
+ * one is being asked for. `current`: nothing is pending. `silent`: the server has said nothing and
+ * nothing is pending — a push-only server may never publish, so this never waits. `unavailable`:
+ * the connection is gone and what was shown was cleared.
+ */
+export type LanguageServerDiagnosticsFreshness =
+  | 'awaiting'
+  | 'refreshing'
+  | 'current'
+  | 'silent'
+  | 'unavailable'
+
 export type LanguageServerDiagnosticSummary = {
   readonly uri: lsp.DocumentUri | null
   readonly version: number | null
   readonly diagnostics: readonly lsp.Diagnostic[]
   readonly counts: LanguageServerDiagnosticCounts
+  readonly freshness: LanguageServerDiagnosticsFreshness
 }
 
 export type LanguageServerDiagnosticMarkerEvent = {

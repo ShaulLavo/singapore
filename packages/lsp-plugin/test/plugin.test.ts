@@ -33,6 +33,7 @@ import { createLanguageServerAdapterPlugin, createLanguageServerPlugin } from '.
 import type {
   ApplyWorkspaceEditRequest,
   ApplyWorkspaceEditResult,
+  LanguageServerDiagnosticSummary,
   LanguageServerPlugin,
   LanguageServerRenamePrompt,
 } from '../src/types'
@@ -901,7 +902,131 @@ describe('shared language-server documents', () => {
     document.dispose()
     pool.dispose()
   })
+
+  it('says a push server that has not published is silent, never pending', async () => {
+    const pool = new LspConnectionPool()
+    const freshness: string[] = []
+    const document = freshnessDocument(pool, (summary) => freshness.push(summary.freshness))
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.open()
+    await flushPromises()
+    socket.receive(initializeResponse(jsonMessage(socket.sent[0])))
+    await document.lanes[0]!.connection.ready
+
+    expect(document.lanes[0]!.diagnosticsFreshness).toBe('silent')
+    socket.receive(publishDiagnosticsMessage())
+    expect(freshness.at(-1)).toBe('current')
+    socket.close()
+    expect(freshness.at(-1)).toBe('unavailable')
+    document.dispose()
+    pool.dispose()
+  })
+
+  it('tells a pending pull apart from its answer, first and on refresh', async () => {
+    const pool = new LspConnectionPool()
+    const summaries: { freshness: string; total: number }[] = []
+    const document = freshnessDocument(pool, (summary) =>
+      summaries.push({ freshness: summary.freshness, total: summary.counts.total }),
+    )
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.open()
+    await flushPromises()
+    socket.receive(
+      initializeResponse(jsonMessage(socket.sent[0]), {
+        diagnosticProvider: { interFileDependencies: true, workspaceDiagnostics: false },
+      }),
+    )
+    await document.lanes[0]!.connection.ready
+    await flushPromises()
+
+    expect(summaries.at(-1)).toEqual({ freshness: 'awaiting', total: 0 })
+    socket.receive(pullAnswer(socket, [diagnosticItem()]))
+    await flushPromises()
+    expect(summaries.at(-1)).toEqual({ freshness: 'current', total: 1 })
+
+    socket.receive({ jsonrpc: '2.0', method: 'workspace/diagnostic/refresh' })
+    await flushPromises()
+    // The earlier answer stays on screen, marked as being re-asked rather than as current.
+    expect(summaries.at(-1)).toEqual({ freshness: 'refreshing', total: 1 })
+    socket.receive(pullAnswer(socket, []))
+    await flushPromises()
+    expect(summaries.at(-1)).toEqual({ freshness: 'current', total: 0 })
+    document.dispose()
+    pool.dispose()
+  })
+
+  it('reports freshness without a LanguageServerDocument', async () => {
+    const transport = new FakeTransport()
+    const freshness: string[] = []
+    const { features, provider } = activatePlugin(
+      createLanguageServerAdapterPlugin({
+        name: 'editor.test-lsp',
+        createTransport: () => transport,
+        onDiagnostics: (summary) => freshness.push(summary.freshness),
+        diagnostics: {
+          minimapSourceId: 'editor.test-lsp.diagnostics',
+          highlightNameNamespace: 'test-lsp',
+          markerTimingNamePrefix: 'testLsp.marker',
+        },
+        completion: {
+          editFeature: createEditorCapabilityToken<LanguageServerCompletionEditFeature>(
+            'test.lsp-plugin.freshness',
+          ),
+          acceptTimingName: 'testLsp.completion.accept',
+        },
+        hoverDefinition: {
+          linkHighlightNameNamespace: 'test-lsp',
+          tooltipClassNamespace: 'test-lsp',
+          navigationTimingNamePrefix: 'testLsp',
+        },
+      }),
+      { applyEdits: vi.fn() },
+    )
+    provider.createContribution(viewContributionContext(editorSnapshot(), { features }))
+    transport.receive(initializeResponse(jsonMessage(transport.sent[0])))
+    await flushPromises()
+
+    transport.receive(publishDiagnosticsMessage())
+    expect(freshness.at(-1)).toBe('current')
+  })
 })
+
+function freshnessDocument(
+  pool: LspConnectionPool,
+  onDiagnostics: (summary: LanguageServerDiagnosticSummary) => void,
+) {
+  return createLanguageServerDocument({
+    buffer: createEditorTextBuffer('# Notes'),
+    uri: 'file:///README.md',
+    languageId: 'markdown',
+    lanes: [
+      {
+        id: 'test',
+        features: { diagnostics: 0 },
+        webSocketRoute: 'ws://localhost/lsp',
+        connectionProvider: pool.provider('test'),
+        webSocketTransportOptions: { WebSocketCtor: FakeWebSocket },
+        onDiagnostics,
+      },
+    ],
+  })
+}
+
+function pullAnswer(socket: FakeWebSocket, items: lsp.Diagnostic[]): JsonMessage {
+  const request = socket.sent.map(jsonMessage).findLast((message) => {
+    return message.method === 'textDocument/diagnostic'
+  })
+  if (!request) throw new Error('no pull request was sent')
+  return { jsonrpc: '2.0', id: request.id, result: { kind: 'full', items } }
+}
+
+function diagnosticItem(): lsp.Diagnostic {
+  return {
+    severity: 1,
+    message: 'heading',
+    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+  }
+}
 
 function activatePlugin(
   plugin: LanguageServerPlugin,

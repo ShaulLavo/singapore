@@ -9,6 +9,7 @@ import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rende
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
+  combineDiagnosticsFreshness,
   diagnosticHighlightGroups,
   summarizeDiagnostics,
   type LanguageServerDiagnosticHighlightLayer,
@@ -24,6 +25,7 @@ import type {
   LanguageServerDiagnosticMarkerClaim,
   LanguageServerDiagnosticMarkerEvent,
   LanguageServerDiagnosticSummary,
+  LanguageServerDiagnosticsFreshness,
 } from './types'
 
 export { viewDocumentSnapshot } from './viewDocumentSnapshot'
@@ -203,11 +205,13 @@ export type CompositeDiagnosticsLanePresenter = {
     uri: lsp.DocumentUri,
     version: number | null,
     diagnostics: readonly lsp.Diagnostic[],
+    freshness: LanguageServerDiagnosticsFreshness,
   ): void
 }
 
 export class CompositeDiagnosticsPresenter {
   readonly #batches = new Map<string, DiagnosticBatch>()
+  readonly #freshness = new Map<string, LanguageServerDiagnosticsFreshness>()
   #diagnostics: readonly lsp.Diagnostic[] = []
 
   public constructor(
@@ -244,10 +248,11 @@ export class CompositeDiagnosticsPresenter {
         this.refreshDiagnostics()
         this.renderCombined()
       },
-      publishSummary: (uri, version, diagnostics) => {
+      publishSummary: (uri, version, diagnostics, freshness) => {
+        this.#freshness.set(laneId, freshness)
         const current = this.#batches.get(laneId)
         if (!current && diagnostics.length === 0) {
-          onDiagnostics?.(summarizeDiagnostics(uri, version, diagnostics))
+          onDiagnostics?.(summarizeDiagnostics(uri, version, diagnostics, freshness))
           this.publishCombinedSummary()
           return
         }
@@ -259,7 +264,7 @@ export class CompositeDiagnosticsPresenter {
           version,
         })
         this.refreshDiagnostics()
-        onDiagnostics?.(summarizeDiagnostics(uri, version, diagnostics))
+        onDiagnostics?.(summarizeDiagnostics(uri, version, diagnostics, freshness))
         this.publishCombinedSummary()
       },
     }
@@ -267,6 +272,7 @@ export class CompositeDiagnosticsPresenter {
 
   public clear(): void {
     this.#batches.clear()
+    this.#freshness.clear()
     this.refreshDiagnostics()
     this.presenter.clear()
   }
@@ -294,8 +300,16 @@ export class CompositeDiagnosticsPresenter {
 
   private publishCombinedSummary(): void {
     const current = this.currentBatch()
+    const freshness = combineDiagnosticsFreshness(
+      this.laneIds.flatMap((id) => this.#freshness.get(id) ?? []),
+    )
     this.onDiagnostics?.(
-      summarizeDiagnostics(current?.uri ?? null, current?.version ?? null, this.diagnostics),
+      summarizeDiagnostics(
+        current?.uri ?? null,
+        current?.version ?? null,
+        this.diagnostics,
+        freshness,
+      ),
     )
   }
 
