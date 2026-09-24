@@ -313,7 +313,12 @@ let rowGeometrySweepCount = 0
 let rtlTextClassificationScanCount = 0
 
 /** Why a row's geometry is built the way it is; every value but `calculated` measures the DOM. */
-type RowGeometryPath = 'calculated' | 'inline-mapping' | 'non-simple-text' | 'tab'
+type RowGeometryPath =
+  | 'calculated'
+  | 'inline-mapping'
+  | 'non-simple-text'
+  | 'proportional-font'
+  | 'tab'
 
 export function createTextChunkParts(
   node: Text,
@@ -474,7 +479,7 @@ export function xToOffset(
   x: number,
   scale?: number,
 ): number {
-  if (rowUsesCalculatedGeometry(row)) return calculatedXToOffset(view, row, x, scale)
+  if (rowUsesCalculatedGeometry(view, row)) return calculatedXToOffset(view, row, x, scale)
 
   const geometry = ensureRowGeometry(view, row)
   return offsetForX(geometry, Math.max(0, x))
@@ -489,7 +494,7 @@ export function knownRowContentWidth(
   const cached = row.geometryCache as RowGeometryCache | null
   if (cached?.key === key && !cached.geometry.plan && Number.isFinite(cached.geometry.width))
     return cached.geometry.width
-  if (rowUsesCalculatedGeometry(row)) return calculatedRowWidth(view, row)
+  if (rowUsesCalculatedGeometry(view, row)) return calculatedRowWidth(view, row)
 
   const measured = measuredRowWidths.get(row.element)
   return measured?.key === key ? measured.width : null
@@ -1541,7 +1546,7 @@ function buildRowGeometry(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): RowGeometry {
-  const path = rowGeometryPath(row)
+  const path = rowGeometryPath(view, row)
   recordEditorPerformanceDiagnostic('view.rowGeometry', () => ({
     path,
     length: row.text.length,
@@ -1550,8 +1555,11 @@ function buildRowGeometry(
   return buildMeasuredRowGeometry(view, row)
 }
 
-function rowUsesCalculatedGeometry(row: MountedVirtualizedTextRow): boolean {
-  return rowGeometryPath(row) === 'calculated'
+function rowUsesCalculatedGeometry(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): boolean {
+  return rowGeometryPath(view, row) === 'calculated'
 }
 
 /**
@@ -1559,9 +1567,13 @@ function rowUsesCalculatedGeometry(row: MountedVirtualizedTextRow): boolean {
  * editor's base font. Rows with inline replacements can be restyled per replacement kind — a
  * markdown heading row is bold and larger — so their advance widths only exist in the DOM.
  */
-function rowGeometryPath(row: MountedVirtualizedTextRow): RowGeometryPath {
+function rowGeometryPath(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): RowGeometryPath {
   if (row.inlineMapping) return 'inline-mapping'
   if (!isSimpleRowText(row)) return 'non-simple-text'
+  if (!view.monospace) return 'proportional-font'
   // CSS tab stops can disagree with the estimated cell grid after a horizontal spacer.
   const hasTabs =
     row.measurements?.hasTabs ?? (typeof row.text === 'string' && row.text.includes('\t'))

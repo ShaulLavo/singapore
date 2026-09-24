@@ -22,7 +22,11 @@ import type { SelectionAffinity, SelectionGoal } from '../selections'
 import { EditorTokenStore, type EditorTokenInput } from '../syntax/tokenStore'
 import type { TextEdit } from '../tokens'
 import { applyEditorTheme } from '../theme'
-import { measureBrowserTextMetrics, type BrowserTextMetrics } from './browserMetrics'
+import {
+  measureBrowserTextMetrics,
+  measureMonospaceAdvances,
+  type BrowserTextMetrics,
+} from './browserMetrics'
 import { FixedRowVirtualizer, type FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
 import {
   DEFAULT_OVERSCAN,
@@ -401,6 +405,7 @@ export class VirtualizedTextView {
       lineHeightOverride,
       rowGap,
       metrics: { ...measuredMetrics, rowHeight },
+      monospace: textMetrics ? true : measureMonospaceAdvances(scrollElement),
       textMetrics,
       hiddenCharacters: normalizeHiddenCharactersMode(options.hiddenCharacters),
       suspiciousCharacters: DEFAULT_SUSPICIOUS_SETTINGS,
@@ -764,6 +769,7 @@ export class VirtualizedTextView {
   public refreshMetrics(): BrowserTextMetrics {
     const view = this.view
     const measured = view.textMetrics ?? measureBrowserTextMetrics(this.scrollElement)
+    view.monospace = view.textMetrics ? true : measureMonospaceAdvances(this.scrollElement)
     const rowHeightValue = normalizeRowHeight(view.lineHeightOverride ?? measured.rowHeight)
     this.applyMetrics({ rowHeight: rowHeightValue, characterWidth: measured.characterWidth })
     return view.metrics

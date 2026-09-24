@@ -12,6 +12,7 @@ export type WhitespaceDotGlyph = '·' | '⸱'
 // The measured record carries more than callers may hand in as an override, so it stays internal.
 type MeasuredTextMetrics = BrowserTextMetrics & {
   readonly whitespaceDotGlyph: WhitespaceDotGlyph
+  readonly monospace: boolean
 }
 
 const DEFAULT_ROW_HEIGHT = 24
@@ -23,6 +24,14 @@ const SPACE_PROBE_TEXT = ' '.repeat(PROBE_LENGTH)
 // answer whenever the comparison cannot be made.
 const DEFAULT_WHITESPACE_DOT_GLYPH: WhitespaceDotGlyph = '·'
 const WHITESPACE_DOT_GLYPHS: readonly WhitespaceDotGlyph[] = [DEFAULT_WHITESPACE_DOT_GLYPH, '⸱']
+// Monaco's set: narrow, wide and punctuation glyphs, digits, in every style a theme may paint a
+// token with. A font whose bold or italic advance differs still breaks column arithmetic there.
+const MONOSPACE_PROBE_TEXTS = ['i', 'l', '|', '/', '-', '_', '%', 'W', '0', '1'].map((glyph) =>
+  glyph.repeat(PROBE_LENGTH),
+)
+const MONOSPACE_PROBE_STYLES = ['regular', 'bold', 'italic'] as const
+// Layout reports 1/64 px; over the 16-glyph probe that bounds one advance to about 0.001 px.
+const MONOSPACE_EPSILON = 0.002
 const NO_INVALIDATION: EditorDisposable = { dispose: () => {} }
 let metricsCache = new WeakMap<Document, Map<string, MeasuredTextMetrics>>()
 
@@ -37,6 +46,14 @@ export function measureBrowserTextMetrics(element: HTMLElement): BrowserTextMetr
  */
 export function measureWhitespaceDotGlyph(element: HTMLElement): WhitespaceDotGlyph {
   return measureTextMetrics(element).whitespaceDotGlyph
+}
+
+/**
+ * Whether every probed glyph, space included, advances by the measured character width. When it
+ * does not, column arithmetic lands clicks and carets on the wrong character.
+ */
+export function measureMonospaceAdvances(element: HTMLElement): boolean {
+  return measureTextMetrics(element).monospace
 }
 
 /**
@@ -80,18 +97,23 @@ function measureTextMetrics(element: HTMLElement): MeasuredTextMetrics {
   const dotProbes = WHITESPACE_DOT_GLYPHS.map((glyph) =>
     appendProbe(element, glyph.repeat(PROBE_LENGTH)),
   )
+  const monospaceProbes = MONOSPACE_PROBE_STYLES.flatMap((probeStyle) =>
+    MONOSPACE_PROBE_TEXTS.map((text) => styledProbe(appendProbe(element, text), probeStyle)),
+  )
 
   // Every probe is attached before the first read, so the whole set costs one layout.
   const rect = probe.getBoundingClientRect()
   const style = readComputedStyle(probe)
   const spaceWidth = measuredAdvance(spaceProbe)
   const dotWidths = dotProbes.map(measuredAdvance)
-  for (const attached of [probe, spaceProbe, ...dotProbes]) attached.remove()
+  const monospaceWidths = [spaceWidth, ...monospaceProbes.map(measuredAdvance)]
+  for (const attached of [probe, spaceProbe, ...dotProbes, ...monospaceProbes]) attached.remove()
 
   const metrics = {
     rowHeight: measuredRowHeight(rect, style),
     characterWidth: measuredCharacterWidth(rect),
     whitespaceDotGlyph: nearestWhitespaceDotGlyph(spaceWidth, dotWidths),
+    monospace: advancesAgree(rect.width / PROBE_LENGTH, monospaceWidths),
   }
   // A hidden probe reports zero geometry; its fallback must not become a shared font measurement.
   if (cacheKey && rect.width > 0 && rect.height > 0) {
@@ -106,6 +128,25 @@ function appendProbe(element: HTMLElement, text: string): HTMLSpanElement {
   probe.textContent = text
   element.appendChild(probe)
   return probe
+}
+
+function styledProbe(
+  probe: HTMLSpanElement,
+  style: (typeof MONOSPACE_PROBE_STYLES)[number],
+): HTMLSpanElement {
+  if (style === 'bold') probe.style.fontWeight = 'bold'
+  if (style === 'italic') probe.style.fontStyle = 'italic'
+  return probe
+}
+
+// An unmeasurable probe (hidden host, no layout engine) proves nothing, so it keeps the fast path.
+function advancesAgree(characterWidth: number, widths: readonly (number | null)[]): boolean {
+  if (!Number.isFinite(characterWidth) || characterWidth <= 0) return true
+  for (const width of widths) {
+    if (width === null) continue
+    if (Math.abs(width - characterWidth) > MONOSPACE_EPSILON) return false
+  }
+  return true
 }
 
 function measuredAdvance(probe: HTMLElement): number | null {

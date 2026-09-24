@@ -50,6 +50,7 @@ try {
   for (let round = 0; round < rounds; round++)
     for (const variant of rotate(variants, round))
       result.samples.push(await sample(browser, server.process().pid, variant, round))
+  result.gpu = await gpuFlags(server.process().pid)
   result.summary = summarize(result.samples)
   console.log(JSON.stringify(result.summary))
   await mkdir(dirname(resolve(values.output)), { recursive: true })
@@ -57,6 +58,16 @@ try {
 } finally {
   await server?.close()
   await rm(directory, { recursive: true, force: true })
+}
+
+/** The GPU process's GL/ANGLE flags, which say whether compositing ran on hardware. */
+async function gpuFlags(rootPid) {
+  for (const pid of (await processTicks(rootPid)).keys()) {
+    if ((await processType(pid)) !== 'gpu-process') continue
+    const cmdline = await readFile(`/proc/${pid}/cmdline`, 'utf8')
+    return cmdline.split('\0').filter((flag) => /gl|angle|gpu|vulkan|ozone/i.test(flag))
+  }
+  return null
 }
 
 function rotate(list, by) {
@@ -71,6 +82,12 @@ async function asset(route) {
     body: await readFile(path),
     contentType: types[extname(path)] ?? 'application/octet-stream',
   })
+}
+
+/** Chromium's `--type=` for a process, `browser` for the root. */
+async function processType(pid) {
+  const cmdline = await readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => '')
+  return /--type=([\w-]+)/.exec(cmdline)?.[1] ?? 'browser'
 }
 
 /** CPU ticks of the browser process and every descendant, keyed by pid. */
@@ -97,10 +114,16 @@ async function processTicks(rootPid) {
   return owned
 }
 
-function cpuSeconds(before, after) {
+async function cpuSeconds(before, after) {
+  const byType = {}
   let total = 0
-  for (const [pid, value] of after) total += value - (before.get(pid) ?? 0)
-  return total / ticksPerSecond
+  for (const [pid, value] of after) {
+    const delta = (value - (before.get(pid) ?? 0)) / ticksPerSecond
+    const type = await processType(pid)
+    byType[type] = Math.round(((byType[type] ?? 0) + delta) * 100) / 100
+    total += delta
+  }
+  return { total, byType }
 }
 
 async function sample(browser, rootPid, variant, round) {
@@ -130,7 +153,8 @@ async function sample(browser, rootPid, variant, round) {
     const before = await processTicks(rootPid)
     await page.waitForTimeout(seconds * 1000)
     const after = await processTicks(rootPid)
-    const row = { variant, round, cpuSeconds: cpuSeconds(before, after) }
+    const { total, byType } = await cpuSeconds(before, after)
+    const row = { variant, round, cpuSeconds: total, byType }
     console.log(JSON.stringify(row))
     return row
   } finally {

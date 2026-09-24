@@ -147,6 +147,8 @@ export interface VirtualizedTextViewInternal {
   lineHeightOverride: number | null
   rowGap: number
   metrics: BrowserTextMetrics
+  /** False when the font's glyph advances differ, which retires calculated row geometry. */
+  monospace: boolean
   textMetrics: BrowserTextMetrics | null
   hiddenCharacters: HiddenCharactersMode
   suspiciousCharacters: SuspiciousCharacterSettings
