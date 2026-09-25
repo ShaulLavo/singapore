@@ -71,8 +71,9 @@ Document three actual flows: host text into a normalized piece table and back to
 snapshot changes into Tree-sitter source synchronization, and Editor edits into LSP changes.
 Show where version and generation checks apply and which caches must exist at the receiver.
 
-Use [E018](../docs/editing/e018-persisted-undo.md) as a proposed consumer of the vocabulary, not an already
-shipped encoding. Durable history needs an explicit format and reconstruction contract.
+[E018](../docs/editing/e018-persisted-undo.md) shipped on 2026-09-20: `serializeHistory` and
+`restoreHistory` store each node's edit script against its parent, and Platform restores it when the
+content hash matches. Document that format as an existing consumer of this vocabulary.
 Explain why serializing runtime tree pointers, sync segment objects, or parser handles does
 not preserve their meaning across restart.
 

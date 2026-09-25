@@ -8,6 +8,8 @@
 - Dependencies: None
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
+Decided 2026-09-25: owner — kept.
+
 ## Outcome
 
 Browse the parse behind the current editor, inspect node kinds and ranges, follow the cursor's
