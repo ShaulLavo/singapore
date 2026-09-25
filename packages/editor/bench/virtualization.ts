@@ -263,7 +263,7 @@ const stressText = generateFixture('short-lines')
 measureProjectionView(100_000, firstLines(stressText, 100_000))
 measureProjectionView(500_000, stressText)
 
-function measureHighlightOverlay(masked: boolean): void {
+function measureHighlightOverlay(maskRanges: number): void {
   const host = document.createElement('div')
   document.body.append(host)
   const view = new VirtualizedTextView(host, {
@@ -280,8 +280,15 @@ function measureHighlightOverlay(masked: boolean): void {
   view.setText(text)
   view.setScrollMetrics(0, VIEWPORT_HEIGHT, VIEWPORT_WIDTH)
   view.setTokens(tokens)
-  if (masked)
+  if (maskRanges === 1)
     view.setRangeHighlight('overlay-bench', [{ start: 0, end: 76 }], { overlay: { dim: 0.5 } })
+  // One short unused name per row, the shape a file full of unused-symbol diagnostics produces.
+  if (maskRanges > 1)
+    view.setRangeHighlight(
+      'overlay-bench',
+      Array.from({ length: maskRanges }, (_, row) => ({ start: row * 38 + 6, end: row * 38 + 11 })),
+      { overlay: { dim: 0.5 } },
+    )
   const samples: number[] = []
   for (let iteration = 0; iteration < 120; iteration++) {
     const next = (iteration % 2 ? 'c' : 'C') + text.slice(1)
@@ -294,7 +301,7 @@ function measureHighlightOverlay(masked: boolean): void {
   console.log(
     JSON.stringify({
       name: 'highlight-overlay-edit',
-      viewportMask: masked ? 0.1 : 0,
+      maskRanges,
       medianMs: samples[50],
       p95Ms: samples[95],
     }),
@@ -303,5 +310,6 @@ function measureHighlightOverlay(masked: boolean): void {
   host.remove()
 }
 
-measureHighlightOverlay(false)
-measureHighlightOverlay(true)
+measureHighlightOverlay(0)
+measureHighlightOverlay(1)
+measureHighlightOverlay(200)

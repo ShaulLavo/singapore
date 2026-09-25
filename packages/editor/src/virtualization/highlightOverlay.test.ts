@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildHighlightOverlayMask, splitHighlightOverlay } from './highlightOverlay'
+import {
+  buildHighlightOverlayMask,
+  overlayColorStyle,
+  splitHighlightOverlay,
+} from './highlightOverlay'
 
 const codeUnit = (offset: number) => 'ab😀cdefgh'.charCodeAt(offset)
 describe('highlight overlay mask', () => {
@@ -63,5 +67,21 @@ describe('highlight overlay mask', () => {
         buildHighlightOverlayMask([{ start: 0, end: 1, overlay: { dim } }], 10, codeUnit),
       ).toThrow()
     }
+  })
+  it('keeps line keywords contiguous when a decoration carries a style or color', () => {
+    const style = overlayColorStyle(
+      { color: '#ff0000', textDecoration: 'underline wavy rgb(0 0 0)' },
+      { textDecoration: 'line-through' },
+    )
+    expect(style.textDecoration).toBe('underline line-through wavy rgb(0 0 0)')
+    const mask = buildHighlightOverlayMask(
+      [
+        { start: 0, end: 4, overlay: { textDecoration: 'underline dotted red' } },
+        { start: 0, end: 4, overlay: { textDecoration: 'line-through' } },
+      ],
+      10,
+      codeUnit,
+    )
+    expect(mask[0]?.overlay.textDecoration).toBe('underline line-through dotted red')
   })
 })

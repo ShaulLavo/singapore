@@ -10,6 +10,7 @@ const registry: VirtualizedTextHighlightRegistry = {
     highlights.set(name, highlight)
   },
   delete: (name) => highlights.delete(name),
+  entries: () => highlights.entries(),
 }
 let host: HTMLElement
 let view: VirtualizedTextView
@@ -105,10 +106,10 @@ it('releases obsolete token twins when opacity changes', () => {
 it('restores base and range twins when the window resumes', () => {
   view.setRangeHighlight('semantic', [{ start: 0, end: 10 }], { color: '#00ff00', zIndex: 2 })
   view.setRangeHighlight('fade', [{ start: 2, end: 5 }], { overlay: { dim: 0.5 } })
-  const entries = [...highlights.entries()]
+  const entries = new Map(highlights)
   highlights.clear()
   window.dispatchEvent(new Event('focus'))
-  expect([...highlights.entries()]).toEqual(entries)
+  expect(new Map(highlights)).toEqual(entries)
 })
 
 it('rebuilds surrogate-safe mask edges when text changes under existing overlays', () => {
@@ -153,4 +154,32 @@ it('keeps equal-priority range color above syntax after identical token updates'
   view.setTokens([{ start: 0, end: 10, style: { color: '#ff0000' } }])
   const winners = [...highlights.entries()].filter(([, highlight]) => highlight.priority === 0)
   expect(winners.at(-1)?.[0]).toBe('color-overlay-0')
+})
+
+it('paints every range with one overlay through a single reused base group', () => {
+  view.setText('abcdefghij'.repeat(10))
+  const ranges = Array.from({ length: 20 }, (_, index) => ({
+    start: index * 5,
+    end: index * 5 + 2,
+  }))
+  view.setRangeHighlight('fade', ranges, { overlay: { dim: 0.5 } })
+  const bases = () => [...highlights.entries()].filter(([name]) => name.includes('-overlay-base-'))
+  expect(bases()).toHaveLength(1)
+  const [name, highlight] = bases()[0]!
+  view.applyEdit({ from: 0, to: 1, text: 'A' }, 'A' + 'abcdefghij'.repeat(10).slice(1))
+  expect(bases()).toEqual([[name, highlight]])
+  view.setRangeHighlight('strike', [{ start: 1, end: 3 }], {
+    overlay: { textDecoration: 'line-through' },
+  })
+  expect(bases()).toHaveLength(3)
+})
+
+it('re-registers range groups only when the registry order drifts', () => {
+  view.setTokens([{ start: 0, end: 10, style: { color: '#ff0000' } }])
+  view.setRangeHighlight('color', [{ start: 0, end: 10 }], { color: '#00ff00' })
+  view.setRangeHighlight('fade', [{ start: 0, end: 5 }], { overlay: { dim: 0.5 } })
+  const deletes = vi.spyOn(registry, 'delete')
+  view.setRangeHighlight('color', [{ start: 0, end: 9 }], { color: '#00ff00' })
+  expect(deletes.mock.calls.map(([name]) => name)).not.toContain('color')
+  deletes.mockRestore()
 })

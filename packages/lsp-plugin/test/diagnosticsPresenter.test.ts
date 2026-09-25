@@ -47,6 +47,29 @@ describe('DiagnosticsPresenter', () => {
     }
   })
 
+  it('reads the unnecessary alpha once per theme', () => {
+    const context = editorContext(new TestMinimap())
+    const presenter = new DiagnosticsPresenter(context, 'tag-test', {
+      minimapSourceId: 'test',
+      highlightNameNamespace: 'lsp',
+      markerTimingNamePrefix: 'test',
+    })
+    const getStyle = vi
+      .spyOn(window, 'getComputedStyle')
+      .mockReturnValue({ color: 'rgba(0, 0, 0, 0.25)' } as CSSStyleDeclaration)
+    try {
+      const unused = [{ ...diagnostic(4, 0, 3, 'unused'), tags: [1] }]
+      presenter.render(activeDocument('abc'), unused)
+      presenter.render(activeDocument('abc'), unused)
+      expect(getStyle).toHaveBeenCalledTimes(1)
+      presenter.invalidateTheme()
+      presenter.render(activeDocument('abc'), unused)
+      expect(getStyle).toHaveBeenCalledTimes(2)
+    } finally {
+      getStyle.mockRestore()
+    }
+  })
+
   it('uses configured highlight names, minimap source, and marker timing names', () => {
     const minimap = new TestMinimap()
     const context = editorContext(minimap)

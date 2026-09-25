@@ -93,17 +93,16 @@ function splitsSurrogate(
 
 function mergedOverlay(overlays: Iterable<HighlightOverlay>): HighlightOverlay | undefined {
   let dim = 1
-  const decorations = new Set<string>()
+  const decorations: (string | undefined)[] = []
   for (const overlay of overlays) {
     dim = Math.min(dim, overlay.dim ?? 1)
-    for (const value of overlay.textDecoration?.split(/\s+/) ?? []) {
-      if (value && value !== 'none') decorations.add(value)
-    }
+    decorations.push(overlay.textDecoration)
   }
-  if (dim === 1 && decorations.size === 0) return undefined
+  const textDecoration = mergeTextDecorations(decorations)
+  if (dim === 1 && !textDecoration) return undefined
   return {
     ...(dim < 1 ? { dim } : {}),
-    ...(decorations.size ? { textDecoration: [...decorations].join(' ') } : {}),
+    ...(textDecoration ? { textDecoration } : {}),
   }
 }
 
@@ -132,9 +131,43 @@ export function overlayColorStyle<
   const base = style.color ?? 'var(--editor-foreground)'
   const opacity = dimmable ? (overlay.dim ?? 1) : 1
   const color = opacity === 1 ? base : `color-mix(in srgb, ${base} ${opacity * 100}%, transparent)`
-  const decorations = [style.textDecoration, overlay.textDecoration]
-    .flatMap((value) => value?.split(/\s+/) ?? [])
-    .filter((value) => value && value !== 'none')
-  const textDecoration = [...new Set(decorations)].join(' ')
+  const textDecoration = mergeTextDecorations([style.textDecoration, overlay.textDecoration])
   return { ...style, color, ...(textDecoration ? { textDecoration } : {}) }
+}
+
+const TEXT_DECORATION_LINES = new Set(['underline', 'overline', 'line-through', 'blink'])
+
+/**
+ * Unions the line keywords and keeps the first value's style, color and thickness. CSS requires the
+ * line keywords to be contiguous, so `underline wavy red line-through` would drop the declaration.
+ */
+function mergeTextDecorations(values: readonly (string | undefined)[]): string {
+  const lines = new Set<string>()
+  let rest: readonly string[] | null = null
+  for (const value of values) {
+    const words = textDecorationWords(value ?? '')
+    for (const word of words) if (TEXT_DECORATION_LINES.has(word)) lines.add(word)
+    const others = words.filter((word) => word !== 'none' && !TEXT_DECORATION_LINES.has(word))
+    if (!rest && others.length) rest = others
+  }
+  return [...lines, ...(rest ?? [])].join(' ')
+}
+
+// Splits on whitespace outside parentheses, so `rgb(0 0 0)` stays one word.
+function textDecorationWords(value: string): string[] {
+  const words: string[] = []
+  let depth = 0
+  let word = ''
+  for (const character of value) {
+    if (character === '(') depth++
+    if (character === ')') depth = Math.max(0, depth - 1)
+    if (depth > 0 || !/\s/.test(character)) {
+      word += character
+      continue
+    }
+    if (word) words.push(word)
+    word = ''
+  }
+  if (word) words.push(word)
+  return words
 }

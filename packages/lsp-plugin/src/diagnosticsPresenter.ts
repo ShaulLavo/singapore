@@ -88,6 +88,7 @@ export class DiagnosticsPresenter {
   private readonly highlightNames: Record<LanguageServerDiagnosticHighlightLayer, string>
   private markerClaim: Extract<LanguageServerDiagnosticMarkerClaim, { kind: 'claimed' }> | null =
     null
+  private unnecessaryDimCache: number | null = null
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -100,6 +101,10 @@ export class DiagnosticsPresenter {
   public render(document: LspTextDocumentSnapshot, diagnostics: readonly lsp.Diagnostic[]): void {
     this.renderHighlights(document, diagnostics)
     this.renderMinimapMarkers(diagnostics)
+  }
+
+  public invalidateTheme(): void {
+    this.unnecessaryDimCache = null
   }
 
   public clear(): void {
@@ -176,14 +181,19 @@ export class DiagnosticsPresenter {
         this.highlightNames[layer],
         groups[layer],
         layer === 'unnecessary' && groups.unnecessary.length > 0
-          ? {
-              overlay: {
-                dim: readColorAlpha(this.context.scrollElement, UNNECESSARY_DIAGNOSTIC_OPACITY),
-              },
-            }
+          ? { overlay: { dim: this.unnecessaryDim() } }
           : DIAGNOSTIC_LAYER_STYLES[layer],
       )
     }
+  }
+
+  // Reading the alpha forces a style recalc, and it only moves with the theme.
+  private unnecessaryDim(): number {
+    this.unnecessaryDimCache ??= readColorAlpha(
+      this.context.scrollElement,
+      UNNECESSARY_DIAGNOSTIC_OPACITY,
+    )
+    return this.unnecessaryDimCache
   }
 
   private renderMinimapMarkers(diagnostics: readonly lsp.Diagnostic[]): void {
@@ -229,6 +239,7 @@ export class CompositeDiagnosticsPresenter {
   public updateTheme(theme: EditorTheme | null): void {
     if (editorThemesEqual(this.theme, theme)) return
     this.theme = theme
+    this.presenter.invalidateTheme()
     this.renderCombined()
   }
 

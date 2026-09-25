@@ -1,4 +1,6 @@
 import {
+  type HighlightOverlay,
+  type HighlightOverlayRange,
   buildHighlightOverlayMask,
   splitHighlightOverlay,
   overlayColorStyle,
@@ -14,7 +16,7 @@ import {
 import { tokenProjectionLiveRangeStatus } from '../editor/tokenProjection'
 import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
 import { lowerBound, upperBound } from './rowHeightIndex'
-import { getSharedTokenHighlights } from './sharedTokenHighlights'
+import { getSharedTokenHighlights, SHARED_TOKEN_HIGHLIGHT_PREFIX } from './sharedTokenHighlights'
 import { rowLocalIndexForOffset } from './virtualizedTextViewInlineMapping'
 import { reregisterHighlights, scheduleHighlightRepaintNudge } from './geckoHighlightRepaint'
 import {
@@ -268,7 +270,6 @@ export function setRangeHighlight(
   }
   prepareRangeHighlightTwins(view, group)
   renderRangeHighlight(view, name)
-  orderRangeHighlights(view)
   rebuildStyleRules(view)
 }
 
@@ -1373,8 +1374,8 @@ function hideSecondaryCaretElements(view: VirtualizedTextViewInternal, startInde
 }
 
 export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
-  orderRangeHighlights(view)
   if (view.provisional) return
+  orderRangeHighlights(view)
   // Token highlight rules live in the shared per-document stylesheet
   // (sharedTokenHighlights), written once here per batch. The per-view style element only
   // carries range/decoration highlight rules, which are specific to this view's ranges.
@@ -1502,16 +1503,7 @@ function refreshHighlightOverlayMask(view: VirtualizedTextViewInternal): void {
   view.highlightOverlayMask = buildHighlightOverlayMask(ranges, snapshot.length, (offset) =>
     snapshot.readRange(offset, offset + 1).charCodeAt(0),
   )
-  for (const base of view.overlayBaseGroups.values()) clearPaintGroup(view, base)
-  view.overlayBaseGroups.clear()
-  for (const [index, range] of view.highlightOverlayMask.entries()) {
-    const name = `${view.highlightScope}-overlay-base-${index}`
-    const base = createOverlayPaintGroup(name, [range], {
-      ...overlayColorStyle({}, range.overlay),
-      zIndex: -1,
-    })
-    view.overlayBaseGroups.set(name, base)
-  }
+  syncOverlayBaseGroups(view)
   for (const group of view.rangeHighlightGroups.values()) {
     group.signature = staleRangeHighlightSignature()
     if (group.style.overlay) {
@@ -1524,8 +1516,51 @@ function refreshHighlightOverlayMask(view: VirtualizedTextViewInternal): void {
   view.tokenPaletteDirty = true
   renderTokenHighlights(view)
   for (const group of view.rangeHighlightGroups.values()) renderRangeHighlight(view, group.name)
-  orderRangeHighlights(view)
   rebuildStyleRules(view)
+}
+
+// One base group per distinct overlay, reused across edits, so the registry grows with the
+// overlay kinds in play and a keystroke re-fills Highlights instead of re-registering them.
+function syncOverlayBaseGroups(view: VirtualizedTextViewInternal): void {
+  const rangesByKey = new Map<string, HighlightOverlayRange[]>()
+  for (const range of view.highlightOverlayMask) {
+    const key = overlayKey(range.overlay)
+    const ranges = rangesByKey.get(key)
+    if (ranges) ranges.push(range)
+    else rangesByKey.set(key, [range])
+  }
+  for (const [key, base] of view.overlayBaseGroups) {
+    if (rangesByKey.has(key)) continue
+    clearPaintGroup(view, base)
+    view.overlayBaseGroups.delete(key)
+    view.rangeHighlightRuleVersion++
+  }
+  for (const [key, ranges] of rangesByKey) {
+    const existing = view.overlayBaseGroups.get(key)
+    if (existing) {
+      existing.ranges = ranges
+      existing.signature = staleRangeHighlightSignature()
+      continue
+    }
+    const style = { ...overlayColorStyle({}, ranges[0]!.overlay), zIndex: -1 }
+    view.overlayBaseGroups.set(
+      key,
+      createOverlayPaintGroup(nextOverlayBaseName(view), ranges, style),
+    )
+    view.rangeHighlightRuleVersion++
+  }
+}
+
+function overlayKey(overlay: HighlightOverlay): string {
+  return `${overlay.dim ?? 1}|${overlay.textDecoration ?? ''}`
+}
+
+function nextOverlayBaseName(view: VirtualizedTextViewInternal): string {
+  const names = new Set([...view.overlayBaseGroups.values()].map((group) => group.name))
+  for (let index = 0; ; index++) {
+    const name = `${view.highlightScope}-overlay-base-${index}`
+    if (!names.has(name)) return name
+  }
 }
 
 function createOverlayPaintGroup(
@@ -1619,11 +1654,40 @@ function appendOverlayTokenSegments(
 
 function orderRangeHighlights(view: VirtualizedTextViewInternal): void {
   if (view.highlightOverlayMask.length === 0 || !view.highlightRegistry) return
+  const groups = orderedPaintGroups(view)
+  if (rangeHighlightsInOrder(view.highlightRegistry, groups)) return
+  for (const group of groups) reregisterPaintGroup(view, group)
+}
+
+function orderedPaintGroups(view: VirtualizedTextViewInternal): VirtualizedTextHighlightGroup[] {
+  const groups: VirtualizedTextHighlightGroup[] = []
   for (const group of view.rangeHighlightGroups.values()) {
     if (group.style.overlay) continue
-    reregisterPaintGroup(view, group)
-    for (const twin of group.twins?.values() ?? []) reregisterPaintGroup(view, twin)
+    if (group.registered) groups.push(group)
+    for (const twin of group.twins?.values() ?? []) if (twin.registered) groups.push(twin)
   }
+  return groups
+}
+
+// Re-registering repaints every highlight, so it only runs when a token group or a range group
+// was registered out of order since the last check.
+function rangeHighlightsInOrder(
+  registry: HighlightRegistry,
+  groups: readonly VirtualizedTextHighlightGroup[],
+): boolean {
+  if (!registry.entries) return false
+  const positions = new Map(groups.map((group, index) => [group.name, index]))
+  let next = 0
+  for (const [name] of registry.entries()) {
+    const position = positions.get(name)
+    if (position === undefined) {
+      if (next > 0 && name.startsWith(SHARED_TOKEN_HIGHLIGHT_PREFIX)) return false
+      continue
+    }
+    if (position !== next) return false
+    next++
+  }
+  return next === groups.length
 }
 
 function reregisterPaintGroup(
