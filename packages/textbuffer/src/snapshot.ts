@@ -1,13 +1,20 @@
 import type {
+  Piece,
   PieceTableBuffers,
   PieceTableReverseIndex,
   PieceTableTreeSnapshot,
   PieceTreeNode,
 } from './pieceTableTypes'
 import { createInitialBuffers, createOriginalPiece, type PieceTableBufferOptions } from './buffers'
-import { buildReverseIndex, rebuildReverseIndex } from './reverseIndex'
+import { applyReverseIndexChanges, buildReverseIndex, relabelReverseIndex } from './reverseIndex'
 import { normalizePieceOrders } from './tree'
-import { createNode, getSubtreePieces, getSubtreeVisibleLength, isStandIn } from './node'
+import {
+  createNode,
+  getSubtreePieces,
+  getSubtreeVisibleLength,
+  isStandIn,
+  ORIGINAL_BUFFER,
+} from './node'
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_DOCUMENT_LINE_ENDING, normalizeDocumentText } from './lineEndings'
 
@@ -62,29 +69,29 @@ export function publishSnapshotPositions(
   return true
 }
 
-// Orders ran out of room somewhere, so every piece is relabelled. Entries that
-// compaction led to a stand-in are not derived from the tree's pieces, so they
-// are carried over from the index before the edit.
+// Orders ran out of room somewhere, so every piece is relabelled. Only the
+// entries of pieces in the tree and the stand-ins' identities follow; entries
+// of compacted insertions name identities and stay as they are.
 export const createNormalizedSnapshot = (
   buffers: PieceTableBuffers,
   root: PieceTreeNode | null,
-  previous: PieceTableTreeSnapshot,
+  previous: PieceTableReverseIndex,
+  changes: readonly Piece[],
 ): PieceTableTreeSnapshot => {
   const epoch = buffers.lineage.epoch
-  const standIns = new Map<number, number>()
+  const pieces: number[] = []
+  const standIns: number[] = []
   const normalizedRoot = normalizePieceOrders(
     root,
     { value: PIECE_ORDER_STEP },
     epoch,
     (piece, order) => {
-      if (isStandIn(piece)) standIns.set(piece.order, order)
+      if (isStandIn(piece)) standIns.push(piece.start, order)
+      else if (piece.buffer !== ORIGINAL_BUFFER) pieces.push(piece.buffer, piece.start, order)
     },
   )
-  const index =
-    standIns.size === 0
-      ? buildReverseIndex(normalizedRoot)
-      : rebuildReverseIndex(normalizedRoot, previous.reverseIndex, standIns)
-  return createSnapshot(buffers, normalizedRoot, index)
+  const withChanges = applyReverseIndexChanges(previous, changes)
+  return createSnapshot(buffers, normalizedRoot, relabelReverseIndex(withChanges, pieces, standIns))
 }
 
 // Makes the snapshot persistent: nothing created before this call is ever

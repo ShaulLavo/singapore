@@ -220,6 +220,81 @@ describe('compaction between edits', () => {
   })
 })
 
+describe('work proportional to the tree, not the history', () => {
+  const cpuMs = (): number => {
+    const usage = process.threadCpuUsage()
+    return (usage.user + usage.system) / 1000
+  }
+
+  const churnAtOneSpot = (cycles: number, passEvery: number) => {
+    let snapshot = createPieceTableSnapshot('ab')
+    const passSteps: number[] = []
+    for (let cycle = 1; cycle <= cycles; cycle++) {
+      snapshot = deleteFromPieceTable(
+        insertIntoPieceTable(snapshot, 1, `p${cycle}`),
+        1,
+        `p${cycle}`.length,
+      )
+      if (cycle % passEvery !== 0) continue
+      const job = compactTombstones(snapshot)
+      let steps = 0
+      while (!job.next().done) steps++
+      passSteps.push(steps)
+    }
+    return { snapshot, passSteps }
+  }
+
+  // Relabelling runs inside an edit. After a long compacted history it once
+  // rebuilt an entry per insertion ever made: 45 ms at 100,000 of them.
+  test('a relabel after a long history touches only the live tree', () => {
+    let { snapshot } = churnAtOneSpot(50_000, 2000)
+    expect(snapshot.pieceCount).toBeLessThan(200)
+    let longest = 0
+    for (let edit = 0; edit < 120; edit++) {
+      const start = cpuMs()
+      snapshot = insertIntoPieceTable(snapshot, 1, `${edit % 10}`)
+      longest = Math.max(longest, cpuMs() - start)
+    }
+    expect(longest).toBeLessThan(8)
+    expectValid(snapshot)
+  }, 60_000)
+
+  // Maintenance runs every few thousand insertions on a tree that stays small.
+  // Walking the whole index each time grew a pass from 42 to 794 steps.
+  test('a pass costs the same late in a long history as early on', () => {
+    const { passSteps } = churnAtOneSpot(100_000, 4096)
+    const early = passSteps[1]!
+    expect(Math.max(...passSteps.slice(1))).toBeLessThan(2 * early)
+  }, 60_000)
+
+  // Fragmented buffers the pass does not compact must cost it nothing.
+  test('a pass does not read the entries of fragments it leaves alone', () => {
+    let snapshot = createPieceTableSnapshot('fragments: ')
+    for (let paste = 0; paste < 64; paste++) {
+      const at = snapshot.length
+      snapshot = insertIntoPieceTable(snapshot, at, 'x'.repeat(16 * 1024))
+      const holes = Array.from({ length: 8 * 1024 }, (_, hole) => ({
+        from: at + 2 * hole,
+        to: at + 2 * hole + 1,
+        text: '',
+      }))
+      snapshot = applyBatchToPieceTable(snapshot, holes)
+    }
+    for (let cycle = 0; cycle < 50; cycle++) snapshot = churn(snapshot, 3, `churn ${cycle}`)
+    const job = compactTombstones(snapshot)
+    let longest = 0
+    for (let done = false; !done; ) {
+      const start = cpuMs()
+      const step = job.next()
+      longest = Math.max(longest, cpuMs() - start)
+      done = step.done === true
+      if (done) expect(step.value.runs).toBe(1)
+    }
+    expect(longest).toBeLessThan(8)
+    expectValid(snapshot)
+  }, 60_000)
+})
+
 describe('maintenance latency', () => {
   // Each cycle's deleted text is blocked by a different visible append, so one
   // trailing run holds a stand-in per cycle. Checking it once took 68 ms here.

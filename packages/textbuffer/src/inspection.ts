@@ -16,6 +16,7 @@ import {
   retiredBufferLength,
 } from './buffers'
 import { isStandIn, ORIGINAL_BUFFER } from './node'
+import { liveStandIn, standInOrder } from './standIns'
 
 export type PieceTreeIssueKind =
   | 'cycle'
@@ -118,7 +119,7 @@ function checkPiece(
   report: Report,
 ): number {
   const piece = node.piece
-  if (isStandIn(piece)) return checkStandIn(piece, id, report)
+  if (isStandIn(piece)) return checkStandIn(snapshot, piece, id, report)
   const text = snapshot.buffers.chunks.get(piece.buffer)
   const retiredLength = retiredBufferLength(snapshot.buffers, piece.buffer)
   if (retiredLength !== undefined) return checkRetiredPiece(piece, retiredLength, id, report)
@@ -273,10 +274,22 @@ function checkSpanBreaks(
   return count
 }
 
-// A stand-in holds no text; its buffer is a threshold, which may exceed every id.
-function checkStandIn(piece: Piece, id: string, report: Report): number {
+// A stand-in holds no text; its buffer is a threshold, which may exceed every
+// id, and its start a live identity that leads back to its own order.
+function checkStandIn(
+  snapshot: PieceTableSnapshot,
+  piece: Piece,
+  id: string,
+  report: Report,
+): number {
+  const table = snapshot.reverseIndex.standIns
   report('buffer-bounds', id, 'standIn.visible', false, piece.visible)
-  report('buffer-bounds', id, 'standIn.start', 0, piece.start)
+  const known = Number.isSafeInteger(piece.start) && piece.start >= 0 && piece.start < table.size
+  report('reverse-index', id, 'standIn.identity', true, known)
+  if (known) {
+    report('reverse-index', id, 'standIn.live', piece.start, liveStandIn(table, piece.start))
+    report('reverse-index', id, 'standIn.order', piece.order, standInOrder(table, piece.start))
+  }
   report('line-breaks', id, 'standIn.lineBreaks', 0, piece.lineBreaks)
   report('ordering', id, 'piece.order.finite', true, Number.isFinite(piece.order))
   const validThreshold = Number.isSafeInteger(piece.buffer) && piece.buffer > ORIGINAL_BUFFER

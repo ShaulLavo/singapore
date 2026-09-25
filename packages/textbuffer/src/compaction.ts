@@ -1,8 +1,9 @@
 import type { Piece, PieceBufferId, PieceTableSnapshot, PieceTreeNode } from './pieceTableTypes'
 import { join } from './join'
-import { createNode, ORIGINAL_BUFFER, own } from './node'
-import { remapReverseIndex } from './reverseIndex'
+import { createNode, isStandIn, ORIGINAL_BUFFER, own } from './node'
+import { redirectReverseIndex } from './reverseIndex'
 import { publishSnapshotPositions, retainPieceTableSnapshot } from './snapshot'
+import { addStandIn, foldStandIns, liveStandIn, moveStandIn, type StandInTable } from './standIns'
 
 // Tombstones matter only to deleted anchors, which read only where a gap scan
 // stops (tree.ts). Text never lands between two tombstones, so a scan can stop
@@ -262,38 +263,64 @@ function* outsideMatches(
   return placed === oldest && cursor === originalEnd
 }
 
-const slotPiece = (slot: Slot, order: number): Piece => {
-  const group = slot.group
-  if (slot.original) {
-    return {
-      buffer: ORIGINAL_BUFFER,
-      start: group.originalStart,
-      length: group.originalEnd - group.originalStart,
-      order,
-      lineBreaks: group.originalBreaks,
-      firstLineBreak: group.firstLineBreak,
-      visible: false,
-    }
+const originalPiece = (group: Group, order: number): Piece => ({
+  buffer: ORIGINAL_BUFFER,
+  start: group.originalStart,
+  length: group.originalEnd - group.originalStart,
+  order,
+  lineBreaks: group.originalBreaks,
+  firstLineBreak: group.firstLineBreak,
+  visible: false,
+})
+
+const standInPiece = (threshold: number, order: number, identity: number): Piece => ({
+  buffer: threshold as PieceBufferId,
+  start: identity,
+  length: 0,
+  order,
+  lineBreaks: 0,
+  firstLineBreak: 0,
+  visible: false,
+})
+
+// What a pass writes besides the tree: the identity table, and buffer, start
+// and identity triples for the entries of tombstones it compacts.
+type Claims = { table: StandInTable; readonly redirects: number[] }
+
+// A group's stand-in keeps the identities of the stand-ins it replaces, folded
+// into one; entries naming any of them need no rewrite. Only the group's real
+// tombstones are pointed at it.
+function* claimGroup(
+  claims: Claims,
+  layout: Layout,
+  group: Group,
+  order: number,
+): Generator<void, number> {
+  let identity = -1
+  for (let at = 0; at < group.inserted.length; at++) {
+    if (at % 1024 === 1023) yield
+    const piece = layout.pieces[group.inserted[at]!]!
+    if (!isStandIn(piece)) continue
+    if (identity < 0) identity = liveStandIn(claims.table, piece.start)
+    else [claims.table, identity] = foldStandIns(claims.table, identity, piece.start)
   }
-  return {
-    buffer: slot.threshold as PieceBufferId,
-    start: 0,
-    length: 0,
-    order,
-    lineBreaks: 0,
-    firstLineBreak: 0,
-    visible: false,
+  if (identity < 0) [claims.table, identity] = addStandIn(claims.table, order)
+  else claims.table = moveStandIn(claims.table, identity, order)
+  for (let at = 0; at < group.inserted.length; at++) {
+    if (at % 1024 === 1023) yield
+    const piece = layout.pieces[group.inserted[at]!]!
+    if (!isStandIn(piece)) claims.redirects.push(piece.buffer, piece.start, identity)
   }
+  return identity
 }
 
 // The stand-ins take the orders of the run's first pieces, which already sit
-// between the run's neighbours. Each inserted tombstone's entries, and those of
-// any stand-in it replaces, follow its group's stand-in. Every pass over the
-// run yields, so one long run cannot hold a maintenance slice.
+// between the run's neighbours. Every pass over the run yields, so one long run
+// cannot hold a maintenance slice.
 function* planRun(
   layout: Layout,
   run: Run,
-  remap: Map<number, number>,
+  claims: Claims,
 ): Generator<void, RunPlan | 'kept' | 'unverified'> {
   const groups = yield* groupMembers(layout, run)
   const slots = yield* arrange(groups.values())
@@ -302,16 +329,16 @@ function* planRun(
   if (!(yield* scansMatch(slots, trailing))) return 'unverified'
   if (!(yield* outsideMatches(layout, run, slots))) return 'unverified'
   const pieces: Piece[] = []
-  let written = 0
   for (let at = 0; at < slots.length; at++) {
-    const piece = slotPiece(slots[at]!, layout.pieces[run.start + at]!.order)
-    pieces.push(piece)
-    if (++written % 1024 === 0) yield
-    if (slots[at]!.original) continue
-    for (const member of slots[at]!.group.inserted) {
-      remap.set(layout.pieces[member]!.order, piece.order)
-      if (++written % 1024 === 0) yield
+    const { group, threshold, original } = slots[at]!
+    const order = layout.pieces[run.start + at]!.order
+    if (at % 1024 === 1023) yield
+    if (original) {
+      pieces.push(originalPiece(group, order))
+      continue
     }
+    const identity = yield* claimGroup(claims, layout, group, order)
+    pieces.push(standInPiece(threshold, order, identity))
   }
   return { run, pieces }
 }
@@ -381,10 +408,10 @@ export function* compactTombstones(
   retainPieceTableSnapshot(snapshot)
   const root = snapshot.root
   const layout = yield* readLayout(root)
-  const remap = new Map<number, number>()
+  const claims: Claims = { table: snapshot.reverseIndex.standIns, redirects: [] }
   const plans: RunPlan[] = []
   for (const run of layout.runs) {
-    const plan = yield* planRun(layout, run, remap)
+    const plan = yield* planRun(layout, run, claims)
     if (plan === 'unverified') result.unverified++
     else if (plan !== 'kept') plans.push(plan)
     yield
@@ -399,7 +426,11 @@ export function* compactTombstones(
     result.tombstones += plan.run.end - plan.run.start + 1 - plan.pieces.length
     yield
   }
-  const reverseIndex = yield* remapReverseIndex(snapshot.reverseIndex, remap)
+  const reverseIndex = yield* redirectReverseIndex(
+    snapshot.reverseIndex,
+    claims.redirects,
+    claims.table,
+  )
   if (!publishSnapshotPositions(snapshot, root, next, reverseIndex)) {
     return { runs: 0, tombstones: 0, unverified: result.unverified }
   }

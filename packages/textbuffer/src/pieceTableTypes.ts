@@ -1,3 +1,4 @@
+import type { StandInTable } from './standIns'
 import type { DocumentLineEnding } from './lineEndings'
 
 declare const pieceBufferIdBrand: unique symbol
@@ -157,6 +158,8 @@ export type PieceTableReverseIndex = {
   readonly shift: number
   readonly root: PieceTableReverseBranch | readonly PieceTableReverseSlot[] | null
   readonly tail: PieceTableReverseTail
+  // Where each compacted tombstone's stand-in is now. See standIns.ts.
+  readonly standIns: StandInTable
 }
 
 export type PieceTableTreeSnapshot = {
