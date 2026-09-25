@@ -342,22 +342,6 @@
       ]
     },
     {
-      "id": "E022",
-      "file": "e022-compact-blank-lines.md",
-      "title": "Prove compact blank lines with correct geometry",
-      "status": "Proposed",
-      "owner": "Editor",
-      "kind": "Research",
-      "priority": "P2",
-      "effort": "M",
-      "dependsOn": [
-        "E001"
-      ],
-      "topics": [
-        "Compact blank lines (display-time)"
-      ]
-    },
-    {
       "id": "E023",
       "file": "e023-instrumentation-panel.md",
       "title": "Inspect editor timing and retained memory",
@@ -853,10 +837,12 @@
       "priority": "P3",
       "effort": "L",
       "dependsOn": [
-        "E036"
+        "E036",
+        "E001"
       ],
       "topics": [
-        "Proportional fonts: wrap and horizontal extent from measured advances"
+        "Proportional fonts: wrap and horizontal extent from measured advances",
+        "Compact blank lines (display-time)"
       ],
       "baseline": "40d841583659d2889fc03f61979e607f56df4c86"
     },

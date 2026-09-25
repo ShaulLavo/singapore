@@ -8,6 +8,8 @@
 - Dependencies: None
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
+Decided 2026-09-25: owner — keep steps 3–5 (portable colors, the policy wiring and browser proof), queued as future work. Unit 1 is done, so the status stays In progress.
+
 ## Outcome
 
 Copy multiple code selections with syntax styling while keeping the existing plain-text payload and paste metadata correct.

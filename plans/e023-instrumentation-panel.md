@@ -8,6 +8,8 @@
 - Dependencies: [E001](../examples/stress/README.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
+Decided 2026-09-25: owner — parked. Not scheduled until the owner revisits it.
+
 ## Outcome
 
 Open one diagnostic panel and see which editor operation is slow and which subsystem retains
