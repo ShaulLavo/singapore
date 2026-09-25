@@ -75,9 +75,9 @@ export function createTypeScriptLspPlugin(
     semanticTokens: resolved.semanticTokens,
     createTransport: typeScriptTransportFactory(resolved),
     documentSync: {
-      shouldSyncLanguageId: isTypeScriptLspLanguage,
-      shouldSyncUri: isTypeScriptLspSourceFileName,
       ...resolved.documentSync,
+      shouldSyncLanguageId: resolved.documentSync?.shouldSyncLanguageId ?? isTypeScriptLspLanguage,
+      shouldSyncUri: resolved.documentSync?.shouldSyncUri ?? isTypeScriptLspSourceFileName,
     },
     diagnostics: {
       minimapSourceId: 'editor.typescript-lsp.diagnostics',

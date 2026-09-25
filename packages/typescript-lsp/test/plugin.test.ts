@@ -150,6 +150,44 @@ describe('createTypeScriptLspPlugin', () => {
     document.body.replaceChildren()
   })
 
+  it.each([
+    { documentId: 'README.md', languageId: 'typescript' },
+    { documentId: 'src/index.ts', languageId: 'markdown' },
+  ])(
+    'keeps default document filters when options are explicitly undefined: $documentId/$languageId',
+    async (snapshot) => {
+      const worker = new FakeWorker()
+      const plugin = createTypeScriptLspPlugin({
+        workerFactory: () => worker,
+        documentSync: { shouldSyncUri: undefined, shouldSyncLanguageId: undefined },
+      })
+      const provider = activatePlugin(plugin)
+      const contribution = provider.createContribution(
+        viewContributionContext(editorSnapshot(snapshot)),
+      )
+      worker.receive(initializeResponse(message(worker.sent[0])))
+      await flushPromises()
+      expect(sentMethods(worker)).not.toContain('textDocument/didOpen')
+      contribution?.dispose()
+    },
+  )
+
+  it('accepts explicit document filter functions', async () => {
+    const worker = new FakeWorker()
+    const plugin = createTypeScriptLspPlugin({
+      workerFactory: () => worker,
+      documentSync: { shouldSyncUri: () => true, shouldSyncLanguageId: () => true },
+    })
+    const provider = activatePlugin(plugin)
+    const contribution = provider.createContribution(
+      viewContributionContext(editorSnapshot({ documentId: 'README.md', languageId: 'markdown' })),
+    )
+    worker.receive(initializeResponse(message(worker.sent[0])))
+    await flushPromises()
+    expect(sentMethods(worker)).toContain('textDocument/didOpen')
+    contribution?.dispose()
+  })
+
   it('uses the host document URI mapping for worker document synchronization', async () => {
     const worker = new FakeWorker()
     const plugin = createTypeScriptLspPlugin({
