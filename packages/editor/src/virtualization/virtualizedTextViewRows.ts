@@ -309,6 +309,7 @@ function createGutterCell(
   cell.classList.add(GUTTER_CELL_CLASS)
   if (contribution.className) cell.classList.add(contribution.className)
   cell.dataset.editorGutterContribution = contribution.id
+  if (contribution.interactive) cell.dataset.editorGutterInteractive = ''
   setCachedGutterCellWidth(view, cell, contribution.id)
   return cell
 }
