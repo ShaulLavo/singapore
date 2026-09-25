@@ -262,3 +262,46 @@ function measureProjectionView(lines: number, text: string): void {
 const stressText = generateFixture('short-lines')
 measureProjectionView(100_000, firstLines(stressText, 100_000))
 measureProjectionView(500_000, stressText)
+
+function measureHighlightOverlay(masked: boolean): void {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const view = new VirtualizedTextView(host, {
+    rowHeight: ROW_HEIGHT,
+    textMetrics: { rowHeight: ROW_HEIGHT, characterWidth: 8 },
+    highlightRegistry: new Map<string, Highlight>(),
+  })
+  const text = Array.from({ length: 200 }, () => 'const value = someFunction(argument);').join('\n')
+  const tokens = Array.from({ length: 200 }, (_, row) => ({
+    start: row * 38,
+    end: row * 38 + 37,
+    style: { color: '#ff8800' },
+  }))
+  view.setText(text)
+  view.setScrollMetrics(0, VIEWPORT_HEIGHT, VIEWPORT_WIDTH)
+  view.setTokens(tokens)
+  if (masked)
+    view.setRangeHighlight('overlay-bench', [{ start: 0, end: 76 }], { overlay: { dim: 0.5 } })
+  const samples: number[] = []
+  for (let iteration = 0; iteration < 120; iteration++) {
+    const next = (iteration % 2 ? 'c' : 'C') + text.slice(1)
+    const start = performance.now()
+    view.applyEdit({ from: 0, to: 1, text: next[0]! }, next)
+    view.setTokens(tokens)
+    if (iteration >= 20) samples.push(performance.now() - start)
+  }
+  samples.sort((left, right) => left - right)
+  console.log(
+    JSON.stringify({
+      name: 'highlight-overlay-edit',
+      viewportMask: masked ? 0.1 : 0,
+      medianMs: samples[50],
+      p95Ms: samples[95],
+    }),
+  )
+  view.dispose()
+  host.remove()
+}
+
+measureHighlightOverlay(false)
+measureHighlightOverlay(true)

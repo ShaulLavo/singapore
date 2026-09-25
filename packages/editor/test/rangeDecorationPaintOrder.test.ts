@@ -109,7 +109,10 @@ describe('range decoration paint order', () => {
     })
 
     it('keeps a colorless wash below syntax without moving a color producer', () => {
-      view.setRangeHighlight('test-wash', [{ start: 0, end: 4 }], { backgroundColor: 'blue', zIndex: 2 })
+      view.setRangeHighlight('test-wash', [{ start: 0, end: 4 }], {
+        backgroundColor: 'blue',
+        zIndex: 2,
+      })
       view.setRangeHighlight('test-color', [{ start: 0, end: 4 }], { color: 'red', zIndex: 2 })
       expect(highlightsMap.get('test-wash')?.priority).toBe(-98)
       expect(highlightsMap.get('test-color')?.priority).toBe(2)

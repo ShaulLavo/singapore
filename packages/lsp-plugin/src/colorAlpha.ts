@@ -18,7 +18,8 @@ export function colorAlpha(color: string): number {
   if (/^#[\da-f]{8}$/i.test(color)) return Number.parseInt(color.slice(7), 16) / 255
   let component: string | null = null
   if (color.includes('/')) component = color.slice(color.lastIndexOf('/') + 1, -1).trim()
-  if (/^rgba?\(/.test(color) && color.split(',').length === 4) component = color.slice(color.lastIndexOf(',') + 1, -1).trim()
+  if (/^rgba?\(/.test(color) && color.split(',').length === 4)
+    component = color.slice(color.lastIndexOf(',') + 1, -1).trim()
   if (component === null) return 1
   const alpha = Number.parseFloat(component) / (component.endsWith('%') ? 100 : 1)
   return Number.isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 1

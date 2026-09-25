@@ -11,7 +11,10 @@ declare module 'vitest/browser' {
 
 const mounted: { host: HTMLElement; view: VirtualizedTextView }[] = []
 afterEach(() => {
-  for (const { host, view } of mounted.splice(0)) { view.dispose(); host.remove() }
+  for (const { host, view } of mounted.splice(0)) {
+    view.dispose()
+    host.remove()
+  }
 })
 
 it('keeps syntax red beneath a colorless wash in every engine', async () => {
@@ -28,13 +31,17 @@ it('fades each token in its own hue', async () => {
   view.setRangeHighlight('fade', [{ start: 0, end: 12 }], { overlay: { dim: 0.5 } })
   const painted = await pixels(host.id)
   expect(redInk(painted)).toBe(0)
-  expect(ink(painted, (red, green, blue) => red > 70 && red < 150 && green < 20 && blue < 20)).toBeGreaterThan(20)
+  expect(
+    ink(painted, (red, green, blue) => red > 70 && red < 150 && green < 20 && blue < 20),
+  ).toBeGreaterThan(20)
 })
 
 it('strikes syntax with a line in the same explicit hue', async () => {
   const { host, view } = mount()
   const control = await pixels(host.id)
-  view.setRangeHighlight('strike', [{ start: 0, end: 12 }], { overlay: { textDecoration: 'line-through' } })
+  view.setRangeHighlight('strike', [{ start: 0, end: 12 }], {
+    overlay: { textDecoration: 'line-through' },
+  })
   const painted = await pixels(host.id)
   expect(redInk(painted)).toBeGreaterThan(redInk(control) + 20)
   expect(ink(painted, (red, green, blue) => red > 180 && green > 180 && blue > 180)).toBe(0)
@@ -45,14 +52,28 @@ it('fades untokenized foreground and preserves higher-priority colors', async ()
   view.setTokens([])
   view.setRangeHighlight('fade', [{ start: 0, end: 12 }], { overlay: { dim: 0.5 } })
   const base = await pixels(host.id)
-  expect(ink(base, (red, green, blue) => red > 70 && red < 150 && Math.abs(red - green) < 3 && Math.abs(red - blue) < 3)).toBeGreaterThan(20)
+  expect(
+    ink(
+      base,
+      (red, green, blue) =>
+        red > 70 && red < 150 && Math.abs(red - green) < 3 && Math.abs(red - blue) < 3,
+    ),
+  ).toBeGreaterThan(20)
   view.setTokens([{ start: 0, end: 12, style: { color: '#ff0000' } }])
   view.setRangeHighlight('semantic', [{ start: 0, end: 12 }], { color: '#00ff00', zIndex: 2 })
   const semantic = await pixels(host.id)
   expect(redInk(semantic)).toBe(0)
-  expect(ink(semantic, (red, green, blue) => red < 20 && green > 70 && green < 150 && blue < 20)).toBeGreaterThan(20)
-  view.setRangeHighlight('find', [{ start: 0, end: 12 }], { color: '#0000ff', zIndex: 6, dimmable: false })
-  expect(ink(await pixels(host.id), (red, green, blue) => red < 20 && green < 20 && blue > 180)).toBeGreaterThan(20)
+  expect(
+    ink(semantic, (red, green, blue) => red < 20 && green > 70 && green < 150 && blue < 20),
+  ).toBeGreaterThan(20)
+  view.setRangeHighlight('find', [{ start: 0, end: 12 }], {
+    color: '#0000ff',
+    zIndex: 6,
+    dimmable: false,
+  })
+  expect(
+    ink(await pixels(host.id), (red, green, blue) => red < 20 && green < 20 && blue > 180),
+  ).toBeGreaterThan(20)
 })
 
 function mount() {
@@ -72,7 +93,7 @@ function mount() {
 
 async function pixels(hostId: string): Promise<ImageData> {
   const screenshot = await commands.proofHighlightPaintScreenshot(hostId)
-  const bytes = Uint8Array.from(atob(screenshot), character => character.charCodeAt(0))
+  const bytes = Uint8Array.from(atob(screenshot), (character) => character.charCodeAt(0))
   const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }))
   const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
   const context = canvas.getContext('2d')
@@ -90,10 +111,25 @@ function redInk({ data }: ImageData): number {
   return count
 }
 
-function ink({ data }: ImageData, matches: (red: number, green: number, blue: number) => boolean): number {
+function ink(
+  { data }: ImageData,
+  matches: (red: number, green: number, blue: number) => boolean,
+): number {
   let count = 0
   for (let index = 0; index < data.length; index += 4) {
     if (matches(data[index]!, data[index + 1]!, data[index + 2]!)) count++
   }
   return count
 }
+
+it('keeps an equal-priority range color above twins after a token refresh', async () => {
+  const { host, view } = mount()
+  view.setRangeHighlight('color', [{ start: 0, end: 12 }], { color: '#00ff00' })
+  view.setRangeHighlight('fade', [{ start: 0, end: 6 }], { overlay: { dim: 0.5 } })
+  view.setTokens([{ start: 0, end: 12, style: { color: '#ff0000' } }])
+  const painted = await pixels(host.id)
+  expect(redInk(painted)).toBe(0)
+  expect(ink(painted, (red, green, blue) => red < 20 && green > 70 && blue < 20)).toBeGreaterThan(
+    20,
+  )
+})

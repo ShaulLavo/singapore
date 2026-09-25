@@ -5,7 +5,10 @@ import type { LanguageServerDiagnosticSummary, LanguageServerDiagnosticsFreshnes
 
 export type LanguageServerDiagnosticSeverity = 'error' | 'warning' | 'information' | 'hint'
 
-export type LanguageServerDiagnosticHighlightLayer = LanguageServerDiagnosticSeverity | 'deprecated' | 'unnecessary'
+export type LanguageServerDiagnosticHighlightLayer =
+  | LanguageServerDiagnosticSeverity
+  | 'deprecated'
+  | 'unnecessary'
 
 export type LanguageServerDiagnosticHighlightGroups = Readonly<
   Record<LanguageServerDiagnosticHighlightLayer, readonly DiagnosticHighlightRange[]>

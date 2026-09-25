@@ -14,17 +14,37 @@ describe('DiagnosticsPresenter', () => {
   it('paints both tags through overlays and reads the registered theme alpha', () => {
     const context = editorContext(new TestMinimap())
     const presenter = new DiagnosticsPresenter(context, 'tag-test', {
-      minimapSourceId: 'test', highlightNameNamespace: 'lsp', markerTimingNamePrefix: 'test',
+      minimapSourceId: 'test',
+      highlightNameNamespace: 'lsp',
+      markerTimingNamePrefix: 'test',
     })
-    const getStyle = vi.spyOn(window, 'getComputedStyle').mockReturnValue({ color: 'rgba(0, 0, 0, 0.25)' } as CSSStyleDeclaration)
+    const getStyle = vi
+      .spyOn(window, 'getComputedStyle')
+      .mockReturnValue({ color: 'rgba(0, 0, 0, 0.25)' } as CSSStyleDeclaration)
     try {
-      presenter.render(activeDocument('abc'), [{ ...diagnostic(4, 0, 3, 'unused old'), tags: [1, 2] }])
-      expect(context.setRangeHighlight).toHaveBeenCalledWith('tag-test-lsp-unnecessary', [{ start: 0, end: 3 }], { overlay: { dim: 0.25 } })
-      expect(context.setRangeHighlight).toHaveBeenCalledWith('tag-test-lsp-deprecated', [{ start: 0, end: 3 }], { overlay: { textDecoration: 'line-through' } })
-      expect(context.setRangeHighlight).toHaveBeenCalledWith('tag-test-lsp-hint', [], expect.anything())
+      presenter.render(activeDocument('abc'), [
+        { ...diagnostic(4, 0, 3, 'unused old'), tags: [1, 2] },
+      ])
+      expect(context.setRangeHighlight).toHaveBeenCalledWith(
+        'tag-test-lsp-unnecessary',
+        [{ start: 0, end: 3 }],
+        { overlay: { dim: 0.25 } },
+      )
+      expect(context.setRangeHighlight).toHaveBeenCalledWith(
+        'tag-test-lsp-deprecated',
+        [{ start: 0, end: 3 }],
+        { overlay: { textDecoration: 'line-through' } },
+      )
+      expect(context.setRangeHighlight).toHaveBeenCalledWith(
+        'tag-test-lsp-hint',
+        [],
+        expect.anything(),
+      )
       presenter.clear()
       expect(context.clearRangeHighlight).toHaveBeenCalledWith('tag-test-lsp-unnecessary')
-    } finally { getStyle.mockRestore() }
+    } finally {
+      getStyle.mockRestore()
+    }
   })
 
   it('uses configured highlight names, minimap source, and marker timing names', () => {

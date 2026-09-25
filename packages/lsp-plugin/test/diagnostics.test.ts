@@ -50,7 +50,10 @@ describe('language server diagnostics', () => {
     ])
     expect(groups.error).toEqual([{ start: 0, end: 3 }])
     expect(groups.hint).toEqual([])
-    expect(groups.unnecessary).toEqual([{ start: 0, end: 3 }, { start: 3, end: 6 }])
+    expect(groups.unnecessary).toEqual([
+      { start: 0, end: 3 },
+      { start: 3, end: 6 },
+    ])
     expect(groups.deprecated).toEqual(groups.unnecessary)
   })
 

@@ -3,12 +3,24 @@ export type HighlightOverlay = {
   readonly dim?: number
   readonly textDecoration?: string
 }
-export type HighlightOverlayRange = { readonly start: number; readonly end: number; readonly overlay: HighlightOverlay }
-export type HighlightOverlayPart = { readonly start: number; readonly end: number; readonly overlay?: HighlightOverlay }
+export type HighlightOverlayRange = {
+  readonly start: number
+  readonly end: number
+  readonly overlay: HighlightOverlay
+}
+export type HighlightOverlayPart = {
+  readonly start: number
+  readonly end: number
+  readonly overlay?: HighlightOverlay
+}
 
 type Edge = { readonly at: number; readonly id: number; readonly overlay?: HighlightOverlay }
 
-export function buildHighlightOverlayMask(ranges: readonly HighlightOverlayRange[], length: number, codeUnit: (offset: number) => number): readonly HighlightOverlayRange[] {
+export function buildHighlightOverlayMask(
+  ranges: readonly HighlightOverlayRange[],
+  length: number,
+  codeUnit: (offset: number) => number,
+): readonly HighlightOverlayRange[] {
   const edges: Edge[] = []
   for (const [id, range] of ranges.entries()) {
     validateHighlightOverlay(range.overlay)
@@ -23,7 +35,7 @@ export function buildHighlightOverlayMask(ranges: readonly HighlightOverlayRange
   const active = new Map<number, HighlightOverlay>()
   const mask: HighlightOverlayRange[] = []
   let previous = edges[0]?.at ?? 0
-  for (let index = 0; index < edges.length;) {
+  for (let index = 0; index < edges.length; ) {
     const at = edges[index]!.at
     appendOverlay(mask, previous, at, mergedOverlay(active.values()))
     while (index < edges.length && edges[index]!.at === at) {
@@ -42,7 +54,11 @@ export function validateHighlightOverlay(overlay: HighlightOverlay): void {
   throw new RangeError('Highlight overlay opacity must be between zero and one')
 }
 
-export function splitHighlightOverlay(start: number, end: number, mask: readonly HighlightOverlayRange[]): readonly HighlightOverlayPart[] {
+export function splitHighlightOverlay(
+  start: number,
+  end: number,
+  mask: readonly HighlightOverlayRange[],
+): readonly HighlightOverlayPart[] {
   const parts: HighlightOverlayPart[] = []
   let low = 0
   let high = mask.length
@@ -64,7 +80,11 @@ export function splitHighlightOverlay(start: number, end: number, mask: readonly
   return parts
 }
 
-function splitsSurrogate(offset: number, length: number, codeUnit: (offset: number) => number): boolean {
+function splitsSurrogate(
+  offset: number,
+  length: number,
+  codeUnit: (offset: number) => number,
+): boolean {
   if (offset <= 0 || offset >= length) return false
   const before = codeUnit(offset - 1)
   const after = codeUnit(offset)
@@ -81,24 +101,40 @@ function mergedOverlay(overlays: Iterable<HighlightOverlay>): HighlightOverlay |
     }
   }
   if (dim === 1 && decorations.size === 0) return undefined
-  return { ...(dim < 1 ? { dim } : {}), ...(decorations.size ? { textDecoration: [...decorations].join(' ') } : {}) }
+  return {
+    ...(dim < 1 ? { dim } : {}),
+    ...(decorations.size ? { textDecoration: [...decorations].join(' ') } : {}),
+  }
 }
 
-function appendOverlay(mask: HighlightOverlayRange[], start: number, end: number, overlay: HighlightOverlay | undefined): void {
+function appendOverlay(
+  mask: HighlightOverlayRange[],
+  start: number,
+  end: number,
+  overlay: HighlightOverlay | undefined,
+): void {
   if (!overlay || end <= start) return
   const previous = mask.at(-1)
-  if (previous?.end === start && previous.overlay.dim === overlay.dim && previous.overlay.textDecoration === overlay.textDecoration) {
+  if (
+    previous?.end === start &&
+    previous.overlay.dim === overlay.dim &&
+    previous.overlay.textDecoration === overlay.textDecoration
+  ) {
     mask[mask.length - 1] = { start: previous.start, end, overlay: previous.overlay }
     return
   }
   mask.push({ start, end, overlay })
 }
 
-export function overlayColorStyle<T extends { readonly color?: string; readonly textDecoration?: string }>(style: T, overlay: HighlightOverlay, dimmable = true): T & { readonly color: string } {
+export function overlayColorStyle<
+  T extends { readonly color?: string; readonly textDecoration?: string },
+>(style: T, overlay: HighlightOverlay, dimmable = true): T & { readonly color: string } {
   const base = style.color ?? 'var(--editor-foreground)'
-  const opacity = dimmable ? overlay.dim ?? 1 : 1
+  const opacity = dimmable ? (overlay.dim ?? 1) : 1
   const color = opacity === 1 ? base : `color-mix(in srgb, ${base} ${opacity * 100}%, transparent)`
-  const decorations = [style.textDecoration, overlay.textDecoration].flatMap(value => value?.split(/\s+/) ?? []).filter(value => value && value !== 'none')
+  const decorations = [style.textDecoration, overlay.textDecoration]
+    .flatMap((value) => value?.split(/\s+/) ?? [])
+    .filter((value) => value && value !== 'none')
   const textDecoration = [...new Set(decorations)].join(' ')
   return { ...style, color, ...(textDecoration ? { textDecoration } : {}) }
 }

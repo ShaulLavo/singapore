@@ -119,11 +119,17 @@ export default defineConfig({
             provider: playwright(),
             commands: {
               proofHighlightPaintScreenshot: async ({ iframe }, hostId: string) => {
-                const image = await iframe.locator(`#${hostId} [data-editor-virtual-row="0"]`).screenshot({ animations: 'disabled' })
+                const image = await iframe
+                  .locator(`#${hostId} [data-editor-virtual-row="0"]`)
+                  .screenshot({ animations: 'disabled' })
                 return image.toString('base64')
               },
             },
-            instances: [{ browser: 'chromium', name: 'highlight-paint-chromium' }, { browser: 'firefox', name: 'highlight-paint-firefox' }, { browser: 'webkit', name: 'highlight-paint-webkit' }],
+            instances: [
+              { browser: 'chromium', name: 'highlight-paint-chromium' },
+              { browser: 'firefox', name: 'highlight-paint-firefox' },
+              { browser: 'webkit', name: 'highlight-paint-webkit' },
+            ],
           },
         },
       },

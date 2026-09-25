@@ -5,7 +5,11 @@ import {
   type EditorViewContributionContext,
 } from '@singapore-editor/core/extensions'
 import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
-import { editorThemesEqual, type EditorTheme, type VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
+import {
+  editorThemesEqual,
+  type EditorTheme,
+  type VirtualizedTextHighlightStyle,
+} from '@singapore-editor/core/rendering'
 import { readColorAlpha } from './colorAlpha'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -172,7 +176,11 @@ export class DiagnosticsPresenter {
         this.highlightNames[layer],
         groups[layer],
         layer === 'unnecessary' && groups.unnecessary.length > 0
-          ? { overlay: { dim: readColorAlpha(this.context.scrollElement, UNNECESSARY_DIAGNOSTIC_OPACITY) } }
+          ? {
+              overlay: {
+                dim: readColorAlpha(this.context.scrollElement, UNNECESSARY_DIAGNOSTIC_OPACITY),
+              },
+            }
           : DIAGNOSTIC_LAYER_STYLES[layer],
       )
     }
