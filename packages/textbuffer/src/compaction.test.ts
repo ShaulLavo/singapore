@@ -11,7 +11,16 @@ import {
 } from './index'
 import { compactPieceTableTombstones, compactTombstones } from './compaction'
 import { validatePieceTreeInvariants } from './inspection'
-import type { PieceTableEdit, PieceTableSnapshot, RealAnchor } from './pieceTableTypes'
+import type {
+  PieceTableEdit,
+  PieceTableSnapshot,
+  PieceTreeNode,
+  RealAnchor,
+} from './pieceTableTypes'
+import { createNode } from './node'
+import { buildReverseIndex } from './reverseIndex'
+import { createSnapshot } from './snapshot'
+import { flattenPieces } from './tree'
 
 const randomSource = (seed: number) => {
   let state = seed >>> 0
@@ -25,6 +34,29 @@ const tokens = ['x', 'hello ', '\n', '😀', 'paste me in here ', 'ab\ncd', '\ud
 
 const expectValid = (snapshot: PieceTableSnapshot): void => {
   expect(validatePieceTreeInvariants(snapshot).issues).toEqual([])
+}
+
+type Job = ReturnType<typeof compactTombstones>
+
+// Steps a pass partway, as maintenance does between slices.
+const startCompaction = (snapshot: PieceTableSnapshot, steps: number): Job | null => {
+  const job = compactTombstones(snapshot)
+  for (let step = 0; step < steps; step++) {
+    const next = job.next()
+    if (!next.done) continue
+    expect(next.value.unverified).toBe(0)
+    return null
+  }
+  return job
+}
+
+const finishCompaction = (job: Job | null): void => {
+  if (!job) return
+  for (let next = job.next(); ; next = job.next()) {
+    if (!next.done) continue
+    expect(next.value.unverified).toBe(0)
+    return
+  }
 }
 
 const compact = (snapshot: PieceTableSnapshot) => {
@@ -93,6 +125,36 @@ describe('compacting a run of tombstones', () => {
     compact(snapshot)
     expect(anchors.map((anchor) => resolveAnchor(snapshot, anchor))).toEqual(before)
     expectValid(snapshot)
+  })
+})
+
+describe('where text lands', () => {
+  // The same pieces under every root: an insert must land in one place and
+  // every deleted anchor must resolve alike, whatever the tree's shape.
+  test('an insert beside two tombstones does not depend on the tree shape', () => {
+    let snapshot = createPieceTableSnapshot('prefix suffix')
+    snapshot = insertIntoPieceTable(snapshot, 7, 'AAA')
+    const anchors = [anchorAt(snapshot, 8, 'left'), anchorAt(snapshot, 8, 'right')]
+    snapshot = deleteFromPieceTable(snapshot, 7, 3)
+    snapshot = insertIntoPieceTable(snapshot, 7, 'BBB')
+    anchors.push(anchorAt(snapshot, 8, 'left'), anchorAt(snapshot, 8, 'right'))
+    snapshot = deleteFromPieceTable(snapshot, 7, 3)
+    const pieces = flattenPieces(snapshot.root, [])
+    const results = new Set<string>()
+    for (let rootAt = 0; rootAt < pieces.length; rootAt++) {
+      const chain = (from: number, to: number): PieceTreeNode | null => {
+        if (from >= to) return null
+        const at = from === 0 && to === pieces.length ? rootAt : (from + to) >>> 1
+        return createNode(pieces[at]!, chain(from, at), chain(at + 1, to))
+      }
+      const root = chain(0, pieces.length)
+      const shaped = createSnapshot(snapshot.buffers, root, buildReverseIndex(root))
+      const typed = insertIntoPieceTable(shaped, 7, 'N')
+      const sequence = flattenPieces(typed.root, []).map((piece) => piece.buffer)
+      results.add(JSON.stringify([sequence, anchors.map((anchor) => resolveAnchor(typed, anchor))]))
+    }
+    expect(results.size).toBe(1)
+    expect([...results][0]).toContain('"offset":7')
   })
 })
 
@@ -265,6 +327,7 @@ const runDifferential = (seed: number, steps: number, text: string): void => {
   const history: State[] = [state]
   let anchors: Held[] = []
   let hot = 17
+  let pending: Job | null = null
   for (let step = 1; step <= steps; step++) {
     for (let made = 0; made < 2; made++) {
       const at = random(state.control.length + 1)
@@ -281,16 +344,23 @@ const runDifferential = (seed: number, steps: number, text: string): void => {
       parent: state,
     }
     const label = `seed ${seed} step ${step} ${JSON.stringify(edits)}`
+    // A pass begun before this edit publishes on the state it began on.
+    finishCompaction(pending)
+    if (pending) expectSameResolution(state.parent!, anchors, `${label} pass after edit`, false)
+    pending = null
     expect(materializePieceTableFullText(state.candidate), label).toBe(
       materializePieceTableFullText(state.control),
     )
     if (random(6) === 0) compact(state.candidate)
+    else if (random(6) === 0) pending = startCompaction(state.candidate, random(40))
     expectSameResolution(state, anchors, label, step % 20 === 0)
     history.push(state)
 
     // Undo to an older state and carry on from there. Anchors made on the
     // abandoned branch name buffers the new branch will number again.
     if (random(30) === 0) {
+      finishCompaction(pending)
+      pending = null
       state = history[random(history.length)]!
       if (random(2)) compact(state.candidate)
       const kept = lineage(state)

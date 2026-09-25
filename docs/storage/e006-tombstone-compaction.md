@@ -178,14 +178,17 @@ insertion over the same range.
 The [soak](../../examples/stress/results/reclamation/positions-soak.json) runs 400 seeded
 sessions of 800 edits against an uncompacted control: inserts, deletes, replacements and
 multi-edit batches, surrogate halves, empty documents, repeated edits at one spot that exhaust
-order gaps, and undo to earlier states with anchors made on abandoned branches dropped. Every
-anchor resolved alike after every edit through 63,910 compactions that removed 401,592
-tombstones; the linear reference and the inspector agreed every 50 edits.
+order gaps, and undo to earlier states with anchors made on abandoned branches dropped. Some
+passes are stepped partway, as maintenance slices them, then overtaken by the next edit and
+finished afterwards on the state they began on. Every anchor resolved alike after every edit
+through 74,587 compactions, 10,689 of them overtaken, that removed 327,762 tombstones; the
+linear reference and the inspector agreed every 50 edits.
 
 In the tests, [`compaction.test.ts`](../../packages/textbuffer/src/compaction.test.ts) runs the
-same differential check for 16 seeds of 400 edits and 2 surrogate-heavy seeds of 1,500, and
-covers original text, order relabels beside stand-ins, transient lineages and churn at several
-spots. The maintenance tests check identity, revision, deleted anchors and undo across a pass,
+same differential check, overtaken passes included, for 16 seeds of 400 edits and 2
+surrogate-heavy seeds of 1,500. It covers original text, order relabels beside stand-ins,
+transient lineages and churn at several spots, and rebuilds one piece sequence under every root
+to show an insert lands in one place; the landing it replaced gives three answers there. The maintenance tests check identity, revision, deleted anchors and undo across a pass,
 and the piece-growth trigger. The inspector now checks stand-ins, the gaps they leave in a
 buffer's pieces, and entries that lead to them.
 

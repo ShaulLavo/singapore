@@ -9,7 +9,10 @@ import {
   resolveAnchor,
   resolveAnchorLinear,
 } from '../../packages/textbuffer/dist/index.js'
-import { compactPieceTableTombstones } from '../../packages/textbuffer/dist/compaction.js'
+import {
+  compactPieceTableTombstones,
+  compactTombstones,
+} from '../../packages/textbuffer/dist/compaction.js'
 import { validatePieceTreeInvariants } from '../../packages/textbuffer/dist/inspection.js'
 
 const seeds = Number(process.argv[2] ?? 400)
@@ -61,13 +64,40 @@ function lineage(state) {
   return states
 }
 
-const totals = { seeds, steps, failures: [], compactions: 0, tombstones: 0, unverified: 0 }
+const totals = {
+  seeds,
+  steps,
+  failures: [],
+  compactions: 0,
+  interleaved: 0,
+  tombstones: 0,
+  unverified: 0,
+}
 
 function compact(snapshot) {
   const result = compactPieceTableTombstones(snapshot)
   totals.compactions++
   totals.tombstones += result.tombstones
   totals.unverified += result.unverified
+}
+
+// A pass stepped partway, as maintenance slices it, that an edit then overtakes.
+function startCompaction(snapshot, steps) {
+  const job = compactTombstones(snapshot)
+  for (let step = 0; step < steps; step++) {
+    if (job.next().done) return null
+  }
+  return job
+}
+
+function finishCompaction(job) {
+  if (!job) return
+  let next = job.next()
+  while (!next.done) next = job.next()
+  totals.compactions++
+  totals.interleaved++
+  totals.tombstones += next.value.tombstones
+  totals.unverified += next.value.unverified
 }
 
 function checkAnchors(state, anchors, step, linear) {
@@ -92,6 +122,7 @@ function runSeed(seed) {
   const history = [state]
   let anchors = []
   let hot = 0
+  let pending = null
   for (let step = 1; step <= steps; step++) {
     for (let made = 0; made < 2; made++) {
       const at = random(state.control.length + 1)
@@ -112,12 +143,19 @@ function runSeed(seed) {
       materializePieceTableFullText(state.control)
     )
       throw new Error(`step ${step}: text differs`)
+    // The pass publishes on the state it began on, now one edit behind.
+    finishCompaction(pending)
+    if (pending) checkAnchors(state.parent, anchors, step, false)
+    pending = null
     if (random(5) === 0) compact(state.candidate)
+    else if (random(5) === 0) pending = startCompaction(state.candidate, random(40))
     checkAnchors(state, anchors, step, step % 50 === 0)
     if (step % 50 === 0 && validatePieceTreeInvariants(state.candidate).issues.length > 0)
       throw new Error(`step ${step}: invariant issues`)
     history.push(state)
     if (random(30) === 0) {
+      finishCompaction(pending)
+      pending = null
       state = history[random(history.length)]
       if (random(2)) compact(state.candidate)
       const kept = lineage(state)
