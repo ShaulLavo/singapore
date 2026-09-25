@@ -56,8 +56,11 @@ import { childContainingNode, childNodeIndex, elementBoundaryToTextOffset } from
 import {
   editActionForCommand,
   listItemLineBreak,
+  trimTrailingWhitespaceAction,
   type EditorDocumentLine,
   type EditorEditActionCommandId,
+  type EditorEditActionOptions,
+  type EditorEditActionResult,
 } from './editActions'
 import { capitalize, indentTimingName, type SessionChangeOptions } from './editorUtils'
 import {
@@ -1132,15 +1135,11 @@ export class InputSelectionController {
     const selections = session
       .getSelections()
       .selections.map((selection) => resolveSelection(snapshot, selection))
-    const text = commandDocumentText(session)
-    const editOptions = {
+    const action = editActionForSession(command, session, selections, {
       injections: this.options.getSyntaxInjections(),
       languageId: this.options.getLanguageId(),
       tabSize: this.options.tabSize,
-    }
-    const action = isEditorDocumentSelectionEditCommand(command)
-      ? documentSelectionEditForCommand(command, text, selections, editOptions)
-      : editActionForCommand(command, text, selections, editOptions)
+    })
     const change = session.applyEdits(action.edits, {
       selections: action.selections,
     })
@@ -2896,7 +2895,7 @@ export class InputSelectionController {
   private deleteCaretLines(session: DocumentSession): DocumentSessionChange {
     const action = editActionForCommand(
       'editor.action.deleteLines',
-      commandDocumentText(session),
+      session.getTextSnapshot(),
       this.resolvedSelections(),
       { languageId: this.options.getLanguageId(), tabSize: this.options.tabSize },
     )
@@ -3684,9 +3683,31 @@ function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {
   return 'nearest'
 }
 
+/** Line and word actions read the rows and words they touch; the rest still take the whole text. */
+function editActionForSession(
+  command: EditorEditActionCommandId | EditorDocumentSelectionEditCommandId,
+  session: DocumentSession,
+  selections: readonly ResolvedSelection[],
+  options: EditorEditActionOptions,
+): EditorEditActionResult {
+  if (isEditorDocumentSelectionEditCommand(command)) {
+    return documentSelectionEditForCommand(
+      command,
+      commandDocumentText(session),
+      selections,
+      options,
+    )
+  }
+  if (command === 'editor.action.trimTrailingWhitespace') {
+    return trimTrailingWhitespaceAction(commandDocumentText(session))
+  }
+
+  return editActionForCommand(command, session.getTextSnapshot(), selections, options)
+}
+
 /**
- * Edit actions and exact-occurrence commands still take the document as one string. Each is a
- * command the user asked for, so the O(document length) read is explicit and never on typing.
+ * Reindent, trim and the exact-occurrence commands still take the document as one string. Each is
+ * a command the user asked for, so the O(document length) read is explicit and never on typing.
  */
 function commandDocumentText(session: DocumentSession): string {
   return session.materializeFullText()

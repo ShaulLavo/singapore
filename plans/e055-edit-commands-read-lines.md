@@ -1,6 +1,6 @@
 # E055: Edit commands read the lines they touch
 
-- Status: Proposed
+- Status: In progress
 - Kind: Implementation
 - Owner: Editor
 - Priority: P1
@@ -82,3 +82,26 @@ Out of scope: the other allowlisted reads (LSP payloads, Shiki open, save, the l
   on one row. Each case asserts the edits handed to the session, the resulting text and selections,
   that one undo restores the input, and that redo restores the result. The table records current
   behaviour as it is, including two carets on one row wrapping a block comment twice.
+- Step 2: `editActionForCommand` takes a `TextReadSnapshot`. Line actions read through
+  [lineMap.ts](../packages/editor/src/editor/lineMap.ts): each run of selected rows, plus one row
+  on each side, is read once with `readRange`, and every other row or offset is answered by the
+  snapshot. Copy, move and insert work out the resulting selections by applying their edits to
+  those spans. Case transforms read only the selected text. Word deletes read the caret's row and
+  the breaks on either side, capped at 8,192 units each way. The window grows only when a scan
+  stops within 4,096 units (the grapheme search's widest window) of an edge that is not a row edge.
+  The whole-line half of cut uses the same path. The step 1 table passes unchanged.
+- Tests: `lineMap.node.test.ts` compares every row and offset with a string snapshot, before and
+  after copy, move and insert edits, for spans that are read apart and spans that are merged.
+  `lineActionChunks.node.test.ts` runs every bounded action over a piece table split every five
+  units, with selections on and across each seam. It also checks word deletes on a 39K-unit row
+  against scans of the whole string. `fullTextBoundary.test.ts` adds comment toggle, move line,
+  delete word and whole-line cut. Before this change each did one full read, 1,050,521 units for
+  comment toggle at 1M. Now none does, and at both 64K and 1M the reads are 1,987, 1,197, 1,962
+  and 1,741 units.
+- Measured in happy-dom on a 16M-unit document split into about 130 pieces, median of 7 dispatches,
+  before → after: comment toggle 55.5 → 5.0 ms, move line down 77.2 → 5.4 ms, join lines 37.6 →
+  4.5 ms, delete word left 5.8 → 1.9 ms.
+- Left for E055-b: occurrence search (step 3), trim trailing whitespace (step 4, now
+  `trimTrailingWhitespaceAction(text)`), and deleting `commandDocumentText` (step 5). Both reindent
+  commands also still take the string. Their literal masking scans from the document start, so
+  step 5 has to move reindent onto chunk reads too.

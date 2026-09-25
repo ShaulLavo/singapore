@@ -147,8 +147,9 @@ describe('full-text boundary', () => {
   })
 })
 
-// UTF-16 units one operation may read over the fixed viewport, captures and caret. Measured
-// 2026-09-23 at both sizes: type 902, peerUndo 1202, select 411, the rest 0.
+// UTF-16 units one operation may read over the fixed viewport, captures and caret. Measured at both
+// sizes: type 902, peerUndo 1202, select 411, commentLine 1987, moveLine 1197, deleteWord 1962,
+// cutLine 1741, the rest 0.
 const OPERATION_READ_BUDGETS: Readonly<Record<string, number>> = {
   type: 2_048,
   peerUndo: 2_048,
@@ -156,6 +157,10 @@ const OPERATION_READ_BUDGETS: Readonly<Record<string, number>> = {
   scroll: 1_024,
   state: 0,
   snapshots: 0,
+  commentLine: 4_096,
+  moveLine: 2_048,
+  deleteWord: 4_096,
+  cutLine: 4_096,
 }
 
 async function measureOperations(size: number): Promise<Record<string, Reads>> {
@@ -175,6 +180,10 @@ async function measureOperations(size: number): Promise<Record<string, Reads>> {
       const snapshot = first.latest()
       return [{ ...snapshot }, JSON.stringify(snapshot)]
     },
+    commentLine: () => first.editor.dispatchCommand('editor.action.commentLine'),
+    moveLine: () => first.editor.dispatchCommand('editor.action.moveLinesDownAction'),
+    deleteWord: () => first.editor.dispatchCommand('deleteWordLeft'),
+    cutLine: () => cutCaretLine(first.container),
   }
 
   const results: Record<string, Reads> = {}
@@ -235,7 +244,7 @@ function mount(buffer: EditorTextBuffer, viewId: string) {
     languageId: 'markdown',
   })
   editors.push(editor)
-  return { editor, latest: () => snapshots.at(-1)! }
+  return { container, editor, latest: () => snapshots.at(-1)! }
 }
 
 let markdownReplacements = 0
@@ -294,6 +303,14 @@ function markdownCaptures(): EditorPlugin {
 
 function capture_(captureName: string, startIndex: number, endIndex: number): EditorSyntaxCapture {
   return { captureName, startIndex, endIndex }
+}
+
+// Nothing selected, so the cut takes the caret's whole line.
+function cutCaretLine(container: HTMLElement): void {
+  const event = new Event('cut', { bubbles: true, cancelable: true }) as ClipboardEvent
+  const clipboardData = { getData: () => '', setData: () => undefined }
+  Object.defineProperty(event, 'clipboardData', { configurable: true, value: clipboardData })
+  container.querySelector('.editor-virtualized-input')!.dispatchEvent(event)
 }
 
 function capture<T>(run: () => T): { value: T; diagnostics: Diagnostic[] } {
