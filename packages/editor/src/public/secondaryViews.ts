@@ -39,7 +39,8 @@ export type EditorSecondaryTextView = {
   setText(text: string): void
   setTokens(tokens: EditorTokenInput): void
   setTheme(theme: EditorTheme | null): void
-  setLineHeight(lineHeight: number): void
+  /** The mirrored view's metrics: its row height and character width together. */
+  setTextMetrics(metrics: BrowserTextMetrics): void
   setHeight(height: number): void
   dispose(): void
 }
@@ -56,8 +57,8 @@ export function createEditorSecondaryTextView(
     setText: (text) => view.setText(text),
     setTokens: (tokens) => view.setTokens(tokens),
     setTheme: (theme) => view.setTheme(theme),
-    setLineHeight: (lineHeight) => {
-      view.setLineHeight(lineHeight)
+    setTextMetrics: (metrics) => {
+      view.setTextMetrics(metrics)
     },
     setHeight: (height) => {
       view.scrollElement.style.height = `${height}px`

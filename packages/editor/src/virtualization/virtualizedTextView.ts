@@ -44,6 +44,9 @@ import {
   normalizeHorizontalOverscan,
   normalizeRowGap,
   normalizeRowHeight,
+  fontFamilyValue,
+  fontSizeValue,
+  setFontVariable,
   normalizeScrollMode,
   scrollElementPadding,
 } from './virtualizedTextViewHelpers'
@@ -308,6 +311,9 @@ export class VirtualizedTextView {
     const scrollElement = createScrollElement(container, options.className)
     const highlightScope = `editor-highlight-${nextHighlightScope++}`
     scrollElement.setAttribute('data-editor-highlight-scope', highlightScope)
+    // Before the first measurement, so the metrics are read from the face the host asked for.
+    setFontVariable(scrollElement, '--editor-font-size', fontSizeValue(options.fontSize))
+    setFontVariable(scrollElement, '--editor-font-family', fontFamilyValue(options.fontFamily))
     const textMetrics = options.textMetrics ?? null
     const measuredFace = measuredTextFace(scrollElement, textMetrics)
     const measuredMetrics = measuredFace.metrics
@@ -801,6 +807,30 @@ export class VirtualizedTextView {
     view.monospace = face.monospace
     this.applyMetrics({ rowHeight, characterWidth: face.metrics.characterWidth })
     return view.metrics
+  }
+
+  /**
+   * Measures in the same call, so nothing between the write and the next frame positions a caret
+   * or a row with the old face's widths. Null when the metrics in use did not change.
+   */
+  public setFontSize(fontSize: number | undefined): BrowserTextMetrics | null {
+    if (!setFontVariable(this.scrollElement, '--editor-font-size', fontSizeValue(fontSize)))
+      return null
+    return this.remeasureMetrics()
+  }
+
+  public setFontFamily(fontFamily: string | undefined): BrowserTextMetrics | null {
+    if (!setFontVariable(this.scrollElement, '--editor-font-family', fontFamilyValue(fontFamily)))
+      return null
+    return this.remeasureMetrics()
+  }
+
+  /** Adopts metrics measured elsewhere, for a view that mirrors another view's rows. */
+  public setTextMetrics(metrics: BrowserTextMetrics): boolean {
+    const view = this.view
+    view.textMetrics = metrics
+    view.lineHeightOverride = normalizeRowHeight(metrics.rowHeight)
+    return this.remeasureMetrics() !== null
   }
 
   public setLineHeight(lineHeight: number): boolean {

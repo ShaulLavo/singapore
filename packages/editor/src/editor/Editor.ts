@@ -213,7 +213,10 @@ import {
   invalidateRowRectMeasurements,
 } from '../virtualization/virtualizedTextViewGeometry'
 import { normalizeSuspiciousCharactersOptions } from '../unicodeHighlight'
-import { observeBrowserTextMetricsInvalidation } from '../virtualization/browserMetrics'
+import {
+  observeBrowserTextMetricsInvalidation,
+  type BrowserTextMetrics,
+} from '../virtualization/browserMetrics'
 import { EditorDisposableStore } from './disposables'
 import { createError } from '../logging/evlog'
 import type { EditorPreparedDocumentPayload } from './preparedDocument'
@@ -502,6 +505,8 @@ export class Editor {
       gutterContributions: this.composedGutterContributions(),
       cursorLineHighlight: options.cursorLineHighlight,
       hiddenCharacters: options.hiddenCharacters,
+      fontSize: options.fontSize,
+      fontFamily: options.fontFamily,
       lineHeight: options.lineHeight,
       rowGap: options.rowGap,
       rowPositioning: options.rowPositioning,
@@ -1789,8 +1794,24 @@ export class Editor {
     })
   }
 
+  /** Undefined hands the size back to the stylesheet. */
+  setFontSize(fontSize: number | undefined): void {
+    this.announceFontMetrics(this.view.setFontSize(fontSize), 'font_size')
+  }
+
+  /** A CSS `font-family` list; undefined hands the face back to the stylesheet. */
+  setFontFamily(fontFamily: string | undefined): void {
+    this.announceFontMetrics(this.view.setFontFamily(fontFamily), 'font_family')
+  }
+
   private remeasureTextMetrics(): void {
-    const metrics = this.view.remeasureMetrics()
+    this.announceFontMetrics(this.view.remeasureMetrics(), 'face_changed')
+  }
+
+  private announceFontMetrics(
+    metrics: BrowserTextMetrics | null,
+    cause: 'font_size' | 'font_family' | 'face_changed',
+  ): void {
     if (!metrics) return
 
     this.notifyViewContributions('layout', null)
@@ -1798,6 +1819,7 @@ export class Editor {
       action: 'editor.layout.text_metrics_remeasured',
       level: 'info',
       layout: {
+        cause,
         rowHeight: metrics.rowHeight,
         characterWidth: metrics.characterWidth,
       },

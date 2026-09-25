@@ -97,6 +97,28 @@ The diff README, plugin contract and tests pass tokens with the text; Platform's
 does the same (scenario `git-diff-expand-tokens`). The host's `setPresentationReady` bracket stays:
 it also covers restoring selection and scroll, which `setText` drops.
 
+## Typography row, 2026-09-25: the editor owns its font
+
+`EditorOptions.fontSize` (pixels) and `fontFamily` (a CSS `font-family` list), with `setFontSize`
+and `setFontFamily` and entries in the option registry, so both bindings apply them live (D2). The
+view writes them as `--editor-font-size` and `--editor-font-family` on its own element, before the
+first measurement at construction and followed by a re-measure in the same call afterwards;
+`undefined` removes the variable and hands the font back to the stylesheet, whose defaults stay
+`13px` and `monospace`. The editor's hover, completion and rename popups already copied those two
+variables, which nothing wrote, so they now take the editor's face. `lineHeight` stays its own
+option: a larger face does not stretch rows. The resolved pitch was already on the snapshot as
+`metrics`. Sticky scroll's secondary view mirrors `metrics` whole through
+`setTextMetrics` (was `setLineHeight`), since a new size moves every column it draws.
+`test/typography.browser.test.ts` fails with the in-call re-measure removed (character width stays
+at the old face until the resize observer fires); binding samples cover both options.
+
+Platform passes all three from its settings and stopped writing `--editor-font-size`,
+`--editor-row-height` and `--editor-tab-size` on `:root`. Those never reached the editor anyway:
+it writes the row height and tab size on its own element, so `editor.lineHeight` had no effect
+(scenario `editor-typography` fails on the old build at a 34px setting, rows stay 24px). The
+row-height audit is deleted (Platform plan 130, D3). `editor.tabSize` remains unwired: the editor
+detects each document's width and has no setter for the fallback it detects against.
+
 ## Row 5, 2026-09-24: a press a plugin claims
 
 `EditorViewContributionContext.registerPressParticipant(participant)` registers a function the
@@ -150,7 +172,7 @@ this document is the inventory and the contract, not one change.
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `setTokens` after every `setText`              | done: `setText(text, { tokens })`                                                                     |
 | Diff option traps                              | a `createDiffEditorOptions()` preset exported by `packages/diff`; `readonly` suppresses edit bindings |
-| CSS variables for typography                   | `fontSize`, `fontFamily`, `lineHeight` options; the resolved row pitch on the view snapshot           |
+| CSS variables for typography                   | done: `fontSize`, `fontFamily` options beside `lineHeight`; pitch was already `snapshot.metrics`      |
 | `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                      |
 | Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                             |
 | Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                  |

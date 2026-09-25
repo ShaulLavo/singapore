@@ -63,6 +63,10 @@ export type DocumentWithCaretHitTesting = Document & {
 }
 
 export type VirtualizedTextViewOptions = {
+  /** In pixels. Unset, the stylesheet decides. */
+  readonly fontSize?: number
+  /** A CSS `font-family` list. Unset, the stylesheet decides. */
+  readonly fontFamily?: string
   readonly lineHeight?: number
   readonly rowHeight?: number
   readonly rowGap?: number

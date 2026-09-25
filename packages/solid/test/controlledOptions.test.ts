@@ -39,6 +39,13 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     method: 'setEditability',
     applied: ['readonly'],
   },
+  fontFamily: {
+    initial: 'monospace',
+    next: 'JetBrains Mono, monospace',
+    method: 'setFontFamily',
+    applied: ['JetBrains Mono, monospace'],
+  },
+  fontSize: { initial: 12, next: 15, method: 'setFontSize', applied: [15] },
   hiddenCharacters: {
     initial: 'show-on-selection',
     next: 'hidden',
@@ -153,6 +160,8 @@ describe('controlled options', () => {
     const mounted = mountInRoot(() =>
       createEditor({
         document: () => DOCUMENT,
+        fontFamily: () => OPTION_SAMPLES.fontFamily.initial as string,
+        fontSize: () => OPTION_SAMPLES.fontSize.initial as number,
         lineHeight: () => OPTION_SAMPLES.lineHeight.initial as number,
         suspiciousCharacters: () => ({ ambiguous: true, invisible: true }),
         tabMovesFocus: () => false,

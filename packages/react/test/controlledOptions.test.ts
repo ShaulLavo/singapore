@@ -43,6 +43,13 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     method: 'setEditability',
     applied: ['readonly'],
   },
+  fontFamily: {
+    initial: 'monospace',
+    next: 'JetBrains Mono, monospace',
+    method: 'setFontFamily',
+    applied: ['JetBrains Mono, monospace'],
+  },
+  fontSize: { initial: 13, next: 16, method: 'setFontSize', applied: [16] },
   hiddenCharacters: {
     initial: 'hidden',
     next: 'show',

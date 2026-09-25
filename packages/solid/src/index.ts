@@ -52,6 +52,8 @@ export type SolidEditorSelection = EditorControlledSelection
 export type SolidEditorOptions = Omit<
   EditorOptions,
   | 'editability'
+  | 'fontFamily'
+  | 'fontSize'
   | 'hiddenCharacters'
   | 'keymap'
   | 'lineHeight'
@@ -66,6 +68,8 @@ export type SolidEditorOptions = Omit<
 > & {
   readonly document?: SolidEditorReactiveValue<SolidEditorDocument | null | undefined>
   readonly editability?: SolidEditorReactiveValue<EditorEditability | undefined>
+  readonly fontFamily?: SolidEditorReactiveValue<string | undefined>
+  readonly fontSize?: SolidEditorReactiveValue<number | undefined>
   readonly theme?: SolidEditorReactiveValue<EditorTheme | null | undefined>
   readonly hiddenCharacters?: SolidEditorReactiveValue<HiddenCharactersMode | undefined>
   readonly keymap?: SolidEditorReactiveValue<EditorKeymapOptions | undefined>
@@ -243,6 +247,8 @@ function createConstructorOptions(
   const {
     document: _document,
     editability,
+    fontFamily,
+    fontSize,
     hiddenCharacters,
     keymap,
     lineHeight,
@@ -264,6 +270,8 @@ function createConstructorOptions(
     (): EditorOptions => ({
       ...constructorOptions,
       editability: readReactive(editability),
+      fontFamily: readReactive(fontFamily),
+      fontSize: readReactive(fontSize),
       hiddenCharacters: readReactive(hiddenCharacters),
       keymap: readReactive(keymap),
       lineHeight: readReactive(lineHeight),

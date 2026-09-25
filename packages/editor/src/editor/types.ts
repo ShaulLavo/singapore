@@ -109,6 +109,11 @@ export type EditorOptions = {
   readonly keymap?: EditorKeymapOptions
   readonly cursorLineHighlight?: EditorCursorLineHighlightOptions
   readonly hiddenCharacters?: HiddenCharactersMode
+  /** In pixels. Popups the editor opens follow it. Unset, the stylesheet decides (13px). */
+  readonly fontSize?: number
+  /** A CSS `font-family` list. Unset, the stylesheet decides (`monospace`). */
+  readonly fontFamily?: string
+  /** Row height in pixels, not a ratio; independent of `fontSize`. */
   readonly lineHeight?: number
   readonly rangeDecorations?: readonly EditorRangeDecoration[]
   readonly rowGap?: number

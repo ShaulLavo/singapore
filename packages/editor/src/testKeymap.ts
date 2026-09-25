@@ -29,7 +29,10 @@ export function createTestKeymap(
   const runtime = createKeymapRuntime<EditorKeyBinding, EditorKeymapContext>({
     root,
     platform: 'linux',
-    bindings: defaultEditorKeyBindings('linux').map((binding) => ({ ...binding, payload: binding })),
+    bindings: defaultEditorKeyBindings('linux').map((binding) => ({
+      ...binding,
+      payload: binding,
+    })),
     captureContext,
     isAvailable: ({ payload }, context) =>
       (payload.when ?? []).every((condition) => editorKeyConditionMatches(condition, context)),

@@ -102,7 +102,7 @@ class StickyScrollContribution implements EditorViewContribution {
   private appliedText = ''
   private appliedTokens: EditorTokenStore | null = null
   private appliedTheme: EditorTheme | null = null
-  private appliedRowHeight = 0
+  private appliedMetrics: EditorViewSnapshot['metrics'] | null = null
   private contentKey = ''
   private layoutKey = ''
 
@@ -139,7 +139,7 @@ class StickyScrollContribution implements EditorViewContribution {
     }
 
     const lineView = this.ensureLineView(snapshot)
-    this.syncRowHeight(lineView, snapshot)
+    this.syncMetrics(lineView, snapshot)
     this.syncTheme(lineView, snapshot)
     this.syncContent(lineView, snapshot, header)
     this.syncLayout(lineView, snapshot, header)
@@ -151,16 +151,22 @@ class StickyScrollContribution implements EditorViewContribution {
 
     const created = createLineView(this.root, this.context, snapshot)
     this.lineView = created
-    this.appliedRowHeight = snapshot.metrics.rowHeight
+    this.appliedMetrics = snapshot.metrics
     return created
   }
 
-  private syncRowHeight(lineView: EditorSecondaryTextView, snapshot: EditorViewSnapshot): void {
-    const rowHeight = snapshot.metrics.rowHeight
-    if (rowHeight === this.appliedRowHeight) return
+  // Character width too: a font change moves every column the mirrored rows draw at.
+  private syncMetrics(lineView: EditorSecondaryTextView, snapshot: EditorViewSnapshot): void {
+    const metrics = snapshot.metrics
+    const applied = this.appliedMetrics
+    if (
+      applied?.rowHeight === metrics.rowHeight &&
+      applied.characterWidth === metrics.characterWidth
+    )
+      return
 
-    this.appliedRowHeight = rowHeight
-    lineView.setLineHeight(rowHeight)
+    this.appliedMetrics = metrics
+    lineView.setTextMetrics(metrics)
   }
 
   private syncTheme(lineView: EditorSecondaryTextView, snapshot: EditorViewSnapshot): void {

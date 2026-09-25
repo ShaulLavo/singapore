@@ -626,6 +626,37 @@ export function setElementHidden(element: HTMLElement, hidden: boolean): void {
   element.hidden = hidden
 }
 
+/**
+ * The host's font goes in as the variables the stylesheet sizes rows with and the editor's popups
+ * copy, so a hover opened over the editor reads the same face. Null hands the choice back to CSS.
+ * Reports whether the element changed.
+ */
+export function setFontVariable(
+  element: HTMLElement,
+  property: '--editor-font-size' | '--editor-font-family',
+  value: string | null,
+): boolean {
+  const current = element.style.getPropertyValue(property)
+  if (value === null) {
+    if (current === '') return false
+    element.style.removeProperty(property)
+    return true
+  }
+  if (current === value) return false
+  element.style.setProperty(property, value)
+  return true
+}
+
+export function fontSizeValue(fontSize: number | undefined): string | null {
+  if (fontSize === undefined || !Number.isFinite(fontSize) || fontSize <= 0) return null
+  return `${fontSize}px`
+}
+
+export function fontFamilyValue(fontFamily: string | undefined): string | null {
+  const trimmed = fontFamily?.trim() ?? ''
+  return trimmed === '' ? null : trimmed
+}
+
 export function setStyleValue(element: HTMLElement, property: string, value: string): void {
   if (element.style.getPropertyValue(property) === value) return
   element.style.setProperty(property, value)

@@ -30,6 +30,8 @@ export type EditorControlledSelection = EditorSetSelectionOptions & {
 
 type EditorControlledOptions = {
   readonly editability?: EditorEditability
+  readonly fontFamily?: string
+  readonly fontSize?: number
   readonly hiddenCharacters?: HiddenCharactersMode
   readonly keymap?: EditorKeymapOptions
   readonly lineHeight?: number
@@ -108,6 +110,29 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
       if (editability === undefined) return false
 
       editor.setEditability(editability)
+      return true
+    },
+  }),
+  // Undefined is a value here, not "not controlled": it hands the font back to the stylesheet, so
+  // a host that stops passing one does not leave the editor on the last size it was given.
+  defineOption({
+    name: 'fontFamily',
+    defaultValue: undefined,
+    validate: (input) => (typeof input === 'string' ? input : undefined),
+    equals: Object.is,
+    applyTo: (editor, fontFamily) => {
+      editor.setFontFamily(fontFamily)
+      return true
+    },
+  }),
+  defineOption({
+    name: 'fontSize',
+    defaultValue: undefined,
+    validate: (input) =>
+      typeof input === 'number' && Number.isFinite(input) && input > 0 ? input : undefined,
+    equals: Object.is,
+    applyTo: (editor, fontSize) => {
+      editor.setFontSize(fontSize)
       return true
     },
   }),

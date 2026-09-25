@@ -1190,6 +1190,35 @@ describe('Editor', () => {
     })
   })
 
+  describe('font options', () => {
+    it('writes the size and face as the variables the stylesheet reads, and clears them', () => {
+      editor.setFontSize(15)
+      editor.setFontFamily('  Fira Code, monospace ')
+
+      expect(editorRoot().style.getPropertyValue('--editor-font-size')).toBe('15px')
+      expect(editorRoot().style.getPropertyValue('--editor-font-family')).toBe(
+        'Fira Code, monospace',
+      )
+
+      editor.setFontSize(undefined)
+      editor.setFontFamily(undefined)
+
+      expect(editorRoot().style.getPropertyValue('--editor-font-size')).toBe('')
+      expect(editorRoot().style.getPropertyValue('--editor-font-family')).toBe('')
+    })
+
+    it('hands an impossible size back to the stylesheet', () => {
+      const descriptor = EDITOR_OPTION_DESCRIPTORS.find((entry) => entry.name === 'fontSize')
+      if (!descriptor) throw new Error('fontSize is not in the option registry')
+
+      descriptor.applyTo(editor, descriptor.validate(18))
+      expect(editorRoot().style.getPropertyValue('--editor-font-size')).toBe('18px')
+
+      descriptor.applyTo(editor, descriptor.validate(0))
+      expect(editorRoot().style.getPropertyValue('--editor-font-size')).toBe('')
+    })
+  })
+
   describe('setHiddenCharacters', () => {
     it('updates hidden character rendering for mounted rows', () => {
       editor.setText('a b\tc')

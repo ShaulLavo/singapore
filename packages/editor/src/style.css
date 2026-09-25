@@ -50,8 +50,9 @@
 
   flex: 1;
   overflow: auto;
-  font-size: 13px;
-  font-family: monospace;
+  /* Written by the editor from its `fontSize` and `fontFamily` options. */
+  font-size: var(--editor-font-size, 13px);
+  font-family: var(--editor-font-family, monospace);
   white-space: pre;
   tab-size: var(--editor-tab-size, 4);
   color: var(--editor-foreground);
@@ -100,8 +101,9 @@
   flex: 1;
   position: relative;
   overflow: auto;
-  font-size: 13px;
-  font-family: monospace;
+  /* Written by the editor from its `fontSize` and `fontFamily` options. */
+  font-size: var(--editor-font-size, 13px);
+  font-family: var(--editor-font-family, monospace);
   line-height: var(--editor-row-height);
   white-space: pre;
   tab-size: var(--editor-tab-size, 4);
