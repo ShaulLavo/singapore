@@ -148,12 +148,18 @@ type PendingInitialHighlightReplacement = {
   readonly kind: InitialHighlightReplacement
 }
 
+type SettledHighlightStatus = Exclude<EditorInitialHighlightStatus, 'idle' | 'loading'>
+
 type PendingInitialHighlightThemeTerminal = {
   readonly configurationGeneration: number
-  readonly status: Exclude<EditorInitialHighlightStatus, 'loading'>
+  readonly status: SettledHighlightStatus
 }
 
 const BACKGROUND_SYNTAX_TILE_CHARS = 120_000
+
+// Backoff before each retry of a failed highlight refresh. The last rung retries on a new
+// highlighter session; the failure after it is terminal.
+const HIGHLIGHT_RETRY_DELAYS_MS: readonly number[] = [100, 400]
 
 const syntaxWorkTags = (
   documentVersion: number,
@@ -171,7 +177,7 @@ export class EditorSyntaxController {
   private disposed = false
   private syntaxStatus: EditorSyntaxStatus = 'plain'
   private applyingRenderData = false
-  private initialHighlightState: EditorInitialHighlightStatus = 'plain'
+  private initialHighlightState: EditorInitialHighlightStatus = 'idle'
   private initialPaintDocumentVersion = 0
   private initialTextPainted = false
   private initialTextPaintEmitted = false
@@ -180,13 +186,12 @@ export class EditorSyntaxController {
   private pendingInitialHighlightReplacement: PendingInitialHighlightReplacement | null = null
   private pendingInitialHighlightThemeTerminal: PendingInitialHighlightThemeTerminal | null = null
   private highlighterThemePending = false
-  private lastInitialHighlightTerminalStatus: Exclude<
-    EditorInitialHighlightStatus,
-    'loading'
-  > | null = 'plain'
+  private lastInitialHighlightTerminalStatus: SettledHighlightStatus | null = 'plain'
   private syntaxSession: EditorSyntaxSession | null = null
   private syntaxSessionIncludesCaptures = false
   private highlighterSession: EditorHighlighterSession | null = null
+  // Refresh failures since the last success or re-entry (document, provider or highlighter theme).
+  private failedHighlightRefreshes = 0
   private unsubscribeHighlighterTheme: (() => void) | null = null
   private preparedSyntaxDisposer: (() => void) | null = null
   private preparedHighlighterDisposer: (() => void) | null = null
@@ -391,6 +396,7 @@ export class EditorSyntaxController {
     this.resetSyntaxContentVersion()
     this.currentBrackets = []
     this.currentInjections = []
+    this.failedHighlightRefreshes = 0
     this.highlighterSession =
       prepared?.highlighter?.session ??
       this.createHighlighterSession(
@@ -466,7 +472,8 @@ export class EditorSyntaxController {
   clearDocument(): void {
     this.advanceInitialHighlightConfigurationGeneration()
     this.syntaxStatus = 'plain'
-    this.initialHighlightState = 'plain'
+    this.initialHighlightState = 'idle'
+    this.failedHighlightRefreshes = 0
     this.initialPaintDocumentVersion = this.options.getDocumentVersion()
     this.initialTextPainted = false
     this.initialTextPaintEmitted = false
@@ -503,6 +510,7 @@ export class EditorSyntaxController {
 
   reloadHighlighterAndSyntax(): void {
     this.beginInitialHighlightReplacement('all')
+    this.failedHighlightRefreshes = 0
     this.reloadHighlighterSession()
     this.reloadSyntaxSession(false)
     this.settlePlainInitialHighlightIfNeeded()
@@ -715,7 +723,7 @@ export class EditorSyntaxController {
     this.scheduleNextWarmRange(pendingWarm)
   }
 
-  private reloadHighlighterSession(): void {
+  private reloadHighlighterSession(options: EditorSyntaxRefreshOptions = {}): void {
     if (this.disposed) return
 
     this.disposeHighlighterSession()
@@ -730,7 +738,7 @@ export class EditorSyntaxController {
       session.getSnapshot(),
     )
     this.refreshHighlighterTheme()
-    this.refreshHighlightTokens(this.options.getDocumentVersion(), null)
+    this.refreshHighlightTokens(this.options.getDocumentVersion(), null, options)
     this.observeHighlighterTheme()
   }
 
@@ -766,6 +774,7 @@ export class EditorSyntaxController {
     this.unsubscribeHighlighterTheme?.()
     this.unsubscribeHighlighterTheme =
       this.highlighterSession?.onDidChangeTheme?.(() => {
+        this.failedHighlightRefreshes = 0
         this.refreshHighlightTokens(this.options.getDocumentVersion(), null, { delayMs: 0 })
       }) ?? null
   }
@@ -1235,9 +1244,7 @@ export class EditorSyntaxController {
       if (visibleRange) this.applyCachedSyntaxFolds(visibleRange)
     }
     if (!this.highlighterSession) {
-      const status: Exclude<EditorInitialHighlightStatus, 'loading'> = result.degraded
-        ? 'degraded'
-        : 'painted'
+      const status: SettledHighlightStatus = result.degraded ? 'degraded' : 'painted'
       this.commitInitialHighlightStatus(
         status,
         () => this.setTokens(nextTokens),
@@ -1473,6 +1480,7 @@ export class EditorSyntaxController {
         configurationGeneration,
       }))
     }
+    this.failedHighlightRefreshes = 0
     if (result.theme !== undefined) this.setHighlighterTheme(result.theme)
     this.commitInitialHighlightStatus(
       'painted',
@@ -1553,19 +1561,24 @@ export class EditorSyntaxController {
 
   private applyHighlightError(
     documentVersion: number,
-    _startedAt: number,
+    error: unknown,
     configurationGeneration: number,
   ): void {
     const session = this.options.getSession()
     if (!session || documentVersion !== this.options.getDocumentVersion()) return
     if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
+    const attempts = this.failedHighlightRefreshes
     this.options.log?.({
-      action: 'editor.syntax.highlight_cleared_after_error',
+      action: 'editor.syntax.highlight_retries_exhausted',
       level: 'warn',
-      syntax: this.debugContext(documentVersion),
+      error: syntaxLogError(error),
+      syntax: { ...this.debugContext(documentVersion), attempts },
     })
-    warnEditorSyntax('clear plugin highlighting after error', this.debugContext(documentVersion))
+    warnEditorSyntax(
+      `plugin highlighting failed ${attempts} times, clearing it: ${syntaxErrorMessage(error)}`,
+      this.debugContext(documentVersion),
+    )
     this.setHighlighterTheme(null)
     this.commitInitialHighlightStatus(
       'error',
@@ -1584,6 +1597,7 @@ export class EditorSyntaxController {
   ): void {
     if (documentVersion !== this.options.getDocumentVersion()) return
     if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
+    if (!change) this.failedHighlightRefreshes += 1
     this.options.log?.({
       action: 'editor.syntax.highlight_request_failed',
       level: 'warn',
@@ -1591,6 +1605,7 @@ export class EditorSyntaxController {
       syntax: {
         ...this.debugContext(documentVersion),
         changeKind: change?.kind ?? 'refresh',
+        failedRefreshes: this.failedHighlightRefreshes,
         startedAt,
       },
     })
@@ -1602,7 +1617,7 @@ export class EditorSyntaxController {
     })
 
     if (!change) {
-      this.applyHighlightError(documentVersion, startedAt, configurationGeneration)
+      this.retryHighlightRefresh(documentVersion, error, configurationGeneration)
       return
     }
 
@@ -1611,6 +1626,26 @@ export class EditorSyntaxController {
       changeKind: change.kind,
     })
     this.reloadHighlighterSession()
+  }
+
+  // Each retry lands through applyHighlightResult or recoverHighlightError, which drop it once
+  // the document version has moved on.
+  private retryHighlightRefresh(
+    documentVersion: number,
+    error: unknown,
+    configurationGeneration: number,
+  ): void {
+    const rung = this.failedHighlightRefreshes - 1
+    const delayMs = HIGHLIGHT_RETRY_DELAYS_MS[rung]
+    if (delayMs === undefined) {
+      this.applyHighlightError(documentVersion, error, configurationGeneration)
+      return
+    }
+    if (rung === HIGHLIGHT_RETRY_DELAYS_MS.length - 1) {
+      this.reloadHighlighterSession({ delayMs })
+      return
+    }
+    this.refreshHighlightTokens(documentVersion, null, { delayMs })
   }
 
   private debugContext(documentVersion: number): EditorSyntaxDebugPayload {
@@ -1713,10 +1748,7 @@ export class EditorSyntaxController {
     )
   }
 
-  private currentApplicableTerminalStatus(): Exclude<
-    EditorInitialHighlightStatus,
-    'loading'
-  > | null {
+  private currentApplicableTerminalStatus(): SettledHighlightStatus | null {
     if (this.highlighterSession) {
       if (this.initialHighlightState === 'error') return 'error'
       if (this.initialHighlightState === 'loading') return null
@@ -1740,7 +1772,7 @@ export class EditorSyntaxController {
   }
 
   private commitInitialHighlightStatus(
-    status: Exclude<EditorInitialHighlightStatus, 'loading'>,
+    status: SettledHighlightStatus,
     publish: () => void,
     configurationGeneration: number,
   ): void {
@@ -1780,7 +1812,7 @@ export class EditorSyntaxController {
 
   private emitInitialHighlightPaintIfReady(): void {
     if (!this.initialTextPainted || this.initialHighlightPaintEmitted) return
-    if (this.initialHighlightState === 'loading') return
+    if (this.initialHighlightState === 'loading' || this.initialHighlightState === 'idle') return
     if (this.initialPaintDocumentVersion !== this.options.getDocumentVersion()) return
 
     this.initialHighlightPaintEmitted = true

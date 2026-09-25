@@ -207,6 +207,35 @@ in render does not re-apply the keymap. `foldCommands.test.ts` pins each gate, t
 dispatches the fold commands the way Platform does, and Platform's `git-diff-fold` scenario presses
 the chord on a focused diff. Editor `6b5b04d`, `0b5b431` and the review-fix commit carry the change.
 
+## Row 11, 2026-09-25: the settled highlight is the signal
+
+`EditorInitialHighlightStatus` gains `idle`, the status before any document and after
+`clearDocument`. `plain` now only means "settled with no highlighter", so every value except `idle`
+and `loading` is settled; `EditorInitialPaintEvent`'s `status` excludes both. `decode` hides the
+rows on open and starts when the snapshot's status settles, on whichever update carries it.
+`TOKENS_WAIT_MS` and its timer are gone, and so is the decode entry in the timer baseline. Input
+during the wait now cancels too (the listeners used to attach only once the reveal began). A
+document that opens before its highlighter provider registers settles as `plain` and reveals
+uncoloured; Platform registers Shiki with the critical plugins, so its editors are not affected.
+
+Platform plan 071's retry lands with it, so `error` is settled only once the retries are spent. A
+refresh that fails (the document-open path)
+retries after 100 ms on the same session, then reloads the highlighter session and retries after
+400 ms, and then settles as `error`. The backoff goes through the controller's existing
+`LatestAsyncRequest`, so no new timer. Each attempt still logs `editor.syntax.highlight_request_failed`
+at `warn` (now with `failedRefreshes`); exhaustion logs one `editor.syntax.highlight_retries_exhausted`
+at `warn` with `attempts` and the final error, replacing `highlight_cleared_after_error`. The
+document-version and configuration checks already guard every attempt, and an edit replaces a
+pending retry. A success, a new document, a provider reload and a highlighter theme change reset
+the count. The edit path still reloads the session and does not count. The shared Platform logs for
+2026-09-20 to 2026-09-25 hold no `highlight_request_failed` or `highlight_cleared_after_error`
+event, so the retry hides no live failure.
+
+`packages/editor/test/syntax.test.ts` "highlight refresh retry" (the bound of three attempts and
+two sessions, recovery, a superseded retry, the edit path, and the reset) and
+`packages/decode/test/plugin.test.ts` (no reveal after 60 s of fake time while `loading`, a start on
+`error` and `plain`, input during the wait) fail without the change.
+
 ## Scope
 
 API design across `packages/editor` and the bundled plugins. Each section below ships on its own;
@@ -226,7 +255,7 @@ this document is the inventory and the contract, not one change.
 | Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                                              |
 | `pointer-events: auto`                         | an `interactive` flag on a gutter cell contribution                                                                         |
 | Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                                       |
-| `TOKENS_WAIT_MS`                               | the initial-highlight terminal status exposed to contributions                                                              |
+| `TOKENS_WAIT_MS`                               | done: `idle` before a document, so every status but `idle` and `loading` is settled                                         |
 
 ## Steps
 
