@@ -365,3 +365,8 @@ portalled elements. `themeColors.browser.test.ts` checks actual row and selectio
 
 The owner chose short-lived row presentation handles invalidated before DOM recycling, with decode
 reveals cancelled on scrolling and viewport changes. Decode continues to own the animation.
+
+Row 10 implemented: `getRowPresentation` returns a handle whose abort signal fires before text
+replacement, row recycling, provisional paint, or view disposal. Decode releases its animations
+and handles on that signal and on every viewport change. Chromium coverage checks the original
+text is still present when invalidation arrives, including a long-distance scroll.
