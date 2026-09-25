@@ -40,6 +40,7 @@ export {
   REQUEST_CANCELLED,
 } from './protocol'
 export {
+  LspTransportClosedError,
   createWebSocketLspTransport,
   createWorkerLspTransport,
   type LspManagedTransport,

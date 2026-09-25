@@ -31,7 +31,7 @@ export type LspConnectionPoolEvent = {
   readonly key: string
   readonly leaseCount: number
   readonly status: LanguageServerStatus
-  /** Time to `initialize` for `ready`; the connection's whole life for `closed`. */
+  /** Time to `initialize` for `ready`; the connection's life so far for `closed`, `retired` and `error`. */
   readonly durationMs?: number
   readonly reachedReady?: boolean
   readonly error?: unknown
@@ -218,7 +218,11 @@ export class LspConnectionPool {
         for (const lease of leasesOf(entry)) lease.callbacks.onStatusChange?.(status)
       },
       onError: (error) => {
-        this.#emit(entry, 'error', { error })
+        this.#emit(entry, 'error', {
+          durationMs: Math.round(now() - entry.createdAt),
+          error,
+          reachedReady: entry.readyAt !== null,
+        })
         for (const lease of leasesOf(entry)) lease.callbacks.onError?.(error)
       },
     }

@@ -624,3 +624,11 @@ Code fades the first with `opacity` on an inline span and strikes the second. Hi
 inside `color-mix()` to transparent, and Firefox and WebKit draw an uncoloured decoration in the
 element's colour, WebKit repainting the text too. Paint both marks as twins that carry each
 producer's own colour, and keep colourless layers below the tokens.
+
+## TypeScript worker at language-server parity
+
+Added 2026-09-25. `@singapore-editor/typescript-lsp` answers hover, completion, navigation and
+semantic tokens, but not rename, symbols, signature help, code actions, formatting or pull
+diagnostics (which it advertises). It also only knows the files the host pushes up front. A host with no server should
+get from the worker everything Platform gets from its server-side language servers for
+TypeScript.
