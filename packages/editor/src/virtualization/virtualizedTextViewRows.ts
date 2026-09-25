@@ -1,4 +1,4 @@
-import { invalidateRowPresentations } from '../rowPresentation'
+import { completeRowPresentation, invalidateRowPresentations } from '../rowPresentation'
 import { createError } from '../logging/evlog'
 import { pointViewport } from './pointViewport'
 import type { SavedPaint, SavedPaintRow } from '../editor/paintSnapshot'
@@ -624,6 +624,7 @@ function updateRow(
     top: item.start,
     chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
   })
+  completeRowPresentation(row.element)
 }
 
 function updateRowElement(
@@ -720,6 +721,7 @@ function updateRowAfterSameLineEdit(
     top: item.start,
     chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
   })
+  completeRowPresentation(row.element)
   return editedRowPatchedInPlace
 }
 

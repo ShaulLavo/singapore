@@ -4,9 +4,11 @@ export type EditorRowPresentation = {
   dispose(): void
 }
 
+const invalidatedRows = new WeakSet<HTMLElement>()
 const presentations = new WeakMap<HTMLElement, Set<AbortController>>()
 
-export function acquireRowPresentation(element: HTMLElement): EditorRowPresentation {
+export function acquireRowPresentation(element: HTMLElement): EditorRowPresentation | null {
+  if (invalidatedRows.has(element)) return null
   const controller = new AbortController()
   const handles = presentations.get(element) ?? new Set<AbortController>()
   handles.add(controller)
@@ -24,8 +26,13 @@ export function acquireRowPresentation(element: HTMLElement): EditorRowPresentat
 }
 
 export function invalidateRowPresentations(element: HTMLElement): void {
+  invalidatedRows.add(element)
   const handles = presentations.get(element)
   if (!handles) return
   presentations.delete(element)
   for (const controller of handles) controller.abort()
+}
+
+export function completeRowPresentation(element: HTMLElement): void {
+  invalidatedRows.delete(element)
 }
