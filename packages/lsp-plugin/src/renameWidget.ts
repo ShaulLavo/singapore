@@ -31,6 +31,7 @@ type RenamePromptState = {
 
 const THEME_VARIABLES = [
   '--editor-background',
+  '--editor-popup-background',
   '--editor-foreground',
   '--editor-font-family',
   '--editor-font-size',
@@ -51,6 +52,7 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
   element.className = `${namespace}-rename`
   element.style.zIndex = '60'
   element.style.display = 'none'
+  element.style.background = 'var(--editor-popup-background, var(--editor-background, #1e1e1e))'
 
   const input = options.document.createElement('input')
   input.className = `${namespace}-rename-input`
