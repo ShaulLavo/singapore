@@ -12,7 +12,7 @@
   {
     "file": "packages/editor/src/editor/inputSelectionController.ts",
     "function": "commandDocumentText",
-    "reason": "Edit actions and exact-occurrence commands still take one string; each is a user command, never typing or plugin delivery."
+    "reason": "Reindent, trim trailing whitespace and the exact-occurrence commands still take one string; each is a user command, never typing or plugin delivery."
   },
   {
     "file": "packages/lsp/src/client.ts",
