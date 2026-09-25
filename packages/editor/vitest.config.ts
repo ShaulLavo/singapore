@@ -103,6 +103,28 @@ export default defineConfig({
             instances: [{ browser: 'chromium' }],
           },
           include: ['test/**/*.browser.test.ts'],
+          exclude: ['test/highlightPaint.browser.test.ts'],
+        },
+      },
+      {
+        test: {
+          name: 'highlight-paint',
+          sequence: { groupOrder: 2 },
+          include: ['test/highlightPaint.browser.test.ts'],
+          browser: {
+            enabled: true,
+            headless: true,
+            viewport: { width: 800, height: 600 },
+            fileParallelism: false,
+            provider: playwright(),
+            commands: {
+              proofHighlightPaintScreenshot: async ({ iframe }, hostId: string) => {
+                const image = await iframe.locator(`#${hostId} [data-editor-virtual-row="0"]`).screenshot({ animations: 'disabled' })
+                return image.toString('base64')
+              },
+            },
+            instances: [{ browser: 'chromium', name: 'highlight-paint-chromium' }, { browser: 'firefox', name: 'highlight-paint-firefox' }, { browser: 'webkit', name: 'highlight-paint-webkit' }],
+          },
         },
       },
     ],

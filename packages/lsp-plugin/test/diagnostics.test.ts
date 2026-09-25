@@ -32,17 +32,26 @@ describe('language server diagnostics', () => {
     expect(groups.warning).toEqual([{ start: 2, end: 3 }])
   })
 
-  it('adds a deprecated-tagged diagnostic to the deprecated layer on top of its severity', () => {
+  it('keeps deprecated hints and replaces unnecessary hint washes with a fade layer', () => {
     const groups = diagnosticHighlightGroups(snapshotDocument('abcdef'), [
       { ...diagnostic(4, 0, 0, 3), tags: [2] },
       { ...diagnostic(4, 0, 3, 6), tags: [1] },
     ])
 
-    expect(groups.hint).toEqual([
-      { start: 0, end: 3 },
-      { start: 3, end: 6 },
-    ])
+    expect(groups.hint).toEqual([{ start: 0, end: 3 }])
+    expect(groups.unnecessary).toEqual([{ start: 3, end: 6 }])
     expect(groups.deprecated).toEqual([{ start: 0, end: 3 }])
+  })
+
+  it('combines unnecessary and deprecated tags while retaining error severity paint', () => {
+    const groups = diagnosticHighlightGroups(snapshotDocument('abcdef'), [
+      { ...diagnostic(1, 0, 0, 3), tags: [1, 2] },
+      { ...diagnostic(4, 0, 3, 6), tags: [1, 2] },
+    ])
+    expect(groups.error).toEqual([{ start: 0, end: 3 }])
+    expect(groups.hint).toEqual([])
+    expect(groups.unnecessary).toEqual([{ start: 0, end: 3 }, { start: 3, end: 6 }])
+    expect(groups.deprecated).toEqual(groups.unnecessary)
   })
 
   it('does not create highlights for empty diagnostics in empty files', () => {

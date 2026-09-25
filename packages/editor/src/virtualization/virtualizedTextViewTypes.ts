@@ -1,3 +1,4 @@
+import type { HighlightOverlay } from './highlightOverlay'
 import type { TextContent } from '../textContent'
 import type {
   EditorGutterContribution,
@@ -118,15 +119,25 @@ export type VirtualizedTextHighlightRange = {
   readonly end: number
 }
 
-export type VirtualizedTextHighlightStyle = {
-  readonly backgroundColor?: string
-  readonly color?: string
-  readonly textDecoration?: string
-  // Stacking against other highlight groups, highest paints last. Without it
-  // the CSS highlight registry falls back to registration order, which shifts
-  // as groups scroll in and out of the mounted window.
-  readonly zIndex?: number
-}
+export type VirtualizedTextHighlightStyle =
+  | {
+      readonly overlay: HighlightOverlay
+      readonly backgroundColor?: never
+      readonly color?: never
+      readonly textDecoration?: never
+      readonly zIndex?: never
+      readonly dimmable?: never
+    }
+  | {
+      readonly overlay?: never
+      readonly backgroundColor?: string
+      readonly color?: string
+      readonly textDecoration?: string
+      /** Stacking within the color-producing or colorless highlight band. */
+      readonly zIndex?: number
+      /** Keep this producer's color at full opacity inside a fade mask. */
+      readonly dimmable?: boolean
+    }
 
 export type VirtualizedTextRowDecoration = {
   /** Declares that these classes change only foreground/background paint. */

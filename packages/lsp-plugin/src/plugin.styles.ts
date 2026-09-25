@@ -136,12 +136,13 @@ export const DIAGNOSTIC_STYLES: Record<
   hint: { backgroundColor: DIAGNOSTIC_HINT_BACKGROUND },
 }
 
-/**
- * The `Deprecated` diagnostic tag. No colour and no z-index: the stroke takes the text's own colour,
- * so it never contends with syntax or error colouring for the glyphs it crosses out.
- */
+export const UNNECESSARY_DIAGNOSTIC_OPACITY = registerEditorColor('lsp.diagnostic.unnecessaryOpacity', {
+  dark: '#000a',
+  light: '#0007',
+})
+
 export const DEPRECATED_DIAGNOSTIC_STYLE: VirtualizedTextHighlightStyle = {
-  textDecoration: 'line-through',
+  overlay: { textDecoration: 'line-through' },
 }
 
 // Opacity descends with severity, so a line carrying several diagnostics still reads as its worst

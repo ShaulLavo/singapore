@@ -579,6 +579,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.codeActions.update(kind)
     this.formatOnType?.update(snapshot, kind, change ?? null)
     this.syncSemanticTokens(snapshot, kind)
+    if (kind === 'tokens') this.diagnostics.updateTheme(snapshot.theme ?? null)
   }
 
   public dispose(): void {
