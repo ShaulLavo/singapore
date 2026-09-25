@@ -1,4 +1,4 @@
-import './theme'
+import { registerDiffColors } from './theme'
 import type {
   EditorContributionChange,
   EditorDecorationContribution,
@@ -121,6 +121,7 @@ let nextDiffPluginId = 0
  * it.
  */
 export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
+  registerDiffColors()
   const runtime = new DiffPluginRuntime(options)
 
   return {

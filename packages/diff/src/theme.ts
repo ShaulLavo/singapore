@@ -16,4 +16,6 @@ const colors = {
   'hunk.foreground': '#9cdcfe',
 }
 
-for (const [id, fallback] of Object.entries(colors)) registerEditorColor(`diff.${id}`, fallback)
+export function registerDiffColors(): void {
+  for (const [id, fallback] of Object.entries(colors)) registerEditorColor(`diff.${id}`, fallback)
+}

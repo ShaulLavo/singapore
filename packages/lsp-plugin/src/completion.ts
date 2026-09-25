@@ -546,7 +546,11 @@ function syncEditorThemeVariables(element: HTMLElement, source: HTMLElement): vo
 
   for (const variable of COMPLETION_THEME_VARIABLES) {
     const value = style.getPropertyValue(variable)
-    if (value) element.style.setProperty(variable, value)
+    if (value) {
+      element.style.setProperty(variable, value)
+      continue
+    }
+    element.style.removeProperty(variable)
   }
 }
 

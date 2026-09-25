@@ -952,7 +952,11 @@ function syncEditorThemeVariables(target: HTMLElement, source: HTMLElement): voi
   for (const variable of TOOLTIP_THEME_VARIABLES) {
     const value =
       source.style.getPropertyValue(variable).trim() || style.getPropertyValue(variable).trim()
-    if (value) target.style.setProperty(variable, value)
+    if (value) {
+      target.style.setProperty(variable, value)
+      continue
+    }
+    target.style.removeProperty(variable)
   }
 }
 
