@@ -146,6 +146,7 @@
     "lsp-core": [],
     "lsp-plugin": [
       [
+        "packages/lsp-plugin/src/diagnostics.ts",
         "packages/lsp-plugin/src/document.ts",
         "packages/lsp-plugin/src/documentSnapshot.ts",
         "packages/lsp-plugin/src/documentSync.ts",

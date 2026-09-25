@@ -267,6 +267,8 @@ export class LspConnection {
     this.reconnectAttempts += 1
     this.setStatus('loading')
     this.callbacks.onReconnecting?.(error)
+    // @justification A reconnect backoff, not rendering work: the handle is kept, cleared on dispose,
+    // and a disposed connection ignores it.
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       if (!this.disposed) this.connectTransport()

@@ -573,6 +573,8 @@ export function createTypeScriptLanguageSession(
 
   function scheduleDiagnostics(uri: lsp.DocumentUri): void {
     clearScheduledDiagnostics(uri)
+    // @justification Debounces diagnostics per document inside the worker, off the main thread; the
+    // handle is kept per URI and cleared on the next edit or close.
     const timer = setTimeout(() => {
       diagnosticTimers.delete(uri)
       void publishDiagnosticsForUri(uri)
@@ -607,6 +609,8 @@ export function createTypeScriptLanguageSession(
   function scheduleDiagnosticRefresh(): void {
     if (clientCapabilities.workspace?.diagnostics?.refreshSupport !== true) return
     if (refreshTimer) clearTimeout(refreshTimer)
+    // @justification Coalesces diagnostic refresh requests inside the worker; one handle, cleared
+    // before every reschedule.
     refreshTimer = setTimeout(() => {
       refreshTimer = null
       void requestClient(DIAGNOSTIC_REFRESH, undefined).catch(() => undefined)
@@ -826,6 +830,8 @@ export function createTypeScriptLanguageSession(
     serverRequestCount += 1
     const id = `typescript-lsp-${serverRequestCount}`
     return new Promise((resolve, reject) => {
+      // @justification A request timeout inside the worker: it only rejects the pending request, and
+      // the answer clears it.
       const timer = setTimeout(() => {
         serverRequests.delete(id)
         reject(rpcError(REQUEST_FAILED, `The host did not answer ${method}`))
@@ -979,5 +985,6 @@ function readClientCapabilities(params: unknown): lsp.ClientCapabilities {
 }
 
 function delay(milliseconds: number): Promise<void> {
+  // @justification Only resolves an awaited promise inside the worker; nothing renders from it.
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
