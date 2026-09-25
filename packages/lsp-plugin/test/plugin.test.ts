@@ -1,4 +1,5 @@
 import { LspConnectionPool } from '../src/lspConnectionPool'
+import type { LspReconnectOptions } from '../src/lspConnection'
 import { createLanguageServerDocument } from '../src/document'
 import { createEditorTextBuffer, createEditorBufferSession } from '@singapore-editor/core/document'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
@@ -903,6 +904,68 @@ describe('shared language-server documents', () => {
     pool.dispose()
   })
 
+  it('reconnects after the server goes away and re-opens the document on the new one', async () => {
+    vi.useFakeTimers()
+    const pool = new LspConnectionPool()
+    const freshness: string[] = []
+    const document = freshnessDocument(pool, (summary) => freshness.push(summary.freshness), {
+      delaysMs: [100],
+    })
+    const first = FakeWebSocket.instances.at(-1)!
+    first.open()
+    await flushPromises()
+    first.receive(initializeResponse(jsonMessage(first.sent[0])))
+    await document.lanes[0]!.connection.ready
+    first.receive(publishDiagnosticsMessage())
+    expect(freshness.at(-1)).toBe('current')
+
+    first.close()
+    expect(document.lanes[0]!.sync.diagnostics).toHaveLength(0)
+    expect(freshness.at(-1)).toBe('unavailable')
+    expect(document.lanes[0]!.status).toBe('loading')
+    await vi.advanceTimersByTimeAsync(100)
+
+    const second = FakeWebSocket.instances.at(-1)!
+    expect(second).not.toBe(first)
+    second.open()
+    await flushPromises()
+    second.receive(initializeResponse(jsonMessage(second.sent[0])))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sentMethods(second)).toContain('textDocument/didOpen')
+    expect(document.lanes[0]!.status).toBe('ready')
+    expect(freshness.at(-1)).toBe('silent')
+    second.receive(publishDiagnosticsMessage())
+    expect(freshness.at(-1)).toBe('current')
+    document.dispose()
+    pool.dispose()
+    vi.useRealTimers()
+  })
+
+  it('gives up once its reconnect attempts run out', async () => {
+    vi.useFakeTimers()
+    const pool = new LspConnectionPool()
+    const document = freshnessDocument(pool, () => undefined, { delaysMs: [100] })
+    const created = FakeWebSocket.instances.length
+    const first = FakeWebSocket.instances.at(-1)!
+    first.open()
+    await flushPromises()
+    first.receive(initializeResponse(jsonMessage(first.sent[0])))
+    await document.lanes[0]!.connection.ready
+
+    first.close()
+    await vi.advanceTimersByTimeAsync(100)
+    FakeWebSocket.instances.at(-1)!.close()
+    await vi.advanceTimersByTimeAsync(1000)
+
+    expect(document.lanes[0]!.status).toBe('error')
+    expect(document.lanes[0]!.diagnosticsFreshness).toBe('unavailable')
+    // One reconnect for the one delay, then nothing more.
+    expect(FakeWebSocket.instances.length - created).toBe(1)
+    document.dispose()
+    pool.dispose()
+    vi.useRealTimers()
+  })
+
   it('says a push server that has not published is silent, never pending', async () => {
     const pool = new LspConnectionPool()
     const freshness: string[] = []
@@ -994,6 +1057,7 @@ describe('shared language-server documents', () => {
 function freshnessDocument(
   pool: LspConnectionPool,
   onDiagnostics: (summary: LanguageServerDiagnosticSummary) => void,
+  reconnect?: LspReconnectOptions,
 ) {
   return createLanguageServerDocument({
     buffer: createEditorTextBuffer('# Notes'),
@@ -1007,6 +1071,7 @@ function freshnessDocument(
         connectionProvider: pool.provider('test'),
         webSocketTransportOptions: { WebSocketCtor: FakeWebSocket },
         onDiagnostics,
+        reconnect,
       },
     ],
   })

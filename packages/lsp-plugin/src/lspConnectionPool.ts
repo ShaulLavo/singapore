@@ -25,6 +25,7 @@ export type LspConnectionPoolEvent = {
     | 'released'
     | 'closed'
     | 'retired'
+    | 'reconnecting'
     | 'error'
     | 'handler_ignored'
   readonly key: string
@@ -194,6 +195,15 @@ export class LspConnectionPool {
       },
       onDiagnosticRefresh: () => {
         for (const lease of leasesOf(entry)) lease.callbacks.onDiagnosticRefresh?.()
+      },
+      onReconnecting: (error) => {
+        entry.connected = false
+        this.#emit(entry, 'reconnecting', {
+          durationMs: Math.round(now() - entry.createdAt),
+          error,
+          reachedReady: entry.readyAt !== null,
+        })
+        for (const lease of leasesOf(entry)) lease.callbacks.onReconnecting?.(error)
       },
       onUnavailable: () => {
         entry.connected = false

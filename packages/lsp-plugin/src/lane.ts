@@ -37,6 +37,7 @@ export type AcquiredLanguageServerLane = {
 
 export type LanguageServerLaneCallbacks = {
   onDiagnosticRefresh?(): void
+  onReconnecting?(): void
   onPublishDiagnostics?(params: unknown): void
   onReady?(): void
   onUnavailable?(): void
@@ -79,6 +80,10 @@ export function acquireResolvedLanguageServerLane(
       void finishConnection()
     },
     onDiagnosticRefresh: () => callbacks.onDiagnosticRefresh?.(),
+    onReconnecting: () => {
+      usable = false
+      callbacks.onReconnecting?.()
+    },
     onUnavailable: () => {
       usable = false
       callbacks.onUnavailable?.()
@@ -176,6 +181,7 @@ function resolveConnectionOptions(
     ),
     clientInfo: options.clientInfo,
     notificationHandlers: options.notificationHandlers,
+    reconnect: options.reconnect,
     createTransport: options.createTransport,
   }
 }

@@ -13,6 +13,13 @@ import type * as lsp from 'vscode-languageserver-protocol'
 import type { LanguageServerStatus } from './types'
 
 const DIAGNOSTIC_REFRESH_METHOD = 'workspace/diagnostic/refresh'
+/** A connection that stayed up this long ended a crash streak; its next loss starts a new one. */
+const STABLE_CONNECTION_MS = 60_000
+
+export type LspReconnectOptions = {
+  /** One delay per attempt; when they run out the connection gives up and reports unavailable. */
+  readonly delaysMs: readonly number[]
+}
 
 export type LspConnectionTransportFactory = () => LspManagedTransport | Promise<LspManagedTransport>
 
@@ -35,12 +42,17 @@ export type LspConnectionOptions = {
    * Merged around the connection's own handlers rather than replacing them. See createClient.
    */
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
+  /** Reconnects a transport that closed or failed on its own. Absent, the first loss is final. */
+  readonly reconnect?: LspReconnectOptions
   createTransport(): LspManagedTransport | Promise<LspManagedTransport>
 }
 
 export type LspConnectionCallbacks = {
+  /** Also called again after a reconnect: the client re-initialized and re-opened its documents. */
   onConnected(): void
   onDiagnosticRefresh?(): void
+  /** The transport is gone and another is on its way; what the server said so far is stale. */
+  onReconnecting?(error: unknown): void
   onUnavailable(): void
   onPublishDiagnostics(params: unknown): void
   onStatusChange?: (status: LanguageServerStatus) => void
@@ -73,6 +85,9 @@ export class LspConnection {
   private removeTransportCloseListener: (() => void) | null = null
   private disposed = false
   private status: LanguageServerStatus = 'idle'
+  private reconnectAttempts = 0
+  private readyAt: number | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   public constructor(
     private readonly options: LspConnectionOptions,
@@ -90,6 +105,8 @@ export class LspConnection {
     if (this.disposed) return
 
     this.disposed = true
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
     this.removeTransportCloseListener?.()
     this.removeTransportCloseListener = null
     this.client.disconnect()
@@ -170,6 +187,7 @@ export class LspConnection {
   private handleConnected(): void {
     if (this.disposed) return
 
+    this.readyAt = now()
     this.setStatus('ready')
     this.callbacks.onConnected()
   }
@@ -177,30 +195,49 @@ export class LspConnection {
   private handleConnectError(error: unknown): void {
     if (this.disposed) return
 
-    this.closeFailedConnection()
-    this.setStatus('error')
-    this.handleError(error)
+    this.detachTransport()
+    this.giveUpOrReconnect(error)
   }
 
   private handleTransportClose(error?: unknown): void {
     if (this.disposed) return
 
-    this.removeTransportCloseListener?.()
-    this.removeTransportCloseListener = null
-    this.transport = null
-    this.client.disconnect()
-    this.setStatus('error')
-    this.callbacks.onUnavailable()
-    this.handleError(error ?? new Error('LSP transport closed'))
+    this.detachTransport()
+    this.giveUpOrReconnect(error ?? new Error('LSP transport closed'))
   }
 
-  private closeFailedConnection(): void {
+  private detachTransport(): void {
     this.removeTransportCloseListener?.()
     this.removeTransportCloseListener = null
     this.client.disconnect()
     this.transport?.close()
     this.transport = null
+  }
+
+  private giveUpOrReconnect(error: unknown): void {
+    if (this.scheduleReconnect(error)) return
+
+    this.setStatus('error')
     this.callbacks.onUnavailable()
+    this.handleError(error)
+  }
+
+  private scheduleReconnect(error: unknown): boolean {
+    if (this.readyAt !== null && now() - this.readyAt >= STABLE_CONNECTION_MS) {
+      this.reconnectAttempts = 0
+    }
+    this.readyAt = null
+    const delay = this.options.reconnect?.delaysMs[this.reconnectAttempts]
+    if (delay === undefined) return false
+
+    this.reconnectAttempts += 1
+    this.setStatus('loading')
+    this.callbacks.onReconnecting?.(error)
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (!this.disposed) this.connectTransport()
+    }, delay)
+    return true
   }
 
   private setStatus(status: LanguageServerStatus): void {
@@ -234,6 +271,10 @@ export function createWorkerLspTransportFactory(
       messageFormat: 'json',
       terminateOnClose: true,
     })
+}
+
+function now(): number {
+  return typeof performance === 'undefined' ? Date.now() : performance.now()
 }
 
 function isTransportPromise(

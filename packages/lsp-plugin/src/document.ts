@@ -147,7 +147,15 @@ export class DocumentLanguageServerLane {
         onReady: () => {
           this.unavailable = false
           this.synchronize()
+          // After a reconnect the document is the same one; only a new request can refresh it.
+          if (!this.pullDiagnostics?.pending) this.pullDiagnostics?.synchronize()
           this.republishSummary()
+          this.notify()
+        },
+        onReconnecting: () => {
+          this.unavailable = true
+          this.pullDiagnostics?.cancel()
+          this.sync.clearDiagnostics()
           this.notify()
         },
         onDiagnosticRefresh: () => this.pullDiagnostics?.refresh(),

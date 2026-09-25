@@ -15,7 +15,7 @@ import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LanguageServerConnectionContext } from './connectionContext'
 import type { LanguageServerDocumentSyncController } from './documentSyncController'
-import type { LspConnectionProvider } from './lspConnection'
+import type { LspConnectionProvider, LspReconnectOptions } from './lspConnection'
 import type { ParsedWorkspaceEdit } from './workspaceEdit'
 import type { WorkspaceTextDocumentProvenance } from './workspaceTextEdits'
 export type { LanguageServerConnectionContext } from './connectionContext'
@@ -256,6 +256,8 @@ export type LanguageServerLaneOptions = LanguageServerLaneHostOptions & {
   readonly webSocketRoute: string | URL
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
   readonly connectionProvider?: LspConnectionProvider
+  /** Reconnects after the server goes away on its own; off unless given. */
+  readonly reconnect?: LspReconnectOptions
   readonly readyNotifications?: readonly LanguageServerReadyNotification[]
   onConnectionCreated?(context: LanguageServerConnectionContext): EditorDisposable | void
   onConnected?(context: LanguageServerConnectionContext): void

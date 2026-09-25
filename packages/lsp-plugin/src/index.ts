@@ -43,6 +43,7 @@ export {
   type LspConnectionLease,
   type LspConnectionOptions,
   type LspConnectionProvider,
+  type LspReconnectOptions,
   type LspConnectionTransportFactory,
 } from './lspConnection'
 export {
