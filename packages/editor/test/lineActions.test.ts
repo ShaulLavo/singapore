@@ -41,8 +41,10 @@ function editActionForCommand(
   selections: ResolvedSelection[],
   options?: EditorEditActionOptions,
 ) {
-  if (command === 'editor.action.trimTrailingWhitespace') return trimTrailingWhitespaceAction(text)
-  return editActionForSnapshot(command, createStringTextSnapshot(text), selections, options)
+  const source = createStringTextSnapshot(text)
+  if (command === 'editor.action.trimTrailingWhitespace')
+    return trimTrailingWhitespaceAction(source)
+  return editActionForSnapshot(command, source, selections, options)
 }
 
 /** Applies an action's edits to `text`, so tests assert the resulting document, not edit shapes. */

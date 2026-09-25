@@ -1,7 +1,6 @@
 import type { DocumentSessionEditSelection } from '../documentSession'
 import type { TextReadSnapshot } from '../documentTextSnapshot'
 import { normalizeTabSize } from '../displayTransforms'
-import { MAX_BOUNDARY_WINDOW } from '../graphemes'
 import {
   selectionOffsetsWithAffinity,
   selectionRangeWithAffinity,
@@ -34,6 +33,7 @@ import {
   type LineMap,
   type RowRange,
 } from './lineMap'
+import { rangeInRowWindow } from './rowWindow'
 
 export type EditorEditActionCommandId =
   | 'deleteWordLeft'
@@ -138,6 +138,9 @@ type LineSelectionDescriptor = {
   readonly head: RelativePoint
 }
 
+const TAB = 0x09
+const SPACE = 0x20
+
 /**
  * What a language nobody has described gets.
  *
@@ -149,13 +152,6 @@ const DEFAULT_COMMENT_TOKENS: EditorCommentTokens = {
   line: '//',
   block: { open: '/*', close: '*/' },
 }
-
-/**
- * How far a word scan may read past the offset it stops at: the grapheme search's widest window.
- * A window read around the caret is trusted only where the scan stopped at least this far inside it.
- */
-const WORD_SCAN_REACH = MAX_BOUNDARY_WINDOW
-const WORD_WINDOW = 2 * WORD_SCAN_REACH
 
 export function isEditorEditActionCommand(
   command: EditorCommandId,
@@ -287,19 +283,50 @@ function deleteWordAction(
  * One edit per affected line rather than one whole-document edit, so untouched lines keep their
  * piece-table sharing and every anchor outside the trimmed runs survives.
  */
-export function trimTrailingWhitespaceAction(text: string): EditorEditActionResult {
-  const edits: TextEdit[] = []
-  let start = 0
+export function trimTrailingWhitespaceAction(source: TextReadSnapshot): EditorEditActionResult {
+  const scan = new TrailingWhitespaceScan()
+  source.forEachTextChunk((text, start) => scan.feed(text, start))
 
-  while (start <= text.length) {
-    const lineBreak = text.indexOf('\n', start)
-    const end = lineBreak === -1 ? text.length : lineBreak
-    const trimmedEnd = start + text.slice(start, end).replace(/[ \t]+$/, '').length
-    if (trimmedEnd < end) edits.push({ from: trimmedEnd, text: '', to: end })
-    start = end + 1
+  return { edits: scan.finish(source.length), timingName: 'editor.trimTrailingWhitespace' }
+}
+
+/** Streams chunks, carrying a run of spaces and tabs that reaches a chunk's end into the next. */
+class TrailingWhitespaceScan {
+  readonly #edits: TextEdit[] = []
+  #runStart = -1
+
+  feed(text: string, start: number): void {
+    let lineStart = 0
+    for (let end = text.indexOf('\n'); end !== -1; end = text.indexOf('\n', end + 1)) {
+      this.#runStart = this.runStartBefore(text, start, lineStart, end)
+      this.endRow(start + end)
+      lineStart = end + 1
+    }
+    this.#runStart = this.runStartBefore(text, start, lineStart, text.length)
   }
 
-  return { edits, timingName: 'editor.trimTrailingWhitespace' }
+  finish(length: number): readonly TextEdit[] {
+    this.endRow(length)
+    return this.#edits
+  }
+
+  /** Where the run ending at `end` starts in the document, or -1 when there is none. */
+  private runStartBefore(text: string, start: number, lineStart: number, end: number): number {
+    let index = end
+    while (index > lineStart && isBlank(text.charCodeAt(index - 1))) index -= 1
+    // The run began in an earlier chunk when it fills everything this chunk had before `end`.
+    if (index === 0 && this.#runStart !== -1) return this.#runStart
+    return index < end ? start + index : -1
+  }
+
+  private endRow(end: number): void {
+    if (this.#runStart !== -1) this.#edits.push({ from: this.#runStart, text: '', to: end })
+    this.#runStart = -1
+  }
+}
+
+function isBlank(code: number): boolean {
+  return code === SPACE || code === TAB
 }
 
 function sortLinesAction(
@@ -672,34 +699,10 @@ function wordDeleteRange(
     return { start: selection.startOffset, end: selection.endOffset }
   }
 
-  const head = selection.headOffset
-  const line = source.lineRange(source.lineAt(head))
-  // The caret's row with the break on either side: no scan crosses a break, and a delete at the
-  // row's edge takes that break.
-  const first = Math.max(0, line.start - 1)
-  const last = Math.min(source.length, line.end + 1)
-
-  for (let reach = WORD_WINDOW; ; reach *= 4) {
-    const start = Math.max(first, head - reach)
-    const end = Math.min(last, head + reach)
-    const text = source.readRange(start, end)
-    const range = wordDeleteRangeInText(text, head - start, direction, granularity, separators)
-    if (settledInside(text, range, direction, start === first, end === last)) {
-      return { start: start + range.start, end: start + range.end }
-    }
-  }
-}
-
-/** Whether a scan stopped far enough from a window edge that the text past it could not move it. */
-function settledInside(
-  window: string,
-  range: OffsetRange,
-  direction: 'left' | 'right',
-  startsRow: boolean,
-  endsRow: boolean,
-): boolean {
-  if (direction === 'left') return startsRow || range.start >= WORD_SCAN_REACH
-  return endsRow || window.length - range.end >= WORD_SCAN_REACH
+  // The row's window carries the break on either side, which a delete at the row's edge takes.
+  return rangeInRowWindow(source, selection.headOffset, (text, head) =>
+    wordDeleteRangeInText(text, head, direction, granularity, separators),
+  )
 }
 
 function wordDeleteRangeInText(

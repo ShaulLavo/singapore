@@ -892,9 +892,9 @@
     },
     {
       "id": "E055",
-      "file": "e055-edit-commands-read-lines.md",
+      "reference": "../docs/performance/e055-edit-commands-read-lines.md",
       "title": "Edit commands read the lines they touch",
-      "status": "In progress",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

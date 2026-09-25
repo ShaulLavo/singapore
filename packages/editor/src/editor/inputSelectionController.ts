@@ -105,6 +105,7 @@ import {
   findNextExactOccurrenceFromRange,
   occurrenceQueryForSelection,
   occurrenceSelectTimingName,
+  wordRangeAt,
   type OccurrenceQuery,
   type OccurrenceSelectionChange,
 } from './occurrences'
@@ -1257,7 +1258,7 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
 
-    const text = commandDocumentText(session)
+    const text = session.getTextSnapshot()
     const query = this.occurrenceQueryForCurrentSelection(text)
     if (!query) return false
 
@@ -1283,7 +1284,7 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
 
-    const text = commandDocumentText(session)
+    const text = session.getTextSnapshot()
     const selectionSet = session.getSelections()
     const resolved = this.resolvedSelections()
     const preferredIndex = lastAddedSelectionIndex(selectionSet)
@@ -3281,7 +3282,7 @@ export class InputSelectionController {
     source: ResolvedSelection,
     wholeWord: boolean,
   ): OccurrenceSelectionChange | null {
-    const text = commandDocumentText(session)
+    const text = session.getTextSnapshot()
     if (resolved.length === 1 && source.collapsed) {
       return this.selectCurrentWordForOccurrence(text, source)
     }
@@ -3315,7 +3316,9 @@ export class InputSelectionController {
     }
   }
 
-  private occurrenceQueryForCurrentSelection(text: string): OccurrenceQueryWithSources | null {
+  private occurrenceQueryForCurrentSelection(
+    text: TextReadSnapshot,
+  ): OccurrenceQueryWithSources | null {
     const resolved = this.resolvedSelections()
     const source = resolved.find((selection) => !selection.collapsed) ?? resolved[0]
     if (!source) return null
@@ -3332,13 +3335,13 @@ export class InputSelectionController {
   }
 
   private selectCurrentWordForOccurrence(
-    text: string,
+    text: TextReadSnapshot,
     selection: ResolvedSelection,
   ): OccurrenceSelectionChange | null {
     const session = this.session
     if (!session) return null
 
-    const range = wordRangeAtOffset(text, selection.headOffset)
+    const range = wordRangeAt(text, selection.headOffset)
     if (range.start === range.end) return null
 
     return {
@@ -3683,34 +3686,19 @@ function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {
   return 'nearest'
 }
 
-/** Line and word actions read the rows and words they touch; the rest still take the whole text. */
 function editActionForSession(
   command: EditorEditActionCommandId | EditorDocumentSelectionEditCommandId,
   session: DocumentSession,
   selections: readonly ResolvedSelection[],
   options: EditorEditActionOptions,
 ): EditorEditActionResult {
+  const text = session.getTextSnapshot()
   if (isEditorDocumentSelectionEditCommand(command)) {
-    return documentSelectionEditForCommand(
-      command,
-      commandDocumentText(session),
-      selections,
-      options,
-    )
+    return documentSelectionEditForCommand(command, text, selections, options)
   }
-  if (command === 'editor.action.trimTrailingWhitespace') {
-    return trimTrailingWhitespaceAction(commandDocumentText(session))
-  }
+  if (command === 'editor.action.trimTrailingWhitespace') return trimTrailingWhitespaceAction(text)
 
-  return editActionForCommand(command, session.getTextSnapshot(), selections, options)
-}
-
-/**
- * Reindent, trim and the exact-occurrence commands still take the document as one string. Each is
- * a command the user asked for, so the O(document length) read is explicit and never on typing.
- */
-function commandDocumentText(session: DocumentSession): string {
-  return session.materializeFullText()
+  return editActionForCommand(command, text, selections, options)
 }
 
 function applyPasteText(session: DocumentSession, text: string): DocumentSessionChange {

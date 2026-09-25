@@ -23,7 +23,7 @@ Enforcement: `bun run check:full-text` runs first in `health`. Each remaining wh
 named function in [full-text-boundary-allow.json](../../scripts/full-text-boundary-allow.json) with
 its reason: view serialization, Shiki's open payload, LSP didOpen/didSave and full-sync recovery,
 the live diff, `useFullText`, save serialization, and `commandDocumentText` for edit-action and
-occurrence commands. That last entry is its own backlog item. `test/fullTextBoundary.test.ts` reads
+occurrence commands. [E055](e055-edit-commands-read-lines.md) deleted that last entry on 2026-09-25. `test/fullTextBoundary.test.ts` reads
 the same number of units at 64K and 1M.
 
 Measured on two views over a fragmented document, median p95 input-to-applied, control → E033:
