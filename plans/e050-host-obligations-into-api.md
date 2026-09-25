@@ -5,7 +5,7 @@
 - Owner: Cross-repo
 - Priority: P2
 - Effort: L
-- Dependencies: [E047](e047-point-and-row-queries.md)
+- Dependencies: [E047](../docs/display/e047-point-queries.md)
 - Inspected baseline: `aeba6783b978193de9d2ba0fd5874f357df68edc`, 2026-09-21.
 
 ## Outcome

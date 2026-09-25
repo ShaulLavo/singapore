@@ -282,9 +282,9 @@
     },
     {
       "id": "E018",
-      "file": "e018-persisted-undo.md",
+      "reference": "../docs/editing/e018-persisted-undo.md",
       "title": "Persist and restore undo history safely",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Cross-repo",
       "kind": "Implementation",
       "priority": "P2",
@@ -466,9 +466,9 @@
     },
     {
       "id": "E030",
-      "file": "e030-flat-file-explorer.md",
+      "reference": "../../platform/plans/168-flat-file-view.md",
       "title": "Offer a flat file view under a chosen root",
-      "status": "Proposed",
+      "status": "Moved",
       "owner": "Platform",
       "kind": "Implementation",
       "priority": "P2",
@@ -515,9 +515,9 @@
     },
     {
       "id": "E033",
-      "file": "e033-explicit-full-text-boundary.md",
+      "reference": "../docs/performance/e033-full-text-boundary.md",
       "title": "Make full-document text reads an explicit boundary",
-      "status": "Implemented",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
@@ -766,9 +766,9 @@
     },
     {
       "id": "E047",
-      "file": "e047-point-and-row-queries.md",
+      "reference": "../docs/display/e047-point-queries.md",
       "title": "One answer to \"what is under this point\"",
-      "status": "Implemented",
+      "status": "Completed",
       "owner": "Cross-repo",
       "kind": "Implementation",
       "priority": "P1",
@@ -796,9 +796,9 @@
     },
     {
       "id": "E049",
-      "file": "e049-no-silent-misses.md",
+      "reference": "../docs/architecture/e049-no-silent-misses.md",
       "title": "A miss is an error, not a default",
-      "status": "Implemented",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
@@ -830,7 +830,7 @@
     },
     {
       "id": "E051",
-      "file": "e051-fast-path-equivalence.md",
+      "reference": "../docs/display/e051-fast-path-equivalence.md",
       "title": "Every fast path is pinned to the slow path it stands in for",
       "status": "Completed",
       "owner": "Editor",
@@ -889,6 +889,23 @@
         "TypeScript worker at language-server parity"
       ],
       "baseline": "ed5b2e20b9cdd3492ab33ae4e9676a133817b79d"
+    },
+    {
+      "id": "E055",
+      "file": "e055-edit-commands-read-lines.md",
+      "title": "Edit commands read the lines they touch",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "M",
+      "dependsOn": [
+        "E033"
+      ],
+      "topics": [
+        "Edit commands without a whole-document string"
+      ],
+      "baseline": "50a2e5baee62647b41985b1e4c6ec98dc4c72d3d"
     }
   ]
 }

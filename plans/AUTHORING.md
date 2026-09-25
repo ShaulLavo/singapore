@@ -57,9 +57,10 @@ and the verifier. Plan authors edit only their assigned plan files and report an
 changes to the root author. Run the backlog verifier after changes to the inventory or plans.
 
 Schema version 2 keeps executable entries under `file`. Only an entry with status `Completed`
-uses `reference` instead, pointing to a Markdown document outside `plans/` with a relative path
-such as `../docs/performance/input-latency.md`. A completed entry must not contain `file`;
-other statuses must not contain `reference` and retain every executable-plan check.
+or `Moved` uses `reference` instead, pointing to a Markdown document outside `plans/` with a
+relative path such as `../docs/performance/input-latency.md`. A `Moved` entry's reference is the
+plan that owns the work now, such as a Platform plan. Neither may contain `file`; other statuses
+must not contain `reference` and retain every executable-plan check.
 
 After the completion checks pass, move lasting contracts and evidence into the reference document
 and delete the executable plan. Preserve its ID, metadata, dependencies, and original topics in
