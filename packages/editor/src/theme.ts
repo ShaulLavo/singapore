@@ -56,6 +56,9 @@ export type EditorTheme = {
   readonly foregroundColor?: string
   readonly gutterBackgroundColor?: string
   readonly gutterForegroundColor?: string
+  readonly selectionColor?: string
+  readonly inactiveSelectionColor?: string
+  readonly popupBackgroundColor?: string
   readonly caretColor?: string
   readonly minimapBackgroundColor?: string
   readonly syntax?: EditorSyntaxTheme
@@ -177,6 +180,9 @@ const EDITOR_THEME_COLORS = [
   { key: 'gutterBackgroundColor', id: 'gutter.background' },
   { key: 'gutterForegroundColor', id: 'gutter.foreground' },
   { key: 'caretColor', id: 'caret.color' },
+  { key: 'selectionColor', id: 'selection.background' },
+  { key: 'inactiveSelectionColor', id: 'selection.inactive.background' },
+  { key: 'popupBackgroundColor', id: 'popup.background' },
   { key: 'minimapBackgroundColor', id: 'minimap.background' },
 ] satisfies ReadonlyArray<{
   readonly key: Exclude<keyof EditorTheme, 'syntax' | 'colors' | 'type'>

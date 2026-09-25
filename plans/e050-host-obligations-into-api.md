@@ -353,3 +353,15 @@ controller registration order.
   is a larger decision than this plan; recorded here so it is not rediscovered.
 - D2: typography options change how Platform applies appearance live. The "no remount" property
   Platform relies on must survive, so options have to be settable after construction.
+
+## Theme row, 2026-09-25
+
+Selection, inactive selection and popup background are public EditorTheme fields. The diff palette
+uses registered `diff.*` colours, inherited by its rows; row-local literals and forced editor
+background overrides are gone. Hover, completion and rename copy the popup colour into their
+portalled elements. `themeColors.browser.test.ts` checks actual row and selection paint.
+
+## Row presentation decision, 2026-09-25
+
+The owner chose short-lived row presentation handles invalidated before DOM recycling, with decode
+reveals cancelled on scrolling and viewport changes. Decode continues to own the animation.
