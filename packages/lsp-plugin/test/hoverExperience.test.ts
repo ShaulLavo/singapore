@@ -35,7 +35,7 @@ describe('hover timing and keyboard access', () => {
 
   it('passes document identity and version per diagnostic and refuses stale actions', () => {
     let active = activeDocument()
-    const diagnostics = [
+    const diagnostics: lsp.Diagnostic[] = [
       { range: singleLineRange(6, 11), message: 'first warning', severity: 2 },
       { range: singleLineRange(6, 11), message: 'second error', severity: 1 },
     ]
