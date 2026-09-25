@@ -53,6 +53,8 @@ export type TypeScriptLspReferencesResult = LanguageServerReferencesResult
 export type TypeScriptLspPluginOptions = {
   readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly rootUri?: lsp.DocumentUri | null
+  /** Logical filesystem names mapped to their canonical source identity. */
+  readonly canonicalPaths?: Readonly<Record<string, string>>
   readonly compilerOptions?: ts.CompilerOptions
   readonly diagnosticDelayMs?: number
   /** The standard library: bundled with this package unless the host opts into the CDN or its own. */

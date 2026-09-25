@@ -39,6 +39,7 @@ const TYPESCRIPT_LSP_COMPLETION_EDIT_FEATURE =
 export type TypeScriptLspResolvedOptions = {
   readonly documentSync: TypeScriptLspPluginOptions['documentSync']
   readonly rootUri: string | null
+  readonly canonicalPaths: TypeScriptLspPluginOptions['canonicalPaths']
   readonly compilerOptions: TypeScriptLspPluginOptions['compilerOptions']
   readonly diagnosticDelayMs: number
   readonly libraryFiles: TypeScriptLspPluginOptions['libraryFiles']
@@ -76,6 +77,7 @@ export function createTypeScriptLspPlugin(
     createTransport: typeScriptTransportFactory(resolved),
     documentSync: {
       ...resolved.documentSync,
+      languageIdForDocument: resolved.documentSync?.languageIdForDocument ?? protocolLanguageId,
       shouldSyncLanguageId: resolved.documentSync?.shouldSyncLanguageId ?? isTypeScriptLspLanguage,
       shouldSyncUri: resolved.documentSync?.shouldSyncUri ?? isTypeScriptLspSourceFileName,
     },
@@ -228,6 +230,7 @@ function missingWorkerTransportFactory(): never {
 
 function typeScriptInitializationOptions(options: TypeScriptLspResolvedOptions): unknown {
   return {
+    canonicalPaths: options.canonicalPaths,
     compilerOptions: options.compilerOptions,
     diagnosticDelayMs: options.diagnosticDelayMs,
     libraryFiles: librarySource(options.libraryFiles),
@@ -261,6 +264,7 @@ function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResol
   return {
     documentSync: options.documentSync,
     rootUri: options.rootUri ?? 'file:///',
+    canonicalPaths: options.canonicalPaths,
     compilerOptions: options.compilerOptions,
     diagnosticDelayMs: options.diagnosticDelayMs ?? DEFAULT_DIAGNOSTIC_DELAY_MS,
     libraryFiles: options.libraryFiles,
@@ -284,11 +288,19 @@ function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResol
 
 function isTypeScriptLspLanguage(languageId: string): boolean {
   return (
+    languageId === 'tsx' ||
+    languageId === 'jsx' ||
     languageId === 'javascript' ||
     languageId === 'javascriptreact' ||
     languageId === 'typescript' ||
     languageId === 'typescriptreact'
   )
+}
+
+function protocolLanguageId(languageId: string): string {
+  if (languageId === 'tsx') return 'typescriptreact'
+  if (languageId === 'jsx') return 'javascriptreact'
+  return languageId
 }
 
 function ignoreConnectionError(): void {

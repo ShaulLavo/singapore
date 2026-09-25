@@ -217,7 +217,7 @@ describe('createLanguageServerAdapterPlugin', () => {
 
   // A formatter answers with the whole file even when one line moved, and applying that verbatim
   // retires every anchor, decoration, fold and selection inside it.
-  it('applies a whole-document formatting reply as the one edit that differs', async () => {
+  it.each([0, 22])('formats a smaller document with the caret at %s', async (caret) => {
     const transport = new FakeTransport()
     const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
     const text = '# Notes\n\n- one\n-  two\n'
@@ -230,7 +230,21 @@ describe('createLanguageServerAdapterPlugin', () => {
       { applyEdits },
     )
     const contribution = provider.createContribution(
-      viewContributionContext(editorSnapshot(text), { features }),
+      viewContributionContext(
+        {
+          ...editorSnapshot(text),
+          selections: [
+            {
+              anchorOffset: caret,
+              headOffset: caret,
+              startOffset: caret,
+              endOffset: caret,
+              affinity: 'after',
+            },
+          ],
+        },
+        { features },
+      ),
     )
     if (!contribution) throw new Error('missing contribution')
 
@@ -258,7 +272,7 @@ describe('createLanguageServerAdapterPlugin', () => {
     expect(applyEdits).toHaveBeenCalledWith(
       [{ from: 17, text: '', to: 18 }],
       'testLsp.completion.accept',
-      { anchor: 0, head: 0 },
+      { anchor: Math.min(caret, text.length - 1), head: Math.min(caret, text.length - 1) },
     )
   })
 
