@@ -1480,6 +1480,7 @@ export class EditorSyntaxController {
         configurationGeneration,
       }))
     }
+    const failedRefreshes = this.failedHighlightRefreshes
     this.failedHighlightRefreshes = 0
     if (result.theme !== undefined) this.setHighlighterTheme(result.theme)
     this.commitInitialHighlightStatus(
@@ -1495,6 +1496,13 @@ export class EditorSyntaxController {
         tokenCount: result.tokens.length,
       },
     })
+    if (failedRefreshes > 0) {
+      this.options.log?.({
+        action: 'editor.syntax.highlight_recovered',
+        level: 'info',
+        syntax: { ...this.debugContext(documentVersion), attempts: failedRefreshes + 1 },
+      })
+    }
     this.options.notifyChange(null)
   }
 
@@ -1625,6 +1633,8 @@ export class EditorSyntaxController {
       ...this.debugContext(documentVersion),
       changeKind: change.kind,
     })
+    // The reloaded session's refresh starts a fresh ladder, even after an earlier one ran out.
+    this.failedHighlightRefreshes = 0
     this.reloadHighlighterSession()
   }
 
@@ -1643,6 +1653,10 @@ export class EditorSyntaxController {
     }
     if (rung === HIGHLIGHT_RETRY_DELAYS_MS.length - 1) {
       this.reloadHighlighterSession({ delayMs })
+      // A provider that declines the new session leaves nothing to retry.
+      if (!this.highlighterSession) {
+        this.applyHighlightError(documentVersion, error, configurationGeneration)
+      }
       return
     }
     this.refreshHighlightTokens(documentVersion, null, { delayMs })
