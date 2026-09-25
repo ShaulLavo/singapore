@@ -6,8 +6,8 @@
 - Priority: P2
 - Effort: M
 - Dependencies: none
-- Inspected baseline: `206bc32eca5fd02a2d4573952312367c96500192`, 2026-09-24, with the uncommitted
-  Deprecated strike layer in `packages/lsp-plugin` (see Current code).
+- Inspected baseline: `206bc32eca5fd02a2d4573952312367c96500192`, 2026-09-24. The Deprecated
+  strike layer in `packages/lsp-plugin` (see Current code) was committed later, in `299adf8`.
 
 ## Outcome
 
