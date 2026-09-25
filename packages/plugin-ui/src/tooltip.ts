@@ -24,6 +24,7 @@ const TOOLTIP_SCROLL_STEP_PX = 30
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const TOOLTIP_THEME_VARIABLES = [
   '--editor-background',
+  '--editor-popup-background',
   '--editor-foreground',
   '--editor-caret-color',
   '--editor-font-family',
@@ -352,7 +353,7 @@ function createTooltipElement(document: Document, classNamespace: string): HTMLD
     border: `1px solid ${HOVER_COLORS.border}`,
     borderRadius: '2px',
     boxSizing: 'border-box',
-    background: HOVER_COLORS.background,
+    background: `var(--editor-popup-background, ${HOVER_COLORS.background})`,
     color: HOVER_COLORS.foreground,
     boxShadow: `0 8px 28px ${HOVER_COLORS.shadow}`,
     // No inline display: it would beat the `hidden` attribute and leave an empty box on the page.
@@ -951,7 +952,11 @@ function syncEditorThemeVariables(target: HTMLElement, source: HTMLElement): voi
   for (const variable of TOOLTIP_THEME_VARIABLES) {
     const value =
       source.style.getPropertyValue(variable).trim() || style.getPropertyValue(variable).trim()
-    if (value) target.style.setProperty(variable, value)
+    if (value) {
+      target.style.setProperty(variable, value)
+      continue
+    }
+    target.style.removeProperty(variable)
   }
 }
 
