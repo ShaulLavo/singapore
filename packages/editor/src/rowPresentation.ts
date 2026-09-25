@@ -1,6 +1,8 @@
 export type EditorRowPresentation = {
   readonly element: HTMLElement
+  /** Aborts before logical row text replacement, recycling, provisional paint, or view disposal. */
   readonly signal: AbortSignal
+  /** Releases this handle without aborting its signal. Safe to call more than once. */
   dispose(): void
 }
 
@@ -18,7 +20,6 @@ export function acquireRowPresentation(element: HTMLElement): EditorRowPresentat
     signal: controller.signal,
     dispose() {
       handles.delete(controller)
-      controller.abort()
       if (handles.size === 0 && presentations.get(element) === handles)
         presentations.delete(element)
     },

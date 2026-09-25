@@ -60,6 +60,7 @@ class DecodeViewContribution implements EditorViewContribution {
   }
 
   public updateViewport(): void {
+    if (this.reveal === null) return
     this.teardown()
   }
 

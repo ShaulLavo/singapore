@@ -33,6 +33,7 @@ import {
   createRowResizeObserver,
   elementMeasuredSize,
   hideFoldPlaceholder,
+  markRowRetired,
   rangesIntersectInclusive,
   restoreRowElements,
   retireRowElements,
@@ -602,29 +603,45 @@ function updateRow(
 
   const state = rowUpdateState(view, item.index, updatePass)
 
-  invalidateRowPresentations(row.element)
-  updateRowElement(view, row, item, state, snapshot)
-  updateMountedRowPaintFacts(row, state)
-  updateMutableRow(row, {
-    bufferRow: state.bufferRow,
-    endOffset: state.endOffset,
-    injectedTextRowId: state.injectedTextRowId,
-    kind: state.kind,
-    metadata: state.metadata,
-    foldCollapsed: state.foldMarker?.collapsed ?? false,
-    foldMarkerKey: state.foldMarker?.key ?? '',
-    height: item.size,
-    index: item.index,
-    source: state.source,
-    startOffset: state.startOffset,
-    text: state.text,
-    measurements: state.measurements,
-    inlineMapping: state.inlineMapping,
-    textRevision: view.textRevision,
-    top: item.start,
-    chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
-  })
-  completeRowPresentation(row.element)
+  const replacing = rowContentChanged(row, state)
+  if (replacing) invalidateRowPresentations(row.element)
+  try {
+    updateRowElement(view, row, item, state, snapshot)
+    updateMountedRowPaintFacts(row, state)
+    updateMutableRow(row, {
+      bufferRow: state.bufferRow,
+      endOffset: state.endOffset,
+      injectedTextRowId: state.injectedTextRowId,
+      kind: state.kind,
+      metadata: state.metadata,
+      foldCollapsed: state.foldMarker?.collapsed ?? false,
+      foldMarkerKey: state.foldMarker?.key ?? '',
+      height: item.size,
+      index: item.index,
+      source: state.source,
+      startOffset: state.startOffset,
+      text: state.text,
+      measurements: state.measurements,
+      inlineMapping: state.inlineMapping,
+      textRevision: view.textRevision,
+      top: item.start,
+      chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
+    })
+  } finally {
+    if (replacing) completeRowPresentation(row.element)
+  }
+}
+
+function rowContentChanged(row: MountedVirtualizedTextRow, state: RowUpdateState): boolean {
+  return (
+    row.index !== state.index ||
+    row.bufferRow !== state.bufferRow ||
+    row.source !== state.source ||
+    row.injectedTextRowId !== state.injectedTextRowId ||
+    row.kind !== state.kind ||
+    row.text !== state.text ||
+    row.inlineMapping?.line !== state.inlineMapping?.line
+  )
 }
 
 function updateRowElement(
@@ -692,37 +709,41 @@ function updateRowAfterSameLineEdit(
 ): boolean {
   const state = rowUpdateState(view, item.index, updatePass)
 
-  invalidateRowPresentations(row.element)
-  const editedRowPatchedInPlace = updateRowElementForSameLineEdit(
-    view,
-    row,
-    item,
-    state,
-    patch,
-    snapshot,
-  )
-  updateMountedRowPaintFacts(row, state)
-  updateMutableRow(row, {
-    bufferRow: state.bufferRow,
-    endOffset: state.endOffset,
-    injectedTextRowId: state.injectedTextRowId,
-    kind: state.kind,
-    metadata: state.metadata,
-    foldCollapsed: state.foldMarker?.collapsed ?? false,
-    foldMarkerKey: state.foldMarker?.key ?? '',
-    height: item.size,
-    index: item.index,
-    source: state.source,
-    startOffset: state.startOffset,
-    text: state.text,
-    measurements: state.measurements,
-    inlineMapping: state.inlineMapping,
-    textRevision: view.textRevision,
-    top: item.start,
-    chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
-  })
-  completeRowPresentation(row.element)
-  return editedRowPatchedInPlace
+  const replacing = rowContentChanged(row, state)
+  if (replacing) invalidateRowPresentations(row.element)
+  try {
+    const editedRowPatchedInPlace = updateRowElementForSameLineEdit(
+      view,
+      row,
+      item,
+      state,
+      patch,
+      snapshot,
+    )
+    updateMountedRowPaintFacts(row, state)
+    updateMutableRow(row, {
+      bufferRow: state.bufferRow,
+      endOffset: state.endOffset,
+      injectedTextRowId: state.injectedTextRowId,
+      kind: state.kind,
+      metadata: state.metadata,
+      foldCollapsed: state.foldMarker?.collapsed ?? false,
+      foldMarkerKey: state.foldMarker?.key ?? '',
+      height: item.size,
+      index: item.index,
+      source: state.source,
+      startOffset: state.startOffset,
+      text: state.text,
+      measurements: state.measurements,
+      inlineMapping: state.inlineMapping,
+      textRevision: view.textRevision,
+      top: item.start,
+      chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
+    })
+    return editedRowPatchedInPlace
+  } finally {
+    if (replacing) completeRowPresentation(row.element)
+  }
 }
 
 function updateRowElementForSameLineEdit(
@@ -2465,6 +2486,7 @@ function releaseRowsOutside(
     if (index >= start && index < end) continue
     invalidateRowPresentations(row.element)
     view.rowElements.delete(index)
+    markRowRetired(row)
     reusableRows.push(row)
   }
 
@@ -3088,6 +3110,7 @@ export function paintProvisionalRows(
   const slots: MountedVirtualizedTextRow[] = []
   for (const row of view.rowElements.values()) {
     invalidateRowPresentations(row.element)
+    markRowRetired(row)
     row.element.remove()
     row.gutterElement.remove()
     view.rowPool.push(row)

@@ -469,8 +469,9 @@ export class VirtualizedTextView {
   }
 
   public dispose(): void {
-    this.releaseProvisionalPaint()
     const view = this.view
+    for (const row of view.rowElements.values()) invalidateRowPresentations(row.element)
+    this.releaseProvisionalPaint()
     this.pendingReveal = null
     this.cancelContentWidthMeasurement?.()
     this.cancelContentWidthMeasurement = null
@@ -496,7 +497,6 @@ export class VirtualizedTextView {
     disposeGutterCells(view)
     this.scrollElement.remove()
     view.styleEl.remove()
-    for (const row of view.rowElements.values()) invalidateRowPresentations(row.element)
     view.rowElements.clear()
     view.rowPool.length = 0
   }
