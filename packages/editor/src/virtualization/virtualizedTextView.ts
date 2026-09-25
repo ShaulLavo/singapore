@@ -1,3 +1,8 @@
+import {
+  acquireRowPresentation,
+  invalidateRowPresentations,
+  type EditorRowPresentation,
+} from '../rowPresentation'
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 import { pointViewport } from './pointViewport'
 import { markerAtRowX } from './virtualizedTextViewHiddenCharacters'
@@ -491,6 +496,7 @@ export class VirtualizedTextView {
     disposeGutterCells(view)
     this.scrollElement.remove()
     view.styleEl.remove()
+    for (const row of view.rowElements.values()) invalidateRowPresentations(row.element)
     view.rowElements.clear()
     view.rowPool.length = 0
   }
@@ -1298,6 +1304,11 @@ export class VirtualizedTextView {
       failures,
       ok: failures.length === 0,
     }
+  }
+
+  public getRowPresentation(displayRow: number): EditorRowPresentation | null {
+    const row = this.view.rowElements.get(displayRow)
+    return row ? acquireRowPresentation(row.element) : null
   }
 
   public rowAtPoint(clientX: number, clientY: number): EditorPointHit | null {
