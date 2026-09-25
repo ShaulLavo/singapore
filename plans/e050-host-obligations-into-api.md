@@ -57,7 +57,7 @@ Events and ordering:
   the `update` hook is throttled.
 - [foldGutter.css](../packages/gutters/src/foldGutter.css) sets `pointer-events: auto` to punch
   through the core's `pointer-events: none` gutter; no gutter contribution can declare a cell
-  interactive.
+  interactive. Resolved by row 9 below.
 
 Handles:
 
@@ -81,7 +81,7 @@ wording corrected, and three already have part of the proposed API.
 | Capture-phase `keydown`     | Holds   | Signature help is lazy-loaded, so it always registers after completion: Escape closes completion first and needs a second press; with only signature help open, Escape also runs the keymap's Escape bindings.                                                                                                                                                                                  |
 | Style `MutationObserver`    | Holds   | Three drop paths: re-entrant layout (`viewContributions.ts:224`), `committingPresentation`, and provisional paint.                                                                                                                                                                                                                                                                              |
 | Raw `scroll` listener       | Partly  | Plugins already have `updateViewport` after the fold and unthrottled (`plugins.ts:634`); hosts have no `onDidScroll`, and the contribution context has only `setScrollTop`.                                                                                                                                                                                                                     |
-| `pointer-events: auto`      | Holds   | The merge-conflict lens punches through the same way (`style.css:494`).                                                                                                                                                                                                                                                                                                                         |
+| `pointer-events: auto`      | Holds   | The merge-conflict lens punches through the same way (`style.css:494`). Row 9: no core `none` covers the lens, so it needed none.                                                                                                                                                                                                                                                               |
 | Rows by selector            | Holds   | Programmatic scroll does not cancel a reveal.                                                                                                                                                                                                                                                                                                                                                   |
 | `TOKENS_WAIT_MS`            | Partly  | `EditorViewSnapshot.initialHighlightStatus` already reaches contributions on every change; `'plain'` means both "not started" and "settled", which is the real gap.                                                                                                                                                                                                                             |
 
@@ -267,6 +267,11 @@ move the caret to their row, an empty fold cell moves the caret, the chevron fol
 a lens action resolves its conflict. With the core rule removed the probe and chevron cases fail;
 on the old source only the probe case fails. Platform scenario `editor-split-folds` clicks the
 chevron through Playwright's hit check.
+
+Review: the gutter row's `display: flex` beat the UA `[hidden]` rule, so a retired row stayed in
+layout where the host has no `[hidden]` reset, and now its whole fold cell took presses. The core
+hides `.editor-virtualized-gutter-row[hidden]`; the browser test asserts a row retired by a fold has
+no box.
 
 ## Scope
 

@@ -83,6 +83,13 @@ describe('gutter pointer events', () => {
     expect(editor.getState().cursor).toEqual(caret)
   })
 
+  it('keeps a retired gutter row out of layout', async () => {
+    await click(foldToggle('expanded')!)
+    await expect.poll(() => retiredGutterRows().length).toBeGreaterThan(0)
+
+    expect(retiredGutterRows().filter((row) => row.getClientRects().length > 0)).toEqual([])
+  })
+
   it('resolves a merge conflict from its lens', async () => {
     editor.setText(['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'))
     const action = await lensAction('Accept Incoming Change')
@@ -105,6 +112,10 @@ describe('gutter pointer events', () => {
     return container.querySelector<HTMLElement>(
       `.editor-virtualized-fold-toggle[data-editor-fold-state="${state}"]`,
     )
+  }
+
+  function retiredGutterRows(): HTMLElement[] {
+    return [...container.querySelectorAll<HTMLElement>('.editor-virtualized-gutter-row[hidden]')]
   }
 
   function visibleLines(): string[] {

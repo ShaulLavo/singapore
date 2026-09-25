@@ -190,6 +190,11 @@
   user-select: none;
 }
 
+/* `display: flex` above beats the UA [hidden] rule, and a retired row keeps its old position. */
+.editor-virtualized-gutter-row[hidden] {
+  display: none;
+}
+
 .editor-virtualized-gutter-cell {
   align-items: center;
   box-sizing: border-box;
