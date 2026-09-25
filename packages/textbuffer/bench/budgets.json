@@ -276,10 +276,10 @@
         "reverseIndex.splitNode.calls": 25
       },
       "eight-cursor-batches": {
-        "buffers.countLineBreaks.loopIterations": 191,
-        "buffers.growTailLineIndex.indexInputCodeUnits": 3433,
         "buffers.PieceBufferChunkView.fill.calls": 1525,
         "buffers.PieceBufferChunkView.open.calls": 2,
+        "buffers.countLineBreaks.loopIterations": 191,
+        "buffers.growTailLineIndex.indexInputCodeUnits": 3433,
         "edits.snapBatchEditRanges.calls": 191,
         "join.join.calls": 18836,
         "join.rotateLeft.calls": 378,
@@ -290,14 +290,15 @@
         "reads.splitsSurrogatePair.calls": 3052,
         "reverseIndex.appendSlot.calls": 1902,
         "reverseIndex.copyBranch.calls": 210,
+        "reverseIndex.privateTail.calls": 1,
         "reverseIndex.splitNode.calls": 21,
         "tree.normalizePieceOrders.calls": 1538
       },
       "mixed-edit-churn": {
-        "buffers.countLineBreaks.loopIterations": 137,
-        "buffers.growTailLineIndex.indexInputCodeUnits": 2305,
         "buffers.PieceBufferChunkView.fill.calls": 1025,
         "buffers.PieceBufferChunkView.open.calls": 2,
+        "buffers.countLineBreaks.loopIterations": 137,
+        "buffers.growTailLineIndex.indexInputCodeUnits": 2305,
         "join.join.calls": 18074,
         "join.rotateLeft.calls": 679,
         "join.rotateRight.calls": 977,
@@ -306,6 +307,7 @@
         "node.own.calls": 25562,
         "reverseIndex.appendSlot.calls": 1710,
         "reverseIndex.copyBranch.calls": 181,
+        "reverseIndex.privateTail.calls": 1,
         "reverseIndex.splitNode.calls": 15,
         "tree.normalizePieceOrders.calls": 5324
       },
@@ -364,10 +366,10 @@
         "tree.collectTextInRange.calls": 95827
       },
       "persistent-history": {
-        "buffers.countLineBreaks.loopIterations": 137,
-        "buffers.growTailLineIndex.indexInputCodeUnits": 2305,
         "buffers.PieceBufferChunkView.fill.calls": 1025,
         "buffers.PieceBufferChunkView.open.calls": 2,
+        "buffers.countLineBreaks.loopIterations": 137,
+        "buffers.growTailLineIndex.indexInputCodeUnits": 2305,
         "join.join.calls": 18074,
         "join.rotateLeft.calls": 679,
         "join.rotateRight.calls": 977,
@@ -376,6 +378,7 @@
         "node.own.calls": 25562,
         "reverseIndex.appendSlot.calls": 1710,
         "reverseIndex.copyBranch.calls": 181,
+        "reverseIndex.privateTail.calls": 1,
         "reverseIndex.splitNode.calls": 15,
         "tree.normalizePieceOrders.calls": 5324
       },
