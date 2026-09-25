@@ -14,7 +14,7 @@ export type ProjectService = {
  * Every file carries a version, so after an upsert the language service reparses that file and
  * reuses every other one; nothing here rebuilds the program from scratch. Open documents sit over
  * the files: their text wins until they close, and closing falls back to the file, if there is one.
- * Paths are the host's own, with no symlinks to resolve: `realpath` is the identity.
+ * Logical package links resolve to one canonical file, including unsaved document overlays.
  */
 export class ProjectHost implements ProjectService {
   public readonly languageService: ts.LanguageService
@@ -29,18 +29,24 @@ export class ProjectHost implements ProjectService {
     files: Map<string, string>,
     roots: readonly string[],
     private readonly options: ts.CompilerOptions,
+    private readonly canonicalPaths: Readonly<Record<string, string>> = {},
   ) {
-    this.#files = files
-    this.#roots = roots
+    this.#files = new Map()
+    for (const [fileName, text] of files) {
+      const canonical = this.canonical(fileName)
+      this.#files.set(canonical, files.get(canonical) ?? text)
+    }
+    this.#roots = [...new Set(roots.map((file) => this.canonical(file)))]
     for (const fileName of files.keys()) this.#addDirectories(fileName)
     this.languageService = ts.createLanguageService(this.#host())
   }
 
   public getSourceFile(fileName: string): ts.SourceFile | undefined {
-    return this.languageService.getProgram()?.getSourceFile(fileName)
+    return this.languageService.getProgram()?.getSourceFile(this.canonical(fileName))
   }
 
   public setFile(fileName: string, text: string): void {
+    fileName = this.canonical(fileName)
     if (this.#files.get(fileName) === text) return
     this.#files.set(fileName, text)
     this.#addDirectories(fileName)
@@ -48,22 +54,26 @@ export class ProjectHost implements ProjectService {
   }
 
   public deleteFile(fileName: string): void {
+    fileName = this.canonical(fileName)
     if (!this.#files.delete(fileName)) return
     this.#changed(fileName)
   }
 
   public setOpen(fileName: string, text: string): void {
+    fileName = this.canonical(fileName)
     this.#open.set(fileName, text)
     this.#addDirectories(fileName)
     this.#changed(fileName)
   }
 
   public closeOpen(fileName: string): void {
+    fileName = this.canonical(fileName)
     if (!this.#open.delete(fileName)) return
     this.#changed(fileName)
   }
 
   public setRoots(roots: readonly string[]): void {
+    roots = [...new Set(roots.map((file) => this.canonical(file)))]
     if (sameList(this.#roots, roots)) return
     this.#roots = roots
     this.#projectVersion += 1
@@ -74,7 +84,12 @@ export class ProjectHost implements ProjectService {
     this.#projectVersion += 1
   }
 
+  private canonical(fileName: string): string {
+    return this.canonicalPaths[fileName] ?? fileName
+  }
+
   #text(fileName: string): string | undefined {
+    fileName = this.canonical(fileName)
     return this.#open.get(fileName) ?? this.#files.get(fileName)
   }
 
@@ -95,7 +110,7 @@ export class ProjectHost implements ProjectService {
       getCompilationSettings: () => this.options,
       getProjectVersion: () => String(this.#projectVersion),
       getScriptFileNames: () => [...this.#roots, ...this.#openOutsideRoots()],
-      getScriptVersion: (fileName) => String(this.#versions.get(fileName) ?? 0),
+      getScriptVersion: (fileName) => String(this.#versions.get(this.canonical(fileName)) ?? 0),
       getScriptSnapshot: (fileName) => {
         const text = this.#text(fileName)
         return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text)
@@ -108,7 +123,7 @@ export class ProjectHost implements ProjectService {
       getDirectories: (directory) => this.#childDirectories(trimSlash(directory)),
       readDirectory: (directory, extensions) =>
         this.#readDirectory(trimSlash(directory), extensions),
-      realpath: (fileName) => fileName,
+      realpath: (fileName) => this.canonical(fileName),
       useCaseSensitiveFileNames: () => true,
     }
   }

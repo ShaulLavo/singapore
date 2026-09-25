@@ -1012,7 +1012,7 @@ class LanguageServerContribution implements EditorViewContribution {
       if (converted.length === 0) return
       if (!formattingChangesText(active.textSnapshot, converted)) return
 
-      this.applyFormattingEdits(converted)
+      this.applyFormattingEdits(converted, active.textSnapshot.length)
     } catch (error) {
       this.handleRequestError(error)
     }
@@ -1026,11 +1026,15 @@ class LanguageServerContribution implements EditorViewContribution {
    * wholesale, and an offset that survives is closer to where the user was looking than a position
    * mapped through a rewrite of the whole file.
    */
-  private applyFormattingEdits(edits: readonly TextEdit[]): void {
+  private applyFormattingEdits(edits: readonly TextEdit[], previousLength: number): void {
     const feature = this.context.getFeature(this.options.completion.editFeature)
     if (!feature) return
 
-    const head = this.context.getSnapshot().selections[0]?.headOffset ?? 0
+    const length = edits.reduce(
+      (size, edit) => size + edit.text.length - (edit.to - edit.from),
+      previousLength,
+    )
+    const head = Math.min(this.context.getSnapshot().selections[0]?.headOffset ?? 0, length)
     feature.applyCompletion({ edits, selection: { anchor: head, head } })
   }
 

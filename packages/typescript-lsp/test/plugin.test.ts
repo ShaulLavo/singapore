@@ -166,6 +166,27 @@ describe('createTypeScriptLspPlugin', () => {
     contribution?.dispose()
   })
 
+  it.each([
+    ['tsx', 'typescriptreact'],
+    ['jsx', 'javascriptreact'],
+  ])('syncs native %s syntax ids using their protocol language', async (languageId, protocolId) => {
+    const worker = new FakeWorker()
+    const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
+    const provider = activatePlugin(plugin)
+    const contribution = provider.createContribution(
+      viewContributionContext(
+        editorSnapshot({ languageId, documentId: `/src/index.${languageId}` }),
+      ),
+    )
+    worker.receive(initializeResponse(message(worker.sent[0])))
+    await flushPromises()
+    expect(sentMethods(worker)).toContain('textDocument/didOpen')
+    expect(textDocumentFor(worker.sent.find(hasMethod('textDocument/didOpen')))).toMatchObject({
+      languageId: protocolId,
+    })
+    contribution?.dispose()
+  })
+
   it('syncs the active TypeScript document through a worker and renders diagnostics', async () => {
     const worker = new FakeWorker()
     const diagnostics: TypeScriptLspDiagnosticSummary[] = []
