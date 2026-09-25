@@ -94,7 +94,7 @@ pointer events, and the fold gutter's own punch-through CSS is gone.
 tombstones with stand-ins that resolve every deleted anchor exactly as before, checked against an
 uncompacted control. An insert now lands after the last visible piece ending at its offset, so
 where text lands no longer depends on the tree's shape. After 20,000 paragraph replacements the
-current tree holds 4 pieces instead of 20,002; about 9 bytes per insertion remain in the index.
+current tree holds 4 pieces instead of 20,002; about 22 bytes per insertion remain in the index.
 Its execution plan has been removed.
 
 Platform Plan 071 (syntax highlight retry) landed with E050 row 11 on 2026-09-25: a failed

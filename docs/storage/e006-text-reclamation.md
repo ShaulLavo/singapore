@@ -4,7 +4,7 @@ Live buffers now reclaim unused portions of original text and append chunks. Log
 coordinates, anchors, snapshots, revision, dirty state and retained undo remain unchanged.
 Text reclamation passes the string-storage acceptance checks described below. Position metadata
 was the second milestone and is complete: [tombstone compaction](e006-tombstone-compaction.md)
-bounds the current tree and leaves about 9 bytes per insertion in the index.
+bounds the current tree and leaves about 22 bytes per insertion in the index.
 
 ## Ownership and storage
 

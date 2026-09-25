@@ -5,7 +5,7 @@ tombstones become a few textless **stand-ins**, and the reverse index leads the 
 entries to them. Every anchor resolves to exactly the offset and liveness it did before, in the
 compacted snapshot and in every snapshot edited from it. Snapshot identity, text, revision and
 visible pieces do not change. After 20,000 paragraph replacements the current tree holds 4 pieces
-instead of 20,002. What still grows with edit count is about 9 bytes per insertion, down from
+instead of 20,002. What still grows with edit count is about 22 bytes per insertion, down from
 about 259. This completes E006; [text reclamation](e006-text-reclamation.md) was the first milestone.
 
 ## Where text lands
@@ -88,9 +88,10 @@ answer in one pass. An open slot's threshold is the buffer of one of its own gro
 open on that side, so its scan leaves the run and stops where theirs did. A run that fails is
 kept and counted as `unverified`. No test, soak or benchmark has counted one.
 
-Every pass over a run yields at most every 1,024 items: grouping, arranging, the check, building
-the stand-ins, remapping entries and joining the new pieces into the tree in balanced blocks. A
-run of any length therefore never holds a maintenance slice.
+A pass yields after every 1,024 units of work: pieces read, stack entries popped (one piece can
+pop every piece before it), members grouped, slots arranged and checked, stand-ins built, entries
+pointed at them, and pieces joined into the tree in balanced blocks. A run of any length therefore
+never holds a maintenance slice.
 
 A run is replaced only when it gets shorter. Stand-ins take the orders of the run's first
 pieces, and the replacement path-copies the tree around each run with `join`, so the rest of the
@@ -100,18 +101,31 @@ valid. Rebuilt nodes carry an epoch no lineage reaches, so every later edit copi
 
 ## The reverse index
 
-An inserted tombstone's entries now lead to its group's stand-in. Compaction builds one map from
-every replaced order to its stand-in's order and walks the whole index once, copying only the
-leaves that change. The whole index is read because an old entry may lead to a stand-in that is
-itself being compacted. Adjacent entries of one buffer that now lead to the same stand-in merge.
-A stand-in accepts any anchor its entry leads to; a live piece still checks the anchor's offset.
+A compacted tombstone's entries name the **identity** of its group's stand-in, not an order. A
+stand-in keeps its identity in its otherwise unused `start` field, and a small persistent
+[table](../../packages/textbuffer/src/standIns.ts) held with the index maps each identity to its
+stand-in's current order. Identities are small integers counted down from below the lowest order
+any piece may take, so an entry that names one stays an unboxed V8 small integer; the insert that
+would take an order below that floor relabels instead.
 
-Only stand-ins are ever targets. When an edit runs out of room between two orders it hands out
-fallback orders that can equal an existing one until the relabel that follows. A stand-in is the
-only piece with length 0 and no edit makes one, so the relabel can tell targets apart by shape.
-It carries their entries over from the index before the edit rather than rebuilding them from
-the tree, which does not hold them. `resolveAnchorLinear`, the reference that uses no summaries,
-asks the index only for a compacted anchor's stand-in.
+Orders and identities move separately, so neither kind of work reads old insertions' entries:
+
+- **A pass** gives each new stand-in the identity of one it replaces and folds the others into
+  it, smaller groups into larger, so an identity is at most one step from a live one and is moved
+  at most log2 times over its life. Only the entries of real tombstones the pass compacts are
+  written, in batches between yields.
+- **A relabel**, inside the edit that ran out of room, writes the entries of the pieces in the
+  tree and the table rows of the stand-ins in it, copying each touched index node once.
+
+A stand-in accepts any anchor its entry leads to; a live piece still checks the anchor's offset.
+Only stand-ins are ever targets, and the relabel finds them by shape: no edit makes a piece of
+length 0. `resolveAnchorLinear`, the reference that uses no summaries, asks the index only for a
+compacted anchor's stand-in.
+
+The first version pointed entries at orders. Any pass or relabel then had to read every entry
+ever made: after 100,000 compacted insertions a relabelling keystroke took 45.6 ms of CPU time on a
+125-piece tree, and a pass grew from 42 to 794 steps over 200,000 one-character insertions. Both
+now depend on the tree alone: 1 ms and 34 steps.
 
 ## In the editor
 
@@ -160,9 +174,9 @@ times each step of the job in thread CPU time, best of three processes
 
 | Document length | Longest step, first version | Longest step now |
 | --- | ---: | ---: |
-| 4,000 characters | 19.9 ms | 1.0 ms |
+| 4,000 characters | 19.9 ms | 1.5 ms |
 | 8,000 characters | 79.6 ms | 1.6 ms |
-| 16,000 characters | 496 ms | 2.3 ms |
+| 16,000 characters | 496 ms | 2.0 ms |
 
 The remaining growth is collection work that rises with the heap: labelled by phase, the slow
 steps fall in every phase alike. The textbuffer tests, the maintenance tests and the headless
@@ -171,9 +185,9 @@ machine stretched wall-clock slices to 65 ms with nothing else changed.
 
 [Per-insertion cost](../../examples/stress/results/reclamation/positions-per-id.json): fifty
 spots each take an insert that is deleted again, in fresh Node processes, with text reclamation
-in both. The slope between 20,000 and 100,000 insertions is 9.3 bytes each with compaction and
-259 bytes without. In Bun, the live objects in a JSC heap snapshot grow about 12 bytes per
-insertion over the same range.
+in both. The slope between 20,000 and 100,000 insertions is 22 bytes each with compaction and
+258 bytes without. Entries that name one identity are not merged, which is what keeps a pass off
+old entries; the first version merged them and measured 9 bytes.
 
 The [soak](../../examples/stress/results/reclamation/positions-soak.json) runs 400 seeded
 sessions of 800 edits against an uncompacted control: inserts, deletes, replacements and
@@ -181,21 +195,28 @@ multi-edit batches, surrogate halves, empty documents, repeated edits at one spo
 order gaps, and undo to earlier states with anchors made on abandoned branches dropped. Some
 passes are stepped partway, as maintenance slices them, then overtaken by the next edit and
 finished afterwards on the state they began on. Every anchor resolved alike after every edit
-through 74,587 compactions, 10,689 of them overtaken, that removed 327,762 tombstones; the
-linear reference and the inspector agreed every 50 edits.
+through 115,068 compactions, 7,928 of them overtaken after at least one step, that removed
+468,621 tombstones; the linear reference and the inspector agreed every 50 edits. Every finished
+pass is counted, including those that finish during their first steps, and the last pending pass
+is drained. An earlier run under the identity table failed five seeds: folding a group whose only
+folded identity was 0 read it as empty and left 0 two steps away. That is fixed and tested.
 
 In the tests, [`compaction.test.ts`](../../packages/textbuffer/src/compaction.test.ts) runs the
 same differential check, overtaken passes included, for 16 seeds of 400 edits and 2
 surrogate-heavy seeds of 1,500. It covers original text, order relabels beside stand-ins,
 transient lineages and churn at several spots, and rebuilds one piece sequence under every root
-to show an insert lands in one place; the landing it replaced gives three answers there. The maintenance tests check identity, revision, deleted anchors and undo across a pass,
+to show an insert lands in one place; the landing it replaced gives three answers there. Its
+relabel test holds anchors inside the compacted text, which dropping the stand-ins' entries
+turns into offset 0. Three more fail on the first version: a relabel after 50,000 insertions,
+a pass late against early in a long history, and a pass beside 64 fragmented buffers it leaves
+alone. The maintenance tests check identity, revision, deleted anchors and undo across a pass,
 and the piece-growth trigger. The inspector now checks stand-ins, the gaps they leave in a
 buffer's pieces, and entries that lead to them.
 
 ## What still grows
 
-- **One reverse-index slot and one chunk-map entry per insertion ever made,** about 9 bytes
-  together in V8. Buffer ids are what anchors store, so removing either needs ids renumbered, which
+- **One reverse-index slot and one chunk-map entry per insertion ever made,** about 22 bytes
+  together in V8, and a table row per stand-in identity. Buffer ids are what anchors store, so removing either needs ids renumbered, which
   only the anchor lifetime contract in the [investigation](e006-reclamation-investigation.md) would
   allow.
 - **History** holds the trees it recorded until it moves past them: up to the history limit plus
