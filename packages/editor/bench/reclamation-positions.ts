@@ -65,7 +65,7 @@ async function settle(buffer: Buffer, maintained: boolean) {
     await sleep(poll === 0 ? 320 : 10)
     if (buffer.getStorageMaintenanceStats().completed > completed) return
   }
-  throw new Error('maintenance did not settle')
+  assert.fail(`maintenance did not settle: ${completed} passes before, none after 4 seconds`)
 }
 
 function paragraphCycle(session: Session, buffer: Buffer, cycle: number, held: RealAnchor[]) {
