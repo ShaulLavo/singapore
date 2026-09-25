@@ -1,8 +1,8 @@
 {
-  "baseline": "30df13fe0ca3c1c00700a0d0ba1c8854b04c2f43",
+  "baseline": "536e7f7c50d354fd8c3c3f8c6f3b62246ac2d2f3",
   "runtime": "Bun 1.4.0",
-  "measuredAt": "2026-09-25T10:21:53.379Z",
-  "note": "One subprocess per sample, after a 200-cycle warmup. A save every 500 cycles forces a maintenance pass; the control never subscribes, so maintenance never runs. Default 200 history states until the final release. heapAfterRelease is Bun heapUsed and liveHeapAfterRelease is JSC heapStats().heapSize, each after a forced GC and relative to the process baseline; both include runtime state beyond the buffer.",
+  "measuredAt": "2026-09-25T13:04:13.019Z",
+  "note": "One subprocess per sample, after a 200-cycle warmup. A save every 500 cycles forces a maintenance pass, and no slice may reach 16 ms of this thread's CPU time; the control never subscribes, so maintenance never runs. Default 200 history states until the final release. heapAfterRelease is Bun heapUsed and liveHeapAfterRelease is JSC heapStats().heapSize, each after a forced GC and relative to the process baseline; both include runtime state beyond the buffer.",
   "runs": [
     {
       "workload": "paragraph",
@@ -17,15 +17,15 @@
       "bufferIds": 1001,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 12661,
-      "liveHeapWithHistory": 1416095,
-      "heapAfterRelease": 479467,
-      "liveHeapAfterRelease": 476263,
+      "liveHeapWithHistory": 1440466,
+      "heapAfterRelease": 543153,
+      "liveHeapAfterRelease": 540008,
       "maintenance": {
         "completed": 4,
         "tombstones": 998,
-        "maxSliceMs": 0.5783120000000963
+        "maxSliceMs": 0.5310000000000059
       },
-      "editMs": 832.0465860000002,
+      "editMs": 840.1731970000001,
       "heldAnchors": 40,
       "deletedHeldAnchors": 40,
       "control": {
@@ -41,15 +41,15 @@
         "bufferIds": 1001,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 1028469,
-        "liveHeapWithHistory": 2515253,
-        "heapAfterRelease": 1962192,
-        "liveHeapAfterRelease": 1963132,
+        "liveHeapWithHistory": 2537029,
+        "heapAfterRelease": 2017784,
+        "liveHeapAfterRelease": 1974964,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 18.050176999999998
+        "editMs": 34.397169999999996
       },
       "anchorsMatchControl": true
     },
@@ -66,15 +66,15 @@
       "bufferIds": 5001,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 12661,
-      "liveHeapWithHistory": 1344421,
-      "heapAfterRelease": -132581,
-      "liveHeapAfterRelease": -135712,
+      "liveHeapWithHistory": 663494,
+      "heapAfterRelease": -220210,
+      "liveHeapAfterRelease": -224972,
       "maintenance": {
         "completed": 12,
         "tombstones": 4998,
-        "maxSliceMs": 0.5783979999998792
+        "maxSliceMs": 2.323000000000036
       },
-      "editMs": 4175.671808,
+      "editMs": 4431.418332,
       "heldAnchors": 200,
       "deletedHeldAnchors": 200,
       "control": {
@@ -90,15 +90,15 @@
         "bufferIds": 5001,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 5124469,
-        "liveHeapWithHistory": 10345692,
-        "heapAfterRelease": 6749270,
-        "liveHeapAfterRelease": 6713002,
+        "liveHeapWithHistory": 10365480,
+        "heapAfterRelease": 6748173,
+        "liveHeapAfterRelease": 6711904,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 106.797737
+        "editMs": 122.247069
       },
       "anchorsMatchControl": true
     },
@@ -119,15 +119,15 @@
       "bufferIds": 20001,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 20853,
-      "liveHeapWithHistory": 2563523,
-      "heapAfterRelease": 6245616,
-      "liveHeapAfterRelease": 6242349,
+      "liveHeapWithHistory": 2602253,
+      "heapAfterRelease": 5980787,
+      "liveHeapAfterRelease": 5977377,
       "maintenance": {
         "completed": 42,
         "tombstones": 19998,
-        "maxSliceMs": 1.5218599999998332
+        "maxSliceMs": 2.7339999999999804
       },
-      "editMs": 17443.747817,
+      "editMs": 18128.98623,
       "heldAnchors": 800,
       "deletedHeldAnchors": 800,
       "control": {
@@ -147,15 +147,15 @@
         "bufferIds": 20001,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 20484469,
-        "liveHeapWithHistory": 39084279,
-        "heapAfterRelease": 25605344,
-        "liveHeapAfterRelease": 25568013,
+        "liveHeapWithHistory": 39138605,
+        "heapAfterRelease": 25642370,
+        "liveHeapAfterRelease": 25604789,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 616.4439140000001
+        "editMs": 970.426019
       },
       "anchorsMatchControl": true
     },
@@ -172,15 +172,15 @@
       "bufferIds": 4001,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 8469,
-      "liveHeapWithHistory": 1483359,
-      "heapAfterRelease": 706864,
-      "liveHeapAfterRelease": 706304,
+      "liveHeapWithHistory": 1468975,
+      "heapAfterRelease": 696006,
+      "liveHeapAfterRelease": 696009,
       "maintenance": {
         "completed": 4,
         "tombstones": 3872,
-        "maxSliceMs": 0.6930070000000796
+        "maxSliceMs": 0.16200000000000614
       },
-      "editMs": 790.759552,
+      "editMs": 818.212819,
       "heldAnchors": 20,
       "deletedHeldAnchors": 20,
       "control": {
@@ -196,15 +196,15 @@
         "bufferIds": 4001,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 8469,
-        "liveHeapWithHistory": 1359700,
-        "heapAfterRelease": 2840826,
-        "liveHeapAfterRelease": 2841037,
+        "liveHeapWithHistory": 1343873,
+        "heapAfterRelease": 2841428,
+        "liveHeapAfterRelease": 2841501,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 48.613089
+        "editMs": 62.635031999999995
       },
       "anchorsMatchControl": true
     },
@@ -221,15 +221,15 @@
       "bufferIds": 20001,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 8085,
-      "liveHeapWithHistory": 1510890,
-      "heapAfterRelease": 35223,
-      "liveHeapAfterRelease": 31530,
+      "liveHeapWithHistory": 1553398,
+      "heapAfterRelease": -119462,
+      "liveHeapAfterRelease": -122691,
       "maintenance": {
         "completed": 12,
         "tombstones": 19872,
-        "maxSliceMs": 0.7828000000004067
+        "maxSliceMs": 0.6850000000000023
       },
-      "editMs": 3969.7101939999993,
+      "editMs": 4110.989857,
       "heldAnchors": 100,
       "deletedHeldAnchors": 100,
       "control": {
@@ -245,15 +245,15 @@
         "bufferIds": 20001,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 24469,
-        "liveHeapWithHistory": 5448108,
-        "heapAfterRelease": 8298860,
-        "liveHeapAfterRelease": 8295896,
+        "liveHeapWithHistory": 5420116,
+        "heapAfterRelease": 8300402,
+        "liveHeapAfterRelease": 8297240,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 253.56701600000002
+        "editMs": 314.872511
       },
       "anchorsMatchControl": true
     },
@@ -274,15 +274,15 @@
       "bufferIds": 80001,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 18933,
-      "liveHeapWithHistory": 3409268,
-      "heapAfterRelease": 1638959,
-      "liveHeapAfterRelease": 1635267,
+      "liveHeapWithHistory": 3762754,
+      "heapAfterRelease": 2125621,
+      "liveHeapAfterRelease": 2123289,
       "maintenance": {
         "completed": 42,
         "tombstones": 79872,
-        "maxSliceMs": 1.2111919999997554
+        "maxSliceMs": 1.913000000000011
       },
-      "editMs": 16206.791264000001,
+      "editMs": 17033.623401999997,
       "heldAnchors": 400,
       "deletedHeldAnchors": 400,
       "control": {
@@ -303,15 +303,15 @@
         "bufferIds": 80001,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 84469,
-        "liveHeapWithHistory": 20182350,
-        "heapAfterRelease": 59231137,
-        "liveHeapAfterRelease": 59227974,
+        "liveHeapWithHistory": 20232810,
+        "heapAfterRelease": 59232815,
+        "liveHeapAfterRelease": 59229987,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 1141.826971
+        "editMs": 1268.4354409999999
       },
       "anchorsMatchControl": true
     },
@@ -328,15 +328,15 @@
       "bufferIds": 599,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 6838,
-      "liveHeapWithHistory": 1753975,
-      "heapAfterRelease": 2280405,
-      "liveHeapAfterRelease": 2274478,
+      "liveHeapWithHistory": 1723826,
+      "heapAfterRelease": 2191979,
+      "liveHeapAfterRelease": 2187483,
       "maintenance": {
         "completed": 4,
         "tombstones": 278,
-        "maxSliceMs": 0.7238080000001901
+        "maxSliceMs": 0.9429999999999978
       },
-      "editMs": 773.1064460000001,
+      "editMs": 788.849474,
       "heldAnchors": 20,
       "deletedHeldAnchors": 6,
       "control": {
@@ -352,15 +352,15 @@
         "bufferIds": 599,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 9948,
-        "liveHeapWithHistory": 1177124,
-        "heapAfterRelease": 2421707,
-        "liveHeapAfterRelease": 2105933,
+        "liveHeapWithHistory": 1153972,
+        "heapAfterRelease": 2333157,
+        "liveHeapAfterRelease": 2017381,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 11.298599000000003
+        "editMs": 22.771507
       },
       "anchorsMatchControl": true
     },
@@ -377,15 +377,15 @@
       "bufferIds": 3030,
       "lineIndexCapacityBytes": 1024,
       "storedCodeUnits": 11722,
-      "liveHeapWithHistory": 2424606,
-      "heapAfterRelease": 624773,
-      "liveHeapAfterRelease": 588821,
+      "liveHeapWithHistory": 2460573,
+      "heapAfterRelease": 677125,
+      "liveHeapAfterRelease": 641255,
       "maintenance": {
         "completed": 12,
         "tombstones": 6123,
-        "maxSliceMs": 1.4156159999997726
+        "maxSliceMs": 0.8740000000000236
       },
-      "editMs": 3979.1392730000002,
+      "editMs": 4008.9054910000004,
       "heldAnchors": 100,
       "deletedHeldAnchors": 83,
       "control": {
@@ -401,15 +401,15 @@
         "bufferIds": 3030,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 32188,
-        "liveHeapWithHistory": 3014350,
-        "heapAfterRelease": 2466666,
-        "liveHeapAfterRelease": 2429942,
+        "liveHeapWithHistory": 3285102,
+        "heapAfterRelease": 2760806,
+        "liveHeapAfterRelease": 2724420,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 47.91253999999999
+        "editMs": 60.698898
       },
       "anchorsMatchControl": true
     },
@@ -430,15 +430,15 @@
       "bufferIds": 12086,
       "lineIndexCapacityBytes": 0,
       "storedCodeUnits": 12721,
-      "liveHeapWithHistory": 2788043,
-      "heapAfterRelease": 3589188,
-      "liveHeapAfterRelease": 3571506,
+      "liveHeapWithHistory": 2919364,
+      "heapAfterRelease": 4100239,
+      "liveHeapAfterRelease": 4081915,
       "maintenance": {
         "completed": 42,
         "tombstones": 32477,
-        "maxSliceMs": 2.0424419999999373
+        "maxSliceMs": 2.7970000000000255
       },
-      "editMs": 16026.885547,
+      "editMs": 16497.642938999998,
       "heldAnchors": 400,
       "deletedHeldAnchors": 382,
       "control": {
@@ -458,15 +458,171 @@
         "bufferIds": 12086,
         "lineIndexCapacityBytes": 1024,
         "storedCodeUnits": 115211,
-        "liveHeapWithHistory": 10409413,
-        "heapAfterRelease": 9753023,
-        "liveHeapAfterRelease": 9715907,
+        "liveHeapWithHistory": 10392802,
+        "heapAfterRelease": 13175209,
+        "liveHeapAfterRelease": 13138098,
         "maintenance": {
           "completed": 0,
           "tombstones": 0,
           "maxSliceMs": 0
         },
-        "editMs": 191.533099
+        "editMs": 222.801149
+      },
+      "anchorsMatchControl": true
+    },
+    {
+      "workload": "append",
+      "cycles": 1000,
+      "maintained": true,
+      "seed": 60061,
+      "liveCodeUnits": 5469,
+      "piecesBeforeRelease": 2001,
+      "piecesAtSaves": [1501, 2501],
+      "piecesAfterRelease": 2001,
+      "reverseEntries": 3000,
+      "bufferIds": 2001,
+      "lineIndexCapacityBytes": 1024,
+      "storedCodeUnits": 7469,
+      "liveHeapWithHistory": 3788223,
+      "heapAfterRelease": 2577672,
+      "liveHeapAfterRelease": 2298230,
+      "maintenance": {
+        "completed": 4,
+        "tombstones": 1000,
+        "maxSliceMs": 1.2980000000000018
+      },
+      "editMs": 771.970604,
+      "heldAnchors": 40,
+      "deletedHeldAnchors": 20,
+      "control": {
+        "workload": "append",
+        "cycles": 1000,
+        "maintained": false,
+        "seed": 60061,
+        "liveCodeUnits": 5469,
+        "piecesBeforeRelease": 3001,
+        "piecesAtSaves": [1501, 3001],
+        "piecesAfterRelease": 3001,
+        "reverseEntries": 3000,
+        "bufferIds": 2001,
+        "lineIndexCapacityBytes": 1024,
+        "storedCodeUnits": 7469,
+        "liveHeapWithHistory": 3765973,
+        "heapAfterRelease": 2818995,
+        "liveHeapAfterRelease": 2811542,
+        "maintenance": {
+          "completed": 0,
+          "tombstones": 0,
+          "maxSliceMs": 0
+        },
+        "editMs": 42.982842000000005
+      },
+      "anchorsMatchControl": true
+    },
+    {
+      "workload": "append",
+      "cycles": 5000,
+      "maintained": true,
+      "seed": 60061,
+      "liveCodeUnits": 9469,
+      "piecesBeforeRelease": 10001,
+      "piecesAtSaves": [1501, 2501, 3501, 4501, 5501, 6501, 7501, 8501, 9501, 10501],
+      "piecesAfterRelease": 10001,
+      "reverseEntries": 15000,
+      "bufferIds": 10001,
+      "lineIndexCapacityBytes": 1024,
+      "storedCodeUnits": 19469,
+      "liveHeapWithHistory": 13147403,
+      "heapAfterRelease": 2338630,
+      "liveHeapAfterRelease": 2300050,
+      "maintenance": {
+        "completed": 12,
+        "tombstones": 5000,
+        "maxSliceMs": 2.800999999999931
+      },
+      "editMs": 4412.548951999999,
+      "heldAnchors": 200,
+      "deletedHeldAnchors": 100,
+      "control": {
+        "workload": "append",
+        "cycles": 5000,
+        "maintained": false,
+        "seed": 60061,
+        "liveCodeUnits": 9469,
+        "piecesBeforeRelease": 15001,
+        "piecesAtSaves": [1501, 3001, 4501, 6001, 7501, 9001, 10501, 12001, 13501, 15001],
+        "piecesAfterRelease": 15001,
+        "reverseEntries": 15000,
+        "bufferIds": 10001,
+        "lineIndexCapacityBytes": 1024,
+        "storedCodeUnits": 19469,
+        "liveHeapWithHistory": 15701984,
+        "heapAfterRelease": 9567943,
+        "liveHeapAfterRelease": 9549121,
+        "maintenance": {
+          "completed": 0,
+          "tombstones": 0,
+          "maxSliceMs": 0
+        },
+        "editMs": 383.377457
+      },
+      "anchorsMatchControl": true
+    },
+    {
+      "workload": "append",
+      "cycles": 20000,
+      "maintained": true,
+      "seed": 60061,
+      "liveCodeUnits": 24469,
+      "piecesBeforeRelease": 40001,
+      "piecesAtSaves": [
+        1501, 2501, 3501, 4501, 5501, 6501, 7501, 8501, 9501, 10501, 11501, 12501, 13501, 14501,
+        15501, 16501, 17501, 18501, 19501, 20501, 21501, 22501, 23501, 24501, 25501, 26501, 27501,
+        28501, 29501, 30501, 31501, 32501, 33501, 34501, 35501, 36501, 37501, 38501, 39501, 40501
+      ],
+      "piecesAfterRelease": 40001,
+      "reverseEntries": 60000,
+      "bufferIds": 40002,
+      "lineIndexCapacityBytes": 1024,
+      "storedCodeUnits": 31701,
+      "liveHeapWithHistory": 52711204,
+      "heapAfterRelease": 38910452,
+      "liveHeapAfterRelease": 38891316,
+      "maintenance": {
+        "completed": 42,
+        "tombstones": 20000,
+        "maxSliceMs": 2.7399999999997817
+      },
+      "editMs": 27985.150291,
+      "heldAnchors": 800,
+      "deletedHeldAnchors": 400,
+      "control": {
+        "workload": "append",
+        "cycles": 20000,
+        "maintained": false,
+        "seed": 60061,
+        "liveCodeUnits": 24469,
+        "piecesBeforeRelease": 60001,
+        "piecesAtSaves": [
+          1501, 3001, 4501, 6001, 7501, 9001, 10501, 12001, 13501, 15001, 16501, 18001, 19501,
+          21001, 22501, 24001, 25501, 27001, 28501, 30001, 31501, 33001, 34501, 36001, 37501, 39001,
+          40501, 42001, 43501, 45001, 46501, 48001, 49501, 51001, 52501, 54001, 55501, 57001, 58501,
+          60001
+        ],
+        "piecesAfterRelease": 60001,
+        "reverseEntries": 60000,
+        "bufferIds": 40002,
+        "lineIndexCapacityBytes": 1024,
+        "storedCodeUnits": 64469,
+        "liveHeapWithHistory": 77873248,
+        "heapAfterRelease": 66921676,
+        "liveHeapAfterRelease": 66902576,
+        "maintenance": {
+          "completed": 0,
+          "tombstones": 0,
+          "maxSliceMs": 0
+        },
+        "editMs": 4221.39243
       },
       "anchorsMatchControl": true
     }

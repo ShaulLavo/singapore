@@ -9,7 +9,7 @@ import {
   resolveAnchor,
   resolveAnchorLinear,
 } from './index'
-import { compactPieceTableTombstones } from './compaction'
+import { compactPieceTableTombstones, compactTombstones } from './compaction'
 import { validatePieceTreeInvariants } from './inspection'
 import type { PieceTableEdit, PieceTableSnapshot, RealAnchor } from './pieceTableTypes'
 
@@ -156,6 +156,42 @@ describe('compaction between edits', () => {
     expect(Math.max(...counts)).toBeLessThanOrEqual(counts[0]!)
     expect(Math.max(...counts)).toBeLessThan(40)
   })
+})
+
+describe('maintenance latency', () => {
+  // Each cycle's deleted text is blocked by a different visible append, so one
+  // trailing run holds a stand-in per cycle. Checking it once took 68 ms here.
+  // Timed in this thread's CPU time, so other work on the machine cannot fail it.
+  const cpuMs = (): number => {
+    const usage = process.threadCpuUsage()
+    return (usage.user + usage.system) / 1000
+  }
+
+  test('a long run of distinct stand-ins is planned in short steps', () => {
+    let snapshot = createPieceTableSnapshot('')
+    let longest = 0
+    let steps = 0
+    for (let cycle = 0; snapshot.length < 8000; cycle++) {
+      snapshot = insertIntoPieceTable(snapshot, snapshot.length, 'x')
+      for (let twice = 0; twice < 2; twice++) {
+        snapshot = insertIntoPieceTable(snapshot, snapshot.length, 'y')
+        snapshot = deleteFromPieceTable(snapshot, snapshot.length - 1, 1)
+      }
+      if (cycle % 1000 !== 999) continue
+      const job = compactTombstones(snapshot)
+      steps = 0
+      for (let done = false; !done; steps++) {
+        const start = cpuMs()
+        const step = job.next()
+        longest = Math.max(longest, cpuMs() - start)
+        done = step.done === true
+        if (done) expect(step.value.unverified).toBe(0)
+      }
+    }
+    // The last pass saw about 8,000 stand-ins and 2,000 new tombstones in one run.
+    expect(steps).toBeGreaterThan(10_000 / 1024)
+    expect(longest).toBeLessThan(16)
+  }, 30_000)
 })
 
 type State = {

@@ -71,7 +71,9 @@ finds, for every piece, the nearest piece before and after it with a buffer no n
 (two monotonic stacks). That gives each tombstone its pair of stops. Tombstones are grouped by
 pair, and each group becomes one stand-in whose buffer field is a threshold: the oldest buffer in
 the group. Groups open only on the left go first by falling threshold, then the one open both
-ways, then groups open only on the right by rising threshold. A group sealed both ways becomes a
+ways, then groups open only on the right by rising threshold. Left-open tombstones are the run's
+prefix minima and right-open ones its suffix minima, so the order they are met in is already that
+order and nothing is sorted. A group sealed both ways becomes a
 stand-in with a threshold no scan stops at, placed between neighbours on both sides. Scans from
 outside the run stop at its oldest piece, which the arrangement keeps.
 
@@ -81,8 +83,14 @@ contiguous range, placed beside its stand-in so the open side stays open.
 
 Each run's arrangement is checked before anything is published: every slot must stop both scans
 where its group's tombstones did, the oldest buffer must survive, and the original ranges must
-chain. A run that fails is kept and counted as `unverified`. No test, soak or benchmark has
-counted one.
+chain. A slot is sealed on a side when a slot there is no newer, which prefix and suffix minima
+answer in one pass. An open slot's threshold is the buffer of one of its own group's tombstones,
+open on that side, so its scan leaves the run and stops where theirs did. A run that fails is
+kept and counted as `unverified`. No test, soak or benchmark has counted one.
+
+Every pass over a run yields at most every 1,024 items: grouping, arranging, the check, building
+the stand-ins, remapping entries and joining the new pieces into the tree in balanced blocks. A
+run of any length therefore never holds a maintenance slice.
 
 A run is replaced only when it gets shorter. Stand-ins take the orders of the run's first
 pieces, and the replacement path-copies the tree around each run with `join`, so the rest of the
@@ -129,14 +137,37 @@ forced collection, with the default 200 history states still held.
 | 20,000 cycles | Pieces, control → compacted | Heap with history, control → compacted |
 | --- | ---: | ---: |
 | Paragraph replaced at one spot | 20,002 → 4 | 39.1 MB → 2.6 MB |
-| Word typed and backspaced per unit, 64 spots | 80,064 → 192 | 20.2 MB → 3.4 MB |
-| Scattered inserts, deletes and replacements | 35,315 → 2,838 | 10.4 MB → 2.8 MB |
+| Word typed and backspaced per unit, 64 spots | 80,064 → 192 | 20.2 MB → 3.8 MB |
+| Scattered inserts, deletes and replacements | 35,315 → 2,838 | 10.4 MB → 2.9 MB |
+| `x` appended between deleted `y`s | 60,001 → 40,001 | 77.9 MB → 52.7 MB |
 
 The first two stop growing after their first pass: 4 and 192 pieces at 1,000, 5,000 and 20,000
 cycles. Scattered edits leave 2,913 pieces at 5,000 cycles and 2,838 at 20,000. Those are the
 visible fragments of a 4.5 K-unit document that twenty thousand random edits have cut up, plus a
-stand-in or two between them. The longest maintenance slice was 2.04 ms against the soft 2 ms
-target. Heap after clearing history moves with collection timing in these runs, and is not used.
+stand-in or two between them. The appends keep one piece per `x` and one stand-in per cycle,
+each in a class of its own; their large heap is the same in the control and was not examined. The
+longest maintenance slice was 2.8 ms of thread CPU time. Heap after clearing history moves with
+collection timing in these runs, and is not used.
+
+**Maintenance latency.** Appending `x`, then appending and deleting `y` twice, blocks each
+cycle's tombstones with a different visible piece, so one trailing run keeps a stand-in per cycle
+and every pass plans all of it. The first version checked each slot against every other and walked
+the blocker chain per slot, and planned a run without yielding. The
+[probe](../../examples/stress/reclamation-positions-latency.mjs) compacts every 1,000 cycles and
+times each step of the job in thread CPU time, best of three processes
+([before](../../examples/stress/results/reclamation/positions-latency-before.json),
+[after](../../examples/stress/results/reclamation/positions-latency-after.json)):
+
+| Document length | Longest step, first version | Longest step now |
+| --- | ---: | ---: |
+| 4,000 characters | 19.9 ms | 1.0 ms |
+| 8,000 characters | 79.6 ms | 1.6 ms |
+| 16,000 characters | 496 ms | 2.3 ms |
+
+The remaining growth is collection work that rises with the heap: labelled by phase, the slow
+steps fall in every phase alike. The textbuffer tests, the maintenance tests and the headless
+runs fail when a step or slice reaches 16 ms of this thread's CPU time; CPU time, because a busy
+machine stretched wall-clock slices to 65 ms with nothing else changed.
 
 [Per-insertion cost](../../examples/stress/results/reclamation/positions-per-id.json): fifty
 spots each take an insert that is deleted again, in fresh Node processes, with text reclamation
@@ -184,5 +215,6 @@ bun run --cwd packages/editor test --project node test/storageMaintenance.node.t
 bun run --cwd packages/editor bench:reclamation-positions
 node --expose-gc examples/stress/reclamation-positions-per-id.mjs
 node examples/stress/reclamation-positions-soak.mjs 400 800
+node examples/stress/reclamation-positions-latency.mjs
 bun run --cwd packages/textbuffer bench -- --only sequential-typing,random-replacements --samples 15
 ```

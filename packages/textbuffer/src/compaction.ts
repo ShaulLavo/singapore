@@ -22,6 +22,8 @@ type Layout = {
   readonly nextAtMost: Int32Array
   // For a tombstone, where its run of tombstones starts.
   readonly runStart: Int32Array
+  // Runs of two or more tombstones, in document order.
+  readonly runs: readonly Run[]
 }
 
 type Run = { readonly start: number; readonly end: number }
@@ -30,7 +32,7 @@ type Group = {
   readonly left: number
   readonly right: number
   readonly inserted: number[]
-  threshold: number
+  insertedThreshold: number
   originalStart: number
   originalEnd: number
   originalBreaks: number
@@ -72,6 +74,7 @@ function* readLayout(root: PieceTreeNode | null): Generator<void, Layout> {
   const previousAtMost = new Int32Array(count)
   const nextAtMost = new Int32Array(count)
   const runStart = new Int32Array(count)
+  const runs: Run[] = []
   const stack: number[] = []
   for (let at = 0; at < count; at++) {
     while (stack.length > 0 && pieces[stack[stack.length - 1]!]!.buffer > pieces[at]!.buffer)
@@ -79,6 +82,8 @@ function* readLayout(root: PieceTreeNode | null): Generator<void, Layout> {
     previousAtMost[at] = stack.length > 0 ? stack[stack.length - 1]! : -1
     stack.push(at)
     runStart[at] = at > 0 && !pieces[at - 1]!.visible ? runStart[at - 1]! : at
+    const endsRun = !pieces[at]!.visible && (at === count - 1 || pieces[at + 1]!.visible)
+    if (endsRun && runStart[at]! < at) runs.push({ start: runStart[at]!, end: at })
     if (at % 1024 === 1023) yield
   }
   stack.length = 0
@@ -89,7 +94,7 @@ function* readLayout(root: PieceTreeNode | null): Generator<void, Layout> {
     stack.push(at)
     if (at % 1024 === 0) yield
   }
-  return { pieces, previousAtMost, nextAtMost, runStart }
+  return { pieces, previousAtMost, nextAtMost, runStart, runs }
 }
 
 // A visible piece and a run are told apart by parity.
@@ -113,26 +118,11 @@ const rightKey = (layout: Layout, blocker: number, run: Run): number => {
   return layout.runStart[last] === run.start ? SEALED : blockerKey(layout, last)
 }
 
-// Where a scan with `threshold` stops once it leaves the run. The chains of
-// nearest no-newer pieces skip everything newer than the piece they start at.
-const leftBlocker = (layout: Layout, threshold: number, run: Run): number => {
-  let at = run.start - 1
-  while (at >= 0 && layout.pieces[at]!.buffer > threshold) at = layout.previousAtMost[at]!
-  return at
-}
-
-const rightBlocker = (layout: Layout, threshold: number, run: Run): number => {
-  let at = run.end + 1
-  const count = layout.pieces.length
-  while (at < count && layout.pieces[at]!.buffer > threshold) at = layout.nextAtMost[at]!
-  return at
-}
-
 const createGroup = (left: number, right: number): Group => ({
   left,
   right,
   inserted: [],
-  threshold: Infinity,
+  insertedThreshold: Infinity,
   originalStart: -1,
   originalEnd: -1,
   originalBreaks: 0,
@@ -152,18 +142,24 @@ const addOriginal = (group: Group, piece: Piece): void => {
   group.originalBreaks += piece.lineBreaks
 }
 
-const groupMembers = (layout: Layout, run: Run): Map<string, Group> => {
-  const groups = new Map<string, Group>()
+// Keys run from END up to twice the piece count, so one number holds a pair.
+function* groupMembers(layout: Layout, run: Run): Generator<void, Map<number, Group>> {
+  const groups = new Map<number, Group>()
+  const width = 2 * layout.pieces.length - END + 2
   for (let at = run.start; at <= run.end; at++) {
+    if ((at - run.start) % 1024 === 1023) yield
     const left = leftKey(layout, layout.previousAtMost[at]!, run)
     const right = rightKey(layout, layout.nextAtMost[at]!, run)
-    const key = `${left} ${right}`
+    const key = (left - END) * width + (right - END)
     const group = groups.get(key) ?? createGroup(left, right)
     groups.set(key, group)
     const piece = layout.pieces[at]!
-    group.threshold = Math.min(group.threshold, piece.buffer)
-    if (piece.buffer === ORIGINAL_BUFFER) addOriginal(group, piece)
-    else group.inserted.push(at)
+    if (piece.buffer === ORIGINAL_BUFFER) {
+      addOriginal(group, piece)
+      continue
+    }
+    group.inserted.push(at)
+    group.insertedThreshold = Math.min(group.insertedThreshold, piece.buffer)
   }
   return groups
 }
@@ -172,74 +168,85 @@ type Slot = { readonly group: Group; readonly threshold: number; readonly origin
 
 // Within a group the stand-in goes where it keeps the group's open side open:
 // before the original tombstone on the left, after it on the right.
-const groupSlots = (layout: Layout, group: Group, transparent: boolean): Slot[] => {
-  const slots: Slot[] = []
-  if (group.originalStart >= 0) slots.push({ group, threshold: ORIGINAL_BUFFER, original: true })
-  if (group.inserted.length === 0) return slots
-  let threshold = TRANSPARENT as number
-  if (!transparent) {
-    for (const at of group.inserted) threshold = Math.min(threshold, layout.pieces[at]!.buffer)
-  }
-  const standIn = { group, threshold, original: false }
-  if (group.left !== SEALED && group.right === SEALED) slots.unshift(standIn)
-  else slots.push(standIn)
-  return slots
+const pushGroup = (slots: Slot[], group: Group, transparent: boolean): void => {
+  const original = group.originalStart >= 0
+  const standIn = group.inserted.length > 0
+  const threshold = transparent ? TRANSPARENT : group.insertedThreshold
+  const standInFirst = group.left !== SEALED && group.right === SEALED
+  if (standIn && standInFirst) slots.push({ group, threshold, original: false })
+  if (original) slots.push({ group, threshold: ORIGINAL_BUFFER, original: true })
+  if (standIn && !standInFirst) slots.push({ group, threshold, original: false })
 }
 
 // Left-open groups by falling threshold, the both-open one, right-open groups
 // by rising threshold; the sealed group sits where it has neighbours both ways.
-const arrange = (layout: Layout, groups: Iterable<Group>): Slot[] => {
+// Left-open members are the run's prefix minima and right-open ones its suffix
+// minima, so the order they are met in is already the threshold order.
+function* arrange(groups: Iterable<Group>): Generator<void, Slot[]> {
   const leftOpen: Group[] = []
   const bothOpen: Group[] = []
   const rightOpen: Group[] = []
   let sealed: Group | null = null
+  let seen = 0
   for (const group of groups) {
+    if (++seen % 1024 === 0) yield
     if (group.left === SEALED && group.right === SEALED) sealed = group
     else if (group.right === SEALED) leftOpen.push(group)
     else if (group.left === SEALED) rightOpen.push(group)
     else bothOpen.push(group)
   }
-  leftOpen.sort((a, b) => b.threshold - a.threshold)
-  rightOpen.sort((a, b) => a.threshold - b.threshold)
-  const middle = sealed ? groupSlots(layout, sealed, true) : []
-  const slots = leftOpen.flatMap((group) => groupSlots(layout, group, false))
-  if (leftOpen.length > 0) slots.push(...middle)
-  for (const group of bothOpen) slots.push(...groupSlots(layout, group, false))
-  if (leftOpen.length === 0) slots.push(...middle)
-  for (const group of rightOpen) slots.push(...groupSlots(layout, group, false))
+  const slots: Slot[] = []
+  const sealedAfterLeft = leftOpen.length > 0
+  const parts = [leftOpen, sealed && sealedAfterLeft ? [sealed] : [], bothOpen]
+  parts.push(sealed && !sealedAfterLeft ? [sealed] : [], rightOpen)
+  for (const part of parts) {
+    for (let at = 0; at < part.length; at++) {
+      pushGroup(slots, part[at]!, part[at] === sealed)
+      if (at % 1024 === 1023) yield
+    }
+  }
   return slots
 }
 
-const sealedBy = (slots: readonly Slot[], from: number, to: number, threshold: number): boolean => {
-  for (let at = from; at < to; at++) if (slots[at]!.threshold <= threshold) return true
-  return false
-}
-
-// Every slot must end both scans where its group's tombstones did. This is the
-// proof the arrangement needs, checked per run rather than trusted.
-const scansMatch = (layout: Layout, run: Run, slots: readonly Slot[]): boolean => {
+// Every slot must end both scans where its group's tombstones did. A slot is
+// sealed on a side when a slot there is no newer. Otherwise its threshold is a
+// buffer of one of its group's own tombstones, open on that side, so its scan
+// leaves the run and stops where theirs did; off a trailing run's end that
+// counts as sealed. The arrangement is checked per run rather than trusted.
+function* scansMatch(slots: readonly Slot[], trailing: boolean): Generator<void, boolean> {
+  const rightMinimum = new Float64Array(slots.length + 1).fill(Infinity)
+  for (let at = slots.length - 1; at >= 0; at--) {
+    rightMinimum[at] = Math.min(rightMinimum[at + 1]!, slots[at]!.threshold)
+    if (at % 1024 === 0) yield
+  }
+  let leftMinimum = Infinity
   for (let at = 0; at < slots.length; at++) {
     const { group, threshold } = slots[at]!
-    const left = sealedBy(slots, 0, at, threshold)
-      ? SEALED
-      : leftKey(layout, leftBlocker(layout, threshold, run), run)
-    const right = sealedBy(slots, at + 1, slots.length, threshold)
-      ? SEALED
-      : rightKey(layout, rightBlocker(layout, threshold, run), run)
-    if (left !== group.left || right !== group.right) return false
+    const sealedLeft = leftMinimum <= threshold
+    const sealedRight = rightMinimum[at + 1]! <= threshold
+    leftMinimum = Math.min(leftMinimum, threshold)
+    if (sealedLeft !== (group.left === SEALED)) return false
+    if (sealedRight && group.right !== SEALED) return false
+    if (!sealedRight && group.right === SEALED && !trailing) return false
+    if (at % 1024 === 1023) yield
   }
   return true
 }
 
 // Scans from outside stop at a run's oldest piece, and original offsets are a
 // prefix sum, so both must come through unchanged.
-const outsideMatches = (layout: Layout, run: Run, slots: readonly Slot[]): boolean => {
+function* outsideMatches(
+  layout: Layout,
+  run: Run,
+  slots: readonly Slot[],
+): Generator<void, boolean> {
   let oldest = Infinity
   let originalStart = -1
   let originalEnd = -1
   for (let at = run.start; at <= run.end; at++) {
     const piece = layout.pieces[at]!
     oldest = Math.min(oldest, piece.buffer)
+    if ((at - run.start) % 4096 === 4095) yield
     if (piece.buffer !== ORIGINAL_BUFFER) continue
     if (originalStart < 0) originalStart = piece.start
     originalEnd = piece.start + piece.length
@@ -281,32 +288,32 @@ const slotPiece = (slot: Slot, order: number): Piece => {
 
 // The stand-ins take the orders of the run's first pieces, which already sit
 // between the run's neighbours. Each inserted tombstone's entries, and those of
-// any stand-in it replaces, follow its group's stand-in.
-const planRun = (
+// any stand-in it replaces, follow its group's stand-in. Every pass over the
+// run yields, so one long run cannot hold a maintenance slice.
+function* planRun(
   layout: Layout,
   run: Run,
   remap: Map<number, number>,
-): RunPlan | 'kept' | 'unverified' => {
-  const slots = arrange(layout, groupMembers(layout, run).values())
+): Generator<void, RunPlan | 'kept' | 'unverified'> {
+  const groups = yield* groupMembers(layout, run)
+  const slots = yield* arrange(groups.values())
   if (slots.length > run.end - run.start) return 'kept'
-  if (!scansMatch(layout, run, slots) || !outsideMatches(layout, run, slots)) return 'unverified'
-  const pieces = slots.map((slot, at) => slotPiece(slot, layout.pieces[run.start + at]!.order))
+  const trailing = run.end === layout.pieces.length - 1
+  if (!(yield* scansMatch(slots, trailing))) return 'unverified'
+  if (!(yield* outsideMatches(layout, run, slots))) return 'unverified'
+  const pieces: Piece[] = []
+  let written = 0
   for (let at = 0; at < slots.length; at++) {
+    const piece = slotPiece(slots[at]!, layout.pieces[run.start + at]!.order)
+    pieces.push(piece)
+    if (++written % 1024 === 0) yield
     if (slots[at]!.original) continue
-    const order = pieces[at]!.order
-    for (const member of slots[at]!.group.inserted) remap.set(layout.pieces[member]!.order, order)
+    for (const member of slots[at]!.group.inserted) {
+      remap.set(layout.pieces[member]!.order, piece.order)
+      if (++written % 1024 === 0) yield
+    }
   }
   return { run, pieces }
-}
-
-function* runsOf(layout: Layout): Generator<Run> {
-  const count = layout.pieces.length
-  for (let at = 0; at < count; at++) {
-    if (layout.pieces[at]!.visible) continue
-    const start = at
-    while (at + 1 < count && !layout.pieces[at + 1]!.visible) at++
-    if (at > start) yield { start, end: at }
-  }
 }
 
 // Nodes with an order below `order`, and the rest.
@@ -324,21 +331,39 @@ const splitBelow = (
   return [lower, join(upper, own(node, epoch), node.right, epoch)]
 }
 
-const replaceRun = (
+const balancedRun = (
+  pieces: readonly Piece[],
+  from: number,
+  to: number,
+  epoch: number,
+): PieceTreeNode | null => {
+  if (from >= to) return null
+  const middle = (from + to) >>> 1
+  const left = balancedRun(pieces, from, middle, epoch)
+  const right = balancedRun(pieces, middle + 1, to, epoch)
+  return createNode(pieces[middle]!, left, right, epoch)
+}
+
+// The run's pieces join in balanced blocks, a yield between each.
+function* replaceRun(
   root: PieceTreeNode | null,
   layout: Layout,
   plan: RunPlan,
   epoch: number,
-): PieceTreeNode => {
+): Generator<void, PieceTreeNode> {
   const { run, pieces } = plan
   const following = layout.pieces[run.end + 1]
   const [before, rest] = splitBelow(root, layout.pieces[run.start]!.order, epoch)
   const [, after] = splitBelow(rest, following ? following.order : Infinity, epoch)
   let left = before
-  for (let at = 0; at < pieces.length - 1; at++) {
-    left = join(left, createNode(pieces[at]!, null, null, epoch), null, epoch)
+  const last = pieces.length - 1
+  for (let from = 0; from < last; from += 1024) {
+    const to = Math.min(from + 1024, last)
+    const block = balancedRun(pieces, from + 1, to, epoch)
+    left = join(left, createNode(pieces[from]!, null, null, epoch), block, epoch)
+    yield
   }
-  return join(left, createNode(pieces[pieces.length - 1]!, null, null, epoch), after, epoch)
+  return join(left, createNode(pieces[last]!, null, null, epoch), after, epoch)
 }
 
 // Rebuilt nodes carry an epoch no lineage ever reaches, so every later edit
@@ -358,8 +383,8 @@ export function* compactTombstones(
   const layout = yield* readLayout(root)
   const remap = new Map<number, number>()
   const plans: RunPlan[] = []
-  for (const run of runsOf(layout)) {
-    const plan = planRun(layout, run, remap)
+  for (const run of layout.runs) {
+    const plan = yield* planRun(layout, run, remap)
     if (plan === 'unverified') result.unverified++
     else if (plan !== 'kept') plans.push(plan)
     yield
@@ -369,7 +394,7 @@ export function* compactTombstones(
   const epoch = --compactionEpoch
   let next: PieceTreeNode | null = root
   for (const plan of plans) {
-    next = replaceRun(next, layout, plan, epoch)
+    next = yield* replaceRun(next, layout, plan, epoch)
     result.runs++
     result.tombstones += plan.run.end - plan.run.start + 1 - plan.pieces.length
     yield

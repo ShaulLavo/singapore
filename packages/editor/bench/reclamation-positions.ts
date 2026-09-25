@@ -16,8 +16,10 @@ import { storageExtent } from './reclamation'
 // with edit count once maintenance runs, against the same edits without it.
 // Headless buffer and session with real maintenance; not keystroke-to-paint.
 
-type Workload = 'paragraph' | 'backspace' | 'scattered'
+type Workload = 'paragraph' | 'backspace' | 'scattered' | 'append'
 const SAVE_EVERY = 500
+// A maintenance slice that takes a frame is a visible stall.
+const SLICE_LIMIT_MS = 16
 
 function heapUsed() {
   Bun.gc(true)
@@ -32,6 +34,16 @@ function liveHeap() {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+// Maintenance times its slices with performance.now. A sample runs it on this
+// thread's CPU time instead, so other processes cannot stretch a slice.
+const wallNow = performance.now.bind(performance)
+function timeSlicesOnThisThread() {
+  performance.now = () => {
+    const usage = process.threadCpuUsage()
+    return (usage.user + usage.system) / 1000
+  }
+}
 
 function randomSource(seed: number) {
   let state = seed >>> 0
@@ -78,6 +90,19 @@ function backspaceCycle(session: Session, buffer: Buffer, cycle: number, held: R
   }
 }
 
+// Appended text between deleted appends: each cycle's tombstones are blocked by a
+// different visible piece, so the trailing run keeps a stand-in per cycle.
+function appendCycle(session: Session, buffer: Buffer, cycle: number, held: RealAnchor[]) {
+  const end = buffer.getSnapshot().length
+  session.applyEdits([{ from: end, to: end, text: 'x' }])
+  for (let twice = 0; twice < 2; twice++) {
+    session.applyEdits([{ from: end + 1, to: end + 1, text: 'y' }])
+    if (cycle % 50 === 0)
+      held.push(anchorAt(buffer.getSnapshot(), end + 1, twice ? 'left' : 'right'))
+    session.applyEdits([{ from: end + 1, to: end + 2, text: '' }])
+  }
+}
+
 // Inserts, deletes and replacements anywhere, steered to keep the fixture's length.
 function scatteredCycle(
   session: Session,
@@ -111,16 +136,17 @@ async function measure(workload: Workload, cycles: number, maintained: boolean, 
   const random = randomSource(seed)
   const held: RealAnchor[] = []
   const passStarts: number[] = []
-  const editStart = performance.now()
+  const editStart = wallNow()
   for (let cycle = 0; cycle < cycles; cycle++) {
     if (workload === 'paragraph') paragraphCycle(session, buffer, cycle, held)
     else if (workload === 'backspace') backspaceCycle(session, buffer, cycle, held)
+    else if (workload === 'append') appendCycle(session, buffer, cycle, held)
     else scatteredCycle(session, buffer, random, cycle, held, text.length)
     if (cycle % SAVE_EVERY !== SAVE_EVERY - 1) continue
     passStarts.push(buffer.getSnapshot().pieceCount)
     await settle(buffer, maintained)
   }
-  const editMs = performance.now() - editStart
+  const editMs = wallNow() - editStart
   const resolved: ResolvedAnchor[] = held.map((anchor) =>
     resolveAnchor(buffer.getSnapshot(), anchor),
   )
@@ -172,6 +198,7 @@ function isolatedRun(workload: Workload, cycles: number, maintained: boolean, se
 }
 
 async function runSample() {
+  timeSlicesOnThisThread()
   const [workload, cycles, maintained, seed] = process.argv.slice(3)
   await measure(workload as Workload, 200, maintained === '1', Number(seed))
   console.log(
@@ -184,12 +211,16 @@ async function runSample() {
 function runSuite() {
   const seed = 60061
   const runs = []
-  for (const workload of ['paragraph', 'backspace', 'scattered'] as const) {
+  for (const workload of ['paragraph', 'backspace', 'scattered', 'append'] as const) {
     for (const cycles of [1000, 5000, 20000]) {
       const control = isolatedRun(workload, cycles, false, seed)
       const candidate = isolatedRun(workload, cycles, true, seed)
       // The deleted-anchor comparison against the unreclaimed control.
       assert.deepEqual(candidate.resolved, control.resolved, `${workload} ${cycles}`)
+      assert.ok(
+        candidate.maintenance.maxSliceMs < SLICE_LIMIT_MS,
+        `${workload} ${cycles}: a ${candidate.maintenance.maxSliceMs.toFixed(1)} ms maintenance slice`,
+      )
       const { resolved: controlResolved, ...controlRun } = control
       const { resolved: candidateResolved, ...candidateRun } = candidate
       runs.push({
@@ -207,7 +238,7 @@ function runSuite() {
         baseline: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
         runtime: `Bun ${Bun.version}`,
         measuredAt: new Date().toISOString(),
-        note: `One subprocess per sample, after a 200-cycle warmup. A save every ${SAVE_EVERY} cycles forces a maintenance pass; the control never subscribes, so maintenance never runs. Default 200 history states until the final release. heapAfterRelease is Bun heapUsed and liveHeapAfterRelease is JSC heapStats().heapSize, each after a forced GC and relative to the process baseline; both include runtime state beyond the buffer.`,
+        note: `One subprocess per sample, after a 200-cycle warmup. A save every ${SAVE_EVERY} cycles forces a maintenance pass, and no slice may reach ${SLICE_LIMIT_MS} ms of this thread's CPU time; the control never subscribes, so maintenance never runs. Default 200 history states until the final release. heapAfterRelease is Bun heapUsed and liveHeapAfterRelease is JSC heapStats().heapSize, each after a forced GC and relative to the process baseline; both include runtime state beyond the buffer.`,
         runs,
       },
       null,

@@ -25,6 +25,7 @@ const payload = 'x'.repeat(16384)
 const subscriptions: (() => void)[] = []
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const unsubscribe of subscriptions.splice(0)) unsubscribe()
   vi.clearAllTimers()
   vi.useRealTimers()
@@ -167,6 +168,34 @@ describe('automatic buffer storage maintenance', () => {
     expect(buffer.getSnapshot().pieceCount).toBeLessThan(100)
     expect(buffer.materializeFullText()).toBe('a b c d e f g h')
   })
+
+  // Each cycle's deleted text is blocked by a different visible append, so the
+  // trailing run keeps a stand-in per cycle and every pass plans all of it.
+  it('keeps every slice short while a long run of distinct stand-ins grows', async () => {
+    // Slices are timed in this thread's CPU time, so a busy machine cannot fail the check.
+    vi.spyOn(performance, 'now').mockImplementation(() => {
+      const usage = process.threadCpuUsage()
+      return (usage.user + usage.system) / 1000
+    })
+    const buffer = createEditorTextBuffer('')
+    const session = createEditorBufferSession(buffer)
+    subscriptions.push(buffer.subscribe(() => {}))
+    for (let cycle = 0; buffer.getSnapshot().length < 8000; cycle++) {
+      const end = buffer.getSnapshot().length
+      session.applyEdits([{ from: end, to: end, text: 'x' }])
+      for (let twice = 0; twice < 2; twice++) {
+        session.applyEdits([{ from: end + 1, to: end + 1, text: 'y' }])
+        session.applyEdits([{ from: end + 1, to: end + 2, text: '' }])
+      }
+      if (cycle % 1000 === 999) await vi.runAllTimersAsync()
+    }
+    await vi.runAllTimersAsync()
+    const stats = buffer.getStorageMaintenanceStats()
+    expect(stats.completed).toBeGreaterThan(1)
+    expect(stats.tombstones).toBeGreaterThan(4000)
+    expect(stats.maxSliceMs).toBeLessThan(16)
+    expect(buffer.materializeFullText()).toBe('x'.repeat(8000))
+  }, 30_000)
 
   it('keeps prepared transactions and receipt reversal valid across publication', async () => {
     const { buffer } = fixture()
