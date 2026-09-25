@@ -565,9 +565,8 @@ type MountOptions = {
 }
 
 /**
- * The host half of §C3, in miniature: construct the editor from `createDiffEditorOptions()`, push
- * the plugin's rows in as text, and re-apply its tokens after every `setText`.
- * Platform's shared mount component does exactly this — see the platform plan §3.
+ * The host half of §C3, in miniature: construct the editor from `createDiffEditorOptions()` and
+ * push the plugin's rows in as text with their tokens.
  */
 function mountDiff(options: MountOptions = {}): {
   editor: Editor

@@ -138,6 +138,11 @@ export type EditorOptions = {
    */
   readonly detectIndentation?: boolean
   /**
+   * Offers fold regions: syntax, indentation, contributed and hand-drawn. On by default; off, the
+   * fold commands find nothing to fold, as a diff projection needs.
+   */
+  readonly folding?: boolean
+  /**
    * Hands Tab back to the page instead of indenting with it, for a reader who would otherwise have
    * no key left to leave the editor by. Ctrl+M turns it on and off from inside.
    */
