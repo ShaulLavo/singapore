@@ -813,8 +813,9 @@
     },
     {
       "id": "E050",
+      "file": "e050-host-obligations-into-api.md",
       "title": "Things every host must remember become things the API does",
-      "status": "Completed",
+      "status": "In progress",
       "owner": "Cross-repo",
       "kind": "Design",
       "priority": "P2",
@@ -825,8 +826,7 @@
       "topics": [
         "Workaround audit: ask the owner, do not model it"
       ],
-      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc",
-      "reference": "../docs/architecture/e050-host-obligations.md"
+      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
     },
     {
       "id": "E051",
