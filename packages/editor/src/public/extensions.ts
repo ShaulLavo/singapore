@@ -1,3 +1,4 @@
+export type { EditorRowPresentation } from '../rowPresentation'
 export type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 export {
   createEditorCapabilityToken,

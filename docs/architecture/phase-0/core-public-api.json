@@ -4894,6 +4894,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorRowPresentation",
+          "source": "packages/editor/src/rowPresentation.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorSelectionRange",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
