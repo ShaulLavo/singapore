@@ -56,6 +56,7 @@ function open(size: number, instrumented: boolean) {
   const editor = new Editor(document.querySelector<HTMLElement>('#editor')!, {
     lineHeight: 20,
     tabSize: 4,
+    detectIndentation: false,
     plugins: [
       createShikiHighlighterPlugin({
         workerOwner: owner,

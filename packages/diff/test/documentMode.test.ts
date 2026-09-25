@@ -99,7 +99,7 @@ function mountDocumentModeDiff(): MountedDocumentModeDiff {
     documentMode: 'static',
     editability: 'readonly',
     keymap: { defaultBindings: false, layers: [] },
-    tabSize: 4,
+    detectIndentation: false,
   })
   mounted.setText(joinRenderLines(rows), { languageId: null, tokens: rowTokens(rows) })
   mounted.setRowDecorations(rowDecorations(rows))

@@ -27,7 +27,7 @@ const editor = new Editor(host, {
   editability: 'readonly',
   keymap: { defaultBindings: false, layers: [] },
   plugins: [plugin],
-  tabSize: 4,
+  detectIndentation: false,
 })
 
 const push = () => {
@@ -56,8 +56,9 @@ Four of those options are load-bearing rather than taste:
 - **`languageId: null`** — the editor's document is the _interleaved_ buffer. Give it a real language
   and tree-sitter parses that interleaving and feeds the result into folds, brackets and injections.
   The language belongs to the plugin's own per-side syntax documents, which is where it lives.
-- **`tabSize`** — omit it and `adoptDocumentTabSize` guesses from the buffer on every `setText`, so
-  tab width flips per file _and_ per expansion toggle.
+- **`detectIndentation: false`** — otherwise the editor guesses the indentation width from the
+  buffer on every `setText`, so it flips per file _and_ per expansion toggle. `tabSize` then sets
+  the width, and `setTabSize` changes it live.
 - **`cursorLineHighlight`** with explicit `false`s — the default is `rowBackground: true`, which
   paints a cursor line on top of the diff row tint. `undefined` means _default_, not off.
 - **`keymap: { defaultBindings: false, layers: [] }`** — a real editor otherwise brings find and the

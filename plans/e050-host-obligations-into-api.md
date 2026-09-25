@@ -116,8 +116,15 @@ Platform passes all three from its settings and stopped writing `--editor-font-s
 `--editor-row-height` and `--editor-tab-size` on `:root`. Those never reached the editor anyway:
 it writes the row height and tab size on its own element, so `editor.lineHeight` had no effect
 (scenario `editor-typography` fails on the old build at a 34px setting, rows stay 24px). The
-row-height audit is deleted (Platform plan 130, D3). `editor.tabSize` remains unwired: the editor
-detects each document's width and has no setter for the fallback it detects against.
+row-height audit is deleted (Platform plan 130, D3).
+
+Tab size followed: `tabSize` is now the configured width (the columns a tab spans, and the fallback
+the indentation guess uses), `detectIndentation` (default on) replaces "a named `tabSize` switches
+the guess off", and `setTabSize` changes both live. The view used to lay tabs out at its
+constructor width forever; it now re-projects, so wrap points, hit tests and the caret follow
+(`typography.browser.test.ts` fails with only the CSS variable updated). The diff recipe and the
+stress examples pass `detectIndentation: false`. Platform feeds `editor.tabSize` to every editor
+and to prepared documents, whose `configuredTabSize` must match the editor's to be claimed.
 
 ## Row 5, 2026-09-24: a press a plugin claims
 

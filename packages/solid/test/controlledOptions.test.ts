@@ -104,6 +104,7 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     method: 'setTabMovesFocus',
     applied: [true],
   },
+  tabSize: { initial: 2, next: 8, method: 'setTabSize', applied: [8] },
   theme: {
     initial: { backgroundColor: '#101010' },
     next: { backgroundColor: '#303030' },
@@ -165,6 +166,7 @@ describe('controlled options', () => {
         lineHeight: () => OPTION_SAMPLES.lineHeight.initial as number,
         suspiciousCharacters: () => ({ ambiguous: true, invisible: true }),
         tabMovesFocus: () => false,
+        tabSize: () => OPTION_SAMPLES.tabSize.initial as number,
         wordWrap,
       }),
     )

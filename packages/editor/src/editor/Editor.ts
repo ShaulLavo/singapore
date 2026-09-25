@@ -381,7 +381,8 @@ export class Editor {
   private appliedInjectedTextRows: readonly InjectedTextRow[] = []
   private readonly lifecycleSummary = createEditorLifecycleSummary()
   /** The width a host named, which no document may contradict. */
-  private readonly configuredTabSize: number
+  private configuredTabSize: number
+  private readonly detectIndentation: boolean
   /** The width in effect: the host's when it named one, otherwise the loaded document's own. */
   private tabSize: number
   private tabMovesFocus: boolean
@@ -474,6 +475,7 @@ export class Editor {
     this.options = options
     this.presentationReady = options.presentationReady !== false
     this.configuredTabSize = normalizeTabSize(options.tabSize)
+    this.detectIndentation = options.detectIndentation ?? true
     this.tabSize = this.configuredTabSize
     this.tabMovesFocus = options.tabMovesFocus ?? false
     // On the host's container rather than on the scrolling element: everything under that element is
@@ -1794,6 +1796,29 @@ export class Editor {
     })
   }
 
+  /**
+   * Columns a tab spans, and the fallback the open document's indentation is guessed against, so a
+   * document that gave no sign of its own follows the new width. Undefined is the default, 4.
+   */
+  setTabSize(tabSize: number | undefined): void {
+    const configured = normalizeTabSize(tabSize)
+    if (configured === this.configuredTabSize) return
+
+    this.configuredTabSize = configured
+    this.view.setTabSize(configured)
+    this.tabSize = this.detectIndentation
+      ? guessedTabSize(this.getTextSnapshot(), configured)
+      : configured
+    // Indentation folds are measured in the width in effect.
+    this.scheduleFallbackFoldProjection()
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.layout.tab_size_changed',
+      level: 'info',
+      layout: { configuredTabSize: configured, tabSize: this.tabSize },
+    })
+  }
+
   /** Undefined hands the size back to the stylesheet. */
   setFontSize(fontSize: number | undefined): void {
     this.announceFontMetrics(this.view.setFontSize(fontSize), 'font_size')
@@ -1903,7 +1928,7 @@ export class Editor {
       const prepared = options.preparedDocument
         ? this.syntax.claimPreparedDocument(syntaxDocument, options.preparedDocument, {
             configuredTabSize: this.configuredTabSize,
-            tabSizePolicy: this.options.tabSize === undefined ? 'detect-indentation' : 'fixed',
+            tabSizePolicy: this.detectIndentation ? 'detect-indentation' : 'fixed',
             documentConfigurationTag: options.documentConfigurationTag ?? [],
             highlighterConfigurationTag: options.highlighterConfigurationTag ?? [],
             structuralConfigurationTag: options.structuralConfigurationTag ?? [],
@@ -2070,19 +2095,18 @@ export class Editor {
   /**
    * Takes the newly loaded document's indentation width as the one in effect.
    *
-   * A host that named a width has said something about intent that a file cannot argue with, so its
-   * value stands; a host that named none would otherwise have every editor measure every file in the
-   * same width, which is wrong for all but the files that happen to use it. The guess reads a
-   * bounded sample of lines, so opening a large file does not scan it.
+   * Without detection every editor would measure every file in the configured width, which is wrong
+   * for all but the files that happen to use it. The guess reads a bounded sample of lines, so
+   * opening a large file does not scan it.
    */
   private adoptDocumentTabSize(source: TextSnapshot): void {
-    if (this.options.tabSize !== undefined) return
+    if (!this.detectIndentation) return
 
     this.tabSize = guessedTabSize(source, this.configuredTabSize)
   }
 
   private adoptPreparedDocumentTabSize(tabSize: number): void {
-    if (this.options.tabSize !== undefined) return
+    if (!this.detectIndentation) return
 
     this.tabSize = tabSize
   }

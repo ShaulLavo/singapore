@@ -145,6 +145,7 @@ function open(size: number, config: BoundaryConfig, diagnostics: boolean) {
     const editor = new Editor(createHost(index), {
       lineHeight: 20,
       tabSize: 2,
+      detectIndentation: false,
       plugins: plugins(config),
       onChange: (_state, change) => {
         if (index === 0 && change && change.kind !== 'selection' && change.kind !== 'none')

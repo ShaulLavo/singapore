@@ -225,6 +225,7 @@ function open(fixture: GeometryFixture, diagnostics: boolean, fontFamily?: strin
   editor = new Editor(host, {
     lineHeight: 20,
     tabSize: 4,
+    detectIndentation: false,
     plugins: fixture === 'markdown' ? [markdownCaptures(text), createMarkdownPreviewPlugin()] : [],
     onChange: () => applied(),
   })

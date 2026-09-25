@@ -108,6 +108,7 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     method: 'setTabMovesFocus',
     applied: [true],
   },
+  tabSize: { initial: 2, next: 8, method: 'setTabSize', applied: [8] },
   theme: {
     initial: { backgroundColor: '#111111' },
     next: { backgroundColor: '#222222' },

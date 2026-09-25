@@ -138,7 +138,7 @@ describe('split mode alignment (§C7)', () => {
       editability: 'readonly',
       keymap: { defaultBindings: false, layers: [] },
       plugins: [plugin],
-      tabSize: 4,
+      detectIndentation: false,
     })
     mounted.push({ editor, host })
     plugin.onDidChangeRows(() => {
@@ -167,7 +167,7 @@ describe('split mode alignment (§C7)', () => {
       editability: 'readonly',
       keymap: { defaultBindings: false, layers: [] },
       plugins: [plugin],
-      tabSize: 4,
+      detectIndentation: false,
     })
     mounted.push({ editor, host })
     plugin.onDidChangeRows(() => {

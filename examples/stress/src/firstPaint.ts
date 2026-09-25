@@ -186,6 +186,7 @@ function open() {
   editor = new Editor(host, {
     lineHeight: 20,
     tabSize: 4,
+    detectIndentation: false,
     plugins,
     onInitialPaint: (event) => paints.push({ ...event, at: performance.now() }),
     onChange: inputApplied,

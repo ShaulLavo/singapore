@@ -127,7 +127,16 @@ export type EditorOptions = {
   readonly selectionSyncMode?: EditorSelectionSyncMode
   /** Confusable and invisible characters to point out; both families report unless turned off. */
   readonly suspiciousCharacters?: EditorSuspiciousCharactersOptions
+  /**
+   * Columns a tab character spans, and the indentation width when `detectIndentation` is off or a
+   * document gives no sign of its own. Defaults to 4.
+   */
   readonly tabSize?: number
+  /**
+   * Guesses each document's indentation width from its text, falling back to `tabSize`. On by
+   * default; turn it off where the text is not a document's own, such as a diff projection.
+   */
+  readonly detectIndentation?: boolean
   /**
    * Hands Tab back to the page instead of indenting with it, for a reader who would otherwise have
    * no key left to leave the editor by. Ctrl+M turns it on and off from inside.

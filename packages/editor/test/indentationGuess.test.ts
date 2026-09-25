@@ -83,10 +83,11 @@ describe('indentation width read off the document', () => {
     setHighlightRegistry(undefined)
   })
 
-  function mount(tabSize?: number): void {
+  function mount(tabSize?: number, detectIndentation?: boolean): void {
     editor = new Editor(container, {
       plugins: [snapshotProbePlugin((snapshot) => snapshots.push(snapshot))],
       tabSize,
+      detectIndentation,
     })
   }
 
@@ -111,10 +112,42 @@ describe('indentation width read off the document', () => {
     expect(indentAfterEnter(TWO_SPACE_SOURCE)).toBe('  ')
   })
 
-  it('lets a width the host named stand over the one the file uses', () => {
-    mount(4)
+  it('lets the configured width stand over the file once detection is off', () => {
+    mount(4, false)
 
     expect(indentAfterEnter(TWO_SPACE_SOURCE)).toBe('    ')
+  })
+
+  it('keeps detecting when the host names a width', () => {
+    mount(8)
+
+    expect(indentAfterEnter(TWO_SPACE_SOURCE)).toBe('  ')
+  })
+
+  it('takes a new width live: as the fallback, and as the width once detection is off', () => {
+    mount()
+    editor.setText('a\nb', { languageId: 'typescript' })
+    editor.setTabSize(3)
+    expect(snapshots.at(-1)?.tabSize).toBe(3)
+    expect(
+      container
+        .querySelector<HTMLElement>('.editor-virtualized')
+        ?.style.getPropertyValue('--editor-tab-size'),
+    ).toBe('3')
+
+    editor.dispose()
+    mount(4, false)
+    editor.setText(TWO_SPACE_SOURCE.replace('|', ''), { languageId: 'typescript' })
+    editor.setTabSize(6)
+    expect(snapshots.at(-1)?.tabSize).toBe(6)
+  })
+
+  it('keeps the width a file is written in when the fallback changes', () => {
+    mount()
+    editor.setText(TWO_SPACE_SOURCE.replace('|', ''), { languageId: 'typescript' })
+    editor.setTabSize(8)
+
+    expect(snapshots.at(-1)?.tabSize).toBe(2)
   })
 
   it('outdents by the width the file is written in', () => {

@@ -63,6 +63,7 @@ export type SolidEditorOptions = Omit<
   | 'scrollMode'
   | 'suspiciousCharacters'
   | 'tabMovesFocus'
+  | 'tabSize'
   | 'theme'
   | 'wordWrap'
 > & {
@@ -83,6 +84,7 @@ export type SolidEditorOptions = Omit<
     EditorSuspiciousCharactersOptions | undefined
   >
   readonly tabMovesFocus?: SolidEditorReactiveValue<boolean | undefined>
+  readonly tabSize?: SolidEditorReactiveValue<number | undefined>
   readonly wordWrap?: SolidEditorReactiveValue<boolean | undefined>
   readonly onChange?: EditorChangeHandler
 }
@@ -261,6 +263,7 @@ function createConstructorOptions(
     selection: _selection,
     suspiciousCharacters,
     tabMovesFocus,
+    tabSize,
     theme,
     wordWrap,
     ...constructorOptions
@@ -280,6 +283,7 @@ function createConstructorOptions(
       scrollMode: readReactive(scrollMode),
       suspiciousCharacters: readReactive(suspiciousCharacters),
       tabMovesFocus: readReactive(tabMovesFocus),
+      tabSize: readReactive(tabSize),
       theme: readReactive(theme) ?? undefined,
       wordWrap: readReactive(wordWrap),
       plugins: [createSolidSyncPlugin(runtime), ...(plugins ?? [])],

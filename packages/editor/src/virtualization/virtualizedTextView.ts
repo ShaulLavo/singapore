@@ -47,6 +47,7 @@ import {
   fontFamilyValue,
   fontSizeValue,
   setFontVariable,
+  setStyleValue,
   normalizeScrollMode,
   scrollElementPadding,
 } from './virtualizedTextViewHelpers'
@@ -823,6 +824,22 @@ export class VirtualizedTextView {
     if (!setFontVariable(this.scrollElement, '--editor-font-family', fontFamilyValue(fontFamily)))
       return null
     return this.remeasureMetrics()
+  }
+
+  public setTabSize(tabSize: number | undefined): boolean {
+    const view = this.view
+    const next = normalizeTabSize(tabSize)
+    if (view.tabSize === next) return false
+
+    view.tabSize = next
+    setStyleValue(view.scrollElement, '--editor-tab-size', String(next))
+    // A tab's width moves every column after it: wrap points, the horizontal extent, hit tests.
+    refreshDisplayProjection(view, horizontalViewportColumns(view))
+    resetContentWidthScan(view)
+    clearRowGeometryCaches(view)
+    view.lastRenderedRowsKey = ''
+    updateVirtualizerRows(view)
+    return true
   }
 
   /** Adopts metrics measured elsewhere, for a view that mirrors another view's rows. */

@@ -42,6 +42,7 @@ type EditorControlledOptions = {
   readonly selection?: EditorControlledSelection | null
   readonly suspiciousCharacters?: EditorSuspiciousCharactersOptions
   readonly tabMovesFocus?: boolean
+  readonly tabSize?: number
   readonly theme?: EditorTheme | null
   readonly wordWrap?: boolean
 }
@@ -257,6 +258,19 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
       if (suspiciousCharacters === undefined) return false
 
       editor.setSuspiciousCharacters(suspiciousCharacters)
+      return true
+    },
+  }),
+  // Undefined resets to the default width rather than meaning "not controlled", for the same
+  // reason as the font options.
+  defineOption({
+    name: 'tabSize',
+    defaultValue: undefined,
+    validate: (input) =>
+      typeof input === 'number' && Number.isFinite(input) && input > 0 ? input : undefined,
+    equals: Object.is,
+    applyTo: (editor, tabSize) => {
+      editor.setTabSize(tabSize)
       return true
     },
   }),

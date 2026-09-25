@@ -589,7 +589,7 @@ function mountDiff(options: MountOptions = {}): {
     editability: 'readonly',
     keymap: { defaultBindings: false, layers: [] },
     plugins: [plugin],
-    tabSize: 4,
+    detectIndentation: false,
   })
   mounted.push({ editor, host })
 

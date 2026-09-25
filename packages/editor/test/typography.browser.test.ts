@@ -92,3 +92,36 @@ it('writes the face where popups opened over the editor read it', () => {
     dispose()
   }
 })
+
+// The view lays tabs out from its own width; a caret or hit test on the old width lands a tab's
+// worth of columns away from the glyph it names.
+it('lays a tab out at a new width and keeps the caret on the glyph after it', async () => {
+  const { editor, scroll, metrics, dispose } = mountEditor()
+  try {
+    editor.setText('\tx')
+    editor.setSelection(1, 1)
+    await expect.poll(() => metrics().characterWidth).toBeGreaterThan(0)
+
+    for (const tabSize of [8, 2]) {
+      editor.setTabSize(tabSize)
+      await new Promise(requestAnimationFrame)
+
+      const text = scroll.querySelector('[data-editor-virtual-row="0"]')!
+      const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT)
+      let node = walker.nextNode() as Text | null
+      while (node && !node.data.includes('x')) node = walker.nextNode() as Text | null
+      if (!node) throw new Error('no rendered x')
+      const range = document.createRange()
+      range.setStart(node, node.data.indexOf('x'))
+      range.setEnd(node, node.data.indexOf('x') + 1)
+      const glyph = range.getBoundingClientRect().left
+      const caret = scroll.querySelector('.editor-virtualized-caret')!.getBoundingClientRect().left
+      const rowLeft = text.getBoundingClientRect().left
+
+      expect(Math.abs(caret - glyph)).toBeLessThanOrEqual(1)
+      expect(glyph - rowLeft).toBeCloseTo(tabSize * metrics().characterWidth, 0)
+    }
+  } finally {
+    dispose()
+  }
+})

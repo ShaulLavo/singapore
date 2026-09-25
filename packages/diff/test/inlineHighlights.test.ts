@@ -57,7 +57,7 @@ describe('inline word-diff tint', () => {
       editability: 'readonly',
       keymap: { defaultBindings: false, layers: [] },
       plugins: [plugin],
-      tabSize: 4,
+      detectIndentation: false,
     })
     plugin.setFile(file)
     editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
