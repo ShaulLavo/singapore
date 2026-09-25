@@ -184,20 +184,26 @@ strips nothing for safety. Of the keys left, folding does harm. A buffer with no
 indentation fallback folds, so Ctrl+K Ctrl+0 folds the interleaved rows (a deletion and its addition
 vanish behind `...`) and would misalign a split. The preset keeps navigation, selection and find
 and leaves folding out. Platform keeps `keymap: { enabled: false }`, as every hosted editor does,
-because its app keymap drives them.
+because its app keymap drives them. The arrow keys can rest the caret on a separator row, where a
+collapsed-caret copy takes the label: row 5's non-caret rows remain. Platform's app keymap already
+moved the caret there.
 
 `test/editorOptions.test.ts` fails with `detectIndentation` removed (the width follows each push's
 guess), with `cursorLineHighlight` removed (the caret's row is painted), with the default keymap or
-the folding pack added (the fold chord folds the projection), and with no keys (Shift+ArrowDown does
-not move). Platform deletes `diff-options.ts`. Scenarios `git-diff-expand-tokens`,
-`git-diff-line-comment`, `git-diff-inline-tint` and `editor-title-diff-toggle` pass.
+the folding pack added (the fold chord folds the projection), with the navigation, selection or find
+pack removed, and with `editability` or `documentMode` changed (with both, a host keymap's
+Backspace edits the buffer). The README shows how to extend the preset's `keymap` and `cursorLineHighlight`, since a
+field an override leaves out takes the editor default. Platform deletes `diff-options.ts`.
+Scenarios `git-diff-expand-tokens`, `git-diff-line-comment`, `git-diff-inline-tint` and
+`editor-title-diff-toggle` pass.
 
 Not covered: Platform's own fold commands still reach a diff. With a diff focused, Ctrl+K Ctrl+0
 hides the change (a throwaway probe scenario, evidence in
 `/work/tmp/fregat-evidence/20260925T114118Z-scenario-zz-diff-fold-probe`),
 because the app keymap dispatches `editor.foldAll` to the focused editor and the preset's keymap is
 off there. Recommended: a `folding: false` editor option (VS Code's `editor.folding`) that makes the
-fold commands no-ops and skips fallback folds, set by the preset.
+fold commands no-ops and skips fallback folds, set by the preset. The Design row carries it until
+it lands.
 
 ## Scope
 
@@ -206,19 +212,19 @@ this document is the inventory and the contract, not one change.
 
 ## Design
 
-| Secret today                                   | API that replaces it                                                                                  |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `setTokens` after every `setText`              | done: `setText(text, { tokens })`                                                                     |
-| Diff option traps                              | done: `createDiffEditorOptions()` preset in `packages/diff`; `readonly` already refused edit bindings |
-| CSS variables for typography                   | done: `fontSize`, `fontFamily` options beside `lineHeight`; pitch was already `snapshot.metrics`      |
-| `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                      |
-| Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                             |
-| Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                  |
-| `MutationObserver` on `style`                  | `onDidChangeReservedOverlayWidth(side)` that is not dropped when re-entrant                           |
-| Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                        |
-| `pointer-events: auto`                         | an `interactive` flag on a gutter cell contribution                                                   |
-| Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                 |
-| `TOKENS_WAIT_MS`                               | the initial-highlight terminal status exposed to contributions                                        |
+| Secret today                                   | API that replaces it                                                                                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setTokens` after every `setText`              | done: `setText(text, { tokens })`                                                                                                                                   |
+| Diff option traps                              | done: `createDiffEditorOptions()` preset in `packages/diff`; `readonly` already refused edit bindings; a `folding: false` option for a host's fold commands remains |
+| CSS variables for typography                   | done: `fontSize`, `fontFamily` options beside `lineHeight`; pitch was already `snapshot.metrics`                                                                    |
+| `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                                                                                    |
+| Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                                                                                           |
+| Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                                                                                |
+| `MutationObserver` on `style`                  | `onDidChangeReservedOverlayWidth(side)` that is not dropped when re-entrant                                                                                         |
+| Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                                                                                      |
+| `pointer-events: auto`                         | an `interactive` flag on a gutter cell contribution                                                                                                                 |
+| Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                                                                               |
+| `TOKENS_WAIT_MS`                               | the initial-highlight terminal status exposed to contributions                                                                                                      |
 
 ## Steps
 
