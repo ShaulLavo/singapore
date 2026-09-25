@@ -57,6 +57,8 @@ const HEAD = [
   '',
 ].join('\n')
 const BOLD_START = HEAD.indexOf('**bold**')
+// A filler row no replacement lands on, below every row the other operations move or cut.
+const FILLER_ROW = HEAD.split('\n').length + 1
 const REPLACEMENTS = 32
 
 const editors: Editor[] = []
@@ -149,7 +151,7 @@ describe('full-text boundary', () => {
 
 // UTF-16 units one operation may read over the fixed viewport, captures and caret. Measured at both
 // sizes: type 902, peerUndo 1202, select 411, commentLine 1987, moveLine 1197, deleteWord 1962,
-// cutLine 1741, the rest 0.
+// cutLine 1741, addNextOccurrence 1214, the rest 0.
 const OPERATION_READ_BUDGETS: Readonly<Record<string, number>> = {
   type: 2_048,
   peerUndo: 2_048,
@@ -161,6 +163,7 @@ const OPERATION_READ_BUDGETS: Readonly<Record<string, number>> = {
   moveLine: 2_048,
   deleteWord: 4_096,
   cutLine: 4_096,
+  addNextOccurrence: 2_048,
 }
 
 async function measureOperations(size: number): Promise<Record<string, Reads>> {
@@ -184,6 +187,12 @@ async function measureOperations(size: number): Promise<Record<string, Reads>> {
     moveLine: () => first.editor.dispatchCommand('editor.action.moveLinesDownAction'),
     deleteWord: () => first.editor.dispatchCommand('deleteWordLeft'),
     cutLine: () => cutCaretLine(first.container),
+    // A caret in a filler row's `line`: the first press selects it, the second finds the next row's.
+    addNextOccurrence: () => {
+      first.editor.setSelection(first.editor.getTextSnapshot().lineStart(FILLER_ROW) + 8)
+      expect(first.editor.dispatchCommand('addNextOccurrence')).toBe(true)
+      expect(first.editor.dispatchCommand('addNextOccurrence')).toBe(true)
+    },
   }
 
   const results: Record<string, Reads> = {}
