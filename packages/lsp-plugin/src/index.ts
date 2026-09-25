@@ -84,6 +84,8 @@ export type {
   ApplyWorkspaceEditRequest,
   ApplyWorkspaceEditResult,
   LanguageServerDiagnosticCounts,
+  LanguageServerDiagnosticActionContext,
+  LanguageServerDiagnosticActions,
   LanguageServerDiagnosticMarkerClaim,
   LanguageServerDiagnosticMarkerEvent,
   LanguageServerDefinitionTarget,

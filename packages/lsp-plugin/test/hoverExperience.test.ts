@@ -33,6 +33,40 @@ describe('hover timing and keyboard access', () => {
     document.body.replaceChildren()
   })
 
+  it('passes document identity and version per diagnostic and refuses stale actions', () => {
+    let active = activeDocument()
+    const diagnostics = [
+      { range: singleLineRange(6, 11), message: 'first warning', severity: 2 },
+      { range: singleLineRange(6, 11), message: 'second error', severity: 1 },
+    ]
+    const run = vi.fn()
+    const getDiagnosticActions = vi.fn((context) => [{ label: 'Inspect', run: () => run(context) }])
+    const participant = createLanguageServerHoverParticipant({
+      router: { hasReady: () => false } as never,
+      requestHover: async () => null,
+      getActiveDocument: () => active,
+      getDiagnostics: () => diagnostics,
+      getDiagnosticActions,
+      onRequestError: vi.fn(),
+    })
+    const parts = participant.computeSync!({
+      anchor: { offset: 8, range: { start: 6, end: 11 }, source: 'keyboard' },
+      snapshot: hoverSnapshot(active, 'const value = 1'),
+      signal: new AbortController().signal,
+    })
+    const action = parts[0]?.notes?.[1]?.actions?.[0]
+    expect(action).toBeDefined()
+    action!.run()
+    expect(run).toHaveBeenCalledExactlyOnceWith({
+      documentUri: active.uri,
+      textVersion: 1,
+      diagnostic: diagnostics[1],
+    })
+    active = { ...active, textVersion: 2 }
+    expect(() => action!.run()).toThrow('The diagnostic changed')
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('starts semantic work halfway through the delay and paints only after the full delay', async () => {
     vi.useFakeTimers()
     const editor = await connectedEditor('const value = 1', 6)

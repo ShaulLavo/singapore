@@ -1,3 +1,4 @@
+import type { TooltipAction } from '@singapore-editor/plugin-ui/tooltip'
 import type { LanguageServerDocument } from './document'
 import type { DocumentLogicalRevisionScope } from '@singapore-editor/core/document'
 import type {
@@ -186,6 +187,16 @@ export type LanguageServerRenamePrompt = {
   readonly signal: AbortSignal
 }
 
+export type LanguageServerDiagnosticActionContext = {
+  readonly documentUri: lsp.DocumentUri
+  readonly textVersion: number
+  readonly diagnostic: lsp.Diagnostic
+}
+
+export type LanguageServerDiagnosticActions = (
+  context: LanguageServerDiagnosticActionContext,
+) => readonly TooltipAction[]
+
 export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   readonly rootUri?: lsp.DocumentUri | null
   readonly initializationOptions?: unknown
@@ -235,6 +246,7 @@ export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   onConnected?(context: LanguageServerConnectionContext): void
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly getDiagnosticActions?: LanguageServerDiagnosticActions
   readonly onDidNavigateDiagnostic?: (
     event: LanguageServerDiagnosticMarkerEvent,
   ) => LanguageServerDiagnosticMarkerClaim
@@ -279,6 +291,7 @@ export type LanguageServerSetPluginOptions = Pick<
   LanguageServerPluginOptions,
   | 'onDiagnostics'
   | 'onDidNavigateDiagnostic'
+  | 'getDiagnosticActions'
   | 'onInteractiveReady'
   | 'onRequestError'
   | 'onDefinitionLinkHover'

@@ -1,3 +1,5 @@
+import type { LanguageServerDiagnosticActions } from './types'
+import type { TooltipAction } from '@singapore-editor/plugin-ui/tooltip'
 import {
   lspPositionToOffsetInSnapshot,
   offsetToLspPositionInSnapshot,
@@ -32,6 +34,7 @@ export type LanguageServerHoverParticipantOptions = {
   ): Promise<lsp.Hover | null>
   getActiveDocument(): ActiveDocument | null
   getDiagnostics(): readonly lsp.Diagnostic[]
+  readonly getDiagnosticActions?: LanguageServerDiagnosticActions
   /** Follows a diagnostic's related-information link. */
   openLocation?: OpenLocation
   onRequestSuccess?(): void
@@ -77,7 +80,11 @@ export function createLanguageServerHoverParticipant(
         {
           ordinal: DIAGNOSTIC_ORDINAL,
           range: request.anchor.range,
-          notes: diagnosticNotes(diagnostics, options.openLocation ?? (() => undefined)),
+          notes: diagnosticNotes(
+            diagnostics,
+            options.openLocation ?? (() => undefined),
+            (diagnostic) => diagnosticActions(options, active, diagnostic),
+          ),
         },
       ]
     },
@@ -104,6 +111,45 @@ export function createLanguageServerHoverParticipant(
       }
     },
   }
+}
+
+function diagnosticActions(
+  options: LanguageServerHoverParticipantOptions,
+  active: ActiveDocument,
+  diagnostic: lsp.Diagnostic,
+): readonly TooltipAction[] {
+  try {
+    const actions =
+      options.getDiagnosticActions?.({
+        documentUri: active.uri,
+        textVersion: active.textVersion,
+        diagnostic,
+      }) ?? []
+    return actions.map((action) => ({
+      ...action,
+      run: () => runDiagnosticAction(options, active, diagnostic, action),
+    }))
+  } catch (error) {
+    options.onRequestError(error)
+    return []
+  }
+}
+
+function runDiagnosticAction(
+  options: LanguageServerHoverParticipantOptions,
+  active: ActiveDocument,
+  diagnostic: lsp.Diagnostic,
+  action: TooltipAction,
+): void | Promise<void> {
+  const current = options.getActiveDocument()
+  if (
+    !current ||
+    current.uri !== active.uri ||
+    current.textVersion !== active.textVersion ||
+    !options.getDiagnostics().includes(diagnostic)
+  )
+    throw new Error('The diagnostic changed. Reopen its hover.')
+  return action.run()
 }
 
 function hoverParts(

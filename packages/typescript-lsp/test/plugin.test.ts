@@ -827,6 +827,40 @@ describe('createTypeScriptLspPlugin', () => {
     expect(latestRangeHighlightRanges(context, 'editor-test-typescript-lsp-error')).toEqual([])
   })
 
+  it('forwards diagnostic note actions with the active worker document identity', async () => {
+    vi.useFakeTimers()
+    const worker = new FakeWorker()
+    const context = viewContributionContext(editorSnapshot())
+    const run = vi.fn()
+    const getDiagnosticActions = vi.fn(() => [{ label: 'Inspect diagnostic', run }])
+    const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker, getDiagnosticActions })
+    activatePlugin(plugin).createContribution(context)
+    worker.receive(initializeResponse(message(worker.sent[0])))
+    await flushPromises()
+    worker.receive(publishDiagnosticsMessage())
+    context.scrollElement.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 12, clientY: 16, buttons: 0 }),
+    )
+    await vi.advanceTimersByTimeAsync(260)
+    const request = message(worker.sent.toReversed().find(hasMethod('textDocument/hover')))
+    worker.receive({ jsonrpc: '2.0', id: request.id, result: null })
+    await flushPromises()
+    await finishHoverReveal()
+    expect(getDiagnosticActions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentUri: 'file:///src/index.ts',
+        textVersion: 0,
+        diagnostic: expect.objectContaining({ message: 'bad assignment' }),
+      }),
+    )
+    const button = Array.from(tooltipElement().querySelectorAll('button')).find(
+      (button) => button.textContent === 'Inspect diagnostic',
+    )
+    expect(button).toBeTruthy()
+    button!.click()
+    expect(run).toHaveBeenCalledOnce()
+  })
+
   it('renders hover quick info with diagnostics at the pointer', async () => {
     vi.useFakeTimers()
     const worker = new FakeWorker()

@@ -2,6 +2,7 @@ import type { EditorDisposable, EditorPlugin } from '@singapore-editor/core/exte
 import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapore-editor/lsp'
 import type {
   LanguageServerConnectionContext,
+  LanguageServerDiagnosticActions,
   LanguageServerDocumentSyncOptions,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticCounts,
@@ -91,6 +92,7 @@ export type TypeScriptLspPluginOptions = {
    * reports that instead.
    */
   readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
+  readonly getDiagnosticActions?: LanguageServerDiagnosticActions
   readonly onRequestError?: (method: string, error: unknown) => void
   readonly onError?: (error: unknown) => void
 }
