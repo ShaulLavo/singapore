@@ -22,9 +22,9 @@ marker line.
 Enforcement: `bun run check:full-text` runs first in `health`. Each remaining whole-text read is a
 named function in [full-text-boundary-allow.json](../../scripts/full-text-boundary-allow.json) with
 its reason: view serialization, Shiki's open payload, LSP didOpen/didSave and full-sync recovery,
-the live diff, `useFullText`, save serialization, and `commandDocumentText` for edit-action and
-occurrence commands. [E055](e055-edit-commands-read-lines.md) deleted that last entry on 2026-09-25. `test/fullTextBoundary.test.ts` reads
-the same number of units at 64K and 1M.
+the live diff, `useFullText` and save serialization. On 2026-09-25
+[E055](e055-edit-commands-read-lines.md) removed the edit-command entry, `commandDocumentText`.
+`test/fullTextBoundary.test.ts` reads the same number of units at 64K and 1M.
 
 Measured on two views over a fragmented document, median p95 input-to-applied, control → E033:
 

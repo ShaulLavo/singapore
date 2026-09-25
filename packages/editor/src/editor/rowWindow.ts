@@ -10,8 +10,7 @@ const WORD_SCAN_REACH = MAX_BOUNDARY_WINDOW
 const FIRST_REACH = 2 * WORD_SCAN_REACH
 
 /**
- * Runs a word scan over the offset's row, with the break on either side, in a window that grows
- * until the scan stops far enough inside it that the text past the window could not move it.
+ * Runs a word scan over the offset's row and its breaks, widening until the result is settled.
  * No word scan crosses a break, so the row bounds every window.
  */
 export function rangeInRowWindow(

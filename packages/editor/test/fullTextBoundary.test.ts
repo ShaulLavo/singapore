@@ -57,8 +57,8 @@ const HEAD = [
   '',
 ].join('\n')
 const BOLD_START = HEAD.indexOf('**bold**')
-// A filler row no replacement lands on, below every row the other operations move or cut.
-const FILLER_ROW = HEAD.split('\n').length + 1
+// A filler row past the first 4,096 units, with no replacement on it or the row after at either size.
+const FILLER_ROW = 200
 const REPLACEMENTS = 32
 
 const editors: Editor[] = []
@@ -151,7 +151,7 @@ describe('full-text boundary', () => {
 
 // UTF-16 units one operation may read over the fixed viewport, captures and caret. Measured at both
 // sizes: type 902, peerUndo 1202, select 411, commentLine 1987, moveLine 1197, deleteWord 1962,
-// cutLine 1741, addNextOccurrence 1214, the rest 0.
+// cutLine 1741, addNextOccurrence 1912, the rest 0.
 const OPERATION_READ_BUDGETS: Readonly<Record<string, number>> = {
   type: 2_048,
   peerUndo: 2_048,
