@@ -131,8 +131,7 @@ textDecoration?: string }`. An overlay group is never registered as a CSS highli
 - **Local WebKit.** Playwright's WebKit build does not start on Arch (libicu74, libxml2 and libflite
   are missing), so step 1 is proven in CI. A local WebKitGTK harness reproduced the table on
   2026-09-24; keep it out of the repo unless CI cannot run WebKit.
-- **Alpha source.** Either a plain plugin option, or a registered colour's alpha as in VS Code.
-  Decide before step 5.
+- **Alpha source.** Decided 2026-09-25 by the owner: use a registered theme colour's alpha, as in VS Code.
 - **Firefox painting.** In the real app a hint wash was not visible in Firefox where Chromium drew
   it (2026-09-24). This may be the intermittent painting noted in `virtualizedTextViewHelpers.ts`.
   Step 1 should include a wash row that runs through the real view, not only a bare page.

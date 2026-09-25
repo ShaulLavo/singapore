@@ -13,6 +13,7 @@ import {
 import {
   createDiffEditorOptions,
   createDiffPlugin,
+  createDiffRegionStore,
   createTextDiff,
   diffRowAtEvent,
   diffSyntaxBackend,
@@ -825,3 +826,52 @@ async function flushUntil(done: () => boolean): Promise<void> {
     await flushPromises()
   }
 }
+
+it('caches stacked rows until file or expansion changes', () => {
+  const plugin = createDiffPlugin({ mode: 'document', side: 'old' })
+  plugin.setFile(prefixSkippedDiff())
+  const collapsed = plugin.getStackedRows()
+  expect(plugin.getStackedRows()).toBe(collapsed)
+  expect(collapsed.map((row) => row.type)).toContain('addition')
+  expect(plugin.getRows().map((row) => row.type)).not.toContain('addition')
+  const key = collapsed.find((row) => row.expandable)?.expandKey
+  if (!key) throw new Error('Expected an expandable region')
+  plugin.toggleRegion(key)
+  const expanded = plugin.getStackedRows()
+  expect(expanded).not.toBe(collapsed)
+  expect(expanded.map((row) => row.text)).toContain('alpha')
+  expect(plugin.getStackedRows()).toBe(expanded)
+  plugin.toggleRegion(key)
+  expect(plugin.getStackedRows()).toEqual(collapsed)
+  expect(plugin.getStackedRows()).not.toBe(expanded)
+  plugin.setFile(singleHunkDiff())
+  expect(plugin.getStackedRows().map((row) => row.text)).toEqual(['one', 'two', 'TWO'])
+  plugin.setFile(null)
+  expect(plugin.getStackedRows()).toEqual([])
+  expect(plugin.getStackedRows()).toBe(plugin.getStackedRows())
+})
+
+it('keeps private stacked expansion separate and follows a shared region store', () => {
+  const regions = createDiffRegionStore()
+  const left = createDiffPlugin({ mode: 'document', side: 'old', regions })
+  const right = createDiffPlugin({ mode: 'document', side: 'new', regions })
+  const independent = createDiffPlugin({ mode: 'document', side: 'new' })
+  const stacked = createDiffPlugin({ mode: 'document', regions })
+  const file = prefixSkippedDiff()
+  for (const plugin of [left, right, independent, stacked]) plugin.setFile(file)
+  const collapsed = independent.getStackedRows()
+  const sharedCollapsed = right.getStackedRows()
+  const key = collapsed.find((row) => row.expandable)?.expandKey
+  if (!key) throw new Error('Expected an expandable region')
+  left.toggleRegion(key)
+  expect(left.getStackedRows().map((row) => row.text)).toContain('alpha')
+  expect(right.getStackedRows()).toEqual(left.getStackedRows())
+  expect(right.getStackedRows()).not.toBe(sharedCollapsed)
+  expect(independent.getStackedRows()).toEqual(collapsed)
+  expect(independent.getExpandedRegions().size).toBe(0)
+  expect(stacked.getStackedRows()).toBe(stacked.getRows())
+  independent.toggleRegion(key)
+  right.toggleRegion(key)
+  expect(left.getStackedRows()).toEqual(collapsed)
+  expect(independent.getStackedRows().map((row) => row.text)).toContain('alpha')
+})

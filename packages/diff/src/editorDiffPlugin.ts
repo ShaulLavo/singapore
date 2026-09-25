@@ -1,3 +1,4 @@
+import { registerDiffColors } from './theme'
 import type {
   EditorContributionChange,
   EditorDecorationContribution,
@@ -57,6 +58,8 @@ export type DiffPlugin = EditorPlugin & {
   /** `document` mode: the file to project. The host owns the editor's text — §C3. */
   setFile(file: DiffFile | null): void
   getRows(): readonly DiffRenderRow[]
+  /** Both sides in row order. Cached until the file or expansion state changes. */
+  getStackedRows(): readonly DiffRenderRow[]
   /**
    * Projected syntax tokens for the current rows. The host passes them with the rows' text,
    * `setText(text, { tokens })`, or an expansion toggle repaints uncoloured (§C10).
@@ -118,6 +121,7 @@ let nextDiffPluginId = 0
  * it.
  */
 export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
+  registerDiffColors()
   const runtime = new DiffPluginRuntime(options)
 
   return {
@@ -127,6 +131,7 @@ export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
     },
     setFile: (file) => runtime.setFile(file),
     getRows: () => runtime.getRows(),
+    getStackedRows: () => runtime.getStackedRows(),
     getTokens: () => runtime.getTokens(),
     isSyntaxReady: () => runtime.isSyntaxReady(),
     onDidChangeRows: (listener) => runtime.onDidChangeRows(listener),
@@ -149,6 +154,7 @@ class DiffPluginRuntime {
   private readonly regions: DiffRegionStore
   private file: DiffFile | null = null
   private rows: readonly DiffRenderRow[] = []
+  private stackedRows: readonly DiffRenderRow[] | null = null
   private digits: DiffGutterDigits = { old: 0, new: 0 }
   private hunkRows = false
   private expandableRows = false
@@ -258,6 +264,13 @@ class DiffPluginRuntime {
     return this.rows
   }
 
+  getStackedRows(): readonly DiffRenderRow[] {
+    if (this.mode === 'overlay') return this.liveProjection.rows
+    if (this.side === 'stacked') return this.rows
+    this.stackedRows ??= projectRows(this.file, 'stacked', this.regions.getExpandedRegions())
+    return this.stackedRows
+  }
+
   isSyntaxReady(): boolean {
     return this.syntax.isReady()
   }
@@ -301,6 +314,7 @@ class DiffPluginRuntime {
   }
 
   private rebuildRows(): void {
+    this.stackedRows = null
     this.rows = projectRows(this.file, this.side, this.regions.getExpandedRegions())
     // Both derived once here rather than per gutter-width recompute and per mousemove.
     this.digits = diffGutterDigits(this.rows)
