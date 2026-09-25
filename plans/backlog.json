@@ -450,7 +450,7 @@
     },
     {
       "id": "E030",
-      "reference": "../../platform/plans/168-flat-file-view.md",
+      "reference": "../../platform/PLAN.md",
       "title": "Offer a flat file view under a chosen root",
       "status": "Moved",
       "owner": "Platform",
