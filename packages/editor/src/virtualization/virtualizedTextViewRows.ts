@@ -1,4 +1,3 @@
-import { completeRowPresentation, invalidateRowPresentations } from '../rowPresentation'
 import { createError } from '../logging/evlog'
 import { pointViewport } from './pointViewport'
 import type { SavedPaint, SavedPaintRow } from '../editor/paintSnapshot'
@@ -602,7 +601,6 @@ function updateRow(
 
   const state = rowUpdateState(view, item.index, updatePass)
 
-  invalidateRowPresentations(row.element)
   updateRowElement(view, row, item, state, snapshot)
   updateMountedRowPaintFacts(row, state)
   updateMutableRow(row, {
@@ -624,7 +622,6 @@ function updateRow(
     top: item.start,
     chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
   })
-  completeRowPresentation(row.element)
 }
 
 function updateRowElement(
@@ -692,7 +689,6 @@ function updateRowAfterSameLineEdit(
 ): boolean {
   const state = rowUpdateState(view, item.index, updatePass)
 
-  invalidateRowPresentations(row.element)
   const editedRowPatchedInPlace = updateRowElementForSameLineEdit(
     view,
     row,
@@ -721,7 +717,6 @@ function updateRowAfterSameLineEdit(
     top: item.start,
     chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
   })
-  completeRowPresentation(row.element)
   return editedRowPatchedInPlace
 }
 
@@ -2463,7 +2458,6 @@ function releaseRowsOutside(
   const reusableRows: MountedVirtualizedTextRow[] = []
   for (const [index, row] of view.rowElements) {
     if (index >= start && index < end) continue
-    invalidateRowPresentations(row.element)
     view.rowElements.delete(index)
     reusableRows.push(row)
   }
@@ -3087,7 +3081,6 @@ export function paintProvisionalRows(
 ): (() => void) | null {
   const slots: MountedVirtualizedTextRow[] = []
   for (const row of view.rowElements.values()) {
-    invalidateRowPresentations(row.element)
     row.element.remove()
     row.gutterElement.remove()
     view.rowPool.push(row)

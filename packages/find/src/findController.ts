@@ -71,7 +71,7 @@ const FIND_SCOPE_STYLE = {
 // A match on screen stays where the reader is looking at it; one that is not lands
 // in the middle, with context on both sides rather than on the viewport's edge.
 function findReveal(match: FindRange): EditorSetSelectionOptions {
-  return { jumpCause: 'find', revealOffset: match.end, revealBlock: 'center-if-outside' }
+  return { revealOffset: match.end, revealBlock: 'center-if-outside' }
 }
 
 // Seeding stops here rather than pushing a multi-megabyte selection through the

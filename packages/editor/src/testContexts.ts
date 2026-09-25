@@ -107,7 +107,6 @@ export function createTestViewContributionContext(
     reserveOverlayWidth: () => undefined,
     getReservedOverlayWidth: () => 0,
     onDidChangeReservedOverlayWidth: () => noDisposal,
-    getRowPresentation: () => null,
     rowAtPoint: () => null,
     markerAtPoint: () => null,
     textOffsetFromPoint: () => null,

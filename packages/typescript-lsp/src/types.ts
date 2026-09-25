@@ -2,7 +2,6 @@ import type { EditorDisposable, EditorPlugin } from '@singapore-editor/core/exte
 import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapore-editor/lsp'
 import type {
   LanguageServerConnectionContext,
-  LanguageServerDocumentSyncOptions,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticCounts,
   LanguageServerDiagnosticSummary,
@@ -51,7 +50,6 @@ export type TypeScriptLspNavigationOptions = LanguageServerNavigationOptions
 export type TypeScriptLspReferencesResult = LanguageServerReferencesResult
 
 export type TypeScriptLspPluginOptions = {
-  readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly rootUri?: lsp.DocumentUri | null
   readonly compilerOptions?: ts.CompilerOptions
   readonly diagnosticDelayMs?: number

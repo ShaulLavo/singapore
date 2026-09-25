@@ -1,4 +1,3 @@
-import { captureJumpLocation, JumpHistory, type JumpLocation, type JumpCause } from './jumpHistory'
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 import { decodePaintSnapshot, encodePaintSnapshot } from './paintSnapshot'
 import { detectPlatform } from '@tanstack/hotkeys'
@@ -406,15 +405,6 @@ export class Editor {
       readonly options: SessionChangeOptions
     }
   >()
-  private readonly jumpHistory = new JumpHistory()
-  private pendingJump: {
-    readonly session: DocumentSession
-    readonly location: JumpLocation
-  } | null = null
-  private pendingPointerJump: {
-    readonly session: DocumentSession
-    readonly location: JumpLocation
-  } | null = null
   private readonly cursorHistory = new CursorHistory()
   private cursorHistorySession: DocumentSession | null = null
   private cursorHistoryBefore: {
@@ -637,24 +627,10 @@ export class Editor {
       getSession: () => this.session,
       getSessionOptions: () => this.sessionOptions,
       getPasteHandlers: () => this.languageFeatures.ordered(EDITOR_PASTE_HANDLER, this.languageId),
-      getSyntaxTokens: () => this.syntax.copyTokens,
+      getSyntaxTokens: () => this.tokens,
       getEditorTheme: () => this.resolvedTheme(),
       getTextSnapshot: () => this.getTextSnapshot(),
       canEditDocument: () => this.canEditDocument(),
-      beginPointerJump: () => {
-        this.cursorHistoryForSession()
-        const location = this.captureJump()
-        this.pendingPointerJump =
-          location && this.session ? { session: this.session, location } : null
-      },
-      cancelPointerJump: () => {
-        this.pendingPointerJump = null
-      },
-      finishPointerJump: () => {
-        this.pendingJump = this.pendingPointerJump
-        this.pendingPointerJump = null
-        this.recordJumpHistory()
-      },
       runInOperation: (run) => this.runInOperation(run),
       applySessionChange: (change, totalName, totalStart, options) =>
         this.applySessionChange(change, totalName, totalStart, options),
@@ -674,7 +650,6 @@ export class Editor {
     this.commandRouter = new EditorCommandRouter({
       history: (command, context) => this.inputSelection.applyHistoryCommand(command, context),
       cursorHistory: (command) => this.applyCursorHistory(command),
-      jumpHistory: (command) => this.applyJumpHistory(command),
       delete: (direction, context) => this.inputSelection.applyDeleteCommand(direction, context),
       indent: (direction, context) => this.inputSelection.applyIndentCommand(direction, context),
       editAction: (command, context) =>
@@ -1195,7 +1170,6 @@ export class Editor {
     edit: TextEdit,
     tokens: EditorTokenStore,
     nextTextSnapshot: TextSnapshot,
-    currentTokens = true,
   ): void {
     this.view.runAtomicRender(() => {
       const batch = createTextEditBatch(this.textSnapshot, nextTextSnapshot, [edit])
@@ -1208,7 +1182,7 @@ export class Editor {
       this.syncInjectedTextRows()
       measureEditorPerformance(
         'editor.tokens.adoptProjected',
-        () => this.adoptTokens(tokens, currentTokens),
+        () => this.adoptTokens(tokens),
         () => ({
           tokenCount: tokens.length,
         }),
@@ -1216,8 +1190,8 @@ export class Editor {
     })
   }
 
-  private adoptTokens(tokens: EditorTokenStore, current = true): void {
-    this.syntax.setTokens(tokens, current)
+  private adoptTokens(tokens: EditorTokenStore): void {
+    this.syntax.setTokens(tokens)
   }
 
   setDocument(document: EditorDocument): void {
@@ -1653,18 +1627,6 @@ export class Editor {
     })
   }
 
-  jumpTo(anchor: number, head = anchor, cause: JumpCause = 'provider'): void {
-    this.setSelection(anchor, head, { jumpCause: cause, reveal: true })
-  }
-
-  jumpBack(): boolean {
-    return this.applyJumpHistory('back')
-  }
-
-  jumpForward(): boolean {
-    return this.applyJumpHistory('forward')
-  }
-
   openFind(): boolean {
     return this.findFeature()?.openFind() ?? false
   }
@@ -2029,9 +1991,6 @@ export class Editor {
   }
 
   detachSession(): void {
-    this.jumpHistory.clear()
-    this.pendingJump = null
-    this.pendingPointerJump = null
     this.fallbackFolds.reset()
     this.foldState.clear()
     this.disposeBufferSubscriptions()
@@ -2042,9 +2001,6 @@ export class Editor {
   }
 
   clear(): void {
-    this.jumpHistory.clear()
-    this.pendingJump = null
-    this.pendingPointerJump = null
     this.withdrawSnapshot()
     this.snapshotSettled = true
     this.detachedEditChain.rotate()
@@ -2064,9 +2020,6 @@ export class Editor {
     if (this.disposed) return
 
     this.disposed = true
-    this.jumpHistory.clear()
-    this.pendingJump = null
-    this.pendingPointerJump = null
     this.lastSnapshot = null
     this.disconnectSnapshotAppearanceObserver()
     this.lifecycleSummary.disposingAt = new Date().toISOString()
@@ -3087,7 +3040,6 @@ export class Editor {
       getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
       onDidChangeReservedOverlayWidth: (listener) => this.addReservedWidthListener(listener),
       setScrollPosition: (position) => this.applyScrollPosition(position),
-      getRowPresentation: (displayRow) => this.view.getRowPresentation(displayRow),
       rowAtPoint: (clientX, clientY) => this.rowAtPoint(clientX, clientY),
       markerAtPoint: (clientX, clientY) => this.markerAtPoint(clientX, clientY),
       textOffsetFromPoint: (clientX, clientY) =>
@@ -4009,8 +3961,6 @@ export class Editor {
       timedChange = appendTiming(timedChange, 'editor.reveal', revealStart)
     }
 
-    this.recordJumpHistory()
-
     if (flush.syncDomSelection) {
       const selectionStart = nowMs()
       this.inputSelection.syncDomSelection()
@@ -4081,9 +4031,6 @@ export class Editor {
     if (this.cursorHistorySession !== this.session) {
       this.cursorHistorySession = this.session
       this.cursorHistory.clear()
-      this.jumpHistory.clear()
-      this.pendingJump = null
-      this.pendingPointerJump = null
     }
 
     return this.cursorHistory
@@ -4112,58 +4059,6 @@ export class Editor {
         affinity: selection.affinity,
       })),
     }
-  }
-
-  private captureJump(): JumpLocation | null {
-    const session = this.session
-    if (!session) return null
-    const cursor = this.captureCursorHistoryEntry()
-    const rows = this.view.getState().mountedRows
-    const first = rows.find((row) => row.top + row.height > cursor.scrollTop)
-    return captureJumpLocation(
-      session.getSnapshot(),
-      cursor,
-      first?.startOffset ?? 0,
-      cursor.scrollTop - (first?.top ?? 0),
-    )
-  }
-
-  private beginJump(): void {
-    this.cursorHistoryForSession()
-    if (this.pendingJump) return
-    const location = this.captureJump()
-    if (!location || !this.session) return
-    this.pendingJump = { session: this.session, location }
-  }
-
-  private recordJumpHistory(): void {
-    const pending = this.pendingJump
-    this.pendingJump = null
-    if (!pending || pending.session !== this.session) return
-    const destination = this.captureJump()
-    if (!destination) return
-    this.jumpHistory.record(pending.session.getSnapshot(), pending.location, destination)
-  }
-
-  private applyJumpHistory(direction: 'back' | 'forward'): boolean {
-    this.cursorHistoryForSession()
-    const current = this.captureJump()
-    if (!current || !this.session) return false
-    const entry = this.jumpHistory.move(this.session.getSnapshot(), direction, current)
-    if (!entry) return false
-    this.runInOperation(() =>
-      this.applyRequestedSelections(
-        entry.selections,
-        'editor.jumpHistory',
-        undefined,
-        entry.lastAddedIndex,
-      ),
-    )
-    this.applyScrollPosition({
-      top: this.view.topForOffset(entry.viewportOffset) + entry.topDelta,
-      left: entry.scrollLeft,
-    })
-    return true
   }
 
   private applyCursorHistory(direction: 'undo' | 'redo'): boolean {
@@ -4239,7 +4134,7 @@ export class Editor {
       )
       if (manualFolds) this.manualFolds = manualFolds
       if (foldProjection) this.setSyntaxFoldProjection(foldProjection)
-      this.renderEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change), false)
+      this.renderEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
       this.scheduleFallbackFoldProjection()
       if (rowDecorationsProjected) this.view.setRowDecorations(this.composedRowDecorations())
       return
@@ -4274,7 +4169,7 @@ export class Editor {
       if (this.projectRowDecorationsThroughBatch(batch)) {
         this.view.setRowDecorations(this.composedRowDecorations())
       }
-      this.adoptTokens(tokens, false)
+      this.adoptTokens(tokens)
     })
   }
 
@@ -4475,7 +4370,6 @@ export class Editor {
     options?: EditorSetSelectionOptions,
     revealByDefault = false,
   ): void {
-    if (options?.jumpCause) this.beginJump()
     this.revealFoldedOffset(head)
     this.inputSelection.applyFindSelection(anchor, head, timingName, {
       affinity: options?.affinity,

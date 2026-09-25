@@ -99,7 +99,6 @@ const COMPLETION_WIDGET_CLASS_NAMESPACE = 'lsp-plugin'
 const COMPLETION_TRIGGER_CHARACTERS = new Set(['.', '"', "'", '`', '/', '@', '<', '#'])
 const COMPLETION_THEME_VARIABLES = [
   '--editor-background',
-  '--editor-popup-background',
   '--editor-foreground',
   '--editor-caret-color',
 ] as const
@@ -369,7 +368,7 @@ function createCompletionWidgetElement(
     borderRadius: '6px',
     boxSizing: 'border-box',
     background:
-      'var(--editor-popup-background, color-mix(in srgb, var(--editor-background, #18181b) 96%, var(--editor-foreground, #e4e4e7) 4%))',
+      'color-mix(in srgb, var(--editor-background, #18181b) 96%, var(--editor-foreground, #e4e4e7) 4%)',
     color: 'var(--editor-foreground, #e4e4e7)',
     boxShadow: '0 12px 30px color-mix(in srgb, var(--editor-background, #000000) 60%, transparent)',
     font: '12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
@@ -546,11 +545,7 @@ function syncEditorThemeVariables(element: HTMLElement, source: HTMLElement): vo
 
   for (const variable of COMPLETION_THEME_VARIABLES) {
     const value = style.getPropertyValue(variable)
-    if (value) {
-      element.style.setProperty(variable, value)
-      continue
-    }
-    element.style.removeProperty(variable)
+    if (value) element.style.setProperty(variable, value)
   }
 }
 

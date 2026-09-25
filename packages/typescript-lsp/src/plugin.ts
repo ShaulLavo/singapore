@@ -37,7 +37,6 @@ const TYPESCRIPT_LSP_COMPLETION_EDIT_FEATURE =
   )
 
 export type TypeScriptLspResolvedOptions = {
-  readonly documentSync: TypeScriptLspPluginOptions['documentSync']
   readonly rootUri: string | null
   readonly compilerOptions: TypeScriptLspPluginOptions['compilerOptions']
   readonly diagnosticDelayMs: number
@@ -77,7 +76,6 @@ export function createTypeScriptLspPlugin(
     documentSync: {
       shouldSyncLanguageId: isTypeScriptLspLanguage,
       shouldSyncUri: isTypeScriptLspSourceFileName,
-      ...resolved.documentSync,
     },
     diagnostics: {
       minimapSourceId: 'editor.typescript-lsp.diagnostics',
@@ -259,7 +257,6 @@ function libraryNames(params: unknown): readonly string[] {
 
 function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResolvedOptions {
   return {
-    documentSync: options.documentSync,
     rootUri: options.rootUri ?? 'file:///',
     compilerOptions: options.compilerOptions,
     diagnosticDelayMs: options.diagnosticDelayMs ?? DEFAULT_DIAGNOSTIC_DELAY_MS,
