@@ -27,3 +27,8 @@ self-owned overlay of clone lines positioned from the editor's own geometry (`vi
 color is painted by the CSS Custom Highlight API over the real text, the finish is a blur-masked
 crossfade where the highlighted text "blooms" in. Any keypress, click, or scroll cancels instantly —
 the editor underneath was live the whole time. Honors `prefers-reduced-motion` (no animation).
+
+The rows stay hidden from the moment a document opens until its initial highlight settles
+(`initialHighlightStatus` leaves `loading`), so the reveal is coloured. A document without a
+highlighter settles as `plain` at once; a failed highlight settles as `error` and reveals uncoloured.
+Input during the wait shows the document straight away.

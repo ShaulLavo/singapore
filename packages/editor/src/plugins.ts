@@ -199,7 +199,14 @@ export type EditorResolvedSelection = {
   readonly affinity: SelectionAffinity
 }
 
-export type EditorInitialHighlightStatus = 'loading' | 'painted' | 'plain' | 'degraded' | 'error'
+/** `idle` before any document and `loading` while its highlight runs; the rest are settled. */
+export type EditorInitialHighlightStatus =
+  | 'idle'
+  | 'loading'
+  | 'painted'
+  | 'plain'
+  | 'degraded'
+  | 'error'
 
 export type EditorInitialPaintEvent =
   | {
@@ -213,7 +220,7 @@ export type EditorInitialPaintEvent =
       readonly documentId: string | null
       readonly documentGeneration: number
       readonly textVersion: number
-      readonly status: Exclude<EditorInitialHighlightStatus, 'loading'>
+      readonly status: Exclude<EditorInitialHighlightStatus, 'idle' | 'loading'>
     }
 
 export type EditorTokenStyleJSON = {

@@ -84,21 +84,21 @@ describe('createDecodePlugin', () => {
     expect(registerViewContribution).toHaveBeenCalledOnce()
   })
 
-  it('hides the real rows on open but waits for tokens before revealing', () => {
+  it('hides the real rows on open but waits for the highlight to settle before revealing', () => {
     const { context, contribution } = mount()
 
-    contribution.update(snapshot({ tokens: EditorTokenStore.empty() }), 'document')
+    contribution.update(loading(), 'document')
 
     expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(true)
     expect(rowAnimations()).toHaveLength(0)
     expect(caretLayer(context)).toBeNull()
   })
 
-  it('reveals each real row with a caret once tokens arrive', () => {
+  it('reveals each real row with a caret once the highlight settles', () => {
     const { context, contribution } = mount()
     const withTokens = snapshot({ tokens: someTokens() })
 
-    contribution.update(snapshot({ tokens: EditorTokenStore.empty() }), 'document')
+    contribution.update(loading(), 'document')
     contribution.update(withTokens, 'tokens')
 
     const expected = withTokens.visibleRows.filter((r) => r.kind === 'text' && r.text.length > 0)
@@ -115,6 +115,45 @@ describe('createDecodePlugin', () => {
 
     expect(rowAnimations().length).toBeGreaterThan(0)
     expect(caretElements(context).length).toBe(rowAnimations().length)
+  })
+
+  it('starts on the settled status alone, with no timer behind it', () => {
+    vi.useFakeTimers()
+    try {
+      const { context, contribution } = mount()
+      contribution.update(loading(), 'document')
+
+      vi.advanceTimersByTime(60_000)
+      expect(rowAnimations()).toHaveLength(0)
+      expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(true)
+
+      contribution.update(loading(), 'tokens')
+      expect(rowAnimations()).toHaveLength(0)
+
+      // A highlight that ended in error settles too; the reveal starts uncoloured.
+      contribution.update(snapshot({ initialHighlightStatus: 'error' }), 'tokens')
+      expect(rowAnimations().length).toBeGreaterThan(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('starts at once for a document that has no highlighter', () => {
+    const { contribution } = mount()
+    contribution.update(snapshot({ initialHighlightStatus: 'plain' }), 'document')
+
+    expect(rowAnimations().length).toBeGreaterThan(0)
+  })
+
+  it('shows the document at once on input while it waits', () => {
+    const { context, contribution } = mount()
+    contribution.update(loading(), 'document')
+
+    context.scrollElement.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    contribution.update(snapshot({ tokens: someTokens() }), 'tokens')
+
+    expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(false)
+    expect(rowAnimations()).toHaveLength(0)
   })
 
   it('schedules autoregressive sequentially and parallel with jittered starts', () => {
@@ -458,6 +497,10 @@ function snapshot({
     },
     changesSinceDocumentSyncPoint: overrides.changesSinceDocumentSyncPoint ?? (() => null),
   }
+}
+
+function loading(): EditorViewSnapshot {
+  return snapshot({ tokens: EditorTokenStore.empty(), initialHighlightStatus: 'loading' })
 }
 
 function someTokens(): EditorViewSnapshot['tokens'] {
