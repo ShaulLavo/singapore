@@ -67,6 +67,74 @@ describe('hover timing and keyboard access', () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
+  it('joins a running action across hovers and reports its failure to the host', async () => {
+    const active = activeDocument()
+    const diagnostics: lsp.Diagnostic[] = [
+      { range: singleLineRange(6, 11), message: 'slow warning', severity: 2 },
+    ]
+    let fail: (error: Error) => void = () => undefined
+    const run = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          fail = reject
+        }),
+    )
+    const onRequestError = vi.fn()
+    const participant = createLanguageServerHoverParticipant({
+      router: { hasReady: () => false } as never,
+      requestHover: async () => null,
+      getActiveDocument: () => active,
+      getDiagnostics: () => diagnostics,
+      getDiagnosticActions: () => [{ label: 'Fix', run }],
+      onRequestError,
+    })
+    const actionFromHover = () =>
+      participant.computeSync!({
+        anchor: { offset: 8, range: { start: 6, end: 11 }, source: 'pointer' },
+        snapshot: hoverSnapshot(active, 'const value = 1'),
+        signal: new AbortController().signal,
+      })[0]?.notes?.[0]?.actions?.[0]
+
+    const first = actionFromHover()!.run()
+    const second = actionFromHover()!.run()
+    expect(second).toBe(first)
+    expect(run).toHaveBeenCalledOnce()
+
+    const failure = new Error('fix failed')
+    fail(failure)
+    await expect(first).rejects.toBe(failure)
+    expect(onRequestError).toHaveBeenCalledExactlyOnceWith(failure)
+  })
+
+  it('runs an action after its diagnostic is republished unchanged', () => {
+    const active = activeDocument()
+    let diagnostics: lsp.Diagnostic[] = [
+      { range: singleLineRange(6, 11), message: 'warning', severity: 2 },
+    ]
+    const run = vi.fn()
+    const participant = createLanguageServerHoverParticipant({
+      router: { hasReady: () => false } as never,
+      requestHover: async () => null,
+      getActiveDocument: () => active,
+      getDiagnostics: () => diagnostics,
+      getDiagnosticActions: () => [{ label: 'Fix', run }],
+      onRequestError: vi.fn(),
+    })
+    const action = participant.computeSync!({
+      anchor: { offset: 8, range: { start: 6, end: 11 }, source: 'pointer' },
+      snapshot: hoverSnapshot(active, 'const value = 1'),
+      signal: new AbortController().signal,
+    })[0]?.notes?.[0]?.actions?.[0]
+
+    diagnostics = [{ range: singleLineRange(6, 11), message: 'warning', severity: 2 }]
+    action!.run()
+    expect(run).toHaveBeenCalledOnce()
+
+    diagnostics = [{ range: singleLineRange(6, 11), message: 'other warning', severity: 2 }]
+    expect(() => action!.run()).toThrow('The diagnostic changed')
+    expect(run).toHaveBeenCalledOnce()
+  })
+
   it('starts semantic work halfway through the delay and paints only after the full delay', async () => {
     vi.useFakeTimers()
     const editor = await connectedEditor('const value = 1', 6)

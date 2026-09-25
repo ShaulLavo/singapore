@@ -276,10 +276,10 @@
         "reverseIndex.splitNode.calls": 25
       },
       "eight-cursor-batches": {
-        "buffers.PieceBufferChunkView.fill.calls": 1525,
-        "buffers.PieceBufferChunkView.open.calls": 2,
         "buffers.countLineBreaks.loopIterations": 191,
         "buffers.growTailLineIndex.indexInputCodeUnits": 3433,
+        "buffers.PieceBufferChunkView.fill.calls": 1525,
+        "buffers.PieceBufferChunkView.open.calls": 2,
         "edits.snapBatchEditRanges.calls": 191,
         "join.join.calls": 18836,
         "join.rotateLeft.calls": 378,
@@ -295,10 +295,10 @@
         "tree.normalizePieceOrders.calls": 1538
       },
       "mixed-edit-churn": {
-        "buffers.PieceBufferChunkView.fill.calls": 1025,
-        "buffers.PieceBufferChunkView.open.calls": 2,
         "buffers.countLineBreaks.loopIterations": 137,
         "buffers.growTailLineIndex.indexInputCodeUnits": 2305,
+        "buffers.PieceBufferChunkView.fill.calls": 1025,
+        "buffers.PieceBufferChunkView.open.calls": 2,
         "join.join.calls": 18074,
         "join.rotateLeft.calls": 679,
         "join.rotateRight.calls": 977,
@@ -366,10 +366,10 @@
         "tree.collectTextInRange.calls": 95827
       },
       "persistent-history": {
-        "buffers.PieceBufferChunkView.fill.calls": 1025,
-        "buffers.PieceBufferChunkView.open.calls": 2,
         "buffers.countLineBreaks.loopIterations": 137,
         "buffers.growTailLineIndex.indexInputCodeUnits": 2305,
+        "buffers.PieceBufferChunkView.fill.calls": 1025,
+        "buffers.PieceBufferChunkView.open.calls": 2,
         "join.join.calls": 18074,
         "join.rotateLeft.calls": 679,
         "join.rotateRight.calls": 977,
