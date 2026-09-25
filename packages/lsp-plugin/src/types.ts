@@ -9,6 +9,7 @@ import type {
 import type {
   LspClient,
   LspNotificationHandler,
+  LspServerRequestHandler,
   LspWebSocketTransportOptions,
 } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
@@ -202,6 +203,11 @@ export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
    * after the plugin's and cannot displace it, because the diagnostics feature hangs off it.
    */
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
+  /**
+   * Answers requests the server sends the client, such as a server asking the host for files.
+   * A method the plugin answers itself (`workspace/diagnostic/refresh`) stays the plugin's.
+   */
+  readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
   /** Which documents reach the server, and under what language id. */
   readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly webSocketRoute: string | URL
@@ -253,6 +259,7 @@ export type LanguageServerLaneOptions = LanguageServerLaneHostOptions & {
   readonly capabilities?: lsp.ClientCapabilities
   readonly clientInfo?: lsp.InitializeParams['clientInfo']
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
+  readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
   readonly webSocketRoute: string | URL
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
   readonly connectionProvider?: LspConnectionProvider

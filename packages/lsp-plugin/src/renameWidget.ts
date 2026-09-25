@@ -5,6 +5,8 @@ export type RenameWidgetOptions = {
   /** Element whose computed style carries the editor theme variables. */
   readonly themeSource: HTMLElement
   readonly classNamespace?: string
+  /** Called when the prompt closes while it holds focus, which hiding it would otherwise strand. */
+  readonly returnFocus?: () => void
 }
 
 export type RenameWidgetPrompt = {
@@ -79,8 +81,11 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
     promptState.settle = null
     promptState.removeAbortListener?.()
     promptState.removeAbortListener = null
+    // A close from a click elsewhere has already moved focus; Enter and Escape leave it here.
+    const heldFocus = element.contains(options.document.activeElement)
     element.style.display = 'none'
     surface.release()
+    if (heldFocus) options.returnFocus?.()
     resolve(value)
   }
 

@@ -13,6 +13,10 @@ export {
   type LanguageServerDiagnosticHighlightGroups as TypeScriptLspDiagnosticHighlightGroups,
   type LanguageServerDiagnosticSeverity as TypeScriptLspDiagnosticSeverity,
 } from '@singapore-editor/lsp-plugin/diagnostics'
+export type {
+  ApplyWorkspaceEditRequest as TypeScriptLspWorkspaceEditRequest,
+  ApplyWorkspaceEditResult as TypeScriptLspWorkspaceEditResult,
+} from '@singapore-editor/lsp-plugin'
 export {
   documentUriToFileName,
   fileNameToDocumentUri,
@@ -25,6 +29,8 @@ export type {
   TypeScriptLspDiagnosticCounts,
   TypeScriptLspDefinitionTarget,
   TypeScriptLspDiagnosticSummary,
+  TypeScriptLspLibraryLoader,
+  TypeScriptLspLibrarySource,
   TypeScriptLspNavigationKind,
   TypeScriptLspNavigationOpenMode,
   TypeScriptLspNavigationOptions,

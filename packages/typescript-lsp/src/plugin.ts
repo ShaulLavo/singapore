@@ -1,6 +1,11 @@
 import type { EditorDisposable } from '@singapore-editor/core/extensions'
 import { createEditorCapabilityToken } from '@singapore-editor/core/extensions'
-import type { LspClient, LspWebSocketTransportOptions, LspWorkerLike } from '@singapore-editor/lsp'
+import type {
+  LspClient,
+  LspServerRequestHandler,
+  LspWebSocketTransportOptions,
+  LspWorkerLike,
+} from '@singapore-editor/lsp'
 import {
   createLanguageServerAdapterPlugin,
   createWebSocketLspTransportFactory,
@@ -11,6 +16,12 @@ import {
 import type { LanguageServerCompletionEditFeature } from '@singapore-editor/lsp-plugin/completion'
 
 import { isTypeScriptLspSourceFileName } from './paths'
+import {
+  DELETE_WORKSPACE_FILES,
+  LIBRARY_FILES_REQUEST,
+  SET_WORKSPACE_FILES,
+  UPSERT_WORKSPACE_FILES,
+} from './worker/customMethods'
 import type {
   TypeScriptLspPlugin,
   TypeScriptLspPluginOptions,
@@ -29,6 +40,7 @@ export type TypeScriptLspResolvedOptions = {
   readonly rootUri: string | null
   readonly compilerOptions: TypeScriptLspPluginOptions['compilerOptions']
   readonly diagnosticDelayMs: number
+  readonly libraryFiles: TypeScriptLspPluginOptions['libraryFiles']
   readonly timeoutMs: number
   readonly capabilities: TypeScriptLspPluginOptions['capabilities']
   readonly clientInfo: TypeScriptLspPluginOptions['clientInfo']
@@ -41,6 +53,7 @@ export type TypeScriptLspResolvedOptions = {
   readonly onDiagnostics: TypeScriptLspPluginOptions['onDiagnostics']
   readonly onOpenDefinition: TypeScriptLspPluginOptions['onOpenDefinition']
   readonly onOpenReferences: TypeScriptLspPluginOptions['onOpenReferences']
+  readonly onApplyWorkspaceEdit: TypeScriptLspPluginOptions['onApplyWorkspaceEdit']
   readonly onRequestError: TypeScriptLspPluginOptions['onRequestError']
   readonly onError: TypeScriptLspPluginOptions['onError']
 }
@@ -54,6 +67,7 @@ export function createTypeScriptLspPlugin(
     name: 'editor.typescript-lsp',
     rootUri: resolved.rootUri,
     initializationOptions: typeScriptInitializationOptions(resolved),
+    serverRequestHandlers: libraryRequestHandlers(resolved.libraryFiles),
     timeoutMs: resolved.timeoutMs,
     capabilities: resolved.capabilities,
     clientInfo: resolved.clientInfo,
@@ -88,6 +102,7 @@ export function createTypeScriptLspPlugin(
     onDiagnostics: resolved.onDiagnostics,
     onOpenDefinition: resolved.onOpenDefinition,
     onOpenReferences: resolved.onOpenReferences,
+    onApplyWorkspaceEdit: resolved.onApplyWorkspaceEdit,
     onRequestError: (_serverId, method, error) => resolved.onRequestError?.(method, error),
     onError: resolved.onError,
   })
@@ -95,22 +110,39 @@ export function createTypeScriptLspPlugin(
   return {
     ...plugin,
     setWorkspaceFiles: (files) => workspaceFiles.setWorkspaceFiles(files),
-    clearWorkspaceFiles: () => workspaceFiles.clearWorkspaceFiles(),
+    upsertWorkspaceFiles: (files) => workspaceFiles.upsertWorkspaceFiles(files),
+    deleteWorkspaceFiles: (paths) => workspaceFiles.deleteWorkspaceFiles(paths),
+    clearWorkspaceFiles: () => workspaceFiles.setWorkspaceFiles([]),
   }
 }
 
+/**
+ * The host's files, kept here so a worker that reconnects starts from all of them; a connected
+ * worker is told only what changed.
+ */
 class TypeScriptWorkspaceFiles {
   private readonly clients = new Map<LspClient, (error: unknown) => void>()
-  private files: readonly TypeScriptLspSourceFile[] = []
+  private readonly files = new Map<string, string>()
 
   public setWorkspaceFiles(files: readonly TypeScriptLspSourceFile[]): void {
-    this.files = files.map((file) => ({ path: file.path, text: file.text }))
+    this.files.clear()
+    for (const file of files) this.files.set(file.path, file.text)
     this.syncClients()
   }
 
-  public clearWorkspaceFiles(): void {
-    this.files = []
-    this.syncClients()
+  public upsertWorkspaceFiles(files: readonly TypeScriptLspSourceFile[]): void {
+    const changed = files.filter((file) => this.files.get(file.path) !== file.text)
+    if (changed.length === 0) return
+    for (const file of changed) this.files.set(file.path, file.text)
+    this.notifyClients(UPSERT_WORKSPACE_FILES, {
+      files: changed.map((file) => ({ path: file.path, text: file.text })),
+    })
+  }
+
+  public deleteWorkspaceFiles(paths: readonly string[]): void {
+    const removed = paths.filter((path) => this.files.delete(path))
+    if (removed.length === 0) return
+    this.notifyClients(DELETE_WORKSPACE_FILES, { paths: removed })
   }
 
   public registerClient(
@@ -130,13 +162,28 @@ class TypeScriptWorkspaceFiles {
     if (!onError) return
     if (!client.initialized) return
 
-    void client
-      .notify('editor/typescript/setWorkspaceFiles', { files: this.files })
-      .catch((error: unknown) => onError(error))
+    this.notify(client, onError, SET_WORKSPACE_FILES, {
+      files: Array.from(this.files, ([path, text]) => ({ path, text })),
+    })
   }
 
   private syncClients(): void {
     for (const client of this.clients.keys()) this.syncClient(client)
+  }
+
+  private notifyClients(method: string, params: unknown): void {
+    for (const [client, onError] of this.clients) {
+      if (client.initialized) this.notify(client, onError, method, params)
+    }
+  }
+
+  private notify(
+    client: LspClient,
+    onError: (error: unknown) => void,
+    method: string,
+    params: unknown,
+  ): void {
+    void client.notify(method, params).catch((error: unknown) => onError(error))
   }
 }
 
@@ -181,7 +228,31 @@ function typeScriptInitializationOptions(options: TypeScriptLspResolvedOptions):
   return {
     compilerOptions: options.compilerOptions,
     diagnosticDelayMs: options.diagnosticDelayMs,
+    libraryFiles: librarySource(options.libraryFiles),
   }
+}
+
+function librarySource(libraryFiles: TypeScriptLspPluginOptions['libraryFiles']): string {
+  if (typeof libraryFiles === 'function') return 'host'
+  return libraryFiles ?? 'bundled'
+}
+
+/** A host loader answers the worker's request for library files by name. */
+function libraryRequestHandlers(
+  libraryFiles: TypeScriptLspPluginOptions['libraryFiles'],
+): Readonly<Record<string, LspServerRequestHandler<LspClient>>> {
+  if (typeof libraryFiles !== 'function') return {}
+  return {
+    [LIBRARY_FILES_REQUEST]: async (_client, params) => ({
+      files: await libraryFiles(libraryNames(params)),
+    }),
+  }
+}
+
+function libraryNames(params: unknown): readonly string[] {
+  if (typeof params !== 'object' || params === null || !('names' in params)) return []
+  const names = params.names
+  return Array.isArray(names) ? names.filter((name) => typeof name === 'string') : []
 }
 
 function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResolvedOptions {
@@ -189,6 +260,7 @@ function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResol
     rootUri: options.rootUri ?? 'file:///',
     compilerOptions: options.compilerOptions,
     diagnosticDelayMs: options.diagnosticDelayMs ?? DEFAULT_DIAGNOSTIC_DELAY_MS,
+    libraryFiles: options.libraryFiles,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     capabilities: options.capabilities,
     clientInfo: options.clientInfo,
@@ -201,6 +273,7 @@ function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResol
     onDiagnostics: options.onDiagnostics,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     onRequestError: options.onRequestError,
     onError: options.onError,
   }

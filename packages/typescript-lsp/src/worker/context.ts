@@ -1,7 +1,7 @@
-import type { VirtualTypeScriptEnvironment } from '@typescript/vfs'
 import type ts from 'typescript'
 import type * as lsp from 'vscode-languageserver-protocol'
 import type { LineIndex } from './lineIndex'
+import type { ProjectService } from './projectHost'
 
 export type WorkerDocument = {
   readonly uri: lsp.DocumentUri
@@ -13,7 +13,7 @@ export type WorkerDocument = {
 
 /** What a request handler may read: the language service and the files it answers about. */
 export type ServiceContext = {
-  readonly env: VirtualTypeScriptEnvironment
+  readonly env: ProjectService
   readonly formatSettings: ts.FormatCodeSettings
   readonly preferences: ts.UserPreferences
   /** Lines of the text the service holds for a file, or null when it holds none. */

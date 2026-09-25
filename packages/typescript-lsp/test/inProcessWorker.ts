@@ -12,7 +12,7 @@ import {
   createTypeScriptLanguageSession,
   type TypeScriptLanguageSession,
 } from '../src/worker/session'
-import { typeScriptLibraryFilesFromDisk } from './realTypeScriptService'
+import { libraryFilesFromDisk } from './realTypeScriptService'
 
 export class InProcessTypeScriptWorker implements LspWorkerLike {
   /** Every message the session posted, in order. */
@@ -24,7 +24,7 @@ export class InProcessTypeScriptWorker implements LspWorkerLike {
   public constructor() {
     this.#session = createTypeScriptLanguageSession({
       post: (message) => this.#deliver(message),
-      loadLibraryFiles: () => Promise.resolve(typeScriptLibraryFilesFromDisk()),
+      readLibraryFiles: (names) => Promise.resolve(libraryFilesFromDisk(names)),
     })
   }
 

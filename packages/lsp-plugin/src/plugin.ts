@@ -13,7 +13,11 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
-import type { LspClient, LspNotificationHandler } from '@singapore-editor/lsp'
+import type {
+  LspClient,
+  LspNotificationHandler,
+  LspServerRequestHandler,
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
@@ -146,6 +150,8 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
   readonly clientInfo?: lsp.InitializeParams['clientInfo']
   /** See LanguageServerPluginOptions.notificationHandlers. Merged, never replacing. */
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
+  /** See LanguageServerPluginOptions.serverRequestHandlers. */
+  readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
   createTransport(): ReturnType<LspConnectionTransportFactory>
   /** Borrows the connection instead of constructing one per view. See LspConnectionProvider. */
   readonly connectionProvider?: LspConnectionProvider
@@ -904,6 +910,7 @@ class LanguageServerContribution implements EditorViewContribution {
       classNamespace: this.options.hoverDefinition.tooltipClassNamespace ?? 'lsp-plugin',
       document: this.context.container.ownerDocument,
       themeSource: this.context.scrollElement,
+      returnFocus: () => this.context.focusEditor(),
     })
     return this.rename
   }
@@ -1116,6 +1123,7 @@ function languageServerLaneFromPluginOptions(
     capabilities: options.capabilities,
     clientInfo: options.clientInfo,
     notificationHandlers: options.notificationHandlers,
+    serverRequestHandlers: options.serverRequestHandlers,
     webSocketRoute: options.webSocketRoute,
     webSocketTransportOptions: options.webSocketTransportOptions,
     connectionProvider: options.connectionProvider,
@@ -1140,6 +1148,7 @@ function resolvedLaneFromAdapterOptions(
     capabilities: options.capabilities,
     clientInfo: options.clientInfo,
     notificationHandlers: options.notificationHandlers,
+    serverRequestHandlers: options.serverRequestHandlers,
     createTransport: options.createTransport,
     connectionProvider: options.connectionProvider,
     onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,

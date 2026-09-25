@@ -22,7 +22,7 @@ import type {
 } from '@singapore-editor/core/extensions'
 import { EDITOR_MINIMAP_FEATURE } from '@singapore-editor/core/extensions'
 import type { LspClient, LspWebSocketLike, LspWorkerLike } from '@singapore-editor/lsp'
-import { semanticTokensClientCapability } from '@singapore-editor/lsp'
+import { LspServerExitedError, semanticTokensClientCapability } from '@singapore-editor/lsp'
 import {
   createHoverPlugin,
   HOVER_REQUEST_DEBOUNCE_MS,
@@ -262,12 +262,14 @@ describe('createTypeScriptLspPlugin', () => {
     contribution.dispose()
   })
 
-  it('routes worker crashes through owned worker transport', () => {
+  it('reports a worker crash once, as an exit with its reason, and marks the server failed', () => {
     const worker = new FakeWorker()
     const errors: unknown[] = []
+    const statuses: string[] = []
     const plugin = createTypeScriptLspPlugin({
       workerFactory: () => worker,
       onError: (error) => errors.push(error),
+      onStatusChange: (status) => statuses.push(status),
     })
     const provider = activatePlugin(plugin)
     const contribution = provider.createContribution(viewContributionContext(editorSnapshot()))
@@ -275,7 +277,13 @@ describe('createTypeScriptLspPlugin', () => {
 
     worker.fail('worker crashed')
 
-    expect(errorMessage(errors[0])).toBe('worker crashed')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toBeInstanceOf(LspServerExitedError)
+    expect(errors[0]).toMatchObject({
+      message: 'worker crashed',
+      params: { outcome: 'crashed', error: { code: 'LSP_SERVER_EXITED' } },
+    })
+    expect(statuses.at(-1)).toBe('error')
     expect(worker.terminated).toBe(true)
     expect(worker.listenerCount('message')).toBe(0)
     expect(worker.listenerCount('error')).toBe(0)

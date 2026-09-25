@@ -13,13 +13,8 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import {
-  createSystem,
-  createVirtualTypeScriptEnvironment,
-  type VirtualTypeScriptEnvironment,
-} from '@typescript/vfs'
-import ts from 'typescript'
-import { defaultCompilerOptions } from '../src/worker/project'
+import { resolvedCompilerOptions } from '../src/worker/project'
+import { ProjectHost } from '../src/worker/projectHost'
 
 // Reading a hundred-odd lib files is a few megabytes of I/O, and every suite in this file's orbit
 // wants the same bytes. Read them once per process.
@@ -43,19 +38,25 @@ export const typeScriptLibraryFilesFromDisk = (): ReadonlyMap<string, string> =>
   return files
 }
 
+/** The session's `readLibraryFiles` seam, answered from the same files. */
+export const libraryFilesFromDisk = (names: readonly string[]): ReadonlyMap<string, string> => {
+  const files = typeScriptLibraryFilesFromDisk()
+  const found = new Map<string, string>()
+  for (const name of names) {
+    const text = files.get(`/${name}`)
+    if (text !== undefined) found.set(name, text)
+  }
+  return found
+}
+
 /** Builds a language service whose only source files are the ones handed in, plus the libs. */
 export const createRealTypeScriptService = (
   sourceFiles: ReadonlyMap<string, string>,
-): VirtualTypeScriptEnvironment => {
-  const fsMap = new Map(typeScriptLibraryFilesFromDisk())
-  for (const [fileName, text] of sourceFiles) fsMap.set(fileName, text)
+): ProjectHost => {
+  const files = new Map(typeScriptLibraryFilesFromDisk())
+  for (const [fileName, text] of sourceFiles) files.set(fileName, text)
 
-  return createVirtualTypeScriptEnvironment(
-    createSystem(fsMap),
-    Array.from(sourceFiles.keys()),
-    ts,
-    defaultCompilerOptions(),
-  )
+  return new ProjectHost(files, Array.from(sourceFiles.keys()), resolvedCompilerOptions(null, {}))
 }
 
 const isLibraryFileName = (entry: string): boolean =>

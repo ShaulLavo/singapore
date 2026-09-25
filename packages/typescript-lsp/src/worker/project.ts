@@ -1,6 +1,6 @@
 import ts from 'typescript'
 import { isTypeScriptLspSourceFileName, sourcePathToFileName } from '../paths'
-import type { WorkerDocument } from './context'
+import { libraryFileName } from './libraries'
 import { isRecord } from './protocol'
 
 const REACT_JSX_RUNTIME_PACKAGE_JSON = '/node_modules/react/package.json'
@@ -41,14 +41,14 @@ export type ProjectConfig = {
   readonly fileNames: readonly string[]
 }
 
-type WorkspacePackage = {
+export type WorkspacePackage = {
   readonly name: string
   readonly root: string
 }
 
 export type WorkspaceFiles = ReadonlyMap<string, string>
 
-export function defaultCompilerOptions(): ts.CompilerOptions {
+function defaultCompilerOptions(): ts.CompilerOptions {
   return {
     target: ts.ScriptTarget.ES2023,
     module: ts.ModuleKind.ESNext,
@@ -65,38 +65,24 @@ export function defaultCompilerOptions(): ts.CompilerOptions {
   }
 }
 
+/** A `lib` given as `ES2024` in initialization options reaches the program as `lib.es2024.d.ts`. */
 export function resolvedCompilerOptions(
   projectConfig: ProjectConfig | null,
   override: ts.CompilerOptions,
 ): ts.CompilerOptions {
-  return {
+  const options = {
     ...defaultCompilerOptions(),
     ...projectConfig?.compilerOptions,
     ...override,
   }
+  if (!options.lib) return options
+  return { ...options, lib: options.lib.map(libraryFileName) }
 }
 
-/** `@typescript/vfs` names libs `es2024`, where a tsconfig may say `lib.es2024.d.ts`. */
-export function vfsLibraryCompilerOptions(compilerOptions: ts.CompilerOptions): ts.CompilerOptions {
-  if (!compilerOptions.lib) return compilerOptions
-  return {
-    ...compilerOptions,
-    lib: compilerOptions.lib.map(normalizeLibNameForVfs),
-  }
-}
-
-function normalizeLibNameForVfs(lib: string): string {
-  return lib
-    .replace(/^lib\./i, '')
-    .replace(/\.d\.ts$/i, '')
-    .toLowerCase()
-}
-
-/** Every file the service starts from: libs, workspace files and their package mirrors, open text. */
+/** Every file the program can read: libs, workspace files and their package mirrors, fallbacks. */
 export function projectFileMap(
   libraryFiles: ReadonlyMap<string, string>,
   workspaceFiles: WorkspaceFiles,
-  documents: Iterable<WorkerDocument>,
 ): Map<string, string> {
   const fsMap = new Map(libraryFiles)
   for (const [fileName, text] of workspaceFiles) fsMap.set(fileName, text)
@@ -106,8 +92,22 @@ export function projectFileMap(
   setFallbackFile(fsMap, REACT_JSX_RUNTIME_PACKAGE_JSON, REACT_JSX_RUNTIME_FALLBACK_PACKAGE_JSON)
   setFallbackFile(fsMap, REACT_INDEX_TYPES, REACT_INDEX_FALLBACK_TYPES)
   setFallbackFile(fsMap, REACT_JSX_RUNTIME_TYPES, REACT_JSX_RUNTIME_FALLBACK_TYPES)
-  for (const document of documents) fsMap.set(document.fileName, document.text)
   return fsMap
+}
+
+/** Where a workspace file also appears as `node_modules/<package>/…`, so a change reaches both. */
+export function mirrorPaths(packages: readonly WorkspacePackage[], fileName: string): string[] {
+  return packages.flatMap((workspacePackage) => {
+    const rootPrefix = `${workspacePackage.root}/`
+    if (!isPackageFile(fileName, workspacePackage.root, rootPrefix)) return []
+    return [`/node_modules/${workspacePackage.name}/${fileName.slice(rootPrefix.length)}`]
+  })
+}
+
+/** Files that decide options, roots or package mirrors: changing one rebuilds the project. */
+export function isProjectShapeFile(fileName: string): boolean {
+  const base = fileName.slice(fileName.lastIndexOf('/') + 1)
+  return base === 'package.json' || /^[tj]sconfig(\..*)?\.json$/.test(base)
 }
 
 function setFallbackFile(fsMap: Map<string, string>, fileName: string, text: string): void {
@@ -135,7 +135,8 @@ function isPackageFile(fileName: string, root: string, rootPrefix: string): bool
   return fileName === `${root}/package.json` || fileName.startsWith(rootPrefix)
 }
 
-function workspacePackages(workspaceFiles: WorkspaceFiles): readonly WorkspacePackage[] {
+/** A scan of every file and a parse of every package.json: compute once, not per changed file. */
+export function workspacePackages(workspaceFiles: WorkspaceFiles): readonly WorkspacePackage[] {
   return Array.from(workspaceFiles.entries()).flatMap(([fileName, text]) =>
     workspacePackageFromFile(fileName, text),
   )
@@ -163,20 +164,22 @@ function packageJsonName(text: string): string | null {
 /** The workspace path a result names, where TypeScript reached it through a package mirror. */
 export function workspaceFileNameForResult(
   workspaceFiles: WorkspaceFiles,
+  packages: readonly WorkspacePackage[],
   fileName: string,
 ): string {
   const normalized = sourcePathToFileName(fileName)
   if (workspaceFiles.has(normalized)) return normalized
-  return workspaceFileNameFromNodeModulesMirror(workspaceFiles, normalized) ?? normalized
+  return workspaceFileNameFromNodeModulesMirror(workspaceFiles, packages, normalized) ?? normalized
 }
 
 function workspaceFileNameFromNodeModulesMirror(
   workspaceFiles: WorkspaceFiles,
+  packages: readonly WorkspacePackage[],
   fileName: string,
 ): string | null {
   if (!fileName.startsWith('/node_modules/')) return null
 
-  for (const workspacePackage of workspacePackages(workspaceFiles)) {
+  for (const workspacePackage of packages) {
     const prefix = `/node_modules/${workspacePackage.name}/`
     if (!fileName.startsWith(prefix)) continue
 
@@ -187,16 +190,13 @@ function workspaceFileNameFromNodeModulesMirror(
   return null
 }
 
+/** The tsconfig's files, or without one every workspace source file; open documents join later. */
 export function rootFileNames(
-  fsMap: ReadonlyMap<string, string>,
+  workspaceFiles: WorkspaceFiles,
   projectConfig: ProjectConfig | null,
-  documents: Iterable<WorkerDocument>,
 ): string[] {
-  const roots = new Set(
-    projectConfig?.fileNames ?? Array.from(fsMap.keys()).filter(isTypeScriptLspSourceFileName),
-  )
-  for (const document of documents) roots.add(document.fileName)
-  return Array.from(roots).filter(isTypeScriptLspSourceFileName)
+  const roots = projectConfig?.fileNames ?? Array.from(workspaceFiles.keys())
+  return roots.filter(isTypeScriptLspSourceFileName)
 }
 
 export function readProjectConfig(

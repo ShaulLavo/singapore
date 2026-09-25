@@ -876,9 +876,9 @@
     },
     {
       "id": "E054",
-      "file": "e054-worker-language-server-parity.md",
+      "reference": "../docs/architecture/e054-worker-language-server-parity.md",
       "title": "The TypeScript worker answers everything the server path answers",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P2",

@@ -24,6 +24,11 @@ import {
 } from '@singapore-editor/typescript-lsp'
 import { createEditorPane } from './components/editorPane.ts'
 import { createHistoryPanel, type HistoryPanel } from './components/historyPanel.ts'
+import {
+  createOutlinePanel,
+  type OutlineClient,
+  type OutlinePanel,
+} from './components/outlinePanel.ts'
 import { el } from './components/dom.ts'
 import { createSidebar } from './components/sidebar.ts'
 import { createStatusBar } from './components/statusBar.ts'
@@ -44,12 +49,29 @@ export function mountApp(): void {
 
   let controller: SourceController | null = null
   let historyPanel: HistoryPanel | null = null
+  let outlinePanel: OutlinePanel | null = null
+  let outlineClient: OutlineClient | null = null
   let typeScriptLspStatus: TypeScriptLspStatus = 'idle'
   let typeScriptDiagnostics: TypeScriptLspDiagnosticSummary | null = null
   const syncTypeScriptStatus = (): void => {
     statusBar.updateTypeScriptLsp(typeScriptLspStatus, typeScriptDiagnostics)
   }
   const typeScriptLsp = createTypeScriptLspPlugin({
+    capabilities: { textDocument: { documentSymbol: { hierarchicalDocumentSymbolSupport: true } } },
+    // The connection starts while the editor mounts its plugins, before the outline exists.
+    onConnectionCreated: (context) => {
+      outlineClient = context.client
+      outlinePanel?.setClient(outlineClient)
+      return {
+        dispose: () => {
+          outlineClient = null
+          outlinePanel?.setClient(null)
+        },
+      }
+    },
+    onApplyWorkspaceEdit: (request) =>
+      controller?.applyWorkspaceEdit(request) ??
+      Promise.resolve({ status: 'failed', code: 'NO_SOURCE', message: 'No source is loaded.' }),
     onStatusChange: (status) => {
       typeScriptLspStatus = status
       syncTypeScriptStatus()
@@ -105,10 +127,13 @@ export function mountApp(): void {
     onChange: (state) => {
       controller?.updateStatus(state)
       historyPanel?.sync()
+      outlinePanel?.refresh()
     },
   })
   historyPanel = createHistoryPanel(editor)
-  main.append(historyPanel.element)
+  outlinePanel = createOutlinePanel(editor)
+  outlinePanel.setClient(outlineClient)
+  main.append(outlinePanel.element, historyPanel.element)
   controller = new SourceController(topBar, sidebar, statusBar, editor, typeScriptLsp, liveDiff, {
     showEditor: () => {
       liveDiff.setEnabled(false)
@@ -142,6 +167,15 @@ export function mountApp(): void {
     historyPanel?.setOpen(open)
   }
   topBar.element.append(history)
+
+  const outline = el('button', { type: 'button', 'aria-pressed': 'false' })
+  outline.textContent = 'Outline'
+  outline.onclick = () => {
+    const open = outline.getAttribute('aria-pressed') !== 'true'
+    outline.setAttribute('aria-pressed', String(open))
+    outlinePanel?.setOpen(open)
+  }
+  topBar.element.append(outline)
 
   syncTypeScriptStatus()
   controller.start()

@@ -181,6 +181,7 @@ function resolveConnectionOptions(
     ),
     clientInfo: options.clientInfo,
     notificationHandlers: options.notificationHandlers,
+    serverRequestHandlers: options.serverRequestHandlers,
     reconnect: options.reconnect,
     createTransport: options.createTransport,
   }

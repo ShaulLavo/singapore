@@ -355,7 +355,7 @@ function createTooltipElement(document: Document, classNamespace: string): HTMLD
     background: HOVER_COLORS.background,
     color: HOVER_COLORS.foreground,
     boxShadow: `0 8px 28px ${HOVER_COLORS.shadow}`,
-    display: 'block',
+    // No inline display: it would beat the `hidden` attribute and leave an empty box on the page.
     fontFamily:
       'var(--editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace)',
     fontSize: 'var(--editor-font-size, 13px)',

@@ -506,6 +506,7 @@ function lspEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding
 
   return [
     { chord: [key('.', autoFix)], command: 'editor.action.autoFix' },
+    { chord: [key('F2')], command: 'editor.action.rename' },
     { chord: [key('F', { alt: true, shift: true })], command: 'editor.action.formatDocument' },
     { chord: [key('F', { mod: true, shift: true })], command: 'editor.action.formatDocument' },
   ]
@@ -785,7 +786,6 @@ export function vscodeEditorKeyBindings(
     { chord: [prefix, key('.', { mod: true })], command: 'editor.removeManualFoldingRanges' },
     { chord: [prefix, key('I', { mod: true })], command: 'editor.action.showHover' },
     { chord: [prefix, key('C', { mod: true })], command: 'editor.action.commentLine' },
-    { chord: [key('F2')], command: 'editor.action.rename' },
     { chord: [key('F12', { shift: true })], command: 'editor.action.goToReferences' },
     { chord: [key('F12', { alt: true })], command: 'editor.action.peekDefinition' },
     { chord: [key('F12', { mod: true })], command: 'editor.action.goToImplementation' },

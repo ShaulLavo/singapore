@@ -9,11 +9,10 @@
  * factory, a host-built `capabilities` block, the shipped `decodeSemanticTokens`, and a layer the
  * plugin created and handed over through its `semanticTokens` block.
  *
- * Two things here are not the real article, and neither of them sits on that path. The lib files
- * come off disk rather than the TypeScript playground CDN — Milestone 2's seam, because no suite of
- * ours may depend on the network — and the transport is a stub socket that hands the worker module's
- * own message handler the bytes a WebSocket would have carried, because a `Worker` needs a bundler
- * and the narrow factory speaks WebSocket only.
+ * One thing here is not the real article, and it does not sit on that path: the transport is a
+ * stub socket that hands the worker module's own message handler the bytes a WebSocket would have
+ * carried, because a `Worker` needs a bundler and the narrow factory speaks WebSocket only. The lib
+ * files are the worker's bundled ones, so nothing reaches the network.
  */
 
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
@@ -44,35 +43,10 @@ import { semanticTokensClientCapability } from '@singapore-editor/lsp'
 import { createLanguageServerPlugin, decodeSemanticTokens } from '@singapore-editor/lsp-plugin'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
-import { typeScriptLibraryFilesFromDisk } from './realTypeScriptService'
 import {
   createTestPluginContext,
   createTestViewContributionContext,
 } from '@singapore-editor/core/testing'
-
-/**
- * Milestone 2's seam, reached from outside.
- *
- * The worker's own `createService()` takes no argument, so the lib map is swapped where it is built
- * rather than where it is used: on disk in `node_modules/typescript/lib` instead of over the
- * playground CDN. Everything else in `@typescript/vfs` — and all of `typescript` — is the real
- * thing.
- *
- * The reader is reached through a holder rather than called in the factory. `vi.mock` factories are
- * hoisted above the imports, and the helper that reads the libs imports `@typescript/vfs` itself, so
- * a factory that imported the helper would be waiting on the module it is standing in for.
- */
-const libraries = vi.hoisted(() => ({ read: null as null | (() => ReadonlyMap<string, string>) }))
-
-vi.mock('@typescript/vfs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@typescript/vfs')>()
-  return {
-    ...actual,
-    createDefaultMapFromCDN: () => Promise.resolve(new Map(libraries.read?.())),
-  }
-})
-
-libraries.read = typeScriptLibraryFilesFromDisk
 
 /**
  * A real TypeScript file, chosen so the fixture legend's three awkward shapes are all reachable.

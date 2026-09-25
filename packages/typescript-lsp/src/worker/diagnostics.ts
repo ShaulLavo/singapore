@@ -1,13 +1,10 @@
-import type { VirtualTypeScriptEnvironment } from '@typescript/vfs'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { tsDiagnosticToLspDiagnostic } from '../tsDiagnostics'
 import type { DocumentContext } from './context'
+import type { ProjectService } from './projectHost'
 import { stringParam } from './protocol'
 
-export function collectDiagnostics(
-  env: VirtualTypeScriptEnvironment,
-  fileName: string,
-): lsp.Diagnostic[] {
+export function collectDiagnostics(env: ProjectService, fileName: string): lsp.Diagnostic[] {
   const service = env.languageService
   return [
     ...service.getSyntacticDiagnostics(fileName),

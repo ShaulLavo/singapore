@@ -1,9 +1,8 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export const JSON_RPC_VERSION = '2.0'
-export const INVALID_PARAMS = -32602
 export const METHOD_NOT_FOUND = -32601
-export const INTERNAL_ERROR = -32603
+const INTERNAL_ERROR = -32603
 export const REQUEST_FAILED = -32803
 
 export type JsonRpcRequestId = number | string
