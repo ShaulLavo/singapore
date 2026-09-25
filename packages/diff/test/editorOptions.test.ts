@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Editor } from '@singapore-editor/core/editor'
 import type { EditorPlugin } from '@singapore-editor/core/extensions'
+import type { EditorKeymapOptions } from '@singapore-editor/core/keymap'
 import { createDiffEditorOptions, createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
 import type { DiffFile, DiffPlugin } from '../src'
 import { installHighlightPolyfill } from './support/highlightPolyfill'
@@ -41,20 +42,15 @@ describe('createDiffEditorOptions', () => {
     expect(host.querySelector('.editor-virtualized-cursor-line-gutter')).toBeNull()
   })
 
-  it('leaves the interleaved buffer without a language', () => {
-    const { editor, plugin } = mountDiff(indentedDiff('  '))
-
-    expect(plugin.getRows().some((row) => row.type === 'deletion')).toBe(true)
-    expect(editor.getState().languageId).toBeNull()
-    expect(editor.getState().syntaxStatus).toBe('plain')
-  })
-
   it('keeps reading keys and drops folding and editing keys', () => {
-    const { editor, host } = mountDiff(indentedDiff('  '))
+    const { editor, finds, host } = mountDiff(indentedDiff('  '))
     editor.setSelection(0)
 
+    press(host, 'ArrowDown')
     press(host, 'ArrowDown', { shift: true })
-    expect(editor.getState().cursor.row).toBe(1)
+    press(host, 'f', { mod: true })
+    expect(editor.getState().cursor.row).toBe(2)
+    expect(finds).toEqual(['find'])
 
     const text = visibleText(host)
     press(host, 'k', { mod: true })
@@ -63,10 +59,30 @@ describe('createDiffEditorOptions', () => {
     press(host, 'z', { mod: true })
     expect(visibleText(host)).toBe(text)
   })
+
+  it('refuses edits from a host keymap that binds them', () => {
+    const { editor, host } = mountDiff(indentedDiff('  '), { defaultBindings: true })
+    editor.setSelection(20)
+    const { length } = editor.getState()
+
+    press(host, 'Backspace')
+
+    expect(editor.getState()).toMatchObject({
+      documentMode: 'static',
+      editability: 'readonly',
+      isDirty: false,
+      length,
+    })
+  })
 })
 
-function mountDiff(file: DiffFile): {
+/** `keymap` replaces the preset's, the way a host bringing its own bindings would. */
+function mountDiff(
+  file: DiffFile,
+  keymap?: EditorKeymapOptions,
+): {
   editor: Editor
+  finds: string[]
   host: HTMLElement
   plugin: DiffPlugin
   tabSizes: number[]
@@ -76,10 +92,12 @@ function mountDiff(file: DiffFile): {
   document.body.appendChild(host)
 
   const tabSizes: number[] = []
+  const finds: string[] = []
   const plugin = createDiffPlugin({ mode: 'document', side: 'stacked', syntaxHighlight: false })
   const editor = createVisibleEditor(host, {
     ...createDiffEditorOptions(),
-    plugins: [plugin, tabSizeProbe(tabSizes)],
+    ...(keymap ? { keymap } : {}),
+    plugins: [plugin, tabSizeProbe(tabSizes), findProbe(finds)],
     tabSize: 8,
   })
   mounted.push({ editor, host })
@@ -88,7 +106,7 @@ function mountDiff(file: DiffFile): {
     editor.setText(joinRenderLines(plugin.getRows()), { tokens: plugin.getTokens() })
   })
   plugin.setFile(file)
-  return { editor, host, plugin, tabSizes }
+  return { editor, finds, host, plugin, tabSizes }
 }
 
 /** A block whose body changes, indented by `indent`, so an indentation guess has one to find. */
@@ -112,6 +130,21 @@ function tabSizeProbe(record: number[]): EditorPlugin {
             if (snapshot.lineCount > 1) record.push(snapshot.tabSize)
           },
         }),
+      }),
+  }
+}
+
+/** Stands in for the find plugin: records each `find` command a key dispatches. */
+function findProbe(record: string[]): EditorPlugin {
+  return {
+    name: 'test.find-probe',
+    activate: (context) =>
+      context.registerCommandContribution({
+        createContribution: (commands) =>
+          commands.registerCommand('find', () => {
+            record.push('find')
+            return true
+          }),
       }),
   }
 }

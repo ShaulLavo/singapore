@@ -53,9 +53,21 @@ plugin.setFile(parseGitPatch(patchText)[0])
 `createDiffEditorOptions()` returns what the diff's editor needs: a static read-only document, the
 configured `tabSize` with no indentation guess, no cursor-line paint over the row tint, and the
 navigation, selection and find keys. Folding is left out because it would hide projected rows.
-Spread it and add your own options: plugins, typography, theme, or a `keymap` of your own. The
-pushed text carries no `languageId`, because the language belongs to the plugin's per-side syntax
-documents.
+Spread it and add your own options: plugins, typography, theme. The pushed text carries no
+`languageId`, because the language belongs to the plugin's per-side syntax documents.
+
+`keymap` and `cursorLineHighlight` are whole objects, and a field an override leaves out takes the
+editor default: every key pack, folding included, and a painted cursor line. Extend them:
+
+```ts
+const preset = createDiffEditorOptions()
+const editor = new Editor(host, {
+  ...preset,
+  cursorLineHighlight: { ...preset.cursorLineHighlight, gutterNumber: true },
+  keymap: { ...preset.keymap, layers: [...preset.keymap.layers, hostLayer] },
+  plugins: [plugin],
+})
+```
 
 Split mode is two editors, `side: 'old'` and `side: 'new'`, laid out and scroll-synced by the host.
 **Give both plugins the same region store**, or expanding a collapsed region on one side leaves the
