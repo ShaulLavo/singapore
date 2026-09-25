@@ -1,17 +1,13 @@
 /*
  * A real `ts.LanguageService` over a virtual file system, with the network switched off.
  *
- * The worker's `createService` pulls its `lib.*.d.ts` files off the TypeScript playground CDN. No
- * suite of ours may do that: a test that fails when a CDN blinks is a test nobody trusts, and CI
- * has no business dialling out. The identical lib files already sit in `node_modules/typescript/lib`
- * — this reads them from there and hands the map to the seam `createService` grew for the purpose.
+ * The worker loads its `lib.*.d.ts` files off the TypeScript playground CDN by default. No suite of
+ * ours may do that: a test that fails when a CDN blinks is a test nobody trusts, and CI has no
+ * business dialling out. The identical lib files already sit in `node_modules/typescript/lib`, and
+ * this reads them from there for the session's `loadLibraryFiles` seam.
  *
  * The suites and `bench/semanticClassification.ts` share this module because a benchmark that
  * measures a differently-built service is measuring something no test asserts about.
- *
- * It deliberately does not import the worker to borrow its compiler options: the worker installs an
- * `onmessage` handler the moment it is imported, which pins a plain Bun process open forever. The
- * options below are a copy, and `realTypeScriptService.test.ts` fails if the copy ever drifts.
  */
 
 import { readdirSync, readFileSync } from 'node:fs'
@@ -23,22 +19,7 @@ import {
   type VirtualTypeScriptEnvironment,
 } from '@typescript/vfs'
 import ts from 'typescript'
-
-/** A copy of the worker's `defaultCompilerOptions()`, kept honest by a test. */
-export const REAL_SERVICE_COMPILER_OPTIONS: ts.CompilerOptions = {
-  target: ts.ScriptTarget.ES2023,
-  module: ts.ModuleKind.ESNext,
-  moduleResolution: ts.ModuleResolutionKind.Bundler,
-  jsx: ts.JsxEmit.ReactJSX,
-  strict: true,
-  noEmit: true,
-  allowJs: true,
-  checkJs: false,
-  allowImportingTsExtensions: true,
-  esModuleInterop: true,
-  skipLibCheck: true,
-  resolveJsonModule: true,
-}
+import { defaultCompilerOptions } from '../src/worker/project'
 
 // Reading a hundred-odd lib files is a few megabytes of I/O, and every suite in this file's orbit
 // wants the same bytes. Read them once per process.
@@ -73,7 +54,7 @@ export const createRealTypeScriptService = (
     createSystem(fsMap),
     Array.from(sourceFiles.keys()),
     ts,
-    REAL_SERVICE_COMPILER_OPTIONS,
+    defaultCompilerOptions(),
   )
 }
 

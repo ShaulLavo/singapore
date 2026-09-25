@@ -16,6 +16,8 @@ const fakeTs = vi.hoisted(() => ({
     Suggestion: 2,
     Message: 3,
   },
+  SemicolonPreference: { Ignore: 'ignore' },
+  getDefaultFormatCodeSettings: () => ({}),
   flattenDiagnosticMessageText: (message: string) => message,
   displayPartsToString: (parts: readonly { readonly text: string }[] = []) =>
     parts.map((part) => part.text).join(''),
