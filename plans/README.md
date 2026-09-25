@@ -79,11 +79,13 @@ walking a lazy `Proxy` array were 90%. Its execution plan has been removed.
 The order below is a recommendation.
 
 [E050](e050-host-obligations-into-api.md) is in progress: all eleven rows were re-checked on
-2026-09-24, and rows 1, 2, 5 and 6 landed: `setText(text, { tokens })` paints text and tokens in one render, and
-`registerPressParticipant` lets a plugin claim a press before caret placement. Row 6 opened the keymap
-context to plugin keys; completion and signature help keys are commands in a `suggest` pack. The
-typography row (2026-09-25) added `fontSize` and `fontFamily` options, measured in the same call.
-Row 2 (2026-09-25) made the diff editor's options a preset, `createDiffEditorOptions()`.
+2026-09-24, and rows 1, 2, 5 and 6 landed: `setText(text, { tokens })` paints text and tokens in
+one render, and `registerPressParticipant` lets a plugin claim a press before caret placement. Row
+6 opened the keymap context to plugin keys; completion and signature help keys are commands in a
+`suggest` pack. The typography row (2026-09-25) added `fontSize` and `fontFamily` options, measured
+in the same call. Row 2 (2026-09-25) made the diff editor's options a preset,
+`createDiffEditorOptions()`, with a new core `folding: false` so no host's fold command hides diff
+rows.
 
 [E006](../docs/storage/e006-tombstone-compaction.md) is complete on 2026-09-25. Maintenance
 [reclaims deleted text](../docs/storage/e006-text-reclamation.md) and replaces each run of

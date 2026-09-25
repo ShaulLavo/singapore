@@ -39,7 +39,12 @@ describe('createDiffEditorOptions', () => {
     editor.setSelection(1)
 
     expect(host.querySelector('.editor-virtualized-cursor-line-row')).toBeNull()
-    expect(host.querySelector('.editor-virtualized-cursor-line-gutter')).toBeNull()
+    // No gutter is mounted here, so the gutter parts are pinned on the value.
+    expect(createDiffEditorOptions().cursorLineHighlight).toEqual({
+      gutterBackground: false,
+      gutterNumber: false,
+      rowBackground: false,
+    })
   })
 
   it('keeps reading keys and drops folding and editing keys', () => {
@@ -57,6 +62,18 @@ describe('createDiffEditorOptions', () => {
     press(host, '0', { mod: true })
     press(host, 'Backspace')
     press(host, 'z', { mod: true })
+    expect(visibleText(host)).toBe(text)
+  })
+
+  it('folds nothing when a host dispatches the fold commands', () => {
+    const { editor, host } = mountDiff(indentedDiff('  '), { enabled: false })
+    editor.setSelection(0)
+    const text = visibleText(host)
+
+    expect(editor.dispatchCommand('editor.foldAll')).toBe(false)
+    expect(editor.dispatchCommand('editor.fold')).toBe(false)
+    expect(editor.dispatchCommand('editor.foldLevel1')).toBe(false)
+    expect(editor.dispatchCommand('editor.createFoldingRangeFromSelection')).toBe(false)
     expect(visibleText(host)).toBe(text)
   })
 

@@ -383,6 +383,7 @@ export class Editor {
   /** The width a host named, which no document may contradict. */
   private configuredTabSize: number
   private readonly detectIndentation: boolean
+  private readonly folding: boolean
   /** The width in effect: the host's when it named one, otherwise the loaded document's own. */
   private tabSize: number
   private tabMovesFocus: boolean
@@ -476,6 +477,7 @@ export class Editor {
     this.presentationReady = options.presentationReady !== false
     this.configuredTabSize = normalizeTabSize(options.tabSize)
     this.detectIndentation = options.detectIndentation ?? true
+    this.folding = options.folding ?? true
     this.tabSize = this.configuredTabSize
     this.tabMovesFocus = options.tabMovesFocus ?? false
     // On the host's container rather than on the scrolling element: everything under that element is
@@ -588,7 +590,7 @@ export class Editor {
         selection: this.syntax.fallbackFoldSelection,
         grammarProjectionSuppression:
           this.grammarDescribedFolds || this.syntaxFoldProjection().length > 0,
-        active: this.session !== null && !this.disposed,
+        active: this.session !== null && !this.disposed && this.folding,
       }),
       publish: (index) => this.foldState.setFoldProjections(this.foldProjections(index), index),
       changed: () => this.notifyViewContributions('layout', null),
@@ -2743,6 +2745,8 @@ export class Editor {
   private foldProjections(
     index = this.fallbackFolds.index,
   ): readonly EditorDisplayProjection<'folds'>[] {
+    if (!this.folding) return []
+
     const contributed = this.displayProjections.values('folds')
     if (this.manualFolds.length === 0) return contributed
 
@@ -4320,6 +4324,8 @@ export class Editor {
    * is what unfolds them again — the fold would come back open the moment it was made.
    */
   private createManualFolds(): boolean {
+    if (!this.folding) return false
+
     const snapshot = this.session?.getSnapshot()
     if (!snapshot) return false
 
