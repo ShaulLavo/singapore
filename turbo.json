@@ -13,7 +13,7 @@
       "dependsOn": ["^build", "build"]
     },
     "@singapore-editor/core#typecheck": {
-      "dependsOn": ["build", "@singapore-editor/tree-sitter-languages#build"]
+      "dependsOn": ["build", "@singapore-editor/tree-sitter-languages#build", "@singapore-editor/diff#build"]
     },
     "lint": {},
     "format": {
@@ -24,7 +24,7 @@
       "dependsOn": ["^build", "build"]
     },
     "@singapore-editor/core#test": {
-      "dependsOn": ["build", "@singapore-editor/tree-sitter-languages#build"]
+      "dependsOn": ["build", "@singapore-editor/tree-sitter-languages#build", "@singapore-editor/diff#build"]
     }
   }
 }

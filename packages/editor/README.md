@@ -40,6 +40,30 @@ editor.openDocument({
 - `@singapore-editor/core/syntax` exports syntax provider and syntax token helpers.
 - `@singapore-editor/core/style.css` is the base editor stylesheet.
 
+## Theme colors
+
+Pass `theme` when constructing an editor, or call `editor.setTheme(theme)` to update it in place.
+Themes work with `new Editor(element)` and `setText(text)` without a document session.
+
+```ts
+editor.setTheme({
+  type: 'dark',
+  backgroundColor: '#1e1e1e',
+  foregroundColor: '#d4d4d4',
+  gutterBackgroundColor: '#252526',
+  caretColor: '#ffffff',
+  selectionColor: '#264f78',
+  inactiveSelectionColor: '#3a3d41',
+  popupBackgroundColor: '#252526',
+})
+```
+
+`selectionColor` paints focused selections; `inactiveSelectionColor` paints them after blur.
+`popupBackgroundColor` supplies the popup background used by hover, completion and rename.
+Plugins can register more colors with `registerEditorColor` from the rendering entry point;
+set these through `theme.colors`, keyed by the registered id. The [diff theme documentation](../diff/README.md#theme)
+lists its palette and the public replacements for the removed diff base CSS hooks.
+
 ## Chords and host keymaps
 
 Declare shortcuts as a non-empty `chord` array. Single strokes use the same field.

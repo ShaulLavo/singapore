@@ -58,7 +58,7 @@ export type DiffPlugin = EditorPlugin & {
   /** `document` mode: the file to project. The host owns the editor's text — §C3. */
   setFile(file: DiffFile | null): void
   getRows(): readonly DiffRenderRow[]
-  /** Both sides in row order, using the current expansion state. */
+  /** Both sides in row order. Cached until the file or expansion state changes. */
   getStackedRows(): readonly DiffRenderRow[]
   /**
    * Projected syntax tokens for the current rows. The host passes them with the rows' text,
@@ -154,6 +154,7 @@ class DiffPluginRuntime {
   private readonly regions: DiffRegionStore
   private file: DiffFile | null = null
   private rows: readonly DiffRenderRow[] = []
+  private stackedRows: readonly DiffRenderRow[] | null = null
   private digits: DiffGutterDigits = { old: 0, new: 0 }
   private hunkRows = false
   private expandableRows = false
@@ -266,7 +267,8 @@ class DiffPluginRuntime {
   getStackedRows(): readonly DiffRenderRow[] {
     if (this.mode === 'overlay') return this.liveProjection.rows
     if (this.side === 'stacked') return this.rows
-    return projectRows(this.file, 'stacked', this.regions.getExpandedRegions())
+    this.stackedRows ??= projectRows(this.file, 'stacked', this.regions.getExpandedRegions())
+    return this.stackedRows
   }
 
   isSyntaxReady(): boolean {
@@ -312,6 +314,7 @@ class DiffPluginRuntime {
   }
 
   private rebuildRows(): void {
+    this.stackedRows = null
     this.rows = projectRows(this.file, this.side, this.regions.getExpandedRegions())
     // Both derived once here rather than per gutter-width recompute and per mousemove.
     this.digits = diffGutterDigits(this.rows)

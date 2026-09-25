@@ -358,8 +358,14 @@ controller registration order.
 
 Selection, inactive selection and popup background are public EditorTheme fields. The diff palette
 uses registered `diff.*` colours, inherited by its rows; row-local literals and forced editor
-background overrides are gone. Hover, completion and rename copy the popup colour into their
-portalled elements. `themeColors.browser.test.ts` checks actual row and selection paint.
+background overrides are gone. Diff base colors use `backgroundColor`, `foregroundColor` and
+`gutterBackgroundColor`; the diff README maps the removed CSS hooks to these fields. Palette
+defaults distinguish dark and light themes. Hover, completion and rename copy the popup colour
+into their portalled elements. `themeColors.browser.test.ts` constructs the plugin and checks
+default palette, overrides, live base-color updates and selection paint. The production consumer
+bundle test executes registration after minification; removing the factory registration fails
+both tests. Split `getStackedRows()` caches its projection until the file or expansion changes,
+with private and shared expansion stores covered by toggle regressions.
 
 ## Row presentation decision, 2026-09-25
 

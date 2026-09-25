@@ -7,9 +7,8 @@
  * running rather than animating something invisible. Selection is untouched — it paints from its
  * own range highlight, so a reader can still select and copy.
  *
- * Scoped to `.editor-diff-view`, which is the host's element (see the note above): a host that
- * wants the caret back simply does not stamp the class, and loses the `--editor-diff-*` block with
- * it.
+ * Scoped to the host's `.editor-diff-view` class. Base colors come from EditorTheme;
+ * `createDiffPlugin` registers the `diff.*` palette used below.
  */
 .editor-diff-view .editor-virtualized-caret-layer {
   display: none;

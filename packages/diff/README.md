@@ -91,6 +91,50 @@ Expansion is per _diff_, not per path: pushing the same path with different cont
 because region keys are absolute line numbers and any edit above a region renumbers it. Pushing an
 identical file again keeps it.
 
+## Theme
+
+Pass an `EditorTheme` to each diff editor. Base colors use the same fields as a plain editor:
+
+| Removed CSS hook                  | EditorTheme field       |
+| --------------------------------- | ----------------------- |
+| `--editor-diff-background`        | `backgroundColor`       |
+| `--editor-diff-foreground`        | `foregroundColor`       |
+| `--editor-diff-gutter-background` | `gutterBackgroundColor` |
+
+The removed hooks have no aliases. Set these fields on the diff editor itself. Its rows and gutter
+inherit the values, and `editor.setTheme(theme)` updates them without remounting.
+
+```ts
+editor.setTheme({
+  type: 'light',
+  backgroundColor: '#ffffff',
+  foregroundColor: '#18181b',
+  gutterBackgroundColor: '#f4f4f5',
+  colors: { 'diff.added.bg': '#dcfce7' },
+})
+```
+
+`createDiffPlugin` registers the following `EditorTheme.colors` ids. Defaults follow the theme's
+`type`; explicit colors override those defaults. A light theme should also supply its base colors.
+
+| Color id                               | Paint                                           |
+| -------------------------------------- | ----------------------------------------------- |
+| `diff.added`, `diff.deleted`           | Added and deleted gutter numbers and indicators |
+| `diff.modified`                        | Input to the default hunk background mix        |
+| `diff.added.bg`, `diff.deleted.bg`     | Changed rows and gutter cells                   |
+| `diff.hunk.bg`, `diff.hunk.foreground` | Hunk separators and their gutter cells          |
+| `diff.placeholder.bg`                  | Empty cells on one side of a split diff         |
+| `diff.muted`                           | Empty diff message                              |
+| `diff.border`, `diff.split.handle`     | Host diff borders and split handles             |
+
+## Stacked rows
+
+`plugin.getStackedRows()` returns both sides in row order, including the plugin's current region
+expansions. For a stacked plugin it returns the same readonly array as `getRows()`. For a split
+plugin the result is cached until its file or expansion state changes. Private region stores keep
+views independent; plugins given the same store observe each other's toggles. Overlay mode returns
+its live projection rows, as `getRows()` does.
+
 ## Modes
 
 - **`document`** (default) — the editor holds a synthetic buffer of the projected rows. Deletion rows
