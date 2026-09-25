@@ -245,6 +245,29 @@ after exhaustion, a declined reload session, and the reset) and
 `packages/decode/test/plugin.test.ts` (no reveal after 60 s of fake time while `loading`, a start on
 `error` and `plain`, input during the wait) fail without the change.
 
+## Row 9, 2026-09-25: a gutter cell that takes presses
+
+`EditorGutterContribution.interactive` marks a contribution whose cell handles presses. The core
+tags that cell `data-editor-gutter-interactive` and owns the one rule that gives it
+`pointer-events: auto`; the rest of the gutter stays `none`, so a press there reaches the text as
+before. A press an interactive cell does not claim bubbles to the editor, which places the caret from
+the point, as it did for the empty fold cell. The fold gutter sets the flag, and `foldGutter.css`
+lost its `pointer-events: auto` and the hidden button's `none` (`visibility: hidden` already takes
+it out of hit testing).
+
+The merge-conflict lens is not a gutter cell: its view contribution mounts a zero-height layer in
+`contentElement`, which no core `none` covers. The layer's `none` and the lens's `auto` cancelled
+each other, so both are deleted. The minimap's `pointer-events: auto` stays: it undoes the
+minimap's own autohide `none` on a sibling of the editor, not a core rule. Platform has no
+punch-through on editor gutter or lens selectors (`apps/web`, `packages/ui` `globals.css`).
+
+`test/gutterPointerEvents.browser.test.ts` clicks through Playwright at each element's centre: an
+interactive probe cell gets the press and the caret stays, an inert probe cell and a line number
+move the caret to their row, an empty fold cell moves the caret, the chevron folds and unfolds, and
+a lens action resolves its conflict. With the core rule removed the probe and chevron cases fail;
+on the old source only the probe case fails. Platform scenario `editor-split-folds` clicks the
+chevron through Playwright's hit check.
+
 ## Scope
 
 API design across `packages/editor` and the bundled plugins. Each section below ships on its own;
@@ -262,7 +285,7 @@ this document is the inventory and the contract, not one change.
 | Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                                        |
 | `MutationObserver` on `style`                  | `onDidChangeReservedOverlayWidth(side)` that is not dropped when re-entrant                                                 |
 | Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                                              |
-| `pointer-events: auto`                         | an `interactive` flag on a gutter cell contribution                                                                         |
+| `pointer-events: auto`                         | done: `interactive` on a gutter contribution; the merge-conflict lens needed no flag                                        |
 | Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                                       |
 | `TOKENS_WAIT_MS`                               | done: `idle` before a document, so every status but `idle` and `loading` is settled                                         |
 

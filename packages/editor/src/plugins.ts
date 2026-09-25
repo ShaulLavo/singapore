@@ -926,6 +926,8 @@ export type EditorGutterContribution = {
   }
   readonly id: string
   readonly className?: string
+  /** The cell takes pointer events; the rest of the gutter passes them to the text beneath. */
+  readonly interactive?: boolean
   createCell(document: Document): HTMLElement
   width(context: EditorGutterWidthContext): number
   updateCell(element: HTMLElement, row: EditorGutterRowContext): void

@@ -206,6 +206,11 @@
   line-height: inherit;
 }
 
+/* The gutter passes presses through to the text; an interactive contribution's cell takes them. */
+.editor-virtualized-gutter-cell[data-editor-gutter-interactive] {
+  pointer-events: auto;
+}
+
 .editor-virtualized-gutter-cell.editor-virtualized-cursor-line-gutter {
   background: var(--editor-cursor-line-gutter-background);
 }
@@ -488,7 +493,6 @@
 .editor-merge-conflict-lens-layer {
   height: 0;
   left: 0;
-  pointer-events: none;
   position: absolute;
   right: 0;
   top: 0;
@@ -503,7 +507,6 @@
   height: var(--editor-row-height);
   left: var(--editor-gutter-width);
   line-height: var(--editor-row-height);
-  pointer-events: auto;
   position: absolute;
   top: 0;
   user-select: none;
