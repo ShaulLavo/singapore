@@ -10,7 +10,22 @@ Four synthetic direct readers improved in both runs; one reader regressed. Those
 do not justify shared document storage's representation, synchronization, and lifetime complexity.
 
 These are instrumented worker-request measurements, not input-to-paint measurements or a completed
-[E009 evaluation](../../plans/e009-worker-transport-costs.md). Production code was not changed.
+E009 evaluation. Production code was not changed.
+
+## Decision, 2026-09-25
+
+Decided 2026-09-25: owner — delete the SAB text transport. After the transport fixes it runs at the
+same speed as the string path and never got faster; the numbers below predate those fixes.
+
+- [E057](../../plans/e057-delete-sab-transport.md) deletes it, ahead of Platform
+  [Plan 099](../../../platform/plans/099-document-contributions.md).
+- E010 (shared allocator and hash map), E012 (epoch reclamation) and E013 (shared document
+  snapshots) are closed as no-go for this reason. Their plans are in git history before this
+  commit.
+- E009 (worker transport costs) is folded into Plan 099 unit 6 and closed in the Editor backlog.
+- E011 (packed piece tree) is parked under Platform
+  [Plan 112](../../../platform/plans/112-large-file-ceiling.md), revived only if 112 shows piece
+  memory dominates.
 
 ## Current Tree-sitter path
 

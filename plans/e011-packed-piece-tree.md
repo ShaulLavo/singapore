@@ -5,8 +5,10 @@
 - Owner: Editor
 - Priority: P3
 - Effort: L
-- Dependencies: [E005](../docs/storage/piece-tree-inspection.md), [E009](e009-worker-transport-costs.md)
+- Dependencies: [E005](../docs/storage/piece-tree-inspection.md), [E009](../../platform/plans/099-document-contributions.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, 2026-09-05.
+
+Decided 2026-09-25: owner — parked under Platform [Plan 112](../../platform/plans/112-large-file-ceiling.md)'s large-file work. Revive it only if 112 shows piece memory dominates. Its dependency E009 is folded into Platform Plan 099 unit 6.
 
 ## Outcome
 

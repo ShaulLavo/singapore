@@ -8,6 +8,8 @@
 - Dependencies: [E001](../examples/stress/README.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
+Decided 2026-09-25: owner — kept, and moved under Platform [Plan 112](../../platform/plans/112-large-file-ceiling.md) and [E015](e015-massive-file-loading.md): it runs in their lane, after 112's ceiling is measured.
+
 ## Outcome
 
 Find a defensible way to limit Tree-sitter memory and work on huge documents while keeping the

@@ -132,10 +132,10 @@
     },
     {
       "id": "E009",
-      "file": "e009-worker-transport-costs.md",
+      "reference": "../../platform/plans/099-document-contributions.md",
       "title": "Decide worker transport changes from measured costs",
-      "status": "Proposed",
-      "owner": "Editor",
+      "status": "Moved",
+      "owner": "Cross-repo",
       "kind": "Research",
       "priority": "P2",
       "effort": "M",
@@ -148,9 +148,9 @@
     },
     {
       "id": "E010",
-      "file": "e010-shared-memory-toolkit.md",
+      "reference": "../docs/performance/sab-transport-2026-09-12.md",
       "title": "Prove a shared allocator and concurrent hash map",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Research",
       "priority": "P3",
@@ -181,9 +181,9 @@
     },
     {
       "id": "E012",
-      "file": "e012-epoch-reclamation.md",
+      "reference": "../docs/performance/sab-transport-2026-09-12.md",
       "title": "Reuse shared storage only after every reader releases it",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Research",
       "priority": "P3",
@@ -199,9 +199,9 @@
     },
     {
       "id": "E013",
-      "file": "e013-shared-document-snapshots.md",
+      "reference": "../docs/performance/sab-transport-2026-09-12.md",
       "title": "Let eligible workers read shared immutable document snapshots",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Cross-repo",
       "kind": "Research",
       "priority": "P3",
@@ -906,6 +906,21 @@
         "Edit commands without a whole-document string"
       ],
       "baseline": "50a2e5baee62647b41985b1e4c6ec98dc4c72d3d"
+    },
+    {
+      "id": "E057",
+      "file": "e057-delete-sab-transport.md",
+      "title": "Delete the SAB text transport",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P2",
+      "effort": "S",
+      "dependsOn": [],
+      "topics": [
+        "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
+      ],
+      "baseline": "c23cd306c22c107741a4c27ee5afc39b8b99ad59"
     }
   ]
 }
