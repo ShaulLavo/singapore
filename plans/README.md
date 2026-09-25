@@ -83,6 +83,7 @@ The order below is a recommendation.
 `registerPressParticipant` lets a plugin claim a press before caret placement. Row 6 opened the keymap
 context to plugin keys; completion and signature help keys are commands in a `suggest` pack. The
 typography row (2026-09-25) added `fontSize` and `fontFamily` options, measured in the same call.
+Row 2 (2026-09-25) made the diff editor's options a preset, `createDiffEditorOptions()`.
 
 [E006](../docs/storage/e006-tombstone-compaction.md) is complete on 2026-09-25. Maintenance
 [reclaims deleted text](../docs/storage/e006-text-reclamation.md) and replaces each run of

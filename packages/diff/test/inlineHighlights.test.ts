@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Editor } from '@singapore-editor/core/editor'
 import { createVisibleEditor } from './support/visibleEditor'
-import { createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
+import { createDiffEditorOptions, createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
 import type { DiffFile } from '../src'
 import { highlightRegistry, installHighlightPolyfill } from './support/highlightPolyfill'
 
@@ -52,15 +52,11 @@ describe('inline word-diff tint', () => {
 
     const plugin = createDiffPlugin({ mode: 'document', side: 'stacked', syntaxHighlight: false })
     editor = createVisibleEditor(host, {
-      cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
-      documentMode: 'static',
-      editability: 'readonly',
-      keymap: { defaultBindings: false, layers: [] },
+      ...createDiffEditorOptions(),
       plugins: [plugin],
-      detectIndentation: false,
     })
     plugin.setFile(file)
-    editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
+    editor.setText(joinRenderLines(plugin.getRows()))
   }
 })
 

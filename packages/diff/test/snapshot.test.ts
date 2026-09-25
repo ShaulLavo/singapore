@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { Editor } from '@singapore-editor/core/editor'
 import { VirtualizedTextView } from '@singapore-editor/core/testing'
-import { createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
+import { createDiffEditorOptions, createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
 
 const editors: Editor[] = []
 beforeEach(() => {
@@ -26,16 +26,18 @@ test.each(['old', 'new', 'stacked'] as const)(
       newFile: { path: 'a.ts', text: 'after\ncontext' },
     })
     plugin.setFile(file)
-    const original = mount({ documentKey: 'exact-diff', plugins: [plugin] })
-    original.editor.setText(joinRenderLines(plugin.getRows()), {
-      documentMode: 'static',
-      languageId: null,
+    const original = mount({
+      ...createDiffEditorOptions(),
+      documentKey: 'exact-diff',
+      plugins: [plugin],
     })
+    original.editor.setText(joinRenderLines(plugin.getRows()))
     expect(plugin.isSyntaxReady()).toBe(true)
     const snapshot = original.editor.captureSnapshot()
     expect(snapshot).not.toBeNull()
     if (!snapshot) return
     const restored = mount({
+      ...createDiffEditorOptions(),
       documentKey: 'exact-diff',
       snapshot: snapshot.paint,
       presentationReady: false,

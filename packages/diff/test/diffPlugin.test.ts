@@ -11,6 +11,7 @@ import {
   type EditorTokenInput,
 } from '@singapore-editor/core/syntax'
 import {
+  createDiffEditorOptions,
   createDiffPlugin,
   createTextDiff,
   diffRowAtEvent,
@@ -564,8 +565,8 @@ type MountOptions = {
 }
 
 /**
- * The host half of §C3, in miniature: construct the editor with the option bag §C6/§C10/§C11
- * require, push the plugin's rows in as text, and re-apply its tokens after every `setText`.
+ * The host half of §C3, in miniature: construct the editor from `createDiffEditorOptions()`, push
+ * the plugin's rows in as text, and re-apply its tokens after every `setText`.
  * Platform's shared mount component does exactly this — see the platform plan §3.
  */
 function mountDiff(options: MountOptions = {}): {
@@ -584,20 +585,13 @@ function mountDiff(options: MountOptions = {}): {
     syntaxHighlight: options.syntaxHighlight ?? false,
   })
   const editor = createVisibleEditor(host, {
-    cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
-    documentMode: 'static',
-    editability: 'readonly',
-    keymap: { defaultBindings: false, layers: [] },
+    ...createDiffEditorOptions(),
     plugins: [plugin],
-    detectIndentation: false,
   })
   mounted.push({ editor, host })
 
   const push = (): void => {
-    editor.setText(joinRenderLines(plugin.getRows()), {
-      languageId: null,
-      tokens: plugin.getTokens(),
-    })
+    editor.setText(joinRenderLines(plugin.getRows()), { tokens: plugin.getTokens() })
   }
   plugin.onDidChangeRows(push)
   plugin.onDidChangeTokens(() => editor.setTokens(plugin.getTokens()))
