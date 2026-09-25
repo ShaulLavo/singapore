@@ -58,7 +58,7 @@ describe('DiagnosticsPresenter', () => {
       .spyOn(window, 'getComputedStyle')
       .mockReturnValue({ color: 'rgba(0, 0, 0, 0.25)' } as CSSStyleDeclaration)
     try {
-      const unused = [{ ...diagnostic(4, 0, 3, 'unused'), tags: [1] }]
+      const unused: lsp.Diagnostic[] = [{ ...diagnostic(4, 0, 3, 'unused'), tags: [1] }]
       presenter.render(activeDocument('abc'), unused)
       presenter.render(activeDocument('abc'), unused)
       expect(getStyle).toHaveBeenCalledTimes(1)
