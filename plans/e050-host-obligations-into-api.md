@@ -138,11 +138,19 @@ Ctrl/Cmd+click use it; none calls `stopImmediatePropagation` or listens in the c
 more. `test/pressParticipants.test.ts`; Platform scenario `editor-press-participants` fails with
 the hook disabled (a double-click selects `lines` of the separator label).
 
-Not covered: the arrow keys still move the caret onto a separator (the "rows a plugin can mark
-non-caret" half of this row), and the fold gutter and merge-conflict buttons still stop propagation
-on their own elements, which is ordinary DOM ownership rather than an ordering trick. Platform's
-line-comment action observes presses on the pane host, so a Ctrl+click in a diff also offers
-"Ask the agent about these lines".
+The fold gutter and merge-conflict buttons still stop propagation on their own elements, which is
+ordinary DOM ownership rather than an ordering trick. Platform's line-comment action observes
+presses on the pane host, so a Ctrl+click in a diff also offers "Ask the agent about these lines".
+
+Rows a plugin marks non-caret, 2026-09-25: `registerNonCaretRows(isNonCaret)` takes a predicate
+over buffer rows. A caret move whose target lands on such a row steps onward in the move's
+direction, keeping a vertical move's goal column and entering a row from its near edge on a
+horizontal one, and turns back when nothing lies that way (Ctrl+Home onto a leading separator).
+Extending moves step the same way, so the head never rests on one. The diff plugin marks its
+separator rows. Tests: `navigationTargets.test.ts`, diff `diffPlugin.test.ts` (fails with the
+predicate returning false); Platform scenario `editor-press-participants` presses Down and Right at
+the last row above a trailing separator and fails without the predicate (the caret lands on
+`Show 9 unmodified lines`).
 
 ## Row 6, 2026-09-24: keys a plugin contributes
 
@@ -301,7 +309,7 @@ this document is the inventory and the contract, not one change.
 | Diff option traps                              | done: `createDiffEditorOptions()` preset in `packages/diff` with `folding: false`; `readonly` already refused edit bindings |
 | CSS variables for typography                   | done: `fontSize`, `fontFamily` options beside `lineHeight`; pitch was already `snapshot.metrics`                            |
 | `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                                            |
-| Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                                                   |
+| Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`, and `registerNonCaretRows` for the arrow keys                                             |
 | Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                                        |
 | `MutationObserver` on `style`                  | done: `onDidChangeReservedOverlayWidth(side)`, raised by the viewport on every change                                       |
 | Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                                              |

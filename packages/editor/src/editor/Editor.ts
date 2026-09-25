@@ -254,6 +254,7 @@ type EditorContributionFailurePhase =
   | 'factory'
   | 'press'
   | 'reserved-width'
+  | 'non-caret-row'
 
 type TrackedAnchorRange = {
   readonly start: PieceTableAnchor
@@ -610,6 +611,7 @@ export class Editor {
       el: this.el,
       announcer: this.announcer,
       rtlMoveVisually: options.rtlMoveVisually ?? defaultRtlMoveVisually(detectPlatform()),
+      nonCaretOffset: (offset) => this.isNonCaretOffset(offset),
       selectionSyncMode: normalizeEditorSelectionSyncMode(options.selectionSyncMode),
       get tabSize(): number {
         return effectiveTabSize()
@@ -3009,6 +3011,7 @@ export class Editor {
       requestViewUpdate: () => this.notifyViewContributions('layout', null),
       onDidType: (listener) => this.addTypedTextListener(listener),
       registerPressParticipant: (participant) => this.registerPressParticipant(participant),
+      registerNonCaretRows: (isNonCaret) => this.registerNonCaretRows(isNonCaret),
       registerKeymapContextKey: (key, read) => this.registerKeymapContextKey(key, read),
       getFeature: (key) => this.getFeature(key),
       getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
@@ -3483,6 +3486,36 @@ export class Editor {
       } catch (error) {
         this.logContributionFailure('view', 'reserved-width', error)
       }
+    }
+  }
+
+  private readonly nonCaretRowFilters = new Set<(bufferRow: number) => boolean>()
+
+  private registerNonCaretRows(isNonCaret: (bufferRow: number) => boolean): EditorDisposable {
+    this.nonCaretRowFilters.add(isNonCaret)
+    return this.claimForContribution(
+      disposableOnce(() => this.nonCaretRowFilters.delete(isNonCaret)),
+    )
+  }
+
+  private isNonCaretOffset(offset: number): boolean {
+    if (this.nonCaretRowFilters.size === 0) return false
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot) return false
+
+    const row = offsetToPoint(snapshot, offset).row
+    for (const isNonCaret of [...this.nonCaretRowFilters]) {
+      if (this.rowRefusedBy(isNonCaret, row)) return true
+    }
+    return false
+  }
+
+  private rowRefusedBy(isNonCaret: (bufferRow: number) => boolean, row: number): boolean {
+    try {
+      return isNonCaret(row)
+    } catch (error) {
+      this.logContributionFailure('view', 'non-caret-row', error)
+      return false
     }
   }
 
@@ -4712,6 +4745,7 @@ function editorContributionFailureAction(phase: EditorContributionFailurePhase):
   if (phase === 'dispose') return 'editor.contribution.dispose_failed'
   if (phase === 'press') return 'editor.contribution.press_failed'
   if (phase === 'reserved-width') return 'editor.contribution.reserved_width_failed'
+  if (phase === 'non-caret-row') return 'editor.contribution.non_caret_row_failed'
   if (phase === 'capture-visible-paint') return 'editor.contribution.capture_visible_paint_failed'
   return 'editor.contribution.update_failed'
 }

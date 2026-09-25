@@ -564,6 +564,11 @@ export type EditorViewContributionContext = {
   /** Participants are asked in the order they registered. */
   registerPressParticipant(participant: EditorPressParticipant): EditorDisposable
   /**
+   * Keeps the caret off buffer rows the contribution draws as chrome, such as a diff separator whose
+   * label is buffer text: a caret move that would land on one steps past it in the same direction.
+   */
+  registerNonCaretRows(isNonCaret: (bufferRow: number) => boolean): EditorDisposable
+  /**
    * Names state this contribution owns for key bindings' `when` conditions, such as a widget being
    * open. Read at the moment a key is matched, so it is never stale; unregistered, it reads false.
    */

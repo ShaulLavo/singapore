@@ -568,6 +568,7 @@ type DiffViewOptions = {
 class DiffViewContribution implements EditorViewContribution {
   readonly snapshotKey = 'diff-inline-v1'
   private readonly pressParticipant: EditorDisposable
+  private readonly separatorRows: EditorDisposable
   private snapshot: EditorViewSnapshot | null = null
   private lastHighlightRows: readonly DiffRenderRow[] | null = null
   private lastHighlightTextVersion = -1
@@ -579,6 +580,7 @@ class DiffViewContribution implements EditorViewContribution {
     this.context.scrollElement.dataset.editorDiffSide = options.side
     viewsByScrollElement.set(this.context.scrollElement, this)
     this.pressParticipant = this.context.registerPressParticipant(this.claimSeparatorPress)
+    this.separatorRows = this.context.registerNonCaretRows(this.isSeparatorRow)
     this.context.scrollElement.addEventListener('click', this.handleClick)
     this.context.scrollElement.addEventListener('mousemove', this.handleMouseMove)
     this.context.scrollElement.addEventListener('mouseleave', this.handleMouseLeave)
@@ -642,6 +644,7 @@ class DiffViewContribution implements EditorViewContribution {
 
   dispose(): void {
     this.pressParticipant.dispose()
+    this.separatorRows.dispose()
     this.context.scrollElement.removeEventListener('click', this.handleClick)
     this.context.scrollElement.removeEventListener('mousemove', this.handleMouseMove)
     this.context.scrollElement.removeEventListener('mouseleave', this.handleMouseLeave)
@@ -687,8 +690,8 @@ class DiffViewContribution implements EditorViewContribution {
    * A separator is chrome, not content — but its label is real buffer text, because the host's
    * document is `joinRenderLines(rows)` and there is nowhere else for the label to live. So the
    * editor will happily rest a caret in the middle of `Show 12 unmodified lines`, and a collapsed
-   * caret copies its own line: Cmd+C would put that sentence on the clipboard. Refusing the
-   * mousedown is the whole of what can be done from here. A drag that *crosses* a separator still
+   * caret copies its own line: Cmd+C would put that sentence on the clipboard. The mousedown is
+   * refused here, and arrow keys step over the row (`isSeparatorRow`). A drag that *crosses* a separator still
    * covers it, and always will while the label occupies offsets — giving these rows an offset
    * space of their own is the parallel coordinate system §C2 rules out.
    *
@@ -697,6 +700,12 @@ class DiffViewContribution implements EditorViewContribution {
    */
   private readonly claimSeparatorPress = (event: MouseEvent): boolean =>
     event.button === 0 && this.hunkRowAt(event) !== null
+
+  /** The keyboard half of the same rule: arrow keys step over a separator. */
+  private readonly isSeparatorRow = (bufferRow: number): boolean => {
+    if (this.options.mode !== 'document' || !this.options.hasHunkRows()) return false
+    return this.options.getRows()[bufferRow]?.type === 'hunk'
+  }
 
   private readonly handleClick = (event: MouseEvent): void => {
     if (event.button !== 0) return

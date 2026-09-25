@@ -171,6 +171,20 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
     }
   })
 
+  it('keeps arrow keys off a separator row', () => {
+    const { editor, plugin } = mountDiff({ file: prefixSkippedDiff() })
+    const rows = plugin.getRows()
+    expect(rows[0]?.type).toBe('hunk')
+    const firstContent = (rows[0]?.text.length ?? 0) + 1
+
+    editor.setSelection(firstContent)
+    editor.dispatchCommand('cursorLeft')
+    expect(editor.getState().cursor.row).toBe(1)
+
+    editor.dispatchCommand('cursorDocumentStart')
+    expect(editor.getState().cursor.row).toBe(1)
+  })
+
   it('toggles the unmodified tail after the last hunk', () => {
     // Ported from DiffView.test.ts:136-151. A trailing region carries `hunkIndex === undefined`
     // (projection.ts:294-310) — the case a hunk-ordinal mirror can never address, which is why

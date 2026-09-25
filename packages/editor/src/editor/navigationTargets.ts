@@ -65,7 +65,12 @@ type NavigationTargetContext = {
   readonly rtlMoveVisually: boolean
   readonly wordSeparators?: string
   readonly view: NavigationTargetView
+  /** Whether the offset sits on a row a contribution keeps the caret off. */
+  readonly nonCaretOffset?: (offset: number) => boolean
 }
+
+// Consecutive non-caret rows a move steps over before it gives up in that direction.
+const MAX_NON_CARET_HOPS = 64
 
 export function defaultRtlMoveVisually(platform: 'mac' | 'windows' | 'linux'): boolean {
   return platform !== 'windows'
@@ -105,7 +110,57 @@ export function navigationTargetForCommand(
   const target = commandNavigationTarget(context)
   if (!target) return null
 
-  return renderedRowTarget(context, target)
+  return caretRowTarget(context, renderedRowTarget(context, target))
+}
+
+/**
+ * Steps a target off a row a contribution marks non-caret, such as a diff separator whose label is
+ * buffer text, onward in the move's direction; when nothing lies that way it turns back.
+ */
+function caretRowTarget(
+  context: NavigationTargetContext,
+  target: NavigationTarget,
+): NavigationTarget {
+  const nonCaret = context.nonCaretOffset
+  if (!nonCaret?.(target.offset)) return target
+
+  const direction = target.offset < context.resolved.headOffset ? -1 : 1
+  const offset =
+    nearestCaretOffset(context, target, direction, nonCaret) ??
+    nearestCaretOffset(context, target, -direction, nonCaret) ??
+    context.resolved.headOffset
+  return targetAtLogicalOffset(target, offset)
+}
+
+function nearestCaretOffset(
+  context: NavigationTargetContext,
+  target: NavigationTarget,
+  direction: number,
+  nonCaret: (offset: number) => boolean,
+): number | null {
+  let offset = target.offset
+  for (let hop = 0; hop < MAX_NON_CARET_HOPS; hop += 1) {
+    const next = adjacentRowOffset(context.view, target, offset, direction)
+    if (next === offset) return null
+    if (!nonCaret(next)) return next
+    offset = next
+  }
+  return null
+}
+
+/** Vertical moves keep their goal column; a horizontal move enters a row from its near edge. */
+function adjacentRowOffset(
+  view: NavigationTargetView,
+  target: NavigationTarget,
+  offset: number,
+  direction: number,
+): number {
+  if (target.goal && target.goal.kind !== 'none') {
+    return view.verticalCaretTarget(offset, target.affinity, direction, target.goal).offset
+  }
+  const rowStart = view.offsetByDisplayRows(offset, direction, 0)
+  if (direction > 0) return rowStart
+  return view.offsetAtLineBoundary(rowStart, 'end')
 }
 
 /**
