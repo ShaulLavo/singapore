@@ -74,6 +74,18 @@ it('removes an alias after program creation without deleting its surviving canon
   project.languageService.dispose()
 })
 
+it('stops resolving a deleted canonical source while its alias survives', () => {
+  const project = aliasProject()
+  expect(project.languageService.getSemanticDiagnostics('/repo/main.ts')).toHaveLength(0)
+  project.deleteFile(canonical)
+  expect(
+    project.languageService.getSemanticDiagnostics('/repo/main.ts').map((item) => item.code),
+  ).toContain(2307)
+  project.setFile(canonical, 'export const value = 1')
+  expect(project.languageService.getSemanticDiagnostics('/repo/main.ts')).toHaveLength(0)
+  project.languageService.dispose()
+})
+
 it('invalidates cached package imports when their logical alias disappears', () => {
   const project = aliasProject()
   project.setFile('/repo/aliased.ts', 'import { value } from "pkg"; value')

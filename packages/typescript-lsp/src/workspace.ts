@@ -32,7 +32,9 @@ export class TypeScriptLspWorkspace {
     if (changed.length === 0) return
     for (const file of changed) this.files.set(file.path, file.text)
     this.revision++
-    this.notifyClients(UPSERT_WORKSPACE_FILES, { files: changed })
+    this.notifyClients(UPSERT_WORKSPACE_FILES, {
+      files: changed.map(({ path, text }) => ({ path, text })),
+    })
   }
 
   public deleteWorkspaceFiles(paths: readonly string[]): void {

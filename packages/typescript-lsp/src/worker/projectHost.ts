@@ -120,16 +120,18 @@ export class ProjectHost implements ProjectService {
   }
 
   #text(fileName: string): string | undefined {
+    if (!this.#exists(fileName)) return undefined
     const canonical = this.canonical(fileName)
-    if (
-      fileName !== canonical &&
-      !this.#logicalFiles.get(canonical)?.has(fileName) &&
-      ![...(this.#openOwners.get(canonical)?.values() ?? [])].some(
-        (owner) => owner.path === fileName,
-      )
-    )
-      return undefined
     return this.#open.get(canonical) ?? this.#files.get(canonical)
+  }
+
+  // A surviving alias keeps the shared text, but a deleted canonical name must stop resolving.
+  #exists(fileName: string): boolean {
+    const canonical = this.canonical(fileName)
+    if (fileName === canonical && this.#openOwners.has(canonical)) return true
+    if (this.#logicalFiles.get(canonical)?.has(fileName)) return true
+    const owners = this.#openOwners.get(canonical)?.values() ?? []
+    return [...owners].some((owner) => owner.path === fileName)
   }
 
   #addDirectories(fileName: string): void {
@@ -189,6 +191,7 @@ export class ProjectHost implements ProjectService {
     return Array.from(this.#files.keys()).filter(
       (fileName) =>
         fileName.startsWith(prefix) &&
+        this.#exists(fileName) &&
         (!extensions || extensions.some((extension) => fileName.endsWith(extension))),
     )
   }
