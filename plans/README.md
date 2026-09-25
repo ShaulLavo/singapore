@@ -90,7 +90,9 @@ rows. Row 9 (2026-09-25) added `interactive` to gutter contributions: the core g
 pointer events, and the fold gutter's own punch-through CSS is gone. Row 7 (2026-09-25) made a
 reservation change an event, `onDidChangeReservedOverlayWidth`, raised by the viewport on every
 change; the find widget dropped its `MutationObserver`. Row 5 finished (2026-09-25) with
-`registerNonCaretRows`: arrow keys step over diff separator rows.
+`registerNonCaretRows`: arrow keys step over diff separator rows. Row 8 (2026-09-25) added
+`Editor.onDidScroll`, raised after the virtualizer's fold, and a two-axis `setScrollPosition` on the
+contribution context; Platform's diff scroll bridge is gone.
 
 [E006](../docs/storage/e006-tombstone-compaction.md) is complete on 2026-09-25. Maintenance
 [reclaims deleted text](../docs/storage/e006-text-reclamation.md) and replaces each run of

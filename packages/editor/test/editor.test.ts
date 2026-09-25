@@ -2079,6 +2079,35 @@ describe('Editor', () => {
       expect(events).toEqual(['viewport', 'layout', 'content', 'layout'])
     })
 
+    it('reports each new scroll position to onDidScroll, both axes from a contribution', () => {
+      let requester: EditorViewContributionContext | null = null
+      const plugin: EditorPlugin = {
+        activate: (context) =>
+          context.registerViewContribution({
+            createContribution: (view) => {
+              requester = view
+              return { update: () => undefined, dispose: () => undefined }
+            },
+          }),
+      }
+      editor.dispose()
+      editor = createVisibleEditor(container, { plugins: [plugin] })
+      editor.setText(Array.from({ length: 400 }, (_value, row) => `${row} `.repeat(80)).join('\n'))
+      const positions: { readonly top: number; readonly left: number }[] = []
+      const subscription = editor.onDidScroll((position) => positions.push(position))
+
+      requireViewContributionContext(requester).setScrollPosition({ top: 300, left: 40 })
+      editor.setScrollPosition({ top: 300, left: 40 })
+      editor.setScrollPosition({ top: 120 })
+      subscription.dispose()
+      editor.setScrollPosition({ top: 0 })
+
+      expect(positions).toEqual([
+        { top: 300, left: 40 },
+        { top: 120, left: 40 },
+      ])
+    })
+
     it('announces a reservation staked during a layout pass to width listeners', () => {
       const layouts: number[] = []
       const heard: number[] = []
@@ -6242,7 +6271,7 @@ describe('Editor', () => {
       await flushSyntaxDebounce()
       const rangeCountBeforeTeleport = ranges.length
 
-      requireViewContributionContext(contributionContext).setScrollTop(900_000)
+      requireViewContributionContext(contributionContext).setScrollPosition({ top: 900_000 })
       const urgentRange = ranges[rangeCountBeforeTeleport]
       await flushSyntaxDebounce()
       const postTeleportRanges = ranges.slice(rangeCountBeforeTeleport)

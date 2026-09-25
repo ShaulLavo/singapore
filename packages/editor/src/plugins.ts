@@ -24,7 +24,7 @@ import type { InlineReplacementSpec } from './inlineMap'
 import type { TextOffsetRange } from './textRanges'
 import type { SelectionAffinity } from './selections'
 import type { EditorSetSelectionOptions } from './editor/selectionReveal'
-import type { EditorSyntaxStatus } from './editor/types'
+import type { EditorScrollPosition, EditorSyntaxStatus } from './editor/types'
 import type {
   DocumentChangesSinceSyncPoint,
   DocumentLogicalRevisionScope,
@@ -610,7 +610,8 @@ export type EditorViewContributionContext = {
     timingName: string,
     revealOffset?: number,
   ): void
-  setScrollTop(scrollTop: number): void
+  /** An axis left out keeps its current offset. */
+  setScrollPosition(position: EditorScrollPosition): void
   reserveOverlayWidth(side: EditorOverlaySide, width: number): void
   // Width already claimed on that edge by other contributions, so an overlay
   // that anchors itself to the edge can step clear of them instead of covering
