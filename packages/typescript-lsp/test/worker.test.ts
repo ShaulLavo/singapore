@@ -393,3 +393,28 @@ it.each(['file:///repo/src/lib.ts', 'file:///repo/node_modules/pkg/index.ts'])(
     expect(await diagnosticCodes(session, 'file:///repo/main.ts')).not.toContain(2307)
   },
 )
+
+it('invalidates an existing package import after its alias is deleted and resolves it after re-creation', async () => {
+  const session = rawSession()
+  const canonical = '/repo/src/lib.ts'
+  const alias = '/repo/node_modules/pkg/index.ts'
+  await initialize(session, {
+    canonicalPaths: { [alias]: canonical },
+    compilerOptions: { noLib: true, moduleResolution: 2 },
+  })
+  session.notify(SET_WORKSPACE_FILES, {
+    files: [
+      { path: canonical, text: 'export const value = 1' },
+      { path: alias, text: 'export const value = 1' },
+      { path: '/repo/node_modules/pkg/package.json', text: '{"types":"index.ts"}' },
+      { path: '/repo/main.ts', text: 'import { value } from "pkg"; value' },
+    ],
+  })
+  expect(await diagnosticCodes(session, 'file:///repo/main.ts')).not.toContain(2307)
+  session.notify(DELETE_WORKSPACE_FILES, { paths: [alias] })
+  expect(await diagnosticCodes(session, 'file:///repo/main.ts')).toContain(2307)
+  session.notify(UPSERT_WORKSPACE_FILES, {
+    files: [{ path: alias, text: 'export const value = 1' }],
+  })
+  expect(await diagnosticCodes(session, 'file:///repo/main.ts')).not.toContain(2307)
+})

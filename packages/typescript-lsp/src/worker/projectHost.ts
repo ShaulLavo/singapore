@@ -57,6 +57,7 @@ export class ProjectHost implements ProjectService {
     logical.set(fileName, text)
     this.#logicalFiles.set(canonical, logical)
     this.#addDirectories(fileName)
+    if (added) this.languageService.cleanupSemanticCache()
     if (!added && this.#files.get(canonical) === text) return
     this.#files.set(canonical, text)
     this.#changed(canonical)
@@ -66,6 +67,8 @@ export class ProjectHost implements ProjectService {
     const canonical = this.canonical(fileName)
     const logical = this.#logicalFiles.get(canonical)
     if (!logical?.delete(fileName)) return
+    // Cached imports must stop resolving a removed logical path, even when its source survives.
+    this.languageService.cleanupSemanticCache()
     const remaining = logical.get(canonical) ?? [...logical.values()].at(-1)
     if (remaining === undefined) {
       this.#logicalFiles.delete(canonical)
