@@ -84,6 +84,15 @@ describe('createDecodePlugin', () => {
     expect(registerViewContribution).toHaveBeenCalledOnce()
   })
 
+  it('cancels a reveal on a programmatic viewport change', () => {
+    const { context, contribution } = mount()
+    contribution.update(snapshot({ tokens: someTokens() }), 'document')
+    expect(rowAnimations().length).toBeGreaterThan(0)
+    contribution.updateViewport?.(snapshot().viewport)
+    expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(false)
+    expect(rowAnimations().every((animation) => animation.cancel.mock.calls.length > 0)).toBe(true)
+  })
+
   it('hides the real rows on open but waits for the highlight to settle before revealing', () => {
     const { context, contribution } = mount()
 
@@ -447,6 +456,14 @@ function viewContext(): EditorViewContributionContext {
     container,
     scrollElement,
     contentElement,
+    getRowPresentation(index) {
+      const element = scrollElement.querySelector<HTMLElement>(
+        `[data-editor-virtual-row="${index}"]`,
+      )
+      if (!element) return null
+      const controller = new AbortController()
+      return { element, signal: controller.signal, dispose: () => controller.abort() }
+    },
     getSnapshot: () => snapshot({ tokens: someTokens() }),
   })
 }
