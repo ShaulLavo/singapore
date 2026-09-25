@@ -150,6 +150,22 @@ describe('createTypeScriptLspPlugin', () => {
     document.body.replaceChildren()
   })
 
+  it('uses the host document URI mapping for worker document synchronization', async () => {
+    const worker = new FakeWorker()
+    const plugin = createTypeScriptLspPlugin({
+      workerFactory: () => worker,
+      documentSync: { uriForDocument: () => 'file:///repo/mapped.ts' },
+    })
+    const provider = activatePlugin(plugin)
+    const contribution = provider.createContribution(viewContributionContext(editorSnapshot()))
+    worker.receive(initializeResponse(message(worker.sent[0])))
+    await flushPromises()
+    expect(textDocumentFor(worker.sent.find(hasMethod('textDocument/didOpen')))).toMatchObject({
+      uri: 'file:///repo/mapped.ts',
+    })
+    contribution?.dispose()
+  })
+
   it('syncs the active TypeScript document through a worker and renders diagnostics', async () => {
     const worker = new FakeWorker()
     const diagnostics: TypeScriptLspDiagnosticSummary[] = []
