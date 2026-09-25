@@ -73,3 +73,12 @@ Out of scope: the other allowlisted reads (LSP payloads, Shiki open, save, the l
   command's own input, not a hidden copy.
 - Whole-word occurrence checks need one unit on each side of a match, which can sit in the
   neighbouring chunk.
+
+## Progress 2026-09-25
+
+- Step 1: `packages/editor/test/editCommandTable.test.ts` records every edit action, both reindent
+  commands, cut, and the four occurrence commands (96 cases) through a focused editor. Fixtures
+  cover a CRLF file, surrogate pairs, reversed ranges and several selections, including two carets
+  on one row. Each case asserts the edits handed to the session, the resulting text and selections,
+  that one undo restores the input, and that redo restores the result. The table records current
+  behaviour as it is, including two carets on one row wrapping a block comment twice.
