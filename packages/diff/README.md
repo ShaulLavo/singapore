@@ -15,19 +15,21 @@ expansion state and the gutter; the **host owns the editor's document**, because
 can mutate document text. So the host pushes the plugin's rows in and re-applies its tokens:
 
 ```ts
-import { createDiffPlugin, joinRenderLines, parseGitPatch } from '@singapore-editor/diff'
+import {
+  createDiffEditorOptions,
+  createDiffPlugin,
+  joinRenderLines,
+  parseGitPatch,
+} from '@singapore-editor/diff'
 import { Editor } from '@singapore-editor/core/editor'
 import '@singapore-editor/core/style.css'
 import '@singapore-editor/diff/style.css'
 
 const plugin = createDiffPlugin({ mode: 'document', side: 'stacked' })
 const editor = new Editor(host, {
-  cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
-  documentMode: 'static',
-  editability: 'readonly',
-  keymap: { defaultBindings: false, layers: [] },
+  ...createDiffEditorOptions(),
   plugins: [plugin],
-  detectIndentation: false,
+  tabSize: 4,
 })
 
 const push = () => {
@@ -40,10 +42,7 @@ const push = () => {
   // that have moved, and an expansion moves every row below the region: a reader holding a
   // selection would find it pointing at different text. Worth taking if your host has no selection
   // to lose.
-  editor.setText(joinRenderLines(plugin.getRows()), {
-    languageId: null,
-    tokens: plugin.getTokens(),
-  })
+  editor.setText(joinRenderLines(plugin.getRows()), { tokens: plugin.getTokens() })
 }
 plugin.onDidChangeRows(push)
 plugin.onDidChangeTokens(() => editor.setTokens(plugin.getTokens()))
@@ -51,18 +50,12 @@ plugin.onDidChangeTokens(() => editor.setTokens(plugin.getTokens()))
 plugin.setFile(parseGitPatch(patchText)[0])
 ```
 
-Four of those options are load-bearing rather than taste:
-
-- **`languageId: null`** — the editor's document is the _interleaved_ buffer. Give it a real language
-  and tree-sitter parses that interleaving and feeds the result into folds, brackets and injections.
-  The language belongs to the plugin's own per-side syntax documents, which is where it lives.
-- **`detectIndentation: false`** — otherwise the editor guesses the indentation width from the
-  buffer on every `setText`, so it flips per file _and_ per expansion toggle. `tabSize` then sets
-  the width, and `setTabSize` changes it live.
-- **`cursorLineHighlight`** with explicit `false`s — the default is `rowBackground: true`, which
-  paints a cursor line on top of the diff row tint. `undefined` means _default_, not off.
-- **`keymap: { defaultBindings: false, layers: [] }`** — a real editor otherwise brings find and the
-  edit commands into a read-only diff.
+`createDiffEditorOptions()` returns what the diff's editor needs: a static read-only document, the
+configured `tabSize` with no indentation guess, no cursor-line paint over the row tint, and the
+navigation, selection and find keys. Folding is left out because it would hide projected rows.
+Spread it and add your own options: plugins, typography, theme, or a `keymap` of your own. The
+pushed text carries no `languageId`, because the language belongs to the plugin's per-side syntax
+documents.
 
 Split mode is two editors, `side: 'old'` and `side: 'new'`, laid out and scroll-synced by the host.
 **Give both plugins the same region store**, or expanding a collapsed region on one side leaves the
@@ -100,6 +93,7 @@ identical file again keeps it.
 ## Exports
 
 - `createDiffPlugin` — the one plugin factory, carrying both modes. `mode` is required.
+- `createDiffEditorOptions` — the editor options a document-mode diff needs.
 - `createDiffRegionStore` — shared expansion state for the two sides of a split view.
 - `parseGitPatch` and `createTextDiff` build diff models.
 - `createSplitProjection`, `createStackedProjection`, and `createLiveDiffProjection` expose render

@@ -168,6 +168,37 @@ keymap binds the commands itself (lsp-plugin README, Keys).
 `test/keymapContextKeys.test.ts`, lsp `test/widgetKeys.test.ts` (fails with the hint's Escape
 unclaimed); Platform registers the ten commands, scenario `editor-widget-keys`.
 
+## Row 2, 2026-09-25: the diff options are a preset
+
+`createDiffEditorOptions()` in `packages/diff` returns what a diff's editor needs: a static
+read-only document, `detectIndentation: false`, every part of `cursorLineHighlight` off, and a
+keymap of the navigation, selection and find packs. A host spreads it and adds its own plugins,
+typography and theme. The README's list of four load-bearing options is gone. Its recipe, every diff
+test and Platform's `diff-pane.tsx` build the editor from the preset and push
+`setText(text, { tokens })`. `languageId: null` was never needed, because `setText` without a
+language leaves the document without one.
+
+The keymap was decided from source. `readonly` already refuses every mutating binding: each one
+carries the `writable` condition (`withEditorConditions` in `keymap/presets.ts`), so the preset
+strips nothing for safety. Of the keys left, folding does harm. A buffer with no language gets
+indentation fallback folds, so Ctrl+K Ctrl+0 folds the interleaved rows (a deletion and its addition
+vanish behind `...`) and would misalign a split. The preset keeps navigation, selection and find
+and leaves folding out. Platform keeps `keymap: { enabled: false }`, as every hosted editor does,
+because its app keymap drives them.
+
+`test/editorOptions.test.ts` fails with `detectIndentation` removed (the width follows each push's
+guess), with `cursorLineHighlight` removed (the caret's row is painted), with the default keymap or
+the folding pack added (the fold chord folds the projection), and with no keys (Shift+ArrowDown does
+not move). Platform deletes `diff-options.ts`. Scenarios `git-diff-expand-tokens`,
+`git-diff-line-comment`, `git-diff-inline-tint` and `editor-title-diff-toggle` pass.
+
+Not covered: Platform's own fold commands still reach a diff. With a diff focused, Ctrl+K Ctrl+0
+hides the change (a throwaway probe scenario, evidence in
+`/work/tmp/fregat-evidence/20260925T114118Z-scenario-zz-diff-fold-probe`),
+because the app keymap dispatches `editor.foldAll` to the focused editor and the preset's keymap is
+off there. Recommended: a `folding: false` editor option (VS Code's `editor.folding`) that makes the
+fold commands no-ops and skips fallback folds, set by the preset.
+
 ## Scope
 
 API design across `packages/editor` and the bundled plugins. Each section below ships on its own;
@@ -178,7 +209,7 @@ this document is the inventory and the contract, not one change.
 | Secret today                                   | API that replaces it                                                                                  |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `setTokens` after every `setText`              | done: `setText(text, { tokens })`                                                                     |
-| Diff option traps                              | a `createDiffEditorOptions()` preset exported by `packages/diff`; `readonly` suppresses edit bindings |
+| Diff option traps                              | done: `createDiffEditorOptions()` preset in `packages/diff`; `readonly` already refused edit bindings |
 | CSS variables for typography                   | done: `fontSize`, `fontFamily` options beside `lineHeight`; pitch was already `snapshot.metrics`      |
 | `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                      |
 | Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                             |

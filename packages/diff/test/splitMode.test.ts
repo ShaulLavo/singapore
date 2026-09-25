@@ -1,7 +1,13 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Editor } from '@singapore-editor/core/editor'
 import { createVisibleEditor } from './support/visibleEditor'
-import { createDiffPlugin, createDiffRegionStore, createTextDiff, joinRenderLines } from '../src'
+import {
+  createDiffEditorOptions,
+  createDiffPlugin,
+  createDiffRegionStore,
+  createTextDiff,
+  joinRenderLines,
+} from '../src'
 import type { DiffFile, DiffGutterSide, DiffPlugin, DiffRegionStore } from '../src'
 import { installHighlightPolyfill } from './support/highlightPolyfill'
 
@@ -133,21 +139,14 @@ describe('split mode alignment (§C7)', () => {
     document.body.appendChild(host)
 
     const editor = createVisibleEditor(host, {
-      cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
-      documentMode: 'static',
-      editability: 'readonly',
-      keymap: { defaultBindings: false, layers: [] },
+      ...createDiffEditorOptions(),
       plugins: [plugin],
-      detectIndentation: false,
     })
     mounted.push({ editor, host })
     plugin.onDidChangeRows(() => {
-      editor.setText(joinRenderLines(plugin.getRows()), {
-        languageId: null,
-        tokens: plugin.getTokens(),
-      })
+      editor.setText(joinRenderLines(plugin.getRows()), { tokens: plugin.getTokens() })
     })
-    editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
+    editor.setText(joinRenderLines(plugin.getRows()))
     return { editor, host }
   }
 
@@ -162,19 +161,12 @@ describe('split mode alignment (§C7)', () => {
 
     const plugin = createDiffPlugin({ mode: 'document', side, regions, syntaxHighlight: false })
     const editor = createVisibleEditor(host, {
-      cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
-      documentMode: 'static',
-      editability: 'readonly',
-      keymap: { defaultBindings: false, layers: [] },
+      ...createDiffEditorOptions(),
       plugins: [plugin],
-      detectIndentation: false,
     })
     mounted.push({ editor, host })
     plugin.onDidChangeRows(() => {
-      editor.setText(joinRenderLines(plugin.getRows()), {
-        languageId: null,
-        tokens: plugin.getTokens(),
-      })
+      editor.setText(joinRenderLines(plugin.getRows()), { tokens: plugin.getTokens() })
     })
     plugin.setFile(file)
     return { host, plugin }
