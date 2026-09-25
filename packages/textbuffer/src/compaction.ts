@@ -69,32 +69,56 @@ function* piecesInOrder(root: PieceTreeNode | null): Generator<void, Piece[]> {
   return pieces
 }
 
+// Counts pieces visited and stack entries popped alike: one piece can pop
+// every piece before it, so a step is measured in both.
+type Budget = { spent: number }
+
+const WORK_PER_STEP = 1024
+
+function* spend(budget: Budget): Generator<void> {
+  if (++budget.spent < WORK_PER_STEP) return
+  budget.spent = 0
+  yield
+}
+
+// The nearest piece whose buffer is no newer, towards `step`'s side: -1 or
+// the piece count when there is none.
+function* nearestAtMost(
+  pieces: readonly Piece[],
+  step: 1 | -1,
+  budget: Budget,
+): Generator<void, Int32Array> {
+  const count = pieces.length
+  const nearest = new Int32Array(count)
+  const stack: number[] = []
+  const first = step === 1 ? 0 : count - 1
+  const none = step === 1 ? -1 : count
+  for (let at = first; at >= 0 && at < count; at += step) {
+    while (stack.length > 0 && pieces[stack[stack.length - 1]!]!.buffer > pieces[at]!.buffer) {
+      stack.pop()
+      yield* spend(budget)
+    }
+    nearest[at] = stack.length > 0 ? stack[stack.length - 1]! : none
+    stack.push(at)
+    yield* spend(budget)
+  }
+  return nearest
+}
+
 function* readLayout(root: PieceTreeNode | null): Generator<void, Layout> {
   const pieces = yield* piecesInOrder(root)
+  const budget: Budget = { spent: 0 }
   const count = pieces.length
-  const previousAtMost = new Int32Array(count)
-  const nextAtMost = new Int32Array(count)
   const runStart = new Int32Array(count)
   const runs: Run[] = []
-  const stack: number[] = []
   for (let at = 0; at < count; at++) {
-    while (stack.length > 0 && pieces[stack[stack.length - 1]!]!.buffer > pieces[at]!.buffer)
-      stack.pop()
-    previousAtMost[at] = stack.length > 0 ? stack[stack.length - 1]! : -1
-    stack.push(at)
     runStart[at] = at > 0 && !pieces[at - 1]!.visible ? runStart[at - 1]! : at
     const endsRun = !pieces[at]!.visible && (at === count - 1 || pieces[at + 1]!.visible)
     if (endsRun && runStart[at]! < at) runs.push({ start: runStart[at]!, end: at })
-    if (at % 1024 === 1023) yield
+    yield* spend(budget)
   }
-  stack.length = 0
-  for (let at = count - 1; at >= 0; at--) {
-    while (stack.length > 0 && pieces[stack[stack.length - 1]!]!.buffer > pieces[at]!.buffer)
-      stack.pop()
-    nextAtMost[at] = stack.length > 0 ? stack[stack.length - 1]! : count
-    stack.push(at)
-    if (at % 1024 === 0) yield
-  }
+  const previousAtMost = yield* nearestAtMost(pieces, 1, budget)
+  const nextAtMost = yield* nearestAtMost(pieces, -1, budget)
   return { pieces, previousAtMost, nextAtMost, runStart, runs }
 }
 
@@ -215,7 +239,8 @@ function* arrange(groups: Iterable<Group>): Generator<void, Slot[]> {
 // leaves the run and stops where theirs did; off a trailing run's end that
 // counts as sealed. The arrangement is checked per run rather than trusted.
 function* scansMatch(slots: readonly Slot[], trailing: boolean): Generator<void, boolean> {
-  const rightMinimum = new Float64Array(slots.length + 1).fill(Infinity)
+  const rightMinimum = new Float64Array(slots.length + 1)
+  rightMinimum[slots.length] = Infinity
   for (let at = slots.length - 1; at >= 0; at--) {
     rightMinimum[at] = Math.min(rightMinimum[at + 1]!, slots[at]!.threshold)
     if (at % 1024 === 0) yield
@@ -254,7 +279,9 @@ function* outsideMatches(
   }
   let placed = Infinity
   let cursor = originalStart
-  for (const slot of slots) {
+  for (let at = 0; at < slots.length; at++) {
+    const slot = slots[at]!
+    if (at % 1024 === 1023) yield
     placed = Math.min(placed, slot.threshold)
     if (!slot.original) continue
     if (!slot.group.contiguous || slot.group.originalStart !== cursor) return false
