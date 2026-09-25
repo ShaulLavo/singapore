@@ -4192,6 +4192,12 @@
         },
         {
           "kind": "type",
+          "name": "JumpCause",
+          "source": "packages/editor/src/editor/jumpHistory.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "MergeConflictRegion",
           "source": "packages/editor/src/mergeConflicts.ts",
           "via": "packages/editor/src/editor.ts"
