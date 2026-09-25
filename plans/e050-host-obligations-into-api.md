@@ -217,6 +217,11 @@ rows on open and starts when the snapshot's status settles, on whichever update 
 during the wait now cancels too (the listeners used to attach only once the reveal began). A
 document that opens before its highlighter provider registers settles as `plain` and reveals
 uncoloured; Platform registers Shiki with the critical plugins, so its editors are not affected.
+The wait has no ceiling: a highlight request that never settles keeps the rows hidden until input
+(keydown, pointerdown or wheel). Accepted because decode is opt-in (`editor.decode.mode` is `off` by
+default in Platform) and the retry ladder now ends every failed refresh. If hangs show up, the fix
+is a request budget in the controller that fails into the ladder; the scheduler's budget timeout
+cancels without reaching `fail` today.
 
 Platform plan 071's retry lands with it, so `error` is settled only once the retries are spent. A
 refresh that fails (the document-open path)
@@ -226,13 +231,17 @@ retries after 100 ms on the same session, then reloads the highlighter session a
 at `warn` (now with `failedRefreshes`); exhaustion logs one `editor.syntax.highlight_retries_exhausted`
 at `warn` with `attempts` and the final error, replacing `highlight_cleared_after_error`. The
 document-version and configuration checks already guard every attempt, and an edit replaces a
-pending retry. A success, a new document, a provider reload and a highlighter theme change reset
-the count. The edit path still reloads the session and does not count. The shared Platform logs for
+pending retry. A retry that paints logs one `editor.syntax.highlight_recovered` at `info` with
+`attempts`. A success, a new document, a provider reload, a highlighter theme change and the edit
+path's session reload reset the count, so an edit that fails after the ladder ran out gets a fresh
+one. The edit path still reloads the session and does not count. If the provider declines the
+reloaded session, the ladder ends there with the terminal event. The shared Platform logs for
 2026-09-20 to 2026-09-25 hold no `highlight_request_failed` or `highlight_cleared_after_error`
 event, so the retry hides no live failure.
 
 `packages/editor/test/syntax.test.ts` "highlight refresh retry" (the bound of three attempts and
-two sessions, recovery, a superseded retry, the edit path, and the reset) and
+two sessions, recovery and its event, a superseded retry, the edit path, a fresh ladder for an edit
+after exhaustion, a declined reload session, and the reset) and
 `packages/decode/test/plugin.test.ts` (no reveal after 60 s of fake time while `loading`, a start on
 `error` and `plain`, input during the wait) fail without the change.
 

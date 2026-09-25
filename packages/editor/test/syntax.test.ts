@@ -708,6 +708,9 @@ describe('highlight refresh retry', () => {
     expect(view.snapshots.at(-1)?.tokens).toEqual([[0, 5]])
     expect(view.actions('editor.syntax.highlight_request_failed')).toHaveLength(1)
     expect(view.actions('editor.syntax.highlight_retries_exhausted')).toHaveLength(0)
+    const recovered = view.actions('editor.syntax.highlight_recovered')
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0]).toMatchObject({ level: 'info', syntax: { attempts: 2 } })
     expect(view.paints.filter(isHighlightSettled).map((event) => event.status)).toEqual(['painted'])
     view.dispose()
   })
@@ -799,6 +802,61 @@ describe('highlight refresh retry', () => {
     view.dispose()
   })
 
+  it('starts a fresh ladder when an edit fails after the retries ran out', async () => {
+    let refreshes = 0
+    const view = mountRetryEditor(() => ({
+      refresh: async () => {
+        refreshes += 1
+        throw new Error('highlighter unavailable')
+      },
+      applyChange: () => Promise.reject(new Error('edit rejected')),
+      dispose: () => undefined,
+    }))
+    await vi.advanceTimersByTimeAsync(RETRY_WINDOW_MS)
+    expect(view.actions('editor.syntax.highlight_retries_exhausted')).toHaveLength(1)
+
+    view.editor.edit({ from: 0, to: 0, text: 'x' })
+    await vi.advanceTimersByTimeAsync(RETRY_WINDOW_MS)
+
+    // The edit reloads once; its refresh runs the full ladder, which reloads once more.
+    expect(refreshes).toBe(6)
+    expect(view.sessionsCreated()).toBe(4)
+    const terminal = view.actions('editor.syntax.highlight_retries_exhausted')
+    expect(terminal.map((event) => (event.syntax as { attempts: number }).attempts)).toEqual([3, 3])
+    expect(view.editor.getState().initialHighlightStatus).toBe('error')
+    view.dispose()
+  })
+
+  it('settles as an error when the provider declines the reloaded session', async () => {
+    let refreshes = 0
+    let offered = 0
+    const view = mountRetryEditor(() => {
+      offered += 1
+      if (offered > 1) return null
+      return {
+        refresh: async () => {
+          refreshes += 1
+          throw new Error('worker lost')
+        },
+        applyChange: async () => ({ tokens: EditorTokenStore.empty() }),
+        dispose: () => undefined,
+      }
+    }, [syntaxPlugin(syntaxSession(deferred<EditorSyntaxResult>()))])
+
+    await vi.advanceTimersByTimeAsync(10 * RETRY_WINDOW_MS)
+
+    expect(refreshes).toBe(2)
+    expect(view.sessionsCreated()).toBe(2)
+    expect(view.editor.getState().initialHighlightStatus).toBe('error')
+    const terminal = view.actions('editor.syntax.highlight_retries_exhausted')
+    expect(terminal).toHaveLength(1)
+    expect(terminal[0]).toMatchObject({
+      error: { message: 'worker lost' },
+      syntax: { attempts: 2 },
+    })
+    view.dispose()
+  })
+
   it('starts a fresh ladder after a highlighter theme change and a new document', async () => {
     const themeListeners = new Set<() => void>()
     const view = mountRetryEditor(() => ({
@@ -830,7 +888,10 @@ describe('highlight refresh retry', () => {
 const RETRY_WINDOW_MS = 2_000
 const RED = { color: '#ff0000' }
 
-function mountRetryEditor(createSession: () => EditorHighlighterSession): {
+function mountRetryEditor(
+  createSession: () => EditorHighlighterSession | null,
+  plugins: readonly EditorPlugin[] = [],
+): {
   readonly editor: Editor
   readonly paints: EditorInitialPaintEvent[]
   readonly snapshots: Array<{ readonly tokens: readonly [number, number][] }>
@@ -861,6 +922,7 @@ function mountRetryEditor(createSession: () => EditorHighlighterSession): {
       },
       themeSnapshotPlugin(snapshots),
       createEditorLoggingPlugin((event) => events.push(event)),
+      ...plugins,
     ],
     onInitialPaint: (event) => paints.push(event),
   })
