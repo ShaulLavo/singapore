@@ -12,10 +12,18 @@
     },
     {
       "api": "setTimeout",
+      "file": "examples/app/src/components/outlinePanel.ts",
+      "id": "examples/app/src/components/outlinePanel.ts:setTimeout:ee4b32cc3c",
+      "justification": "Debounces outline requests in the demo app; the handle is cleared before each reschedule, and a stale load is dropped by its generation.",
+      "line": 84,
+      "snippet": "this.timer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
       "file": "examples/stress/src/boundary.ts",
       "id": "examples/stress/src/boundary.ts:setTimeout:e6eb9a6545",
       "justification": "Benchmark settle between phases: it only resolves the awaited promise, so deferred editor work finishes before reads are counted.",
-      "line": 186,
+      "line": 187,
       "snippet": "return new Promise<void>((resolve) => setTimeout(resolve, 300))"
     },
     {
@@ -39,7 +47,7 @@
       "file": "examples/stress/src/firstPaint.ts",
       "id": "examples/stress/src/firstPaint.ts:requestAnimationFrame:eb626b3f90",
       "justification": "Measures the next input frame; each benchmark burst waits for it before disposal.",
-      "line": 249,
+      "line": 250,
       "snippet": "requestAnimationFrame(() => {"
     },
     {
@@ -55,7 +63,7 @@
       "file": "examples/stress/src/geometry.ts",
       "id": "examples/stress/src/geometry.ts:setTimeout:213bc5132e",
       "justification": "Benchmark settle between phases: it only resolves the awaited promise, so deferred editor work finishes before counts are taken.",
-      "line": 368,
+      "line": 369,
       "snippet": "return new Promise<void>((resolve) => setTimeout(resolve, 200))"
     },
     {
@@ -199,7 +207,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 1541,
+      "line": 1588,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -207,7 +215,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 1550,
+      "line": 1597,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -251,11 +259,19 @@
       "snippet": "queueMicrotask(() => {"
     },
     {
+      "api": "setTimeout",
+      "file": "packages/lsp-plugin/src/lspConnection.ts",
+      "id": "packages/lsp-plugin/src/lspConnection.ts:setTimeout:c9d15becad",
+      "justification": "A reconnect backoff, not rendering work: the handle is kept, cleared on dispose, and a disposed connection ignores it.",
+      "line": 272,
+      "snippet": "this.reconnectTimer = setTimeout(() => {"
+    },
+    {
       "api": "queueMicrotask",
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:queueMicrotask:1d59545f0f",
       "justification": "Replays pooled connection state after `acquire` returns so callbacks cannot run inside the contribution constructor. The closure verifies that the lease is still active, and each acquisition schedules at most one replay.",
-      "line": 223,
+      "line": 248,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -263,7 +279,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:setTimeout:ad7334dc0b",
       "justification": "Keeps a connection reusable for the configured grace period after its final lease releases. A new acquisition cancels the timer, and `#closeIdle` rechecks both the lease count and pool identity before disposal.",
-      "line": 238,
+      "line": 263,
       "snippet": "entry.idleTimer = setTimeout(() => this.#closeIdle(entry), this.#idleGraceMs)"
     },
     {
@@ -364,11 +380,35 @@
     },
     {
       "api": "setTimeout",
-      "file": "packages/typescript-lsp/src/typescriptLsp.worker.ts",
-      "id": "packages/typescript-lsp/src/typescriptLsp.worker.ts:setTimeout:c3b02c6bab",
-      "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 392,
+      "file": "packages/typescript-lsp/src/worker/session.ts",
+      "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:334b7e5e6a",
+      "justification": "A request timeout inside the worker: it only rejects the pending request, and the answer clears it.",
+      "line": 835,
       "snippet": "const timer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/typescript-lsp/src/worker/session.ts",
+      "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:572f43e51e",
+      "justification": "Coalesces diagnostic refresh requests inside the worker; one handle, cleared before every reschedule.",
+      "line": 614,
+      "snippet": "refreshTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/typescript-lsp/src/worker/session.ts",
+      "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:6a06183b86",
+      "justification": "Debounces diagnostics per document inside the worker, off the main thread; the handle is kept per URI and cleared on the next edit or close.",
+      "line": 578,
+      "snippet": "const timer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/typescript-lsp/src/worker/session.ts",
+      "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:f09d0742f8",
+      "justification": "Only resolves an awaited promise inside the worker; nothing renders from it.",
+      "line": 989,
+      "snippet": "return new Promise((resolve) => setTimeout(resolve, milliseconds))"
     }
   ]
 }

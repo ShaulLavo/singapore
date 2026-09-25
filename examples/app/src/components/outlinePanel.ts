@@ -79,6 +79,8 @@ class OutlinePanelController implements OutlinePanel {
     if (!this.open) return
     if (this.isShowingCurrentText()) return
     if (this.timer) clearTimeout(this.timer)
+    // @justification Debounces outline requests in the demo app; the handle is cleared before each
+    // reschedule, and a stale load is dropped by its generation.
     this.timer = setTimeout(() => {
       this.timer = null
       void this.load()
