@@ -307,7 +307,7 @@
 }
 
 .editor-virtualized-selection-range {
-  background-color: var(--editor-selection-background, rgba(56, 189, 248, 0.35));
+  background-color: rgba(56, 189, 248, 0.35);
   height: calc(var(--editor-row-height) - 1px);
   position: absolute;
   top: 0.5px;
@@ -540,11 +540,4 @@
 
 .editor-merge-conflict-lens-separator {
   padding: 0 0.5em;
-}
-
-.editor:not(:focus-within) .editor-virtualized-selection-range {
-  background-color: var(
-    --editor-selection-inactive-background,
-    var(--editor-selection-background, rgba(56, 189, 248, 0.35))
-  );
 }

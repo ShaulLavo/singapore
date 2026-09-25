@@ -40,19 +40,6 @@ export default defineConfig({
             fileParallelism: false,
             provider: playwright(),
             commands: {
-              proofClipboardPermissions: async ({ page }) => {
-                await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
-              },
-              proofPointerDrag: async (
-                { page },
-                start: { x: number; y: number },
-                end: { x: number; y: number },
-              ) => {
-                await page.mouse.move(start.x, start.y)
-                await page.mouse.down()
-                await page.mouse.move(end.x, end.y, { steps: 5 })
-                await page.mouse.up()
-              },
               proofKeyPress: async ({ page }, key: string) => {
                 await page.keyboard.press(key)
               },

@@ -1,9 +1,7 @@
-import type { JumpCause } from './jumpHistory'
 import type { SelectionAffinity } from '../selections'
 import type { RevealBlock } from '../virtualization/virtualizedTextViewInternals'
 
 export type EditorSetSelectionOptions = {
-  readonly jumpCause?: JumpCause
   readonly affinity?: SelectionAffinity
   readonly reveal?: boolean
   readonly revealBlock?: RevealBlock

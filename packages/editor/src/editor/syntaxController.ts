@@ -235,9 +235,6 @@ export class EditorSyntaxController {
     taskClass: 'background-derived',
   })
   private currentTokens = EditorTokenStore.empty()
-  private acceptedCopyTokens = EditorTokenStore.empty()
-  private acceptedTokensDocumentVersion = -1
-  private acceptedTokensTextVersion = -1
   private currentBrackets: readonly BracketInfo[] = []
   private currentInjections: readonly EditorSyntaxInjection[] = []
   private syntaxContentVersion = 0
@@ -310,15 +307,6 @@ export class EditorSyntaxController {
     return this.initialHighlightState
   }
 
-  get copyTokens(): EditorTokenStore {
-    if (
-      this.acceptedTokensDocumentVersion !== this.options.getDocumentVersion() ||
-      this.acceptedTokensTextVersion !== this.options.getTextVersion()
-    )
-      return EditorTokenStore.empty()
-    return this.acceptedCopyTokens
-  }
-
   get tokens(): EditorTokenStore {
     return this.currentTokens
   }
@@ -347,14 +335,8 @@ export class EditorSyntaxController {
     return this.highlighterTheme
   }
 
-  setTokens(tokens: EditorTokenStore, current = true, copyTokens = tokens): void {
-    if (!current && tokens !== this.currentTokens) this.acceptedCopyTokens = EditorTokenStore.empty()
+  setTokens(tokens: EditorTokenStore): void {
     this.currentTokens = tokens
-    if (current) {
-      this.acceptedCopyTokens = copyTokens
-      this.acceptedTokensDocumentVersion = this.options.getDocumentVersion()
-      this.acceptedTokensTextVersion = this.options.getTextVersion()
-    }
     if (this.preparedInitialTokensInstalled) {
       this.preparedInitialTokensInstalled = false
       return
@@ -569,7 +551,7 @@ export class EditorSyntaxController {
       const terminalStatus = this.lastInitialHighlightTerminalStatus ?? 'painted'
       this.commitInitialHighlightStatus(
         terminalStatus,
-        () => this.setTokens(this.currentTokens, false),
+        () => this.setTokens(this.currentTokens),
         configurationGeneration,
       )
     }
@@ -592,7 +574,7 @@ export class EditorSyntaxController {
     if (status === null) return false
     this.commitInitialHighlightStatus(
       status,
-      () => this.setTokens(this.currentTokens, false),
+      () => this.setTokens(this.currentTokens),
       configurationGeneration,
     )
     return true
@@ -1265,12 +1247,7 @@ export class EditorSyntaxController {
       const status: SettledHighlightStatus = result.degraded ? 'degraded' : 'painted'
       this.commitInitialHighlightStatus(
         status,
-        () =>
-          this.setTokens(
-            nextTokens,
-            true,
-            loadResult.range ? toEditorTokenStore(result.tokens) : nextTokens,
-          ),
+        () => this.setTokens(nextTokens),
         configurationGeneration,
       )
     }
@@ -1288,7 +1265,7 @@ export class EditorSyntaxController {
     ) {
       this.commitInitialHighlightStatus(
         'painted',
-        () => this.setTokens(this.currentTokens, false),
+        () => this.setTokens(this.currentTokens),
         configurationGeneration,
       )
     }
@@ -1544,7 +1521,7 @@ export class EditorSyntaxController {
       const terminalStatus = this.lastInitialHighlightTerminalStatus ?? 'painted'
       this.commitInitialHighlightStatus(
         terminalStatus,
-        () => this.setTokens(this.currentTokens, false),
+        () => this.setTokens(this.currentTokens),
         configurationGeneration,
       )
     }
@@ -1738,7 +1715,7 @@ export class EditorSyntaxController {
     ) {
       this.commitInitialHighlightStatus(
         terminal.status,
-        () => this.setTokens(this.currentTokens, false),
+        () => this.setTokens(this.currentTokens),
         terminal.configurationGeneration,
       )
       return

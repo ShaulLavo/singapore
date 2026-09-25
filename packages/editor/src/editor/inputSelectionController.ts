@@ -40,7 +40,7 @@ import type {
   EditorViewContributionUpdateKind,
 } from '../plugins'
 import { dataTransferTypes, pasteHandlerMatchesTypes } from './pasteHandlers'
-import { readRichTextFont, richTextForCopy, type RichTextCopyFragment } from './richText'
+import { readRichTextFont, richTextForCopy } from './richText'
 import type { EditorSyntaxInjection, EditorSyntaxLanguageId } from '../syntax/session'
 import {
   readClipboardMetadata,
@@ -181,9 +181,6 @@ export type InputSelectionControllerOptions = {
   getEditorTheme(): EditorTheme | null
   getTextSnapshot(): TextReadSnapshot
   canEditDocument(): boolean
-  beginPointerJump?(): void
-  finishPointerJump?(): void
-  cancelPointerJump?(): void
   runInOperation<T>(run: () => T): T
   applySessionChange(
     change: DocumentSessionChange,
@@ -223,7 +220,6 @@ type OccurrenceQueryWithSources = OccurrenceQuery & {
 
 /** What a copy or a cut hands to the clipboard: the text, plus how it was assembled. */
 type ClipboardPayload = {
-  readonly fragments: readonly RichTextCopyFragment[]
   readonly metadata: ClipboardMetadata
   readonly text: string
 }
@@ -1916,7 +1912,6 @@ export class InputSelectionController {
 
     const position = this.textPositionFromMouseEvent(event)
     if (!position) return
-    this.options.beginPointerJump?.()
 
     // Alt on its own already means "another cursor here", so the rectangle takes the pair.
     if (event.altKey && event.shiftKey) {
@@ -2320,7 +2315,6 @@ export class InputSelectionController {
     const start = nowMs()
     if (granularity === 'column') {
       this.commitColumnSelection(session, head.offset, start)
-      this.options.finishPointerJump?.()
       return
     }
 
@@ -2334,7 +2328,6 @@ export class InputSelectionController {
     this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.selection', start, { syncDomSelection })
-    this.options.finishPointerJump?.()
   }
 
   /**
@@ -2401,15 +2394,12 @@ export class InputSelectionController {
       }
 
       event.preventDefault()
-      this.stopMouseTextMoveDrag('finish')
+      this.stopMouseTextMoveDrag()
       const start = eventStartMs(event)
       if (!drag.moved) {
         this.collapseSelectionToPosition(session, drag.press, start)
-        this.options.finishPointerJump?.()
         return
       }
-
-      this.options.cancelPointerJump?.()
 
       // The modifier is read here rather than at the press, because it can be taken up or let go at
       // any point while the text is in flight and what it says at the release is the user's answer.
@@ -2462,14 +2452,13 @@ export class InputSelectionController {
     this.applyChange(change, 'input.selection', start, { syncDomSelection: true })
   }
 
-  private stopMouseTextMoveDrag(reason: 'cancel' | 'finish' = 'cancel'): void {
+  private stopMouseTextMoveDrag(): void {
     const hadDrag = this.mouseTextMoveDrag !== null
     this.mouseTextMoveDrag = null
     this.options.el.ownerDocument.removeEventListener('mousemove', this.updateMouseTextMoveDrag)
     this.options.el.ownerDocument.removeEventListener('mouseup', this.finishMouseTextMoveDrag)
     if (!hadDrag) return
 
-    if (reason === 'cancel') this.options.cancelPointerJump?.()
     this.transitionInputState({ type: 'mouse-selection-finish' })
   }
 
@@ -2481,7 +2470,6 @@ export class InputSelectionController {
     this.options.el.ownerDocument.removeEventListener('mouseup', this.finishMouseSelectionDrag)
     if (!hadDrag) return
 
-    if (reason === 'cancel') this.options.cancelPointerJump?.()
     this.transitionInputState({
       type: reason === 'finish' ? 'mouse-selection-finish' : 'mouse-selection-cancel',
     })
@@ -2838,14 +2826,45 @@ export class InputSelectionController {
     if (!event.clipboardData) return
 
     writeClipboardPayload(event.clipboardData, payload.text, payload.metadata)
-    this.writeRichTextPayload(event.clipboardData, payload)
+    this.writeRichTextPayload(event.clipboardData)
     event.preventDefault()
   }
 
-  private writeRichTextPayload(data: DataTransfer, payload: ClipboardPayload): void {
+  /**
+   * The same text again as styled markup, so a paste into a document or a chat keeps the colours
+   * it was being read in.
+   *
+   * Never more than an addition: everything a paste depends on travels on text/plain, and a target
+   * with no use for markup reads that instead. One range only — markup is a single run of text
+   * with nowhere to say where one caret's share of it ended, which is exactly what the per-caret
+   * fragments beside it exist to carry.
+   */
+  private writeRichTextPayload(data: DataTransfer): void {
+    const session = this.session
+    if (!session) return
+
+    const resolved = this.resolvedSelections()
+    const selection = resolved.length === 1 ? resolved[0] : null
+    if (!selection) return
+
+    // A caret takes its line, the same range the plain payload was built from — minus the
+    // terminator, which under `white-space: pre` would paste as a blank line of its own.
+    const line = selection.collapsed ? this.readLineAt(selection.headOffset) : null
+    const range = line
+      ? { start: line.start, text: line.text }
+      : {
+          start: selection.startOffset,
+          text: readPieceTableTextRange(
+            session.getSnapshot(),
+            selection.startOffset,
+            selection.endOffset,
+          ),
+        }
+
     const html = richTextForCopy({
       font: readRichTextFont(this.options.el),
-      fragments: payload.fragments,
+      startOffset: range.start,
+      text: range.text,
       theme: this.options.getEditorTheme(),
       tokens: this.options.getSyntaxTokens(),
     })
@@ -3343,33 +3362,19 @@ export class InputSelectionController {
     const resolved = this.resolvedSelections()
     const selected = resolved.filter((selection) => !selection.collapsed)
     if (selected.length > 0) {
-      const fragments = selected.map((selection, index) => ({
-        startOffset: selection.startOffset,
-        text: readPieceTableTextRange(snapshot, selection.startOffset, selection.endOffset),
-        separator: index < selected.length - 1 ? '\n' : '',
-      }))
-      const perSelection = fragments.map((fragment) => fragment.text)
-      return {
-        fragments,
-        metadata: { perSelection, pasteOnNewLine: false },
-        text: perSelection.join('\n'),
-      }
+      const perSelection = selected.map((selection) =>
+        readPieceTableTextRange(snapshot, selection.startOffset, selection.endOffset),
+      )
+      return { metadata: { perSelection, pasteOnNewLine: false }, text: perSelection.join('\n') }
     }
 
-    const lines = this.caretLines(resolved)
-    if (lines.length === 0) return null
-    // HTML omits only the final line terminator; plain text and metadata keep it for line paste.
-    const fragments = lines.map((line, index) => ({
-      startOffset: line.start,
-      text: line.text,
-      separator: index < lines.length - 1 ? '\n' : '',
-    }))
-    const perSelection = fragments.map((fragment) => `${fragment.text}\n`)
-    return {
-      fragments,
-      metadata: { perSelection, pasteOnNewLine: true },
-      text: perSelection.join(''),
-    }
+    // A caret that selects nothing is pointing at its line, so that is what it takes. The
+    // terminator travels with it: it is what makes the payload a line rather than a run of
+    // characters, both to the next paste and to any other application it is handed to.
+    const perSelection = this.caretLines(resolved).map((line) => `${line.text}\n`)
+    if (perSelection.length === 0) return null
+
+    return { metadata: { perSelection, pasteOnNewLine: true }, text: perSelection.join('') }
   }
 
   /** The lines the carets are on, in document order; two carets on one line answer for it once. */

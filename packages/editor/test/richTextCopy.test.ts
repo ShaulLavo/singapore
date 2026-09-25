@@ -17,11 +17,12 @@ const FONT: RichTextFont = {
 const copy = (
   text: string,
   tokens: readonly EditorToken[],
-  overrides: Partial<Parameters<typeof richTextForCopy>[0]> & { startOffset?: number } = {},
+  overrides: Partial<Parameters<typeof richTextForCopy>[0]> = {},
 ): string | null =>
   richTextForCopy({
     font: FONT,
-    fragments: [{ startOffset: overrides.startOffset ?? 0, text, separator: '' }],
+    startOffset: 0,
+    text,
     theme: { backgroundColor: '#1e1e1e', foregroundColor: '#d4d4d4' },
     tokens: EditorTokenStore.fromTokens(tokens),
     ...overrides,
@@ -125,38 +126,3 @@ describe('rich text for copy', () => {
 function styleOf(html: string | null): string {
   return /<div style="([^"]*)"/.exec(html ?? '')?.[1] ?? ''
 }
-
-it('bounds total fragments and emitted bytes, including span-heavy text', () => {
-  const fragments = [
-    { startOffset: 0, text: 'x'.repeat(40000), separator: '\n' },
-    { startOffset: 0, text: 'x'.repeat(40000), separator: '' },
-  ]
-  expect(copy('', [token(0, 1, 'red')], { fragments })).toBeNull()
-  const tokens = Array.from({ length: 65536 }, (_, offset) =>
-    token(offset, offset + 1, offset % 2 ? 'red' : 'blue'),
-  )
-  expect(copy('x'.repeat(65536), tokens)).toBeNull()
-})
-
-it('keeps fragment order, separators, escaping and unhighlighted portions', () => {
-  const fragments = [
-    { startOffset: 10, text: '<b>', separator: '\n' },
-    { startOffset: 30, text: '&plain', separator: '' },
-  ]
-  const html = copy('', [token(10, 13, 'red')], { fragments })
-  expect(html).toContain('<span style="color: red;">&lt;b&gt;</span>\n&amp;plain')
-  expect(html?.match(/<div/g)).toHaveLength(1)
-})
-
-it('bounds token visits across disjoint fragments with overlapping syntax tokens', () => {
-  const fragments = Array.from({ length: 1000 }, (_, i) => ({
-    startOffset: i * 2,
-    text: 'x',
-    separator: '\n',
-  }))
-  const tokens = [
-    token(0, 2000, 'red'),
-    ...fragments.map((fragment) => token(fragment.startOffset, fragment.startOffset + 1, 'blue')),
-  ]
-  expect(copy('', tokens, { fragments })).toBeNull()
-})

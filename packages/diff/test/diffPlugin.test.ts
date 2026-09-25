@@ -825,12 +825,3 @@ async function flushUntil(done: () => boolean): Promise<void> {
     await flushPromises()
   }
 }
-
-it('returns stacked rows for a split plugin using its own expansion state', () => {
-  const plugin = createDiffPlugin({ mode: 'document', side: 'old' })
-  plugin.setFile(singleHunkDiff())
-  expect(plugin.getStackedRows().map((row) => row.type)).toContain('addition')
-  expect(plugin.getRows().map((row) => row.type)).not.toContain('addition')
-  plugin.setFile(null)
-  expect(plugin.getStackedRows()).toEqual([])
-})

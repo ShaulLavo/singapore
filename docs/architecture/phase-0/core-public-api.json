@@ -4192,12 +4192,6 @@
         },
         {
           "kind": "type",
-          "name": "JumpCause",
-          "source": "packages/editor/src/editor/jumpHistory.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
           "name": "MergeConflictRegion",
           "source": "packages/editor/src/mergeConflicts.ts",
           "via": "packages/editor/src/editor.ts"
@@ -4896,12 +4890,6 @@
           "kind": "type",
           "name": "EditorResolvedSelection",
           "source": "packages/editor/src/plugins.ts",
-          "via": "packages/editor/src/public/extensions.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorRowPresentation",
-          "source": "packages/editor/src/rowPresentation.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {

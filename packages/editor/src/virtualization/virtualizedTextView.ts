@@ -1,8 +1,3 @@
-import {
-  acquireRowPresentation,
-  invalidateRowPresentations,
-  type EditorRowPresentation,
-} from '../rowPresentation'
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 import { pointViewport } from './pointViewport'
 import { markerAtRowX } from './virtualizedTextViewHiddenCharacters'
@@ -496,7 +491,6 @@ export class VirtualizedTextView {
     disposeGutterCells(view)
     this.scrollElement.remove()
     view.styleEl.remove()
-    for (const row of view.rowElements.values()) invalidateRowPresentations(row.element)
     view.rowElements.clear()
     view.rowPool.length = 0
   }
@@ -1097,10 +1091,6 @@ export class VirtualizedTextView {
   }
 
   /** Scroll a zero-based document line to the top through the display projection. */
-  public topForOffset(offset: number): number {
-    return rowTop(this.view, rowForOffset(this.view, offset))
-  }
-
   public scrollToRow(row: number): void {
     const lines = this.getLineStartsView()
     const offset = lines.at(Math.max(0, Math.min(lines.length - 1, Math.floor(row)))) ?? 0
@@ -1308,11 +1298,6 @@ export class VirtualizedTextView {
       failures,
       ok: failures.length === 0,
     }
-  }
-
-  public getRowPresentation(displayRow: number): EditorRowPresentation | null {
-    const row = this.view.rowElements.get(displayRow)
-    return row ? acquireRowPresentation(row.element) : null
   }
 
   public rowAtPoint(clientX: number, clientY: number): EditorPointHit | null {

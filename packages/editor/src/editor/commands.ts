@@ -10,8 +10,6 @@ export type EditorFoldLevel = (typeof EDITOR_FOLD_LEVELS)[number]
 export type EditorCommandId =
   | 'undo'
   | 'redo'
-  | 'jumpBack'
-  | 'jumpForward'
   | 'cursorUndo'
   | 'cursorRedo'
   | 'find'

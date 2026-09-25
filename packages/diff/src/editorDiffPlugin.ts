@@ -1,4 +1,3 @@
-import { registerDiffColors } from './theme'
 import type {
   EditorContributionChange,
   EditorDecorationContribution,
@@ -58,8 +57,6 @@ export type DiffPlugin = EditorPlugin & {
   /** `document` mode: the file to project. The host owns the editor's text — §C3. */
   setFile(file: DiffFile | null): void
   getRows(): readonly DiffRenderRow[]
-  /** Both sides in row order, using the current expansion state. */
-  getStackedRows(): readonly DiffRenderRow[]
   /**
    * Projected syntax tokens for the current rows. The host passes them with the rows' text,
    * `setText(text, { tokens })`, or an expansion toggle repaints uncoloured (§C10).
@@ -121,7 +118,6 @@ let nextDiffPluginId = 0
  * it.
  */
 export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
-  registerDiffColors()
   const runtime = new DiffPluginRuntime(options)
 
   return {
@@ -131,7 +127,6 @@ export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
     },
     setFile: (file) => runtime.setFile(file),
     getRows: () => runtime.getRows(),
-    getStackedRows: () => runtime.getStackedRows(),
     getTokens: () => runtime.getTokens(),
     isSyntaxReady: () => runtime.isSyntaxReady(),
     onDidChangeRows: (listener) => runtime.onDidChangeRows(listener),
@@ -261,12 +256,6 @@ class DiffPluginRuntime {
   getRows(): readonly DiffRenderRow[] {
     if (this.mode === 'overlay') return this.liveProjection.rows
     return this.rows
-  }
-
-  getStackedRows(): readonly DiffRenderRow[] {
-    if (this.mode === 'overlay') return this.liveProjection.rows
-    if (this.side === 'stacked') return this.rows
-    return projectRows(this.file, 'stacked', this.regions.getExpandedRegions())
   }
 
   isSyntaxReady(): boolean {

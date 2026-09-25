@@ -1,6 +1,5 @@
 import type {
   EditorViewContributionContext,
-  EditorRowPresentation,
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
   EditorVisibleChunkSnapshot,
@@ -9,8 +8,9 @@ import type {
 /** Class on the scroll element that hides the real rows until each is revealed. */
 export const ACTIVE_CLASS = 'editor-decode-active'
 
+const ROW_SELECTOR = '.editor-virtualized-row'
+
 export type DecodeRevealRow = {
-  readonly presentation: EditorRowPresentation
   /** The editor's own (already syntax-highlighted) row element. */
   readonly element: HTMLElement
   /** The row's text — diffusion builds one scramble glyph per character from this. */
@@ -40,18 +40,21 @@ export function collectRevealRows(
   snapshot: EditorViewSnapshot,
   maxRows: number,
 ): DecodeRevealRow[] {
+  const scroll = context.scrollElement
   const charWidth = snapshot.metrics.characterWidth
   const rows: DecodeRevealRow[] = []
   for (const row of snapshot.visibleRows) {
     if (row.kind !== 'text' || row.text.length === 0) continue
 
+    const element = scroll.querySelector<HTMLElement>(
+      `${ROW_SELECTOR}[data-editor-virtual-row="${row.index}"]`,
+    )
+    if (!element) continue
+
     const mounted = mountedRowText(row)
     if (!mounted.text) continue
-    const presentation = context.getRowPresentation(row.index)
-    if (!presentation) continue
     rows.push({
-      element: presentation.element,
-      presentation,
+      element,
       text: mounted.text,
       startOffset: mounted.startOffset,
       length: mounted.text.length,

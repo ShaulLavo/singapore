@@ -1,6 +1,6 @@
 # E021: Complete styled copy for multiple selections and portable colors
 
-- Status: In progress
+- Status: Proposed
 - Kind: Implementation
 - Owner: Editor
 - Priority: P2
@@ -14,15 +14,6 @@ Copy multiple code selections with syntax styling while keeping the existing pla
 Offer an explicit portable color policy for pasting into a light document, without changing the editor's displayed theme.
 For example, two selected functions copied from a dark editor paste as two ordered code blocks with readable colors.
 Plain-text copy continues to work when syntax is pending, the payload is too large, or the target ignores HTML.
-
-## Unit 1 complete, 2026-09-25
-
-Shared fragments preserve plain text and metadata while producing ordered styled HTML for multiple selections
-and deduplicated caret lines. HTML omits only the final caret-line terminator. Limits cover the combined
-65,536 source characters and 1 MiB of UTF-8 output. Missing tokens remain plain within a styled block.
-Trusted Chromium copy/paste verifies rich and textarea receivers. Copy accepts only current-revision
-syntax, and the cumulative token-visit budget prevents overlapping tokens from making fragment lookup
-quadratic. A 65,536-character/65,536-token probe takes 16.3 ms and returns plain-only at the 1 MiB limit. Portable color policy (units 2 and 3) remains.
 
 ## Current code
 
