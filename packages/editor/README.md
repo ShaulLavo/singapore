@@ -120,3 +120,15 @@ Editor facts used by pack conditions. `getInputElement()` identifies the native
 editor input so a host can distinguish it from local widget inputs. Local widgets
 handle their own idle key events before the runtime; a widget that stops an event
 also prevents an application bubble listener from seeing it.
+
+### Row presentation handles
+
+View contributions can call `context.getRowPresentation(displayRow)` to acquire the mounted row
+and an abort signal. The signal fires synchronously before logical text replacement, recycling,
+provisional paint, or view disposal, while the old text and attached element are still available.
+Acquisition returns `null` for an unmounted row or during its invalidation callback.
+
+Decoration, position, and horizontal chunk-window updates preserve a handle. Plugins whose effects
+depend on viewport geometry should cancel them in `updateViewport`. Call `handle.dispose()` to
+release a handle. Release is idempotent and does not abort the signal, so abort listeners only
+report invalidation by the editor.

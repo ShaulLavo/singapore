@@ -596,7 +596,7 @@ function restoreElement(element: HTMLElement, parent: HTMLDivElement): void {
   element.hidden = false
 }
 
-function markRowRetired(row: MountedVirtualizedTextRow): void {
+export function markRowRetired(row: MountedVirtualizedTextRow): void {
   const mutable = row as {
     index: number
     textRevision: number

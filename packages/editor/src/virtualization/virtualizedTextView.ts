@@ -1,3 +1,8 @@
+import {
+  acquireRowPresentation,
+  invalidateRowPresentations,
+  type EditorRowPresentation,
+} from '../rowPresentation'
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 import { pointViewport } from './pointViewport'
 import { markerAtRowX } from './virtualizedTextViewHiddenCharacters'
@@ -464,8 +469,9 @@ export class VirtualizedTextView {
   }
 
   public dispose(): void {
-    this.releaseProvisionalPaint()
     const view = this.view
+    for (const row of view.rowElements.values()) invalidateRowPresentations(row.element)
+    this.releaseProvisionalPaint()
     this.pendingReveal = null
     this.cancelContentWidthMeasurement?.()
     this.cancelContentWidthMeasurement = null
@@ -1298,6 +1304,11 @@ export class VirtualizedTextView {
       failures,
       ok: failures.length === 0,
     }
+  }
+
+  public getRowPresentation(displayRow: number): EditorRowPresentation | null {
+    const row = this.view.rowElements.get(displayRow)
+    return row ? acquireRowPresentation(row.element) : null
   }
 
   public rowAtPoint(clientX: number, clientY: number): EditorPointHit | null {

@@ -1,5 +1,6 @@
 import type {
   EditorPlugin,
+  EditorRowPresentation,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
@@ -39,6 +40,7 @@ class DecodeViewContribution implements EditorViewContribution {
   private pendingDocumentId: string | null = null
   private reveal: RevealHandle | null = null
   private disposed = false
+  private presentations: readonly EditorRowPresentation[] = []
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -55,6 +57,11 @@ class DecodeViewContribution implements EditorViewContribution {
     }
     // A later tick (notably 'tokens') carries the settled highlight a waiting reveal starts on.
     if (this.pendingDocumentId !== null) this.maybeStart(snapshot)
+  }
+
+  public updateViewport(): void {
+    if (this.reveal === null) return
+    this.teardown()
   }
 
   public dispose(): void {
@@ -107,6 +114,10 @@ class DecodeViewContribution implements EditorViewContribution {
       highlightStatus: snapshot.initialHighlightStatus,
       tokenized: snapshot.tokens.length > 0,
     })
+    this.presentations = rows.map((row) => row.presentation)
+    for (const presentation of this.presentations) {
+      presentation.signal.addEventListener('abort', this.cancelOnInput, { once: true })
+    }
     this.reveal = this.startEngine(snapshot, rows)
   }
 
@@ -138,6 +149,12 @@ class DecodeViewContribution implements EditorViewContribution {
     this.context.scrollElement.classList.remove(ACTIVE_CLASS)
     this.reveal?.cancel()
     this.reveal = null
+    const presentations = this.presentations
+    this.presentations = []
+    for (const presentation of presentations) {
+      presentation.signal.removeEventListener('abort', this.cancelOnInput)
+      presentation.dispose()
+    }
   }
 
   private readonly cancelOnInput = (): void => this.teardown()

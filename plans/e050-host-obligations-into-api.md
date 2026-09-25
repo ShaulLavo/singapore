@@ -330,7 +330,7 @@ this document is the inventory and the contract, not one change.
 | `MutationObserver` on `style`                  | done: `onDidChangeReservedOverlayWidth(side)`, raised by the viewport on every change                                       |
 | Raw `scroll` listener                          | done: `Editor.onDidScroll` after the fold; the context's `setScrollPosition` takes both axes                                |
 | `pointer-events: auto`                         | done: `interactive` on a gutter contribution; the merge-conflict lens needed no flag                                        |
-| Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                                       |
+| Row elements by selector                       | done: short-lived row presentation handles invalidated before recycling                                       |
 | `TOKENS_WAIT_MS`                               | done: `idle` before a document, so every status but `idle` and `loading` is settled                                         |
 
 ## Steps
@@ -371,3 +371,10 @@ with private and shared expansion stores covered by toggle regressions.
 
 The owner chose short-lived row presentation handles invalidated before DOM recycling, with decode
 reveals cancelled on scrolling and viewport changes. Decode continues to own the animation.
+
+Row 10 implemented: `getRowPresentation` returns a handle whose abort signal fires before text
+replacement, row recycling, provisional paint, or view disposal. Decode releases its animations
+and handles on that signal and on every viewport change during an active reveal. Viewport
+restoration while highlighting is pending preserves the wait. Releasing a handle does not abort
+its signal; decoration, position, and chunk-window updates preserve it. Chromium coverage checks the original
+text is still present when invalidation arrives, including a long-distance scroll.

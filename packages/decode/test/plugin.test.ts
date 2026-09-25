@@ -1,7 +1,12 @@
+import {
+  acquireRowPresentation,
+  invalidateRowPresentations,
+} from '../../editor/dist/rowPresentation'
 import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { createTestViewSnapshotSource } from '@singapore-editor/core/testing'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  EditorRowPresentation,
   EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
@@ -83,6 +88,69 @@ describe('createDecodePlugin', () => {
     expect(disposable).toBeDefined()
     expect(registerViewContribution).toHaveBeenCalledOnce()
   })
+
+  it.each([{ scrollTop: 40, scrollRow: 2 }, { scrollLeft: 8 }, { scrollTop: 1 }])(
+    'cancels an active reveal on viewport change %j',
+    (change) => {
+      const { context, contribution } = mount()
+      contribution.update(snapshot({ tokens: someTokens() }), 'document')
+      expect(rowAnimations().length).toBeGreaterThan(0)
+      contribution.updateViewport?.({ ...snapshot().viewport, ...change })
+      expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(false)
+      expect(rowAnimations().every((animation) => animation.cancel.mock.calls.length > 0)).toBe(
+        true,
+      )
+    },
+  )
+
+  it('keeps a pending reveal through viewport restoration until highlighting settles', () => {
+    const { context, contribution } = mount()
+    contribution.update(loading(), 'document')
+    contribution.updateViewport?.({ ...snapshot().viewport, scrollTop: 40, scrollRow: 2 })
+    contribution.update(snapshot({ tokens: someTokens() }), 'tokens')
+    expect(rowAnimations().length).toBeGreaterThan(0)
+    expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(true)
+    contribution.dispose()
+  })
+
+  it.each(['autoregressive', 'diffusion'] as const)(
+    'cancels %s on real row invalidation and releases every handle',
+    (mode) => {
+      const { context, contribution, presentations } = mount({ mode })
+      contribution.update(snapshot({ tokens: someTokens() }), 'document')
+      expect(presentations.length).toBeGreaterThan(0)
+      invalidateRowPresentations(presentations[0]!.element)
+      expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(false)
+      expect(caretLayer(context)).toBeNull()
+      expect(context.scrollElement.querySelector('.editor-decode-glyph-layer')).toBeNull()
+      expect(recorded.every((entry) => entry.cancel.mock.calls.length > 0)).toBe(true)
+      expect(
+        presentations.every((handle) => vi.mocked(handle.dispose).mock.calls.length === 1),
+      ).toBe(true)
+      contribution.dispose()
+      expect(
+        presentations.every((handle) => vi.mocked(handle.dispose).mock.calls.length === 1),
+      ).toBe(true)
+    },
+  )
+
+  it.each(['viewport', 'input', 'dispose', 'document'] as const)(
+    'releases row handles on %s cancellation',
+    (reason) => {
+      const { context, contribution, presentations } = mount()
+      contribution.update(snapshot({ tokens: someTokens() }), 'document')
+      const initial = [...presentations]
+      expect(initial.length).toBeGreaterThan(0)
+      if (reason === 'viewport') contribution.updateViewport?.(snapshot().viewport)
+      if (reason === 'input') context.scrollElement.dispatchEvent(new Event('keydown'))
+      if (reason === 'dispose') contribution.dispose()
+      if (reason === 'document') contribution.update(snapshot({ documentId: 'next' }), 'document')
+      expect(initial.every((handle) => vi.mocked(handle.dispose).mock.calls.length === 1)).toBe(
+        true,
+      )
+      contribution.dispose()
+    },
+  )
 
   it('hides the real rows on open but waits for the highlight to settle before revealing', () => {
     const { context, contribution } = mount()
@@ -319,10 +387,18 @@ describe('createDecodePlugin diffusion', () => {
   })
 
   it('converges and hands off to the real rows', () => {
-    const { context, contribution } = mount({ mode: 'diffusion', maxDurationMs: 1000 })
+    const { context, contribution, presentations } = mount({
+      mode: 'diffusion',
+      maxDurationMs: 1000,
+    })
     contribution.update(snapshot({ tokens: someTokens() }), 'document')
 
     vi.advanceTimersByTime(2000)
+    expect(presentations.length).toBeGreaterThan(0)
+    expect(presentations.every((handle) => vi.mocked(handle.dispose).mock.calls.length === 1)).toBe(
+      true,
+    )
+    expect(presentations.every((handle) => !handle.signal.aborted)).toBe(true)
 
     expect(glyphLayer(context)).toBeNull()
     expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(false)
@@ -385,13 +461,15 @@ it('animates only mounted long-line text at its horizontal position', () => {
 function mount(options: DecodePluginOptions = {}): {
   context: EditorViewContributionContext
   contribution: EditorViewContribution
+  presentations: EditorRowPresentation[]
 } {
   const provider = registeredProvider(createDecodePlugin(options))
-  const context = viewContext()
+  const presentations: EditorRowPresentation[] = []
+  const context = viewContext(presentations)
   populateRows(context.contentElement, snapshot())
   const contribution = provider?.createContribution(context)
   if (!contribution) throw new Error('decode contribution was not created')
-  return { context, contribution }
+  return { context, contribution, presentations }
 }
 
 /** Stand in for the editor's already-rendered, highlight-painted row elements. */
@@ -437,7 +515,7 @@ function pluginContext(
   })
 }
 
-function viewContext(): EditorViewContributionContext {
+function viewContext(presentations: EditorRowPresentation[] = []): EditorViewContributionContext {
   const container = document.createElement('div')
   const scrollElement = document.createElement('div')
   const contentElement = document.createElement('div')
@@ -447,6 +525,17 @@ function viewContext(): EditorViewContributionContext {
     container,
     scrollElement,
     contentElement,
+    getRowPresentation(index) {
+      const element = scrollElement.querySelector<HTMLElement>(
+        `[data-editor-virtual-row="${index}"]`,
+      )
+      if (!element) return null
+      const handle = acquireRowPresentation(element)
+      if (!handle) return null
+      vi.spyOn(handle, 'dispose')
+      presentations.push(handle)
+      return handle
+    },
     getSnapshot: () => snapshot({ tokens: someTokens() }),
   })
 }

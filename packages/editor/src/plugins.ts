@@ -1,3 +1,4 @@
+import type { EditorRowPresentation } from './rowPresentation'
 import type { EditorPointHit, EditorMarkerHit } from './pointQueries'
 import type { TextContent } from './textContent'
 import type { EditorDecorationRange, EditorDecorationStore } from './editor/decorationStore'
@@ -622,6 +623,12 @@ export type EditorViewContributionContext = {
    * during layout, or a restored or committed provisional paint. Never dropped or coalesced away.
    */
   onDidChangeReservedOverlayWidth(listener: (side: EditorOverlaySide) => void): EditorDisposable
+  /**
+   * Aborts before logical row text replacement, recycling, provisional paint, or view disposal.
+   * Decoration, position, and horizontal chunk-window updates keep the handle valid.
+   * Returns null for unmounted rows and during invalidation. dispose() only releases the handle.
+   */
+  getRowPresentation(displayRow: number): EditorRowPresentation | null
   rowAtPoint(clientX: number, clientY: number): EditorPointHit | null
   markerAtPoint(clientX: number, clientY: number): EditorMarkerHit | null
   textOffsetFromPoint(clientX: number, clientY: number): number | null

@@ -3040,6 +3040,7 @@ export class Editor {
       getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
       onDidChangeReservedOverlayWidth: (listener) => this.addReservedWidthListener(listener),
       setScrollPosition: (position) => this.applyScrollPosition(position),
+      getRowPresentation: (displayRow) => this.view.getRowPresentation(displayRow),
       rowAtPoint: (clientX, clientY) => this.rowAtPoint(clientX, clientY),
       markerAtPoint: (clientX, clientY) => this.markerAtPoint(clientX, clientY),
       textOffsetFromPoint: (clientX, clientY) =>
