@@ -19,7 +19,8 @@ same way selection expansion and ghost text have since E033. Once no caller is l
 
 - [inputSelectionController.ts](../packages/editor/src/editor/inputSelectionController.ts):
   `commandDocumentText(session)` returns `session.materializeFullText()`. Five call sites use it:
-  the edit-action path (`editActionForCommand` / `documentSelectionEditForCommand`),
+  the edit-action path (`editActionForCommand`, plus both reindent commands through
+  `documentSelectionEditForCommand` in [reindent.ts](../packages/editor/src/editor/reindent.ts)),
   `selectHighlights` / `changeAll`, move-to-next-occurrence, the whole-line half of cut
   (`deleteCaretLines`), and the occurrence selection helper behind Ctrl+D.
 - [editActions.ts](../packages/editor/src/editor/editActions.ts): every action takes
@@ -47,6 +48,12 @@ Out of scope: the other allowlisted reads (LSP payloads, Shiki open, save, the l
 - Occurrence search scans chunks forward from the selection and wraps once, carrying a
   `query.length - 1` overlap between chunks. Select-all-occurrences scans every chunk once.
 - Trim trailing whitespace is whole-document by nature; it walks chunks and never builds a string.
+- Reindent (`editor.action.reindentlines`, `editor.action.reindentselectedlines`) reads chunks.
+  Its literal masking decides which rows start inside a string or comment by walking forward from
+  the document start, so it walks chunks from offset 0 to the last row it rewrites, carrying the
+  literal state and keeping masked text only for the rows it rewrites.
+  `reindentEditsForRanges(text, …)` keeps its string signature for callers that pass a window
+  (`formatOnType` in `lsp-plugin`).
 - Delete `commandDocumentText` and its allowlist entry in the last step.
 
 ## Steps
@@ -56,7 +63,8 @@ Out of scope: the other allowlisted reads (LSP payloads, Shiki open, save, the l
 2. Move the line actions, then the word actions, onto snapshot reads. The step 1 tests pass unchanged.
 3. Move occurrence search onto chunk scans, with matches that straddle chunk boundaries.
 4. Walk chunks for trim trailing whitespace.
-5. Delete `commandDocumentText` and its allowlist entry; `check:full-text` fails if one comes back.
+5. Move both reindent commands onto chunk reads, so `editActionForSession` no longer takes the string.
+6. Delete `commandDocumentText` and its allowlist entry; `check:full-text` fails if one comes back.
 
 ## Verification
 
@@ -102,6 +110,6 @@ Out of scope: the other allowlisted reads (LSP payloads, Shiki open, save, the l
   before → after: comment toggle 55.5 → 5.0 ms, move line down 77.2 → 5.4 ms, join lines 37.6 →
   4.5 ms, delete word left 5.8 → 1.9 ms.
 - Left for E055-b: occurrence search (step 3), trim trailing whitespace (step 4, now
-  `trimTrailingWhitespaceAction(text)`), and deleting `commandDocumentText` (step 5). Both reindent
-  commands also still take the string. Their literal masking scans from the document start, so
-  step 5 has to move reindent onto chunk reads too.
+  `trimTrailingWhitespaceAction(text)`), reindent (step 5) and deleting `commandDocumentText`
+  (step 6). Reindent was not part of step 2: it is not a line action, and its literal masking scans
+  from the document start, so it gets its own step.
