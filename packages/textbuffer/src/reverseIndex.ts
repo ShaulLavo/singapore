@@ -9,7 +9,7 @@ import type {
   PieceTableReverseTail,
   PieceTreeNode,
 } from './pieceTableTypes'
-import { ORIGINAL_BUFFER } from './node'
+import { isStandIn, ORIGINAL_BUFFER } from './node'
 
 const BITS = 4
 const WIDTH = 1 << BITS
@@ -300,30 +300,151 @@ const balancedSplit = (
 }
 
 // Start and order pairs per buffer. A buffer's pieces keep their buffer order
-// in the document, so walking the tree in order leaves each list sorted.
+// in the document, so walking the tree in order leaves each list sorted. A
+// stand-in's buffer is a threshold, and its entries belong to other buffers.
 const collectEntries = (node: PieceTreeNode | null, buffers: (number[] | undefined)[]): void => {
   if (!node) return
   collectEntries(node.left, buffers)
   const piece = node.piece
-  if (piece.buffer !== ORIGINAL_BUFFER) {
+  if (piece.buffer !== ORIGINAL_BUFFER && !isStandIn(piece)) {
     const entries = (buffers[piece.buffer - 1] ??= [])
     entries.push(piece.start, piece.order)
   }
   collectEntries(node.right, buffers)
 }
 
+const slotOf = (entries: readonly number[] | undefined): PieceTableReverseSlot => {
+  if (!entries) return undefined
+  if (entries.length === 2) return entries[1]
+  return balancedSplit(entries, 0, entries.length >>> 1)!
+}
+
+const indexOf = (buffers: readonly (number[] | undefined)[]): PieceTableReverseIndex => {
+  let index = createReverseIndex()
+  for (let at = 0; at < buffers.length; at += 1) index = appendSlot(index, slotOf(buffers[at]))
+  return index
+}
+
 export const buildReverseIndex = (root: PieceTreeNode | null): PieceTableReverseIndex => {
   const buffers: (number[] | undefined)[] = []
   collectEntries(root, buffers)
+  return indexOf(buffers)
+}
 
-  let index = createReverseIndex()
-  for (let at = 0; at < buffers.length; at += 1) {
-    const entries = buffers[at]
-    if (!entries) index = appendSlot(index, undefined)
-    else if (entries.length === 2) index = appendSlot(index, entries[1])
-    else index = appendSlot(index, balancedSplit(entries, 0, entries.length >>> 1)!)
+// Sorted start/order pairs with each run of one order kept as its first entry:
+// a lookup lands on the entry at or before a unit, so the rest said nothing.
+const mergeEntries = (entries: readonly number[]): number[] => {
+  const merged: number[] = []
+  for (let at = 0; at < entries.length; at += 2) {
+    if (merged.length > 0 && merged[merged.length - 1] === entries[at + 1]) continue
+    merged.push(entries[at]!, entries[at + 1]!)
   }
-  return index
+  return merged
+}
+
+const sortEntries = (entries: readonly number[]): number[] => {
+  const pairs: [number, number][] = []
+  for (let at = 0; at < entries.length; at += 2) pairs.push([entries[at]!, entries[at + 1]!])
+  pairs.sort((left, right) => left[0] - right[0])
+  return pairs.flat()
+}
+
+// The index of a relabelled tree whose stand-ins hold entries of compacted
+// buffers. Those entries come from `previous`, led to each stand-in's new order.
+export const rebuildReverseIndex = (
+  root: PieceTreeNode | null,
+  previous: PieceTableReverseIndex,
+  standIns: ReadonlyMap<number, number>,
+): PieceTableReverseIndex => {
+  const buffers: (number[] | undefined)[] = []
+  collectEntries(root, buffers)
+  const redirected = new Set<number>()
+  for (const entry of reverseIndexEntries(previous)) {
+    const order = standIns.get(entry.order)
+    if (order === undefined) continue
+    ;(buffers[entry.buffer - 1] ??= []).push(entry.start, order)
+    redirected.add(entry.buffer - 1)
+  }
+  for (const at of redirected) buffers[at] = mergeEntries(sortEntries(buffers[at]!))
+  return indexOf(buffers)
+}
+
+const collectSplitPairs = (node: PieceTableReverseSplitNode | null, pairs: number[]): void => {
+  if (!node) return
+  collectSplitPairs(node.left, pairs)
+  pairs.push(node.start, node.order)
+  collectSplitPairs(node.right, pairs)
+}
+
+const splitLeadsInto = (
+  node: PieceTableReverseSplitNode | null,
+  remap: ReadonlyMap<number, number>,
+): boolean =>
+  node !== null &&
+  (remap.has(node.order) || splitLeadsInto(node.left, remap) || splitLeadsInto(node.right, remap))
+
+const remapSlot = (
+  slot: PieceTableReverseSlot,
+  remap: ReadonlyMap<number, number>,
+): PieceTableReverseSlot => {
+  if (slot === undefined) return undefined
+  if (typeof slot === 'number') return remap.get(slot) ?? slot
+  if (!splitLeadsInto(slot, remap)) return slot
+  const pairs: number[] = []
+  collectSplitPairs(slot, pairs)
+  for (let at = 1; at < pairs.length; at += 2) pairs[at] = remap.get(pairs[at]!) ?? pairs[at]!
+  return slotOf(mergeEntries(pairs))
+}
+
+const remapLeaf = (leaf: Leaf, remap: ReadonlyMap<number, number>): Leaf => {
+  let next: PieceTableReverseSlot[] | null = null
+  for (let at = 0; at < leaf.length; at++) {
+    const slot = remapSlot(leaf[at], remap)
+    if (slot === leaf[at]) continue
+    next ??= leaf.slice()
+    next[at] = slot
+  }
+  return next ?? leaf
+}
+
+// Nodes whose slots all keep their orders stay shared with the index before.
+function* remapBranch(
+  node: PieceTableReverseBranch,
+  level: number,
+  remap: ReadonlyMap<number, number>,
+): Generator<void, PieceTableReverseBranch> {
+  let next: (PieceTableReverseBranch | Leaf)[] | null = null
+  for (let at = 0; at < node.length; at++) {
+    const child = node[at]!
+    const mapped =
+      level === BITS
+        ? remapLeaf(child as Leaf, remap)
+        : yield* remapBranch(child as PieceTableReverseBranch, level - BITS, remap)
+    if (mapped === child) continue
+    next ??= node.slice()
+    next[at] = mapped
+  }
+  if (level === BITS) yield
+  return next ?? node
+}
+
+// Leads every entry whose order `remap` names to the order it maps to. Every
+// slot is read because entries of long-compacted buffers can lead to a
+// stand-in that is being compacted again; only changed leaves are copied.
+export function* remapReverseIndex(
+  index: PieceTableReverseIndex,
+  remap: ReadonlyMap<number, number>,
+): Generator<void, PieceTableReverseIndex> {
+  const root = index.root as PieceTableReverseBranch | null
+  const nextRoot = root ? yield* remapBranch(root, index.shift, remap) : null
+  const length = index.count - tailOffset(index.count)
+  const tail = index.tail.slots.slice(0, length)
+  const nextTail = remapLeaf(tail, remap)
+  if (nextRoot === root && nextTail === tail) return index
+  const slots = emptySlots()
+  for (let at = 0; at < length; at++) slots[at] = nextTail[at]
+  const tailIndex = nextTail === tail ? index.tail : { slots, used: length }
+  return reverseIndexOf(index.count, index.shift, nextRoot, tailIndex)
 }
 
 const orderOfPieceStartingAtOrBefore = (

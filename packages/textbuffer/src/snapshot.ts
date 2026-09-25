@@ -5,22 +5,22 @@ import type {
   PieceTreeNode,
 } from './pieceTableTypes'
 import { createInitialBuffers, createOriginalPiece, type PieceTableBufferOptions } from './buffers'
-import { buildReverseIndex } from './reverseIndex'
+import { buildReverseIndex, rebuildReverseIndex } from './reverseIndex'
 import { normalizePieceOrders } from './tree'
-import { createNode, getSubtreePieces, getSubtreeVisibleLength } from './node'
+import { createNode, getSubtreePieces, getSubtreeVisibleLength, isStandIn } from './node'
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_DOCUMENT_LINE_ENDING, normalizeDocumentText } from './lineEndings'
 
 class StoredSnapshot implements PieceTableTreeSnapshot {
   readonly length: number
-  readonly pieceCount: number
+  pieceCount: number
   readonly epoch: number
   consumed = false
 
   constructor(
     public buffers: PieceTableBuffers,
-    public readonly root: PieceTreeNode | null,
-    public readonly reverseIndex: PieceTableReverseIndex,
+    public root: PieceTreeNode | null,
+    public reverseIndex: PieceTableReverseIndex,
   ) {
     this.length = getSubtreeVisibleLength(root)
     this.pieceCount = getSubtreePieces(root)
@@ -46,14 +46,45 @@ export function publishSnapshotStorage(
   return true
 }
 
-// Orders ran out of room somewhere, so every piece is relabelled.
+// Only the tree and its index change: every anchor resolves as it did, so
+// text, coordinates and snapshot identity stay fixed. See compaction.ts.
+export function publishSnapshotPositions(
+  snapshot: PieceTableTreeSnapshot,
+  expected: PieceTreeNode | null,
+  root: PieceTreeNode | null,
+  reverseIndex: PieceTableReverseIndex,
+): boolean {
+  if (!(snapshot instanceof StoredSnapshot) || snapshot.consumed || snapshot.root !== expected)
+    return false
+  snapshot.root = root
+  snapshot.reverseIndex = reverseIndex
+  snapshot.pieceCount = getSubtreePieces(root)
+  return true
+}
+
+// Orders ran out of room somewhere, so every piece is relabelled. Entries that
+// compaction led to a stand-in are not derived from the tree's pieces, so they
+// are carried over from the index before the edit.
 export const createNormalizedSnapshot = (
   buffers: PieceTableBuffers,
   root: PieceTreeNode | null,
+  previous: PieceTableTreeSnapshot,
 ): PieceTableTreeSnapshot => {
   const epoch = buffers.lineage.epoch
-  const normalizedRoot = normalizePieceOrders(root, { value: PIECE_ORDER_STEP }, epoch)
-  return createSnapshot(buffers, normalizedRoot, buildReverseIndex(normalizedRoot))
+  const standIns = new Map<number, number>()
+  const normalizedRoot = normalizePieceOrders(
+    root,
+    { value: PIECE_ORDER_STEP },
+    epoch,
+    (piece, order) => {
+      if (isStandIn(piece)) standIns.set(piece.order, order)
+    },
+  )
+  const index =
+    standIns.size === 0
+      ? buildReverseIndex(normalizedRoot)
+      : rebuildReverseIndex(normalizedRoot, previous.reverseIndex, standIns)
+  return createSnapshot(buffers, normalizedRoot, index)
 }
 
 // Makes the snapshot persistent: nothing created before this call is ever

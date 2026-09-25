@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { bufferStorageIdentity } from '@singapore-editor/textbuffer/internal/buffers'
 import {
+  anchorAt,
   createPieceTableSnapshot,
   deleteFromPieceTable,
   insertIntoPieceTable,
   materializePieceTableFullText,
+  resolveAnchor,
+  type RealAnchor,
 } from '@singapore-editor/textbuffer'
 import { TextStorageMaintenance } from '../src/textStorageMaintenance'
 import {
@@ -115,6 +118,54 @@ describe('automatic buffer storage maintenance', () => {
     expect(buffer.isDirty()).toBe(false)
     expect(changes).not.toHaveBeenCalled()
     expect(buffer.materializeFullText()).toBe('a!bc')
+  })
+
+  it('compacts the current tree without moving a deleted anchor, identity or history', async () => {
+    const buffer = createEditorTextBuffer('prefix suffix')
+    const session = createEditorBufferSession(buffer)
+    subscriptions.push(buffer.subscribe(() => {}))
+    const anchors: RealAnchor[] = []
+    for (let cycle = 0; cycle < 200; cycle++) {
+      session.applyEdits([{ from: 7, to: 7, text: `paragraph ${cycle} `.repeat(60) }])
+      anchors.push(
+        anchorAt(buffer.getSnapshot(), 9, 'left'),
+        anchorAt(buffer.getSnapshot(), 9, 'right'),
+      )
+      session.applyEdits([{ from: 7, to: 7 + `paragraph ${cycle} `.repeat(60).length, text: '' }])
+    }
+    const snapshot = buffer.getSnapshot()
+    const revision = buffer.getRevision()
+    const resolved = anchors.map((anchor) => resolveAnchor(snapshot, anchor))
+    const pieces = snapshot.pieceCount
+    await vi.runAllTimersAsync()
+
+    expect(buffer.getStorageMaintenanceStats().tombstones).toBeGreaterThan(190)
+    expect(buffer.getSnapshot()).toBe(snapshot)
+    expect(snapshot.pieceCount).toBeLessThan(pieces / 10)
+    expect(buffer.getRevision()).toBe(revision)
+    expect(anchors.map((anchor) => resolveAnchor(snapshot, anchor))).toEqual(resolved)
+    session.applyEdits([{ from: 7, to: 7, text: 'NEW' }])
+    for (const [at, anchor] of anchors.entries()) {
+      expect(resolveAnchor(buffer.getSnapshot(), anchor).offset).toBe(at % 2 === 0 ? 7 : 10)
+    }
+    buffer.undo()
+    buffer.undo()
+    expect(buffer.materializeFullText()).toBe('prefix ' + 'paragraph 199 '.repeat(60) + 'suffix')
+  })
+
+  it('runs on piece growth when edits delete too little text to trigger it', async () => {
+    const buffer = createEditorTextBuffer('a b c d e f g h')
+    const session = createEditorBufferSession(buffer)
+    subscriptions.push(buffer.subscribe(() => {}))
+    for (let cycle = 0; cycle < 5000; cycle++) {
+      const at = (cycle % 8) * 2
+      session.applyEdits([{ from: at, to: at, text: 'x' }])
+      session.applyEdits([{ from: at, to: at + 1, text: '' }])
+    }
+    await vi.runAllTimersAsync()
+    expect(buffer.getStorageMaintenanceStats().completed).toBeGreaterThan(0)
+    expect(buffer.getSnapshot().pieceCount).toBeLessThan(100)
+    expect(buffer.materializeFullText()).toBe('a b c d e f g h')
   })
 
   it('keeps prepared transactions and receipt reversal valid across publication', async () => {
@@ -231,7 +282,10 @@ describe('automatic buffer storage maintenance', () => {
       large = deleteFromPieceTable(large, 1, payload.length)
     }
     large = insertIntoPieceTable(large, 1, '!')
-    const maintenance = new TextStorageMaintenance(() => [small, large])
+    const maintenance = new TextStorageMaintenance(
+      () => [small, large],
+      () => small,
+    )
     maintenance.request(0, true)
     await vi.runAllTimersAsync()
     expect(maintenance.getStats().chunks).toBeGreaterThan(0)

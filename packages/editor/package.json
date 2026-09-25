@@ -88,6 +88,7 @@
     "bench:inspection": "bun bench/pieceTable-inspection.ts",
     "bench:reclamation": "bun bench/reclamation-run.ts",
     "bench:reclamation-text": "bun bench/reclamation-compare.ts",
+    "bench:reclamation-positions": "bun bench/reclamation-positions.ts",
     "bench:anchors": "bun bench/pieceTable-anchors.ts",
     "bench:transforms": "bun bench/displayTransforms.ts",
     "bench:fold-map": "bun bench/foldMap.ts",

@@ -18,6 +18,12 @@ export const getSubtreeMinOrder = (node: PieceTreeNode | null): number =>
 export const getSubtreeMaxOrder = (node: PieceTreeNode | null): number =>
   node ? node.subtreeMaxOrder : Number.NEGATIVE_INFINITY
 
+// A tombstone with no text, put in by compaction for inserted tombstones whose
+// deleted anchors resolve alike; their reverse-index entries lead here. Its
+// buffer is the threshold gap scans compare against, not a buffer id. Edits
+// never make one, which is how an order relabel tells them apart.
+export const isStandIn = (piece: Piece): boolean => piece.length === 0
+
 export const getPieceVisibleLength = (piece: Piece): number => (piece.visible ? piece.length : 0)
 
 export const getPieceVisibleLineBreaks = (piece: Piece): number =>

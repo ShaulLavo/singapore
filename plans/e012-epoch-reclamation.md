@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P3
 - Effort: L
-- Dependencies: [E006](e006-tombstone-reclamation.md), [E010](e010-shared-memory-toolkit.md), [E011](e011-packed-piece-tree.md)
+- Dependencies: [E006](../docs/storage/e006-tombstone-compaction.md), [E010](e010-shared-memory-toolkit.md), [E011](e011-packed-piece-tree.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, 2026-09-05.
 
 ## Outcome

@@ -5,8 +5,9 @@ The initial working tree was clean. This records the first investigation and its
 tombstone-removal candidate. Its broad stop conclusion was corrected on 2026-09-23:
 the [automatic text reclamation](e006-text-reclamation.md) preserves position metadata,
 passes retained-anchor/snapshot checks and reduces measured heap in Bun and Chromium.
-Full E006 remains open. The rest of this report records the original observations and proposal;
-explicit lifetime handles are not a prerequisite for the implemented text storage maintenance.
+[Tombstone compaction](e006-tombstone-compaction.md) completed E006 on 2026-09-25 with an
+equivalent compact representation, so the lifetime handles proposed below were not needed. The
+rest of this report records the original observations and proposal.
 
 ## Reproduce
 

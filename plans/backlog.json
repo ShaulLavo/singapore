@@ -82,9 +82,9 @@
     },
     {
       "id": "E006",
-      "file": "e006-tombstone-reclamation.md",
+      "reference": "../docs/storage/e006-tombstone-compaction.md",
       "title": "Reclaim deleted text without breaking retained document states",
-      "status": "In progress",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
@@ -95,7 +95,8 @@
       ],
       "topics": [
         "Reduce editor memory footprint"
-      ]
+      ],
+      "baseline": "9abb944f3a2b8d6516953fdec75e8df5e1a94811"
     },
     {
       "id": "E007",
@@ -767,7 +768,7 @@
       "id": "E047",
       "file": "e047-point-and-row-queries.md",
       "title": "One answer to \"what is under this point\"",
-      "status": "Proposed",
+      "status": "Implemented",
       "owner": "Cross-repo",
       "kind": "Implementation",
       "priority": "P1",

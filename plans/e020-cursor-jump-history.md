@@ -64,7 +64,7 @@ Clamp the viewport after layout and use the viewport anchor when earlier edits c
 Text edits preserve waypoints; replacing the document generation clears them.
 Two views on one buffer maintain separate trails even though both observe the same document changes.
 Detaching or disposing a view releases its trail and subscriptions. A host may retain the view to retain its trail.
-Integrate future anchor remapping/reclamation through [E006](e006-tombstone-reclamation.md)'s ownership contract.
+Anchors resolve through [E006](../docs/storage/e006-tombstone-compaction.md) tombstone compaction unchanged, so jump history needs no ownership contract.
 A stale anchor must yield a deliberate skipped result rather than pinning abandoned text indefinitely.
 
 Proposed `jumpBack` and `jumpForward` commands reuse command routing and the shared keymap registration path.

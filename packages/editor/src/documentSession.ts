@@ -587,7 +587,10 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private readonly retainedHistoryStates: number | undefined
   private readonly now: () => number
   private subscribers = 0
-  private readonly storageMaintenance = new TextStorageMaintenance(() => this.storageSnapshots())
+  private readonly storageMaintenance = new TextStorageMaintenance(
+    () => this.storageSnapshots(),
+    () => this.history.current,
+  )
 
   public constructor(rawText: string, options: EditorTextBufferOptions = {}) {
     this.retainedHistoryStates = options.retainedHistoryStates

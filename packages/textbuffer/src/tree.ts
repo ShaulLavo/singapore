@@ -90,40 +90,6 @@ const successorUnit = (
 }
 
 // Each landing probe returns a finished subtree, or null to insert here.
-// Landing with the offset at this node's start (or on a tombstone): the piece
-// ending here, if any, is the rightmost visible one in the left subtree.
-const probeAtStart = (
-  node: PieceTreeNode,
-  offset: number,
-  buffers: PieceTableBuffers,
-  epoch: number,
-  probe: InsertProbe,
-): PieceTreeNode | null => {
-  const ending = findVisiblePieceEndingAt(node.left, offset)
-  if (probe.snap && ending) {
-    // The unit after first: the one before may be the tail's last unit.
-    const after =
-      getPieceVisibleLength(node.piece) > 0
-        ? firstUnitOf(node.piece, buffers)
-        : successorUnit(node.right, buffers, probe)
-    if (
-      isLowSurrogate(after) &&
-      insertSplitsPair(lastUnitOf(ending.piece, buffers), after, probe)
-    ) {
-      probe.outcome = 'retry'
-      return node
-    }
-  }
-
-  const tail = ending ? coalescedPiece(buffers, ending.piece, probe) : null
-  if (!tail) return null
-
-  probe.outcome = 'coalesce'
-  const next = own(node, epoch)
-  next.left = replacePieceEndingAt(next.left, offset, tail, epoch)
-  return summarize(next)
-}
-
 // Landing with the offset at this node's end: this piece is the one ending here.
 const probeAtEnd = (
   node: PieceTreeNode,
@@ -175,16 +141,17 @@ const probeLanding = (
   epoch: number,
   probe: InsertProbe,
 ): PieceTreeNode | number => {
-  if (nodeLen === 0 || offset === leftLen) {
-    const probed = probeAtStart(node, offset, buffers, epoch, probe)
-    if (probed) return probed
-  }
   if (nodeLen > 0 && offset === leftLen + nodeLen) {
     const probed = probeAtEnd(node, buffers, epoch, probe)
     if (probed) return probed
   }
   if (nodeLen > 0 && offset > leftLen && offset < leftLen + nodeLen) {
-    return leftLen + probeInside(node, offset - leftLen, buffers, probe)
+    const localOffset = probeInside(node, offset - leftLen, buffers, probe)
+    if (localOffset > 0) return leftLen + localOffset
+    // The pair opens the piece, so the text belongs after whatever visible
+    // piece ends there; a retry one unit left descends to it.
+    probe.outcome = 'retry'
+    return node
   }
   return offset
 }
@@ -282,7 +249,10 @@ export const insertAtVisibleOffset = (
   const leftLen = getSubtreeVisibleLength(node.left)
   const nodeLen = getPieceVisibleLength(node.piece)
 
-  if (offset < leftLen) {
+  // Text lands right after the last visible piece ending at the offset, so it
+  // never goes between two tombstones and where it lands does not depend on
+  // the tree's shape. Deleted anchors read their gap from that order.
+  if (offset < leftLen || (offset === leftLen && node.left)) {
     context.probe.leftTurns.push(node)
     const left = insertAtVisibleOffset(
       node.left,
@@ -345,9 +315,9 @@ const insertAtLanding = (
 ): PieceTreeNode => {
   const next = own(node, epoch)
   const piece = next.piece
-  const before = nodeLen > 0 && localOffset === 0
 
-  if (before) {
+  // Only the document's first piece is landed on at its start.
+  if (localOffset === 0) {
     const lower = next.left ? finite(getSubtreeMaxOrder(next.left)) : bounds[0]
     const pieces = piecesForInsert(buffers, context, lower, piece.order)
     for (const added of pieces) context.changes.push(added)
@@ -355,7 +325,7 @@ const insertAtLanding = (
   }
 
   const upper = next.right ? finite(getSubtreeMinOrder(next.right)) : bounds[1]
-  if (nodeLen === 0 || localOffset === nodeLen) {
+  if (localOffset === nodeLen) {
     const pieces = piecesForInsert(buffers, context, piece.order, upper)
     for (const added of pieces) context.changes.push(added)
     return join(next.left, next, prependRun(pieces, next.right, epoch), epoch)
@@ -699,45 +669,6 @@ export const findVisiblePieceEndingAt = (
   return findVisiblePieceEndingAt(node.right, offset, nodeEnd)
 }
 
-// An owned child comes back as the same object, so identity cannot mean
-// unchanged; only a null child means the piece was not on that side.
-export const replacePieceEndingAt = (
-  node: PieceTreeNode | null,
-  offset: number,
-  newPiece: Piece,
-  epoch = PERSISTENT_EPOCH,
-  baseOffset = 0,
-): PieceTreeNode | null => {
-  if (!node) return null
-
-  const leftLen = getSubtreeVisibleLength(node.left)
-  const nodeLen = getPieceVisibleLength(node.piece)
-  const nodeStart = baseOffset + leftLen
-  const nodeEnd = nodeStart + nodeLen
-
-  if (offset <= nodeStart) {
-    const left = replacePieceEndingAt(node.left, offset, newPiece, epoch, baseOffset)
-    if (left === null) return node
-
-    const next = own(node, epoch)
-    next.left = left
-    return summarize(next)
-  }
-
-  if (nodeLen > 0 && offset === nodeEnd) {
-    const next = own(node, epoch)
-    next.piece = newPiece
-    return summarize(next)
-  }
-
-  const right = replacePieceEndingAt(node.right, offset, newPiece, epoch, nodeEnd)
-  if (right === null) return node
-
-  const next = own(node, epoch)
-  next.right = right
-  return summarize(next)
-}
-
 export const findVisiblePieceStartingAt = (
   node: PieceTreeNode | null,
   offset: number,
@@ -804,8 +735,9 @@ export const findPieceByOrder = (
   return null
 }
 
-// The original buffer's piece holding `unit`. Its pieces are never moved or
-// dropped, so their lengths are a prefix sum over the buffer's own offsets.
+// The original buffer's piece holding `unit`. Its pieces are never moved, and
+// compaction merges their tombstones without losing a unit, so their lengths
+// are a prefix sum over the buffer's own offsets.
 export const findOriginalPiece = (
   root: PieceTreeNode | null,
   unit: number,
@@ -923,13 +855,15 @@ export const normalizePieceOrders = (
   node: PieceTreeNode | null,
   nextOrder: { value: number },
   epoch = PERSISTENT_EPOCH,
+  relabel?: (piece: Piece, order: number) => void,
 ): PieceTreeNode | null => {
   if (!node) return null
 
   const next = own(node, epoch)
-  next.left = normalizePieceOrders(next.left, nextOrder, epoch)
+  next.left = normalizePieceOrders(next.left, nextOrder, epoch, relabel)
+  relabel?.(next.piece, nextOrder.value)
   next.piece = { ...next.piece, order: nextOrder.value }
   nextOrder.value += PIECE_ORDER_STEP
-  next.right = normalizePieceOrders(next.right, nextOrder, epoch)
+  next.right = normalizePieceOrders(next.right, nextOrder, epoch, relabel)
   return summarize(next)
 }

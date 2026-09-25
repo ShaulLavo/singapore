@@ -2,9 +2,9 @@
 
 Live buffers now reclaim unused portions of original text and append chunks. Logical piece
 coordinates, anchors, snapshots, revision, dirty state and retained undo remain unchanged.
-Text reclamation passes the string-storage acceptance checks described below. E006 stays open
-for its separate metadata milestone: tombstones, reverse-index entries, insertion-ID mappings
-and newline-offset arrays are not yet bounded.
+Text reclamation passes the string-storage acceptance checks described below. Position metadata
+was the second milestone and is complete: [tombstone compaction](e006-tombstone-compaction.md)
+bounds the current tree and leaves about 9 bytes per insertion in the index.
 
 ## Ownership and storage
 
@@ -379,8 +379,7 @@ bun run --cwd packages/tree-sitter test
 bun run --cwd packages/tree-sitter test:browser
 ```
 
-The [plan](../../plans/e006-tombstone-reclamation.md) keeps position metadata reclamation open.
-Small undo-payload backing and string-storage acceptance are addressed. Removing tombstones or reverse-index entries
-requires an equivalent compact position representation or an explicit anchor-lifetime contract; existing deleted-anchor behavior cannot
-be inferred from text visibility. The [initial investigation](e006-reclamation-investigation.md)
-records counterexamples to unsafe compaction.
+Small undo-payload backing and string-storage acceptance are addressed. Removing tombstones needed
+an equivalent compact position representation; [tombstone compaction](e006-tombstone-compaction.md)
+is that representation. The [initial investigation](e006-reclamation-investigation.md) records
+counterexamples to unsafe compaction.

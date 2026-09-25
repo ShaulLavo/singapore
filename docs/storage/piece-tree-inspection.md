@@ -60,13 +60,17 @@ heights differ by at most one.
 Anchor resolution relies on the document order of each buffer's pieces, so the checker reads it
 off the pieces sorted by order: a buffer's pieces appear in buffer order with no unit missing
 between them, the original buffer's start at 0, and no piece of an older buffer sits between two
-pieces of a newer one.
+pieces of a newer one. Since [E006](e006-tombstone-compaction.md), units may be missing where
+compaction dropped a tombstone, but only where the reverse index leads that offset to a stand-in.
 
 Since [E039](../performance/e039-reverse-index-cost.md) the reverse index holds inserted buffers
 only. Each of their pieces has exactly one entry, keyed by buffer ID and by starting offset, or by
-0 for the buffer's first piece, and the entry's order must equal the piece's. The small tree a cut
-buffer's entries live in is checked for stored heights and balance. The inspector lists the
-entries as flat rows, each carrying the piece its order leads to.
+0 for the buffer's first piece, and the entry's order must equal the piece's. A buffer whose first
+piece was compacted keys its first remaining piece by start. Every other entry must lead to a
+stand-in: a tombstone of length 0 at start 0, with no line breaks, whose buffer field is a positive
+threshold rather than an ID. Stand-ins are left out of the buffer-order and key checks. The small
+tree a cut buffer's entries live in is checked for stored heights and balance. The inspector lists
+the entries as flat rows, each carrying the piece its order leads to.
 
 Line-index offsets must match LF positions in the index's own recorded text. `scannedLength`
 equals that text's length, and `count` equals its LF count. Only the first `count` typed-array slots
