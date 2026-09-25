@@ -894,7 +894,7 @@
       "id": "E055",
       "file": "e055-edit-commands-read-lines.md",
       "title": "Edit commands read the lines they touch",
-      "status": "Proposed",
+      "status": "In progress",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

@@ -39,7 +39,7 @@ const SKIN_TONE_LAST = 0x1f3ff
  * ordinary text paying for the possibility.
  */
 const BOUNDARY_WINDOW = 8
-const MAX_BOUNDARY_WINDOW = 4096
+export const MAX_BOUNDARY_WINDOW = 4096
 
 const graphemeSegmenter = createGraphemeSegmenter()
 
