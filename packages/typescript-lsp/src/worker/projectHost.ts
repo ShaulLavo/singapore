@@ -19,6 +19,8 @@ export type ProjectService = {
 export class ProjectHost implements ProjectService {
   public readonly languageService: ts.LanguageService
   readonly #files: Map<string, string>
+  readonly #logicalFiles = new Map<string, Map<string, string>>()
+  readonly #openOwners = new Map<string, Map<string, { path: string; text: string }>>()
   readonly #open = new Map<string, string>()
   readonly #versions = new Map<string, number>()
   readonly #directories = new Set<string>([ROOT])
@@ -34,6 +36,9 @@ export class ProjectHost implements ProjectService {
     this.#files = new Map()
     for (const [fileName, text] of files) {
       const canonical = this.canonical(fileName)
+      const logical = this.#logicalFiles.get(canonical) ?? new Map<string, string>()
+      logical.set(fileName, text)
+      this.#logicalFiles.set(canonical, logical)
       this.#files.set(canonical, files.get(canonical) ?? text)
     }
     this.#roots = [...new Set(roots.map((file) => this.canonical(file)))]
@@ -46,30 +51,53 @@ export class ProjectHost implements ProjectService {
   }
 
   public setFile(fileName: string, text: string): void {
-    fileName = this.canonical(fileName)
-    if (this.#files.get(fileName) === text) return
-    this.#files.set(fileName, text)
+    const canonical = this.canonical(fileName)
+    const logical = this.#logicalFiles.get(canonical) ?? new Map<string, string>()
+    const added = !logical.has(fileName)
+    logical.set(fileName, text)
+    this.#logicalFiles.set(canonical, logical)
     this.#addDirectories(fileName)
-    this.#changed(fileName)
+    if (!added && this.#files.get(canonical) === text) return
+    this.#files.set(canonical, text)
+    this.#changed(canonical)
   }
 
   public deleteFile(fileName: string): void {
-    fileName = this.canonical(fileName)
-    if (!this.#files.delete(fileName)) return
-    this.#changed(fileName)
+    const canonical = this.canonical(fileName)
+    const logical = this.#logicalFiles.get(canonical)
+    if (!logical?.delete(fileName)) return
+    const remaining = logical.get(canonical) ?? [...logical.values()].at(-1)
+    if (remaining === undefined) {
+      this.#logicalFiles.delete(canonical)
+      this.#files.delete(canonical)
+    } else this.#files.set(canonical, remaining)
+    this.#changed(canonical)
   }
 
-  public setOpen(fileName: string, text: string): void {
-    fileName = this.canonical(fileName)
-    this.#open.set(fileName, text)
+  public setOpen(fileName: string, text: string, owner = fileName): void {
+    const canonical = this.canonical(fileName)
+    const owners =
+      this.#openOwners.get(canonical) ?? new Map<string, { path: string; text: string }>()
+    owners.delete(owner)
+    owners.set(owner, { path: fileName, text })
+    this.#openOwners.set(canonical, owners)
     this.#addDirectories(fileName)
-    this.#changed(fileName)
+    if (this.#open.get(canonical) === text) return
+    this.#open.set(canonical, text)
+    this.#changed(canonical)
   }
 
-  public closeOpen(fileName: string): void {
-    fileName = this.canonical(fileName)
-    if (!this.#open.delete(fileName)) return
-    this.#changed(fileName)
+  public closeOpen(fileName: string, owner = fileName): void {
+    const canonical = this.canonical(fileName)
+    const owners = this.#openOwners.get(canonical)
+    if (!owners?.delete(owner)) return
+    const remaining = [...owners.values()].at(-1)
+    if (remaining) this.#open.set(canonical, remaining.text)
+    else {
+      this.#openOwners.delete(canonical)
+      this.#open.delete(canonical)
+    }
+    this.#changed(canonical)
   }
 
   public setRoots(roots: readonly string[]): void {
@@ -89,8 +117,16 @@ export class ProjectHost implements ProjectService {
   }
 
   #text(fileName: string): string | undefined {
-    fileName = this.canonical(fileName)
-    return this.#open.get(fileName) ?? this.#files.get(fileName)
+    const canonical = this.canonical(fileName)
+    if (
+      fileName !== canonical &&
+      !this.#logicalFiles.get(canonical)?.has(fileName) &&
+      ![...(this.#openOwners.get(canonical)?.values() ?? [])].some(
+        (owner) => owner.path === fileName,
+      )
+    )
+      return undefined
+    return this.#open.get(canonical) ?? this.#files.get(canonical)
   }
 
   #addDirectories(fileName: string): void {

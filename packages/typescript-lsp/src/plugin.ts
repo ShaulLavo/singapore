@@ -1,3 +1,4 @@
+import { TypeScriptLspWorkspace } from './workspace'
 import type { EditorDisposable } from '@singapore-editor/core/extensions'
 import { createEditorCapabilityToken } from '@singapore-editor/core/extensions'
 import type {
@@ -16,17 +17,8 @@ import {
 import type { LanguageServerCompletionEditFeature } from '@singapore-editor/lsp-plugin/completion'
 
 import { isTypeScriptLspSourceFileName } from './paths'
-import {
-  DELETE_WORKSPACE_FILES,
-  LIBRARY_FILES_REQUEST,
-  SET_WORKSPACE_FILES,
-  UPSERT_WORKSPACE_FILES,
-} from './worker/customMethods'
-import type {
-  TypeScriptLspPlugin,
-  TypeScriptLspPluginOptions,
-  TypeScriptLspSourceFile,
-} from './types'
+import { LIBRARY_FILES_REQUEST } from './worker/customMethods'
+import type { TypeScriptLspPlugin, TypeScriptLspPluginOptions } from './types'
 
 const DEFAULT_DIAGNOSTIC_DELAY_MS = 150
 const DEFAULT_TIMEOUT_MS = 15000
@@ -37,6 +29,7 @@ const TYPESCRIPT_LSP_COMPLETION_EDIT_FEATURE =
   )
 
 export type TypeScriptLspResolvedOptions = {
+  readonly connectionProvider: TypeScriptLspPluginOptions['connectionProvider']
   readonly documentSync: TypeScriptLspPluginOptions['documentSync']
   readonly rootUri: string | null
   readonly canonicalPaths: TypeScriptLspPluginOptions['canonicalPaths']
@@ -64,7 +57,7 @@ export function createTypeScriptLspPlugin(
   options: TypeScriptLspPluginOptions = {},
 ): TypeScriptLspPlugin {
   const resolved = resolveOptions(options)
-  const workspaceFiles = new TypeScriptWorkspaceFiles()
+  const workspaceFiles = options.workspace ?? new TypeScriptLspWorkspace()
   const plugin = createLanguageServerAdapterPlugin({
     name: 'editor.typescript-lsp',
     rootUri: resolved.rootUri,
@@ -75,6 +68,7 @@ export function createTypeScriptLspPlugin(
     clientInfo: resolved.clientInfo,
     semanticTokens: resolved.semanticTokens,
     createTransport: typeScriptTransportFactory(resolved),
+    connectionProvider: resolved.connectionProvider,
     documentSync: {
       ...resolved.documentSync,
       languageIdForDocument: resolved.documentSync?.languageIdForDocument ?? protocolLanguageId,
@@ -120,83 +114,12 @@ export function createTypeScriptLspPlugin(
   }
 }
 
-/**
- * The host's files, kept here so a worker that reconnects starts from all of them; a connected
- * worker is told only what changed.
- */
-class TypeScriptWorkspaceFiles {
-  private readonly clients = new Map<LspClient, (error: unknown) => void>()
-  private readonly files = new Map<string, string>()
-
-  public setWorkspaceFiles(files: readonly TypeScriptLspSourceFile[]): void {
-    this.files.clear()
-    for (const file of files) this.files.set(file.path, file.text)
-    this.syncClients()
-  }
-
-  public upsertWorkspaceFiles(files: readonly TypeScriptLspSourceFile[]): void {
-    const changed = files.filter((file) => this.files.get(file.path) !== file.text)
-    if (changed.length === 0) return
-    for (const file of changed) this.files.set(file.path, file.text)
-    this.notifyClients(UPSERT_WORKSPACE_FILES, {
-      files: changed.map((file) => ({ path: file.path, text: file.text })),
-    })
-  }
-
-  public deleteWorkspaceFiles(paths: readonly string[]): void {
-    const removed = paths.filter((path) => this.files.delete(path))
-    if (removed.length === 0) return
-    this.notifyClients(DELETE_WORKSPACE_FILES, { paths: removed })
-  }
-
-  public registerClient(
-    client: LspClient,
-    onError: ((error: unknown) => void) | undefined,
-  ): EditorDisposable {
-    this.clients.set(client, onError ?? ignoreConnectionError)
-    return {
-      dispose: () => {
-        this.clients.delete(client)
-      },
-    }
-  }
-
-  public syncClient(client: LspClient): void {
-    const onError = this.clients.get(client)
-    if (!onError) return
-    if (!client.initialized) return
-
-    this.notify(client, onError, SET_WORKSPACE_FILES, {
-      files: Array.from(this.files, ([path, text]) => ({ path, text })),
-    })
-  }
-
-  private syncClients(): void {
-    for (const client of this.clients.keys()) this.syncClient(client)
-  }
-
-  private notifyClients(method: string, params: unknown): void {
-    for (const [client, onError] of this.clients) {
-      if (client.initialized) this.notify(client, onError, method, params)
-    }
-  }
-
-  private notify(
-    client: LspClient,
-    onError: (error: unknown) => void,
-    method: string,
-    params: unknown,
-  ): void {
-    void client.notify(method, params).catch((error: unknown) => onError(error))
-  }
-}
-
 // The host's callback runs alongside the workspace-file registration rather than instead of it: the
 // handle it is being given is the only way to reach the `LspClient`, and taking the workspace sync
 // away as the price of holding it would be a trade nobody asked for.
 function registerTypeScriptConnection(
   context: LanguageServerConnectionContext,
-  workspaceFiles: TypeScriptWorkspaceFiles,
+  workspaceFiles: TypeScriptLspWorkspace,
   options: TypeScriptLspResolvedOptions,
 ): EditorDisposable {
   const registration = workspaceFiles.registerClient(context.client, options.onError)
@@ -263,6 +186,7 @@ function libraryNames(params: unknown): readonly string[] {
 function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResolvedOptions {
   return {
     documentSync: options.documentSync,
+    connectionProvider: options.connectionProvider,
     rootUri: options.rootUri ?? 'file:///',
     canonicalPaths: options.canonicalPaths,
     compilerOptions: options.compilerOptions,
@@ -301,8 +225,4 @@ function protocolLanguageId(languageId: string): string {
   if (languageId === 'tsx') return 'typescriptreact'
   if (languageId === 'jsx') return 'javascriptreact'
   return languageId
-}
-
-function ignoreConnectionError(): void {
-  return undefined
 }

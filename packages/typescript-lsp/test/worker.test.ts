@@ -360,3 +360,36 @@ async function waitFor<T>(find: () => T | undefined): Promise<T> {
   }
   throw new Error('Timed out waiting for the session')
 }
+
+it.each(['file:///repo/src/lib.ts', 'file:///repo/node_modules/pkg/index.ts'])(
+  'keeps the surviving open URI and canonical disk source after closing %s',
+  async (closed) => {
+    const session = rawSession()
+    const canonical = '/repo/src/lib.ts'
+    const alias = '/repo/node_modules/pkg/index.ts'
+    await initialize(session, {
+      canonicalPaths: { [alias]: canonical },
+      compilerOptions: { noLib: true, moduleResolution: 2 },
+    })
+    session.notify(SET_WORKSPACE_FILES, {
+      files: [
+        { path: canonical, text: 'export const value = 1' },
+        { path: alias, text: 'export const value = 1' },
+        {
+          path: '/repo/main.ts',
+          text: 'import { value } from "./src/lib"; const n: number = value',
+        },
+      ],
+    })
+    open(session, `file://${canonical}`, 'export const value: string = "dirty"')
+    open(session, `file://${alias}`, 'export const value: string = "dirty"')
+    expect(await diagnosticCodes(session, 'file:///repo/main.ts')).toContain(2322)
+    session.notify('textDocument/didClose', { textDocument: { uri: closed } })
+    expect(await diagnosticCodes(session, 'file:///repo/main.ts')).toContain(2322)
+    const remaining = closed === `file://${canonical}` ? `file://${alias}` : `file://${canonical}`
+    session.notify('textDocument/didClose', { textDocument: { uri: remaining } })
+    expect(await diagnosticCodes(session, 'file:///repo/main.ts')).not.toContain(2322)
+    session.notify(DELETE_WORKSPACE_FILES, { paths: [alias] })
+    expect(await diagnosticCodes(session, 'file:///repo/main.ts')).not.toContain(2307)
+  },
+)

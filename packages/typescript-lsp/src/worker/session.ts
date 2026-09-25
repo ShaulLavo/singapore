@@ -436,7 +436,13 @@ export function createTypeScriptLanguageSession(
       text: textDocument.text,
     }
     documents.set(document.uri, document)
-    void withProject((project) => project.setOpen(document.fileName, document.text))
+    void withProject((project) =>
+      project.setOpen(
+        documentUriToFileName(document.uri) ?? document.fileName,
+        document.text,
+        document.uri,
+      ),
+    )
     documentChanged(document.uri)
   }
 
@@ -453,7 +459,13 @@ export function createTypeScriptLanguageSession(
       text: applyContentChanges(current.text, change.contentChanges),
     }
     documents.set(document.uri, document)
-    void withProject((project) => project.setOpen(document.fileName, document.text))
+    void withProject((project) =>
+      project.setOpen(
+        documentUriToFileName(document.uri) ?? document.fileName,
+        document.text,
+        document.uri,
+      ),
+    )
     documentChanged(document.uri)
   }
 
@@ -466,7 +478,10 @@ export function createTypeScriptLanguageSession(
     clearScheduledDiagnostics(uri)
     projectRevision += 1
     if (pushesDiagnostics()) postDiagnostics(uri, document?.version ?? null, [])
-    if (document) void withProject((project) => project.closeOpen(document.fileName))
+    if (document)
+      void withProject((project) =>
+        project.closeOpen(documentUriToFileName(document.uri) ?? document.fileName, document.uri),
+      )
   }
 
   function handleSetWorkspaceFiles(params: unknown): void {
@@ -805,7 +820,12 @@ export function createTypeScriptLanguageSession(
       compilerOptions,
       canonicalPaths,
     )
-    for (const document of documents.values()) project.setOpen(document.fileName, document.text)
+    for (const document of documents.values())
+      project.setOpen(
+        documentUriToFileName(document.uri) ?? document.fileName,
+        document.text,
+        document.uri,
+      )
     return { project, config }
   }
 

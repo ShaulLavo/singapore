@@ -27,3 +27,49 @@ it('renames one symbol through its package alias and canonical source', () => {
     '/repo/main.ts',
   ])
 })
+
+const canonical = '/repo/src/lib.ts'
+const alias = '/repo/node_modules/pkg/index.ts'
+function aliasProject() {
+  return new ProjectHost(
+    new Map([
+      [canonical, 'export const value = 1'],
+      [alias, 'export const value = 1'],
+      ['/repo/node_modules/pkg/package.json', '{"types":"index.ts"}'],
+      ['/repo/main.ts', 'import { value } from "./src/lib"; const n: number = value'],
+    ]),
+    ['/repo/main.ts'],
+    { noLib: true, moduleResolution: ts.ModuleResolutionKind.Node10 },
+    { [alias]: canonical },
+  )
+}
+
+it.each([canonical, alias])('retains the other open alias when %s closes', (closed) => {
+  const project = aliasProject()
+  project.setOpen(canonical, 'export const value: string = "dirty"', 'canonical-editor')
+  project.setOpen(alias, 'export const value: string = "dirty"', 'alias-editor')
+  expect(
+    project.languageService.getSemanticDiagnostics('/repo/main.ts').map((item) => item.code),
+  ).toContain(2322)
+  project.closeOpen(closed, closed === canonical ? 'canonical-editor' : 'alias-editor')
+  expect(
+    project.languageService.getSemanticDiagnostics('/repo/main.ts').map((item) => item.code),
+  ).toContain(2322)
+  project.closeOpen(
+    closed === canonical ? alias : canonical,
+    closed === canonical ? 'alias-editor' : 'canonical-editor',
+  )
+  expect(
+    project.languageService.getSemanticDiagnostics('/repo/main.ts').map((item) => item.code),
+  ).not.toContain(2322)
+  project.languageService.dispose()
+})
+
+it('removes an alias after program creation without deleting its surviving canonical source', () => {
+  const project = aliasProject()
+  expect(project.languageService.getSemanticDiagnostics('/repo/main.ts')).toHaveLength(0)
+  project.deleteFile(alias)
+  expect(project.languageService.getSemanticDiagnostics('/repo/main.ts')).toHaveLength(0)
+  expect(project.getSourceFile(canonical)?.text).toBe('export const value = 1')
+  project.languageService.dispose()
+})
