@@ -165,6 +165,7 @@ export type InputSelectionControllerOptions = {
   readonly announcer: EditorAnnouncer
   readonly selectionSyncMode: EditorSelectionSyncMode
   readonly rtlMoveVisually: boolean
+  readonly nonCaretOffset: (offset: number) => boolean
   readonly tabSize: number
   /** Whether Tab is the page's key for leaving the editor rather than the editor's for indenting. */
   readonly tabMovesFocus: boolean
@@ -1386,6 +1387,7 @@ export class InputSelectionController {
         rtlMoveVisually: this.options.rtlMoveVisually,
         wordSeparators,
         view: this.options.view,
+        nonCaretOffset: this.options.nonCaretOffset,
       }),
     }))
     const primary = navigation[0]

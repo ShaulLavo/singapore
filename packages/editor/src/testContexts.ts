@@ -93,6 +93,7 @@ export function createTestViewContributionContext(
     onDidType: () => noDisposal,
     registerPressParticipant: () => noDisposal,
     registerKeymapContextKey: () => noDisposal,
+    registerNonCaretRows: () => noDisposal,
     getFeature: () => null,
     getProviders: () => [],
     registerProvider: () => noDisposal,
