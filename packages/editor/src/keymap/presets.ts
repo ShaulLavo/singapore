@@ -420,6 +420,7 @@ function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBindin
     {
       chord: [platform === 'mac' ? key('-', { ctrl: true }) : key('ArrowLeft', { alt: true })],
       command: 'jumpBack',
+      preventDefault: true,
     },
     {
       chord: [
@@ -428,6 +429,7 @@ function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBindin
           : key('ArrowRight', { alt: true }),
       ],
       command: 'jumpForward',
+      preventDefault: true,
     },
     { chord: [key('U', { mod: true })], command: 'cursorUndo' },
     { chord: [key('U', { mod: true, shift: true })], command: 'cursorRedo' },
@@ -630,15 +632,17 @@ function selectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[
 
 function columnSelectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   const box = { mod: true, alt: true, shift: true }
+  const horizontal = (arrow: string): KeyChord =>
+    platform === 'mac' ? [key(arrow, box)] : [key('K', { mod: true }), key(arrow, { alt: true })]
   const vertical = platform === 'linux' ? { mod: true } : box
 
   return [
     {
-      chord: [key(platform === 'mac' ? 'ArrowLeft' : 'Home', box)],
+      chord: horizontal('ArrowLeft'),
       command: 'cursorColumnSelectLeft',
     },
     {
-      chord: [key(platform === 'mac' ? 'ArrowRight' : 'End', box)],
+      chord: horizontal('ArrowRight'),
       command: 'cursorColumnSelectRight',
     },
     { chord: [key('ArrowUp', vertical)], command: 'cursorColumnSelectUp' },

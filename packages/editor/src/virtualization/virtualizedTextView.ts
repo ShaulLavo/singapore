@@ -1096,11 +1096,12 @@ export class VirtualizedTextView {
     this.view.viewport.onReservedOverlayWidthChange = listener
   }
 
-  /** Scroll a zero-based document line to the top through the display projection. */
+  /** Return the projected row top for a document offset. */
   public topForOffset(offset: number): number {
     return rowTop(this.view, rowForOffset(this.view, offset))
   }
 
+  /** Scroll a zero-based document line to the top through the display projection. */
   public scrollToRow(row: number): void {
     const lines = this.getLineStartsView()
     const offset = lines.at(Math.max(0, Math.min(lines.length - 1, Math.floor(row)))) ?? 0

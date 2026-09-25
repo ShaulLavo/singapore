@@ -185,3 +185,52 @@ it('clears a trail on detach even when the identical session is immediately reat
   editor.dispose()
   host.remove()
 })
+
+function captureCaret(text: string, offset: number) {
+  const snapshot = createPieceTableSnapshot(text)
+  const location = captureJumpLocation(
+    snapshot,
+    {
+      selections: [{ anchor: offset, head: offset }],
+      lastAddedIndex: 0,
+      scrollTop: 0,
+      scrollLeft: 0,
+    },
+    offset,
+    0,
+  )
+  return { snapshot, location }
+}
+
+it.each([
+  ['Delete at a caret', 'alpha beta', 2, 2, 1, 2],
+  ['joining lines', 'alpha\nbeta', 5, 5, 1, 5],
+  ['deleting the last character', 'alpha', 5, 4, 1, 4],
+  ['Backspace at a caret', 'alpha beta', 2, 1, 1, 1],
+] as const)('retains a waypoint after %s', (_name, text, offset, from, length, expected) => {
+  const { snapshot, location } = captureCaret(text, offset)
+  const edited = deleteFromPieceTable(snapshot, from, length)
+  expect(resolveJumpLocation(edited, location)?.selections[0]?.head).toBe(expected)
+})
+
+it('retains a Find selection after replacing the match', () => {
+  const host = document.createElement('div')
+  const editor = new Editor(host, { defaultText: 'alpha beta gamma' })
+  try {
+    editor.jumpTo(6, 10, 'find')
+    editor.jumpTo(15)
+    editor.edit({ from: 6, to: 10, text: 'B' })
+    expect(editor.jumpBack()).toBe(true)
+    expect(editor.getState().cursor.column).toBe(7)
+  } finally {
+    editor.dispose()
+  }
+})
+
+it('keeps an empty-document origin at zero after insertion', () => {
+  const { snapshot, location } = captureCaret('', 0)
+  expect(resolveJumpLocation(insertIntoPieceTable(snapshot, 0, 'abc'), location)).toMatchObject({
+    selections: [{ anchor: 0, head: 0 }],
+    viewportOffset: 0,
+  })
+})

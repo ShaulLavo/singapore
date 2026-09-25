@@ -1,4 +1,5 @@
 import {
+  Anchor,
   anchorAt,
   resolveAnchor,
   type PieceTableAnchor,
@@ -9,9 +10,14 @@ import { sameCursorSelections } from './cursorHistory'
 
 export type JumpCause = 'pointer' | 'find' | 'go-to-line' | 'provider'
 
+type AnchoredPosition = {
+  readonly before: PieceTableAnchor
+  readonly after: PieceTableAnchor
+}
+
 type AnchoredSelection = {
-  readonly anchor: PieceTableAnchor
-  readonly head: PieceTableAnchor
+  readonly anchor: AnchoredPosition
+  readonly head: AnchoredPosition
   readonly affinity: 'before' | 'after'
 }
 
@@ -36,12 +42,12 @@ export function captureJumpLocation(
 ): JumpLocation {
   return {
     selections: cursor.selections.map((selection) => ({
-      anchor: anchorAt(snapshot, selection.anchor, 'right'),
-      head: anchorAt(snapshot, selection.head, 'right'),
+      anchor: capturePosition(snapshot, selection.anchor),
+      head: capturePosition(snapshot, selection.head),
       affinity: selection.affinity ?? 'after',
     })),
     lastAddedIndex: cursor.lastAddedIndex,
-    viewport: anchorAt(snapshot, viewportOffset, 'right'),
+    viewport: anchorAt(snapshot, viewportOffset, snapshot.length === 0 ? 'left' : 'right'),
     topDelta,
     scrollLeft: cursor.scrollLeft,
   }
@@ -54,18 +60,18 @@ export function resolveJumpLocation(
   const primary = location.selections[0]
   if (
     !primary ||
-    resolveAnchor(snapshot, primary.head).liveness === 'deleted' ||
-    resolveAnchor(snapshot, primary.anchor).liveness === 'deleted'
+    resolvePosition(snapshot, primary.head) === null ||
+    resolvePosition(snapshot, primary.anchor) === null
   )
     return null
   const selections: CursorHistoryEntry['selections'][number][] = []
   let lastAddedIndex = 0
   for (const [index, selection] of location.selections.entries()) {
-    const anchor = resolveAnchor(snapshot, selection.anchor)
-    const head = resolveAnchor(snapshot, selection.head)
-    if (anchor.liveness === 'deleted' || head.liveness === 'deleted') continue
+    const anchor = resolvePosition(snapshot, selection.anchor)
+    const head = resolvePosition(snapshot, selection.head)
+    if (anchor === null || head === null) continue
     if (index === location.lastAddedIndex) lastAddedIndex = selections.length
-    selections.push({ anchor: anchor.offset, head: head.offset, affinity: selection.affinity })
+    selections.push({ anchor, head, affinity: selection.affinity })
   }
   if (selections.length === 0) return null
   return {
@@ -76,6 +82,20 @@ export function resolveJumpLocation(
     viewportOffset: resolveAnchor(snapshot, location.viewport).offset,
     topDelta: location.topDelta,
   }
+}
+
+function capturePosition(snapshot: PieceTableSnapshot, offset: number): AnchoredPosition {
+  return {
+    before: offset === 0 ? Anchor.MIN : anchorAt(snapshot, offset, 'left'),
+    after: offset === snapshot.length ? Anchor.MAX : anchorAt(snapshot, offset, 'right'),
+  }
+}
+
+function resolvePosition(snapshot: PieceTableSnapshot, position: AnchoredPosition): number | null {
+  const before = resolveAnchor(snapshot, position.before)
+  if (before.liveness === 'live') return before.offset
+  const after = resolveAnchor(snapshot, position.after)
+  return after.liveness === 'live' ? after.offset : null
 }
 
 export class JumpHistory {

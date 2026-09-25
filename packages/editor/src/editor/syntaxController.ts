@@ -348,7 +348,8 @@ export class EditorSyntaxController {
   }
 
   setTokens(tokens: EditorTokenStore, current = true, copyTokens = tokens): void {
-    if (!current && tokens !== this.currentTokens) this.acceptedCopyTokens = EditorTokenStore.empty()
+    if (!current && tokens !== this.currentTokens)
+      this.acceptedCopyTokens = EditorTokenStore.empty()
     this.currentTokens = tokens
     if (current) {
       this.acceptedCopyTokens = copyTokens

@@ -126,16 +126,24 @@ function styleOf(html: string | null): string {
   return /<div style="([^"]*)"/.exec(html ?? '')?.[1] ?? ''
 }
 
-it('bounds total fragments and emitted bytes, including span-heavy text', () => {
+it('bounds total source length across fragments', () => {
   const fragments = [
     { startOffset: 0, text: 'x'.repeat(40000), separator: '\n' },
     { startOffset: 0, text: 'x'.repeat(40000), separator: '' },
   ]
   expect(copy('', [token(0, 1, 'red')], { fragments })).toBeNull()
-  const tokens = Array.from({ length: 65536 }, (_, offset) =>
-    token(offset, offset + 1, offset % 2 ? 'red' : 'blue'),
-  )
-  expect(copy('x'.repeat(65536), tokens)).toBeNull()
+})
+
+it('bounds UTF-8 output bytes independently of source length across fragments', () => {
+  const tokens = Array.from({ length: 30000 }, (_, offset) => token(offset, offset + 1, 'red'))
+  const fragmentsFor = (character: string) => [
+    { startOffset: 0, text: character.repeat(15000), separator: '\n' },
+    { startOffset: 15000, text: character.repeat(15000), separator: '' },
+  ]
+  const ascii = copy('', tokens, { fragments: fragmentsFor('x') })
+  expect(ascii).not.toBeNull()
+  expect(new TextEncoder().encode(ascii!).byteLength).toBeLessThanOrEqual(1024 * 1024)
+  expect(copy('', tokens, { fragments: fragmentsFor('界') })).toBeNull()
 })
 
 it('keeps fragment order, separators, escaping and unhighlighted portions', () => {
@@ -158,5 +166,21 @@ it('bounds token visits across disjoint fragments with overlapping syntax tokens
     token(0, 2000, 'red'),
     ...fragments.map((fragment) => token(fragment.startOffset, fragment.startOffset + 1, 'blue')),
   ]
+  expect(copy('', tokens, { fragments })).toBeNull()
+})
+
+it('keeps many fragments styled just below the cumulative token-visit limit', () => {
+  const fragments = Array.from({ length: 361 }, (_, i) => ({
+    startOffset: i * 2,
+    text: 'x',
+    separator: '\n',
+  }))
+  const tokens = [
+    token(0, 722, 'red'),
+    ...fragments.map((fragment) => token(fragment.startOffset, fragment.startOffset + 1, 'blue')),
+  ]
+  const html = copy('', tokens, { fragments: fragments.slice(0, 360) })
+  expect(html).toContain('<span style="color: blue;">x</span>\n')
+  expect(html?.match(/<span style="color: red;">x<\/span>\n/g)).toHaveLength(359)
   expect(copy('', tokens, { fragments })).toBeNull()
 })

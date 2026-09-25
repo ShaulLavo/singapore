@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { detectPlatform } from '@tanstack/hotkeys'
+import { detectPlatform, parseHotkey, rawHotkeyToParsedHotkey } from '@tanstack/hotkeys'
 import { createEditorFindPlugin } from '../../find/src/index.ts'
 import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/src/index.ts'
 import {
@@ -590,18 +590,23 @@ function wordNavigationModifier(): KeyboardEventInit {
  */
 function dispatchDefaultKey(command: EditorCommandId): KeyboardEvent {
   const platform = detectPlatform()
-  const hotkey = defaultEditorKeyBindings(platform).find((binding) => binding.command === command)
-    ?.chord[0]
-  if (hotkey === undefined || typeof hotkey === 'string') {
-    throw new Error(`${command} has no default chord on ${platform}`)
-  }
-
-  return dispatchEditorKey(hotkey.key, {
-    altKey: hotkey.alt === true,
-    ctrlKey: hotkey.ctrl === true || (hotkey.mod === true && platform !== 'mac'),
-    metaKey: hotkey.meta === true || (hotkey.mod === true && platform === 'mac'),
-    shiftKey: hotkey.shift === true,
+  const chord = defaultEditorKeyBindings(platform).find(
+    (binding) => binding.command === command,
+  )?.chord
+  if (!chord) throw new Error(`${command} has no default chord on ${platform}`)
+  const events = chord.map((hotkey) => {
+    const parsed =
+      typeof hotkey === 'string'
+        ? parseHotkey(hotkey, platform)
+        : rawHotkeyToParsedHotkey(hotkey, platform)
+    return dispatchEditorKey(parsed.key, {
+      altKey: parsed.alt,
+      ctrlKey: parsed.ctrl,
+      metaKey: parsed.meta,
+      shiftKey: parsed.shift,
+    })
   })
+  return events[events.length - 1]!
 }
 
 /**

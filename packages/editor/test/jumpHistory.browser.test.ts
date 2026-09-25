@@ -117,3 +117,54 @@ it('records a click that collapses an existing selection', async () => {
   editor.dispose()
   host.remove()
 })
+
+it('prevents browser navigation with an empty trail and at both ends', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const editor = new Editor(host, { defaultText: 'alpha beta gamma' })
+  const observed: KeyboardEvent[] = []
+  const observe = (event: KeyboardEvent) => {
+    if (event.altKey && event.key.startsWith('Arrow')) observed.push(event)
+  }
+  document.addEventListener('keydown', observe, true)
+  try {
+    editor.setSelection(0)
+    editor.focus()
+    await commands.proofKeyPress('Alt+ArrowLeft')
+    await commands.proofKeyPress('Alt+ArrowRight')
+    editor.jumpTo(7)
+    await commands.proofKeyPress('Alt+ArrowRight')
+    await commands.proofKeyPress('Alt+ArrowLeft')
+    await commands.proofKeyPress('Alt+ArrowLeft')
+    expect(observed.map((event) => event.defaultPrevented)).toEqual([true, true, true, true, true])
+    expect(editor.getState().cursor.column).toBe(0)
+  } finally {
+    document.removeEventListener('keydown', observe, true)
+    editor.dispose()
+    host.remove()
+  }
+})
+
+it('records committed Find navigation without retaining query prefixes', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const editor = new Editor(host, {
+    defaultText: 'origin alphabet alphabet',
+    plugins: [createEditorFindPlugin({ seedSearchStringFromSelection: 'never' })],
+  })
+  try {
+    editor.openFind()
+    await commands.proofType('alphabet')
+    expect(editor.jumpBack()).toBe(false)
+    const preview = editor.getState().cursor.column
+    await commands.proofKeyPress('Enter')
+    editor.closeFind()
+    expect(editor.jumpBack()).toBe(true)
+    expect(editor.getState().cursor.column).toBe(preview)
+    expect(editor.jumpBack()).toBe(false)
+    expect(editor.jumpForward()).toBe(true)
+  } finally {
+    editor.dispose()
+    host.remove()
+  }
+})
