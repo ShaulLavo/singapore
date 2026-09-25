@@ -19,8 +19,10 @@ Platform Plan 130 removes the host copies; Editor owns the presentation and inte
 
 A row presentation handle is invalidated before text replacement, row release, and view disposal.
 Acquisition is blocked during invalidation, including from abort callbacks, until the replacement
-presentation is complete. Decode owns its animations, listens for invalidation, and cancels on
-viewport changes. This follows the owner's 2026-09-25 choice to keep reveal in the plugin.
+presentation is complete. Decoration, position and chunk-window updates preserve the handle;
+releasing it does not abort its signal. Decode owns its animations, listens for invalidation, and
+cancels active reveals on every viewport change. Viewport restoration while highlighting is
+pending preserves the wait. This follows the owner's 2026-09-25 choice to keep reveal in the plugin.
 
 The theme API registers diff colors explicitly when the plugin is created, so tree shaking cannot
 remove their defaults. Popup copies remove variables the source has cleared. `DiffPlugin.getStackedRows()`
