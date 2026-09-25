@@ -1,6 +1,7 @@
 // Tombstone compaction against an uncompacted control over many seeded sessions.
 // Both apply the same edits; the candidate is compacted at random points, and
 // every held anchor must resolve alike in both after every edit.
+import assert from 'node:assert/strict'
 import {
   anchorAt,
   applyBatchToPieceTable,
@@ -54,10 +55,6 @@ function randomEdits(random, length, hot, hotShare) {
   return edits
 }
 
-function same(left, right) {
-  return left.offset === right.offset && left.liveness === right.liveness
-}
-
 function lineage(state) {
   const states = new Set()
   for (let at = state; at; at = at.parent) states.add(at)
@@ -74,39 +71,45 @@ const totals = {
   unverified: 0,
 }
 
-function compact(snapshot) {
-  const result = compactPieceTableTombstones(snapshot)
+// Every finished pass lands here, whichever way it was run.
+function record(result, overtaken) {
   totals.compactions++
   totals.tombstones += result.tombstones
   totals.unverified += result.unverified
+  if (overtaken) totals.interleaved++
 }
 
-// A pass stepped partway, as maintenance slices it, that an edit then overtakes.
+function compact(snapshot) {
+  record(compactPieceTableTombstones(snapshot), false)
+}
+
+// A pass stepped partway, as maintenance slices it. It has yielded at least
+// once when this returns it; one that finishes first is recorded here.
 function startCompaction(snapshot, steps) {
   const job = compactTombstones(snapshot)
   for (let step = 0; step < steps; step++) {
-    if (job.next().done) return null
+    const next = job.next()
+    if (!next.done) continue
+    record(next.value, false)
+    return null
   }
   return job
 }
 
-function finishCompaction(job) {
+// `overtaken` when an edit arrived between the pass's steps.
+function finishCompaction(job, overtaken) {
   if (!job) return
   let next = job.next()
   while (!next.done) next = job.next()
-  totals.compactions++
-  totals.interleaved++
-  totals.tombstones += next.value.tombstones
-  totals.unverified += next.value.unverified
+  record(next.value, overtaken)
 }
 
 function checkAnchors(state, anchors, step, linear) {
   for (const { anchor } of anchors) {
     const expected = resolveAnchor(state.control, anchor)
-    if (!same(resolveAnchor(state.candidate, anchor), expected))
-      throw new Error(`step ${step}: ${JSON.stringify(anchor)} resolves unlike the control`)
-    if (linear && !same(resolveAnchorLinear(state.candidate, anchor), expected))
-      throw new Error(`step ${step}: linear reference disagrees for ${JSON.stringify(anchor)}`)
+    const label = `step ${step}: ${JSON.stringify(anchor)}`
+    assert.deepEqual(resolveAnchor(state.candidate, anchor), expected, label)
+    if (linear) assert.deepEqual(resolveAnchorLinear(state.candidate, anchor), expected, label)
   }
 }
 
@@ -138,23 +141,25 @@ function runSeed(seed) {
       candidate: applyBatchToPieceTable(state.candidate, edits),
       parent: state,
     }
-    if (
-      materializePieceTableFullText(state.candidate) !==
-      materializePieceTableFullText(state.control)
+    assert.equal(
+      materializePieceTableFullText(state.candidate),
+      materializePieceTableFullText(state.control),
+      `step ${step}: text`,
     )
-      throw new Error(`step ${step}: text differs`)
     // The pass publishes on the state it began on, now one edit behind.
-    finishCompaction(pending)
+    finishCompaction(pending, true)
     if (pending) checkAnchors(state.parent, anchors, step, false)
     pending = null
     if (random(5) === 0) compact(state.candidate)
-    else if (random(5) === 0) pending = startCompaction(state.candidate, random(40))
+    else if (random(5) === 0) pending = startCompaction(state.candidate, 1 + random(40))
     checkAnchors(state, anchors, step, step % 50 === 0)
-    if (step % 50 === 0 && validatePieceTreeInvariants(state.candidate).issues.length > 0)
-      throw new Error(`step ${step}: invariant issues`)
+    if (step % 50 === 0) {
+      const issues = validatePieceTreeInvariants(state.candidate).issues
+      assert.deepEqual(issues, [], `step ${step}: invariants`)
+    }
     history.push(state)
     if (random(30) === 0) {
-      finishCompaction(pending)
+      finishCompaction(pending, false)
       pending = null
       state = history[random(history.length)]
       if (random(2)) compact(state.candidate)
@@ -163,6 +168,8 @@ function runSeed(seed) {
     }
     if (anchors.length > 300) anchors = anchors.filter((_, at) => at % 2 === 0)
   }
+  finishCompaction(pending, false)
+  checkAnchors(state, anchors, steps, true)
 }
 
 for (let seed = 1; seed <= seeds && totals.failures.length < 5; seed++) {
