@@ -1258,11 +1258,11 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
 
-    const text = session.getTextSnapshot()
-    const query = this.occurrenceQueryForCurrentSelection(text)
+    const snapshot = session.getTextSnapshot()
+    const query = this.occurrenceQueryForCurrentSelection(snapshot)
     if (!query) return false
 
-    const ranges = findAllExactOccurrences(text, query.query)
+    const ranges = findAllExactOccurrences(snapshot, query.query)
     if (ranges.length === 0) return false
 
     const selections = ranges.map((range) => occurrenceSelectionForRange(query, range))
@@ -1284,7 +1284,7 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
 
-    const text = session.getTextSnapshot()
+    const snapshot = session.getTextSnapshot()
     const selectionSet = session.getSelections()
     const resolved = this.resolvedSelections()
     const preferredIndex = lastAddedSelectionIndex(selectionSet)
@@ -1292,7 +1292,7 @@ export class InputSelectionController {
     const source = resolved[sourceIndex]
     if (!source) return false
 
-    const query = occurrenceQueryForSelection(text, source)
+    const query = occurrenceQueryForSelection(snapshot, source)
     if (!query) return false
 
     const keptSelections = resolved.filter((_selection, index) => index !== sourceIndex)
@@ -1300,7 +1300,7 @@ export class InputSelectionController {
       start: selection.startOffset,
       end: selection.endOffset,
     }))
-    const next = findNextExactOccurrenceFromRange(text, query.query, selected, query.range)
+    const next = findNextExactOccurrenceFromRange(snapshot, query.query, selected, query.range)
     if (!next) return false
     if (next.start === query.range.start && next.end === query.range.end) return false
 
@@ -3282,12 +3282,12 @@ export class InputSelectionController {
     source: ResolvedSelection,
     wholeWord: boolean,
   ): OccurrenceSelectionChange | null {
-    const text = session.getTextSnapshot()
+    const snapshot = session.getTextSnapshot()
     if (resolved.length === 1 && source.collapsed) {
-      return this.selectCurrentWordForOccurrence(text, source)
+      return this.selectCurrentWordForOccurrence(snapshot, source)
     }
 
-    const query = occurrenceQueryForSelection(text, source)
+    const query = occurrenceQueryForSelection(snapshot, source)
     if (!query) return null
 
     const selected = resolved.map((selection) => ({
@@ -3295,7 +3295,7 @@ export class InputSelectionController {
       end: selection.endOffset,
     }))
     const range = findNextExactOccurrenceFromRange(
-      text,
+      snapshot,
       query.query,
       selected,
       query.range,
@@ -3317,13 +3317,13 @@ export class InputSelectionController {
   }
 
   private occurrenceQueryForCurrentSelection(
-    text: TextReadSnapshot,
+    snapshot: TextReadSnapshot,
   ): OccurrenceQueryWithSources | null {
     const resolved = this.resolvedSelections()
     const source = resolved.find((selection) => !selection.collapsed) ?? resolved[0]
     if (!source) return null
 
-    const query = occurrenceQueryForSelection(text, source)
+    const query = occurrenceQueryForSelection(snapshot, source)
     if (!query) return null
     const sourcesByRange = new Map(
       resolved.map(
@@ -3335,13 +3335,13 @@ export class InputSelectionController {
   }
 
   private selectCurrentWordForOccurrence(
-    text: TextReadSnapshot,
+    snapshot: TextReadSnapshot,
     selection: ResolvedSelection,
   ): OccurrenceSelectionChange | null {
     const session = this.session
     if (!session) return null
 
-    const range = wordRangeAt(text, selection.headOffset)
+    const range = wordRangeAt(snapshot, selection.headOffset)
     if (range.start === range.end) return null
 
     return {
@@ -3692,13 +3692,14 @@ function editActionForSession(
   selections: readonly ResolvedSelection[],
   options: EditorEditActionOptions,
 ): EditorEditActionResult {
-  const text = session.getTextSnapshot()
+  const snapshot = session.getTextSnapshot()
   if (isEditorDocumentSelectionEditCommand(command)) {
-    return documentSelectionEditForCommand(command, text, selections, options)
+    return documentSelectionEditForCommand(command, snapshot, selections, options)
   }
-  if (command === 'editor.action.trimTrailingWhitespace') return trimTrailingWhitespaceAction(text)
+  if (command === 'editor.action.trimTrailingWhitespace')
+    return trimTrailingWhitespaceAction(snapshot)
 
-  return editActionForCommand(command, text, selections, options)
+  return editActionForCommand(command, snapshot, selections, options)
 }
 
 function applyPasteText(session: DocumentSession, text: string): DocumentSessionChange {

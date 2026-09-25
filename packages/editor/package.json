@@ -96,6 +96,7 @@
     "bench:virtualization": "bun bench/virtualization.ts",
     "bench:walker": "bun bench/pieceTable-walker.ts",
     "bench:tokens": "bun bench/tokenStore.ts",
+    "bench:edit-commands": "EDIT_COMMAND_LATENCY=1 vitest run --project dom test/editCommandLatency.test.ts",
     "bidi:check": "bun scripts/generateBidiClass.mjs --check",
     "bidi:generate": "bun scripts/generateBidiClass.mjs",
     "test": "bun run bidi:check && vitest run",

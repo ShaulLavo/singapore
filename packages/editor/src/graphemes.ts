@@ -140,7 +140,7 @@ function isSoloCodeUnit(code: number): boolean {
  * Both neighbours are checked, not just the one being stepped over: a joining character that
  * precedes a plain one pulls it into its own cluster, and only the character before reveals that.
  */
-function isSoloBefore(text: TextContent, offset: number): boolean {
+export function isSoloBefore(text: TextContent, offset: number): boolean {
   if (!isSoloCodeUnit(text.charCodeAt(offset - 1))) return false
   return offset < 2 || isSoloCodeUnit(text.charCodeAt(offset - 2))
 }

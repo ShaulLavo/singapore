@@ -1,6 +1,6 @@
 import type { DocumentSessionChange } from '../documentSession'
 import type { TextReadSnapshot } from '../documentTextSnapshot'
-import { MAX_BOUNDARY_WINDOW } from '../graphemes'
+import { isSoloBefore, MAX_BOUNDARY_WINDOW } from '../graphemes'
 import type { ResolvedSelection } from '../selections'
 import { isWholeWordRange, wordRangeAtOffset } from '../textRanges'
 import { rangeInRowWindow } from './rowWindow'
@@ -28,7 +28,7 @@ export type OccurrenceScanWindows = {
 
 const SCAN_WINDOWS: OccurrenceScanWindows = { first: 1_024, max: 262_144 }
 
-/** A read the matches starting in [`from`, `to`) are found and judged in. */
+/** One read of the document: `text` starts at offset `start`. */
 type ScanWindow = {
   readonly text: string
   readonly start: number
@@ -36,7 +36,7 @@ type ScanWindow = {
 
 type ScanOptions = {
   readonly overlapping: boolean
-  /** Units read ahead of each window, so a whole-word check sees what the full text shows it. */
+  /** Units read ahead of each window: two let a whole-word check settle ASCII neighbours. */
   readonly lead: number
   readonly windows: OccurrenceScanWindows
 }
@@ -88,12 +88,10 @@ export function findNextExactOccurrenceFromRange(
 ): ExactOccurrenceRange | null {
   if (query.length === 0) return null
 
-  // The grapheme search behind a word boundary reads back at most this far.
-  const lead = wholeWord ? MAX_BOUNDARY_WINDOW : 0
-  const options = { overlapping: true, lead, windows }
+  const options = { overlapping: true, lead: wholeWord ? 2 : 0, windows }
   const accepts = (match: ExactOccurrenceRange, window: ScanWindow): boolean => {
     if (selected.some((selection) => rangesOverlap(selection, match))) return false
-    return !wholeWord || isWholeWordInWindow(window, match)
+    return !wholeWord || isWholeWordMatch(source, window, match)
   }
 
   return (
@@ -127,10 +125,8 @@ function firstMatch(
 }
 
 /**
- * Visits each match starting in [`from`, `to`) in document order until `visit` returns true.
- *
- * Windows tile the range; each read runs `query.length + 1` units past its window, so a match that
- * starts inside it is found whole with the code point after it, and `lead` units before it.
+ * Visits each match starting in [`from`, `to`) in order until `visit` returns true. Each read runs
+ * `query.length + 1` units past its window, so a match is found whole with the code point after it.
  */
 function scanMatches(
   source: TextReadSnapshot,
@@ -163,7 +159,34 @@ function scanMatches(
   }
 }
 
-function isWholeWordInWindow(window: ScanWindow, match: ExactOccurrenceRange): boolean {
+function isWholeWordMatch(
+  source: TextReadSnapshot,
+  window: ScanWindow,
+  match: ExactOccurrenceRange,
+): boolean {
+  if (settlesBoundaries(window, match)) return isWholeWordIn(window, match)
+
+  // The grapheme search behind a word boundary reads back at most this far.
+  const start = Math.max(0, match.start - MAX_BOUNDARY_WINDOW)
+  const text = source.readRange(start, Math.min(source.length, match.end + 2))
+  return isWholeWordIn({ text, start }, match)
+}
+
+/** Whether both boundary searches stop inside the window, as they do beside ASCII. */
+function settlesBoundaries(window: ScanWindow, match: ExactOccurrenceRange): boolean {
+  if (window.start === 0) return true
+  return settlesBefore(window, match.start) && settlesBefore(window, match.end)
+}
+
+function settlesBefore(window: ScanWindow, offset: number): boolean {
+  const local = offset - window.start
+  if (local >= MAX_BOUNDARY_WINDOW) return true
+  // A line feed ends its cluster, and a CR or LF before it is no word either way.
+  if (local >= 1 && window.text.charCodeAt(local - 1) === 0x0a) return true
+  return local >= 2 && isSoloBefore(window.text, local)
+}
+
+function isWholeWordIn(window: ScanWindow, match: ExactOccurrenceRange): boolean {
   return isWholeWordRange(window.text, {
     start: match.start - window.start,
     end: match.end - window.start,

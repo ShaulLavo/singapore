@@ -18,8 +18,10 @@ What each command reads:
 - Occurrence search ([occurrences.ts](../../packages/editor/src/editor/occurrences.ts)) reads
   windows forward from the selection, 1,024 units first and doubling to 262,144, then wraps once
   from the start. Each read runs `query.length + 1` units past its window, so a match that starts
-  in it is found whole along with the code point after it. A whole-word search also reads 4,096
-  units before each window, which is what the grapheme search behind a word boundary can reach.
+  in it is found whole along with the code point after it. A whole-word search reads two units
+  before each window, which settles a boundary beside a line feed or plain text. A match whose
+  neighbours join into clusters (combining marks, emoji, surrogates) within 4,096 units of its
+  window's start is judged on its own read reaching 4,096 units back, the widest grapheme search.
   Select-all-occurrences and change-all scan every window once.
 - Trim trailing whitespace walks `forEachTextChunk` and carries a run of spaces and tabs across a
   chunk seam.
@@ -41,25 +43,30 @@ where every match straddles two pieces and windows one piece wide. It checks who
 to letters, astral letters, emoji, flags and a 20-mark combining run on both sides of a seam against
 `indexOf` over one string. It also compares trim with the string algorithm on seeded documents, and
 checks that reindent gives the same edits wherever a page seam cuts a delimiter.
-`fullTextBoundary.test.ts` now also measures Ctrl+D at 64K and 1M: 1,214 units with no full read at
-both sizes. The two presses did two full reads before. A one-off comparison against the previous
-string reindent agreed on 71,254 edits across 3,000 random documents in five languages.
+`fullTextBoundary.test.ts` now also measures Ctrl+D at 64K and 1M, with the caret on row 200 (about
+5,000 units in): 1,912 units with no full read at both sizes, reveal included. The two presses did
+two full reads before. A 4,096-unit read before every whole-word window made it 6,006. A one-off
+comparison against the previous string reindent agreed on 71,254 edits across 3,000 random documents
+in five languages.
 
 Measured in happy-dom on a 16M-unit document split into 128 pieces, with a fresh revision before
-each press so no retained string answers a whole-document read. Each figure is the median of three
-runs, and each run takes the median of 7 dispatches:
+each press so no retained string answers a whole-document read. `bun run bench:edit-commands` in
+`packages/editor` runs
+[editCommandLatency.test.ts](../../packages/editor/test/editCommandLatency.test.ts) and prints the
+median of 7 dispatches per command. Each figure is the median of three runs; before is the source
+at `f947685`:
 
 | Command                                         | Before   | After    |
 | ----------------------------------------------- | -------- | -------- |
-| Ctrl+D, second press (next match 31 units away) | 2.5 ms   | 1.0 ms   |
-| Move selection to next find match               | 2.4 ms   | 0.3 ms   |
-| Select all occurrences (2 matches, whole scan)  | 9.6 ms   | 9.2 ms   |
-| Trim trailing whitespace (4 rows to trim)       | 38.3 ms  | 7.4 ms   |
-| Reindent selected lines, caret on row 3         | 207.4 ms | 0.4 ms   |
-| Reindent lines, whole document                  | 461.1 ms | 265.1 ms |
+| Ctrl+D, second press (next match 31 units away) | 2.4 ms   | 0.7 ms   |
+| Move selection to next find match               | 1.8 ms   | 0.3 ms   |
+| Select all occurrences (2 matches, whole scan)  | 8.2 ms   | 8.7 ms   |
+| Trim trailing whitespace (4 rows to trim)       | 31.1 ms  | 5.5 ms   |
+| Reindent selected lines, caret on row 3         | 180.8 ms | 0.2 ms   |
+| Reindent lines, whole document                  | 333.9 ms | 170.7 ms |
 
-The same measurement for step 2: comment toggle 55.5 → 5.0 ms, move line down 77.2 → 5.4 ms, join
-lines 37.6 → 4.5 ms, delete word left 5.8 → 1.9 ms.
+An earlier one-off run of the same setup measured step 2: comment toggle 55.5 → 5.0 ms, move line
+down 77.2 → 5.4 ms, join lines 37.6 → 4.5 ms, delete word left 5.8 → 1.9 ms.
 
 The [E033](e033-full-text-boundary.md) boundary workload (`examples/stress/boundary.mjs`,
 contributions, 48M) times typing and undo, which never reach these commands. Four control and four

@@ -25,6 +25,8 @@ import { readAll } from './factories/snapshotText'
 const PIECE = 5
 // Windows one piece wide, so a window seam is a piece seam too.
 const WINDOWS: OccurrenceScanWindows = { first: PIECE, max: PIECE }
+// Windows that double from under a piece to past several, then hold at the cap.
+const GROWING: OccurrenceScanWindows = { first: 2, max: 16 }
 
 describe('occurrence search across chunk seams', () => {
   // Every `ab` sits across a seam: its `a` ends one piece and its `b` is the next.
@@ -88,6 +90,20 @@ describe('whole-word checks at chunk edges', () => {
         { start: text.length, end: text.length },
       ]) {
         expectNextMatches(source, text, query, range)
+      }
+    }
+  })
+
+  it('answers the same while its windows grow to the cap', () => {
+    const source = fragmentedSnapshot(text, 3)
+    for (const query of queries) {
+      const all = findAllOverString(text, query)
+      expect({ query, all: findAllExactOccurrences(source, query, GROWING) }).toEqual({
+        query,
+        all,
+      })
+      for (const range of [...all, { start: 0, end: 0 }]) {
+        expectNextMatches(source, text, query, range, GROWING)
       }
     }
   })
@@ -247,6 +263,7 @@ function expectNextMatches(
   text: string,
   query: string,
   range: ExactOccurrenceRange,
+  windows = WINDOWS,
 ): void {
   for (const wholeWord of [false, true]) {
     for (const selected of [[], [range]]) {
@@ -257,7 +274,7 @@ function expectNextMatches(
         selected,
         range,
         wholeWord,
-        WINDOWS,
+        windows,
       )
       expect({ query, range, wholeWord, selected, actual }).toEqual({
         query,
