@@ -29,11 +29,14 @@ it('invalidates a row presentation before replacing its text and when disposed',
   editor.setText('first')
   const handle = view().getRowPresentation(0)!
   let textAtInvalidation = ''
+  let reentrant: unknown = 'not-called'
   handle.signal.addEventListener('abort', () => {
     textAtInvalidation = handle.element.textContent ?? ''
+    reentrant = view().getRowPresentation(0)
   })
   editor.setText(Array.from({ length: 1000 }, (_, index) => `second ${index}`).join('\n'))
   expect(handle.signal.aborted).toBe(true)
+  expect(reentrant).toBeNull()
   expect(textAtInvalidation).toContain('first')
   const scrolling = view().getRowPresentation(0)!
   let beforeRecycle = ''
