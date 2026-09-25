@@ -92,7 +92,7 @@ class EditorFindViewContribution implements EditorViewContribution {
   private readonly visibleKey: EditorDisposable
   private latestSnapshot: EditorViewSnapshot
   private widget: EditorFindWidget | null = null
-  private reservationObserver: MutationObserver | null = null
+  private reservationListener: EditorDisposable | null = null
   private paintedMatches: PaintedFindRanges | null = null
 
   public constructor(
@@ -135,8 +135,8 @@ class EditorFindViewContribution implements EditorViewContribution {
   public dispose(): void {
     this.visibleKey.dispose()
     this.subscription.dispose()
-    this.reservationObserver?.disconnect()
-    this.reservationObserver = null
+    this.reservationListener?.dispose()
+    this.reservationListener = null
     this.widget?.dispose()
     this.widget = null
     this.paintedMatches = null
@@ -191,16 +191,10 @@ class EditorFindViewContribution implements EditorViewContribution {
     return this.widget
   }
 
-  // A claim staked while a layout pass is already running raises a reentrant
-  // notification the host discards, so a widget that re-read the reservation on
-  // notification alone would keep a stale inset until some unrelated layout
-  // disturbed it. Watching the surface that carries the claim makes the inset
-  // independent of the order contributions happen to run in.
   private observeReservedWidth(): void {
-    if (this.reservationObserver || typeof MutationObserver === 'undefined') return
-
-    this.reservationObserver = new MutationObserver(() => this.syncTrailingInset())
-    this.reservationObserver.observe(this.context.scrollElement, { attributeFilter: ['style'] })
+    this.reservationListener ??= this.context.onDidChangeReservedOverlayWidth((side) => {
+      if (side === 'right') this.syncTrailingInset()
+    })
   }
 
   private syncTrailingInset(): void {

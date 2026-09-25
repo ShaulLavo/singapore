@@ -91,6 +91,33 @@ test('content-dependent overlay reservations do not reject bootstrap paint', () 
   expect(restored.host.textContent).toContain('live overlay paint')
 })
 
+test('a reservation deferred behind saved paint is announced when the paint commits', () => {
+  const heard: number[] = []
+  const plugin: EditorPlugin = {
+    activate: (context) =>
+      context.registerViewContribution({
+        createContribution(view) {
+          view.onDidChangeReservedOverlayWidth((side) => {
+            heard.push(view.getReservedOverlayWidth(side))
+          })
+          view.reserveOverlayWidth('right', 120)
+          return { update() {}, dispose() {} }
+        },
+      }),
+  }
+  const saved = capture('saved paint')
+  const restored = mount({ documentKey: 'file-a', snapshot: saved.paint, plugins: [plugin] })
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  // The saved paint's own width (none) is shown until the document commits.
+  expect(heard.at(-1)).toBe(0)
+  heard.length = 0
+
+  restored.editor.openDocument({ documentId: 'file-a', text: 'live paint' })
+
+  expect(restored.editor.getPresentationState()).toBe('live')
+  expect(heard).toEqual([120])
+})
+
 test('real document waits independently for highlights and commits once with no provisional source rows', async () => {
   const saved = capture('saved paint')
   const result = deferredHighlight()

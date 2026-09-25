@@ -1086,6 +1086,10 @@ export class VirtualizedTextView {
     return this.view.viewport.reservedOverlayWidth(side)
   }
 
+  public onReservedOverlayWidthChange(listener: ((side: 'left' | 'right') => void) | null): void {
+    this.view.viewport.onReservedOverlayWidthChange = listener
+  }
+
   /** Scroll a zero-based document line to the top through the display projection. */
   public scrollToRow(row: number): void {
     const lines = this.getLineStartsView()

@@ -273,6 +273,21 @@ layout where the host has no `[hidden]` reset, and now its whole fold cell took 
 hides `.editor-virtualized-gutter-row[hidden]`; the browser test asserts a row retired by a fold has
 no box.
 
+## Row 7, 2026-09-25: a reservation change is an event
+
+`EditorViewContributionContext.onDidChangeReservedOverlayWidth(listener)` is called with the side
+after the width reserved on it changes. The viewport raises it where the padding is written, so it
+covers all three drop paths step 1 found: a claim staked inside a layout pass (whose re-entrant
+`layout` notification is still dropped by design), a claim deferred behind a provisional paint and
+applied when the paint commits, and the saved paint's own widths. A change made by a listener
+queues behind the one being delivered; a listener that throws is logged as
+`editor.contribution.reserved_width_failed`. The find widget moved from its `MutationObserver` on
+the scroll element's `style` to the event. Tests: `editor.test.ts` (a claim made during layout
+reaches the listener while the contribution before it sees no second layout),
+`provisionalPaint.test.ts` (fails when only the editor's own `reserveOverlayWidth` announces, since
+the commit path writes the viewport directly), find `plugin.test.ts`. Platform scenario
+`editor-find` asserts the widget clears the minimap.
+
 ## Scope
 
 API design across `packages/editor` and the bundled plugins. Each section below ships on its own;
@@ -288,7 +303,7 @@ this document is the inventory and the contract, not one change.
 | `!important` theming                           | theme keys for diff palette, caret, selection, inactive selection, popup surface                                            |
 | Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`; rows a plugin can mark non-caret remain                                                   |
 | Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                                        |
-| `MutationObserver` on `style`                  | `onDidChangeReservedOverlayWidth(side)` that is not dropped when re-entrant                                                 |
+| `MutationObserver` on `style`                  | done: `onDidChangeReservedOverlayWidth(side)`, raised by the viewport on every change                                       |
 | Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                                              |
 | `pointer-events: auto`                         | done: `interactive` on a gutter contribution; the merge-conflict lens needed no flag                                        |
 | Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                                       |

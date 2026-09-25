@@ -12,6 +12,8 @@ export class ScrollViewport {
   // CSS serializes fractional sizes with less precision than ResizeObserver reports.
   private viewportWidth = -1
   private viewportHeight = -1
+  /** Every reservation change passes through here, including the provisional paint's. */
+  public onReservedOverlayWidthChange: ((side: 'left' | 'right') => void) | null = null
 
   public constructor(private readonly scrollElement: HTMLDivElement) {
     const document = scrollElement.ownerDocument
@@ -38,6 +40,7 @@ export class ScrollViewport {
 
     this.scrollElement.style[property] = value
     this.synchronizeOrigin()
+    this.onReservedOverlayWidthChange?.(side)
     return true
   }
 

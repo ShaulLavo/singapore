@@ -609,8 +609,13 @@ export type EditorViewContributionContext = {
   reserveOverlayWidth(side: EditorOverlaySide, width: number): void
   // Width already claimed on that edge by other contributions, so an overlay
   // that anchors itself to the edge can step clear of them instead of covering
-  // them. Changes are announced as a 'layout' update.
+  // them.
   getReservedOverlayWidth(side: EditorOverlaySide): number
+  /**
+   * Called after the width reserved on a side changes, from any cause: a contribution's claim made
+   * during layout, or a restored or committed provisional paint. Never dropped or coalesced away.
+   */
+  onDidChangeReservedOverlayWidth(listener: (side: EditorOverlaySide) => void): EditorDisposable
   rowAtPoint(clientX: number, clientY: number): EditorPointHit | null
   markerAtPoint(clientX: number, clientY: number): EditorMarkerHit | null
   textOffsetFromPoint(clientX: number, clientY: number): number | null
