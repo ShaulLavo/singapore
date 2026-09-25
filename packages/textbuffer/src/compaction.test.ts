@@ -14,13 +14,28 @@ import { validatePieceTreeInvariants } from './inspection'
 import type {
   PieceTableEdit,
   PieceTableSnapshot,
+  PieceTableReverseSplitNode,
   PieceTreeNode,
   RealAnchor,
 } from './pieceTableTypes'
 import { createNode } from './node'
-import { buildReverseIndex } from './reverseIndex'
+import { buildReverseIndex, reverseIndexSlot } from './reverseIndex'
 import { createSnapshot } from './snapshot'
 import { flattenPieces } from './tree'
+
+// Setup leaves garbage for V8 to collect; guard the forbidden traversal directly.
+function guardFragmentEntryReads(slot: PieceTableReverseSplitNode, buffer: number): (() => void)[] {
+  return (['start', 'order', 'left', 'right'] as const).map((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(slot, key)!
+    Object.defineProperty(slot, key, {
+      configurable: true,
+      get() {
+        throw new Error(`compaction read unchanged buffer ${buffer}.${key}`)
+      },
+    })
+    return () => Object.defineProperty(slot, key, descriptor)
+  })
+}
 
 const randomSource = (seed: number) => {
   let state = seed >>> 0
@@ -290,16 +305,19 @@ describe('work proportional to the tree, not the history', () => {
       snapshot = applyBatchToPieceTable(snapshot, holes)
     }
     for (let cycle = 0; cycle < 50; cycle++) snapshot = churn(snapshot, 3, `churn ${cycle}`)
-    const job = compactTombstones(snapshot)
-    let longest = 0
-    for (let done = false; !done; ) {
-      const start = cpuMs()
-      const step = job.next()
-      longest = Math.max(longest, cpuMs() - start)
-      done = step.done === true
-      if (done) expect(step.value.runs).toBe(1)
+    const restores: (() => void)[] = []
+    for (let buffer = 0; buffer < 64; buffer++) {
+      const slot = reverseIndexSlot(snapshot.reverseIndex, buffer)
+      expect(slot).toBeTypeOf('object')
+      if (!slot || typeof slot === 'number') throw new Error('expected a fragmented buffer')
+      restores.push(...guardFragmentEntryReads(slot, buffer + 1))
     }
-    expect(longest).toBeLessThan(8)
+    try {
+      const result = compact(snapshot)
+      expect(result.runs).toBe(1)
+    } finally {
+      for (const restore of restores) restore()
+    }
     expectValid(snapshot)
   }, 60_000)
 })
