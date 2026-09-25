@@ -70,8 +70,12 @@ const FIND_SCOPE_STYLE = {
 
 // A match on screen stays where the reader is looking at it; one that is not lands
 // in the middle, with context on both sides rather than on the viewport's edge.
-function findReveal(match: FindRange): EditorSetSelectionOptions {
-  return { revealOffset: match.end, revealBlock: 'center-if-outside' }
+function findReveal(match: FindRange, committed = true): EditorSetSelectionOptions {
+  return {
+    ...(committed ? { jumpCause: 'find' as const } : {}),
+    revealOffset: match.end,
+    revealBlock: 'center-if-outside',
+  }
 }
 
 // Seeding stops here rather than pushing a multi-megabyte selection through the
@@ -721,19 +725,19 @@ export class EditorFindController {
     // Deliberately not escaping an empty match here: re-searching should land
     // on the match at the cursor, empty or not. Only an explicit Find
     // Next/Previous is asking to move off it.
-    this.selectMatch(this.nextMatchAt(offset, false))
+    this.selectMatch(this.nextMatchAt(offset, false), false)
   }
 
   private nextMatchAt(offset: number, escapeEmptyMatchAtOffset: boolean): FindMatch | null {
     return this.searchFrom(findNextMatchFrom, offset, { escapeEmptyMatchAtOffset })
   }
 
-  private selectMatch(match: FindMatch | null): boolean {
+  private selectMatch(match: FindMatch | null, committed = true): boolean {
     const host = this.host
     if (!match || !host) return false
 
     if (this.canPaintCurrentDocument()) this.currentMatch = match
-    host.setSelection(match.start, match.end, 'input.findNavigate', findReveal(match))
+    host.setSelection(match.start, match.end, 'input.findNavigate', findReveal(match, committed))
     if (!this.canPaintCurrentDocument()) return true
     this.updateHighlights()
     this.updateWidget()

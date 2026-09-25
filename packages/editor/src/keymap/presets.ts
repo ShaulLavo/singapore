@@ -258,6 +258,8 @@ const FIND_COMMANDS = new Set<EditorCommandId>([
 const TEXT_EDITING_COMMANDS = new Set<EditorCommandId>([
   'undo',
   'redo',
+  'jumpBack',
+  'jumpForward',
   'cursorUndo',
   'cursorRedo',
   'deleteBackward',
@@ -415,6 +417,20 @@ function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBindin
     { chord: [key('Enter', { mod: true, alt: true })], command: 'replaceAll' },
     { chord: [key('Z', { mod: true })], command: 'undo' },
     { chord: [key('Z', { mod: true, shift: true })], command: 'redo' },
+    {
+      chord: [platform === 'mac' ? key('-', { ctrl: true }) : key('ArrowLeft', { alt: true })],
+      command: 'jumpBack',
+      preventDefault: true,
+    },
+    {
+      chord: [
+        platform === 'mac'
+          ? key('-', { ctrl: true, shift: true })
+          : key('ArrowRight', { alt: true }),
+      ],
+      command: 'jumpForward',
+      preventDefault: true,
+    },
     { chord: [key('U', { mod: true })], command: 'cursorUndo' },
     { chord: [key('U', { mod: true, shift: true })], command: 'cursorRedo' },
     ...platformBindings,
@@ -616,12 +632,19 @@ function selectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[
 
 function columnSelectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   const box = { mod: true, alt: true, shift: true }
-  const horizontal = platform === 'mac' ? box : { alt: true }
+  const horizontal = (arrow: string): KeyChord =>
+    platform === 'mac' ? [key(arrow, box)] : [key('K', { mod: true }), key(arrow, { alt: true })]
   const vertical = platform === 'linux' ? { mod: true } : box
 
   return [
-    { chord: [key('ArrowLeft', horizontal)], command: 'cursorColumnSelectLeft' },
-    { chord: [key('ArrowRight', horizontal)], command: 'cursorColumnSelectRight' },
+    {
+      chord: horizontal('ArrowLeft'),
+      command: 'cursorColumnSelectLeft',
+    },
+    {
+      chord: horizontal('ArrowRight'),
+      command: 'cursorColumnSelectRight',
+    },
     { chord: [key('ArrowUp', vertical)], command: 'cursorColumnSelectUp' },
     { chord: [key('ArrowDown', vertical)], command: 'cursorColumnSelectDown' },
     { chord: [key('PageUp', box)], command: 'cursorColumnSelectPageUp' },

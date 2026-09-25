@@ -11,6 +11,7 @@ import { isEditorInlineSuggestCommand, type EditorInlineSuggestCommandId } from 
 export type EditorCommandRouterHandlers = {
   history(command: 'undo' | 'redo', context: EditorCommandContext): boolean
   cursorHistory(command: 'undo' | 'redo', context: EditorCommandContext): boolean
+  jumpHistory(command: 'back' | 'forward', context: EditorCommandContext): boolean
   delete(direction: 'backward' | 'forward', context: EditorCommandContext): boolean
   indent(direction: 'indent' | 'outdent', context: EditorCommandContext): boolean
   editAction(
@@ -51,6 +52,8 @@ export class EditorCommandRouter {
 
     if (command === 'undo') return this.handlers.history('undo', context)
     if (command === 'redo') return this.handlers.history('redo', context)
+    if (command === 'jumpBack') return this.handlers.jumpHistory('back', context)
+    if (command === 'jumpForward') return this.handlers.jumpHistory('forward', context)
     if (command === 'cursorUndo') return this.handlers.cursorHistory('undo', context)
     if (command === 'cursorRedo') return this.handlers.cursorHistory('redo', context)
     if (command === 'selectAll') return this.handlers.selectAll(context)
