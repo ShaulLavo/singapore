@@ -2079,6 +2079,47 @@ describe('Editor', () => {
       expect(events).toEqual(['viewport', 'layout', 'content', 'layout'])
     })
 
+    it('announces a reservation staked during a layout pass to width listeners', () => {
+      const layouts: number[] = []
+      const heard: number[] = []
+      let requester: EditorViewContributionContext | null = null
+      const plugin: EditorPlugin = {
+        activate: (context) => {
+          context.registerViewContribution({
+            createContribution: (view) => {
+              requester = view
+              view.onDidChangeReservedOverlayWidth((side) => {
+                heard.push(view.getReservedOverlayWidth(side))
+              })
+              return {
+                update: (_snapshot, kind) => {
+                  if (kind === 'layout') layouts.push(view.getReservedOverlayWidth('right'))
+                },
+                dispose: () => undefined,
+              }
+            },
+          })
+          context.registerViewContribution({
+            createContribution: (view) => ({
+              update: (_snapshot, kind) => {
+                if (kind === 'layout') view.reserveOverlayWidth('right', 64)
+              },
+              dispose: () => undefined,
+            }),
+          })
+        },
+      }
+      editor.dispose()
+      editor = createVisibleEditor(container, { plugins: [plugin] })
+      layouts.length = 0
+
+      requireViewContributionContext(requester).requestViewUpdate()
+
+      // The layout pass that staked the claim is not re-run for the contribution before it.
+      expect(layouts).toEqual([0])
+      expect(heard).toEqual([64])
+    })
+
     it('disposes view contributions with the editor', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()

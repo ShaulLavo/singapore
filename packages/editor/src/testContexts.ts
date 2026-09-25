@@ -105,6 +105,7 @@ export function createTestViewContributionContext(
     setScrollTop: () => undefined,
     reserveOverlayWidth: () => undefined,
     getReservedOverlayWidth: () => 0,
+    onDidChangeReservedOverlayWidth: () => noDisposal,
     rowAtPoint: () => null,
     markerAtPoint: () => null,
     textOffsetFromPoint: () => null,

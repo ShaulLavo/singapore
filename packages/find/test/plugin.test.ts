@@ -5,6 +5,7 @@ import type {
   EditorCapabilityContributionProvider,
   EditorCommandContributionProvider,
   EditorEditContributionProvider,
+  EditorOverlaySide,
   EditorPluginContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
@@ -159,9 +160,8 @@ describe('createEditorFindPlugin', () => {
     contribution?.dispose()
   })
 
-  // A reservation staked mid-layout is never announced to the contributions
-  // that already ran in that pass, so no update call follows it here.
-  it('follows a reservation the host never announces', async () => {
+  // No update call follows the claim here: the host announces it only through the width event.
+  it('follows a reservation announced outside any update', () => {
     const providers = createEditorFindContributionProviders()
     const context = viewContext()
     const viewContribution = providers.view.createContribution(context)
@@ -170,51 +170,22 @@ describe('createEditorFindPlugin', () => {
 
     context.reserveOverlayWidth('right', 64)
 
-    await vi.waitFor(() => {
-      expect(findWidgetElement(context).style.marginRight).toBe('64px')
-    })
-
+    expect(findWidgetElement(context).style.marginRight).toBe('64px')
     viewContribution?.dispose()
   })
 
-  it('releases the scroll-surface watcher on dispose', () => {
-    const observers = trackMutationObservers()
-    try {
-      const providers = createEditorFindContributionProviders()
-      const viewContribution = providers.view.createContribution(viewContext())
-      openFindWidget(providers)
-      expect(observers.connected()).toBe(1)
+  it('releases its reservation listener on dispose', () => {
+    const providers = createEditorFindContributionProviders()
+    const context = viewContext()
+    const viewContribution = providers.view.createContribution(context)
+    openFindWidget(providers)
+    expect(context.widthListeners.size).toBe(1)
 
-      viewContribution?.dispose()
+    viewContribution?.dispose()
 
-      expect(observers.connected()).toBe(0)
-    } finally {
-      observers.restore()
-    }
+    expect(context.widthListeners.size).toBe(0)
   })
 })
-
-function trackMutationObservers(): { connected(): number; restore(): void } {
-  const original = globalThis.MutationObserver
-  let connected = 0
-  globalThis.MutationObserver = class extends original {
-    public observe(target: Node, options?: MutationObserverInit): void {
-      connected += 1
-      super.observe(target, options)
-    }
-
-    public disconnect(): void {
-      connected -= 1
-      super.disconnect()
-    }
-  }
-  return {
-    connected: () => connected,
-    restore: () => {
-      globalThis.MutationObserver = original
-    },
-  }
-}
 
 function openFindWidget(providers: EditorFindContributionProviders): void {
   const features: { openFind(): boolean }[] = []
@@ -263,11 +234,14 @@ function pluginContext(): EditorPluginContext {
   })
 }
 
-function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
+function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext & {
+  readonly widthListeners: Set<(side: EditorOverlaySide) => void>
+} {
   const container = document.createElement('div')
   const scrollElement = document.createElement('div')
   container.appendChild(scrollElement)
-  return createTestViewContributionContext({
+  const widthListeners = new Set<(side: EditorOverlaySide) => void>()
+  const context = createTestViewContributionContext({
     container,
     scrollElement,
     contentElement: scrollElement,
@@ -276,11 +250,17 @@ function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
     reserveOverlayWidth: vi.fn<EditorViewContributionContext['reserveOverlayWidth']>(
       (side, width) => {
         scrollElement.style[overlayPadding(side)] = width > 0 ? `${Math.ceil(width)}px` : ''
+        for (const listener of [...widthListeners]) listener(side)
       },
     ),
     getReservedOverlayWidth: (side) =>
       Number.parseFloat(scrollElement.style[overlayPadding(side)]) || 0,
+    onDidChangeReservedOverlayWidth: (listener) => {
+      widthListeners.add(listener)
+      return { dispose: () => widthListeners.delete(listener) }
+    },
   })
+  return Object.assign(context, { widthListeners })
 }
 
 function snapshot(): EditorViewSnapshot {

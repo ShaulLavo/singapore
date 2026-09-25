@@ -249,7 +249,11 @@ const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 
 type SyntaxScrollDirection = -1 | 0 | 1
 type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
-type EditorContributionFailurePhase = EditorViewContributionFailurePhase | 'factory' | 'press'
+type EditorContributionFailurePhase =
+  | EditorViewContributionFailurePhase
+  | 'factory'
+  | 'press'
+  | 'reserved-width'
 
 type TrackedAnchorRange = {
   readonly start: PieceTableAnchor
@@ -694,6 +698,7 @@ export class Editor {
       keymap: options.keymap,
       dispatch: (command, context) => this.dispatchCommand(command, context),
     })
+    this.view.onReservedOverlayWidthChange((side) => this.notifyReservedWidth(side))
     this.viewContributions = new EditorViewContributionController(
       this.createInitialViewContributions(this.pluginHost.getViewContributionProviders()),
       () => this.createViewSnapshot(),
@@ -3019,6 +3024,7 @@ export class Editor {
         this.applyRequestedSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
       getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
+      onDidChangeReservedOverlayWidth: (listener) => this.addReservedWidthListener(listener),
       setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
       rowAtPoint: (clientX, clientY) => this.rowAtPoint(clientX, clientY),
       markerAtPoint: (clientX, clientY) => this.markerAtPoint(clientX, clientY),
@@ -3441,6 +3447,43 @@ export class Editor {
 
   private notifyTyped(text: string): void {
     for (const listener of [...this.typedTextListeners]) listener(text)
+  }
+
+  private readonly reservedWidthListeners = new Set<(side: EditorOverlaySide) => void>()
+  private readonly pendingReservedWidthSides: EditorOverlaySide[] = []
+  private notifyingReservedWidth = false
+
+  private addReservedWidthListener(listener: (side: EditorOverlaySide) => void): EditorDisposable {
+    this.reservedWidthListeners.add(listener)
+    return this.claimForContribution(
+      disposableOnce(() => this.reservedWidthListeners.delete(listener)),
+    )
+  }
+
+  // A change made by a listener queues behind the one being delivered; nothing is dropped.
+  private notifyReservedWidth(side: EditorOverlaySide): void {
+    this.pendingReservedWidthSides.push(side)
+    if (this.notifyingReservedWidth) return
+
+    this.notifyingReservedWidth = true
+    try {
+      for (let next = this.pendingReservedWidthSides.shift(); next; ) {
+        this.deliverReservedWidth(next)
+        next = this.pendingReservedWidthSides.shift()
+      }
+    } finally {
+      this.notifyingReservedWidth = false
+    }
+  }
+
+  private deliverReservedWidth(side: EditorOverlaySide): void {
+    for (const listener of [...this.reservedWidthListeners]) {
+      try {
+        listener(side)
+      } catch (error) {
+        this.logContributionFailure('view', 'reserved-width', error)
+      }
+    }
   }
 
   private readonly pressParticipants = new Set<EditorPressParticipant>()
@@ -4668,6 +4711,7 @@ function editorContributionFailureAction(phase: EditorContributionFailurePhase):
   if (phase === 'factory') return 'editor.contribution.factory_failed'
   if (phase === 'dispose') return 'editor.contribution.dispose_failed'
   if (phase === 'press') return 'editor.contribution.press_failed'
+  if (phase === 'reserved-width') return 'editor.contribution.reserved_width_failed'
   if (phase === 'capture-visible-paint') return 'editor.contribution.capture_visible_paint_failed'
   return 'editor.contribution.update_failed'
 }
