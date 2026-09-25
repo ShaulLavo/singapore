@@ -8,6 +8,8 @@
 - Dependencies: None
 - Inspected baseline: Editor `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, Platform `c8e05123d8f89f74bdca0e73cd43bb060c6f4e67`.
 
+Decided 2026-09-25: owner — unparked. Rebase the plan on the [E050 host contracts](../docs/architecture/e050-host-obligations.md) first, then execute. Platform `ed96e9f16` hand-copied command metadata again, the duplication this plan removes.
+
 ## Outcome
 
 Give every Editor command one authoritative declaration for its ID, human name, description,

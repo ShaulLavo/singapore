@@ -8,6 +8,8 @@
 - Dependencies: [E001](../examples/stress/README.md), [E007](../docs/performance/e007-consumer-copies.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
+Decided 2026-09-25: owner — this plan and Platform [Plan 112](../../platform/plans/112-large-file-ceiling.md) run as one lane, 112 first. 112's benchmark sets the ceiling this plan's scope and exit are written against.
+
 ## Outcome
 
 Determine whether a file larger than the comfortable in-memory editing limit can open, scroll,

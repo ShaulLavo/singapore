@@ -8,6 +8,8 @@
 - Dependencies: None
 - Inspected baseline: Editor `9abb944f3a2b8d6516953fdec75e8df5e1a94811`.
 
+Decided 2026-09-25: owner — unparked. Rebase the plan on the [E050 host contracts](../docs/architecture/e050-host-obligations.md) first, then execute. Platform Plan 122 Phase 0 needs this design pass.
+
 ## Outcome
 
 Publish an accurate extension inventory that tells a plugin author which behavior they can

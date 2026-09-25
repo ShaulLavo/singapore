@@ -110,6 +110,18 @@ references, E030 moved to Platform and E055 was added, and E055 completed the sa
 `backlog.json` on 2026-09-25: 35 entries are complete (the earlier count of 33 missed E020 and
 E050), 1 moved to Platform, and 19 execution plans remain.
 
+## Owner decisions, 2026-09-25
+
+- Decided 2026-09-25: owner — [E026](e026-command-metadata.md) and [E027](e027-extension-hooks.md)
+  are unparked. Rebase both on the [E050 host contracts](../docs/architecture/e050-host-obligations.md)
+  first.
+- Decided 2026-09-25: owner — Platform [Plan 112](../../platform/plans/112-large-file-ceiling.md)
+  runs before [E015](e015-massive-file-loading.md), as one lane.
+- Decided 2026-09-25: owner — open PR #20 (`docs/e047-platform-agnostic-core`, "E047
+  platform-agnostic core") is renumbered to **E056** and parked. E047 is already the completed
+  point-query plan. The branch conflicts with `main` and its docs were not edited; renumber its plan
+  file, backlog entry and index row to E056 when it is next rebased.
+
 ## How to read the plans
 
 IDs are stable references, not a serial execution order. **Needs** lists hard prerequisites.
