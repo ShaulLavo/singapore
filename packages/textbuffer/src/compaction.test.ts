@@ -160,27 +160,36 @@ describe('where text lands', () => {
 
 describe('compaction between edits', () => {
   test('order normalization next to stand-ins keeps their entries', () => {
-    const build = () => {
+    // Anchors inside each churned insert, taken before it is deleted, can only
+    // resolve through the entries that lead to stand-ins.
+    const anchors: RealAnchor[] = []
+    const build = (hold: boolean) => {
       let snapshot = createPieceTableSnapshot('ab')
-      for (let cycle = 0; cycle < 30; cycle++) snapshot = churn(snapshot, 1, `deleted ${cycle}`)
+      for (let cycle = 0; cycle < 30; cycle++) {
+        const text = `deleted ${cycle}`
+        snapshot = insertIntoPieceTable(snapshot, 1, text)
+        if (hold) anchors.push(anchorAt(snapshot, 4, 'left'), anchorAt(snapshot, 4, 'right'))
+        snapshot = deleteFromPieceTable(snapshot, 1, text.length)
+      }
       return snapshot
     }
-    let control = build()
-    let candidate = build()
-    const anchors = [0, 1, 2].flatMap((at) => [
-      anchorAt(control, at, 'left'),
-      anchorAt(control, at, 'right'),
-    ])
+    let control = build(true)
+    let candidate = build(false)
     compact(candidate)
     // Inserting at one spot halves the same order gap until none is left.
+    let relabels = 0
     for (let edit = 0; edit < 200; edit++) {
       control = insertIntoPieceTable(control, 1, `${edit % 10}`)
+      const before = candidate.root
       candidate = insertIntoPieceTable(candidate, 1, `${edit % 10}`)
-      if (edit % 50 === 49) compact(candidate)
-      anchors.push(anchorAt(control, 1 + (edit % 3), edit % 2 ? 'left' : 'right'))
+      if (flattenPieces(candidate.root, []).every((piece) => piece.order % 1024 === 0)) relabels++
+      if (before && edit % 50 === 49) compact(candidate)
     }
+    expect(relabels).toBeGreaterThan(0)
     for (const anchor of anchors) {
-      expect(resolveAnchor(candidate, anchor)).toEqual(resolveAnchor(control, anchor))
+      const resolved = resolveAnchor(candidate, anchor)
+      expect(resolved.liveness).toBe('deleted')
+      expect(resolved).toEqual(resolveAnchor(control, anchor))
     }
     expectValid(candidate)
   })
