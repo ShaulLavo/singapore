@@ -849,7 +849,7 @@ describe('createTypeScriptLspPlugin', () => {
     expect(getDiagnosticActions).toHaveBeenCalledWith(
       expect.objectContaining({
         documentUri: 'file:///src/index.ts',
-        textVersion: 0,
+        textVersion: 1,
         diagnostic: expect.objectContaining({ message: 'bad assignment' }),
       }),
     )
