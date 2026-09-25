@@ -315,9 +315,8 @@
     },
     {
       "id": "E020",
-      "file": "e020-cursor-jump-history.md",
       "title": "Navigate cursor jump history",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P2",
@@ -325,13 +324,14 @@
       "dependsOn": [],
       "topics": [
         "Cursor position navigation history (alt+left / alt+right)"
-      ]
+      ],
+      "reference": "../docs/editing/jump-history.md"
     },
     {
       "id": "E021",
       "file": "e021-styled-clipboard.md",
       "title": "Complete styled copy for multiple selections and portable colors",
-      "status": "Proposed",
+      "status": "In progress",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P2",
@@ -813,9 +813,8 @@
     },
     {
       "id": "E050",
-      "file": "e050-host-obligations-into-api.md",
       "title": "Things every host must remember become things the API does",
-      "status": "In progress",
+      "status": "Completed",
       "owner": "Cross-repo",
       "kind": "Design",
       "priority": "P2",
@@ -826,7 +825,8 @@
       "topics": [
         "Workaround audit: ask the owner, do not model it"
       ],
-      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc"
+      "baseline": "aeba6783b978193de9d2ba0fd5874f357df68edc",
+      "reference": "../docs/architecture/e050-host-obligations.md"
     },
     {
       "id": "E051",

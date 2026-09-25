@@ -186,3 +186,5 @@ export type {
   EditorVisibleSnapshot,
   EditorVisibleSnapshotJSON,
 } from './plugins'
+
+export type { JumpCause } from './editor/jumpHistory'
