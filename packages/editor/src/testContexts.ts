@@ -103,7 +103,7 @@ export function createTestViewContributionContext(
     announce: () => undefined,
     setSelection: () => undefined,
     setSelections: () => undefined,
-    setScrollTop: () => undefined,
+    setScrollPosition: () => undefined,
     reserveOverlayWidth: () => undefined,
     getReservedOverlayWidth: () => 0,
     onDidChangeReservedOverlayWidth: () => noDisposal,

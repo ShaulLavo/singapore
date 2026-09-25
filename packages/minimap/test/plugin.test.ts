@@ -464,13 +464,13 @@ describe('createMinimapPlugin', () => {
       dispatchPointer(slider!, 'pointerdown', { clientY: 10 })
       dispatchPointer(slider!.ownerDocument, 'pointermove', { clientY: 50 })
 
-      expect(testContext.setScrollTop).not.toHaveBeenCalled()
+      expect(testContext.setScrollPosition).not.toHaveBeenCalled()
       expect(testContext.scrollElement.scrollTop).toBe(0)
 
       animationFrames.flush()
 
       expect(testContext.revealLine).toHaveBeenLastCalledWith(50)
-      expect(testContext.setScrollTop).not.toHaveBeenCalled()
+      expect(testContext.setScrollPosition).not.toHaveBeenCalled()
 
       dispatchPointer(slider!.ownerDocument, 'pointermove', { clientY: 60 })
       dispatchPointer(slider!.ownerDocument, 'pointerup', { clientY: 60 })
@@ -730,7 +730,7 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
     getSnapshot: () => viewSnapshot,
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
-    setScrollTop: vi.fn(),
+    setScrollPosition: vi.fn(),
   })
 }
 

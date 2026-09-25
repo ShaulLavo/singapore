@@ -1668,6 +1668,15 @@ export class Editor {
     return this.applyCursorHistory('redo')
   }
 
+  /**
+   * Called with the position after it changes, from a gesture, a programmatic move or a clamp. The
+   * virtualizer has already folded the scroll in, so the position is current, and nothing throttles it.
+   */
+  onDidScroll(listener: (position: Required<EditorScrollPosition>) => void): EditorDisposable {
+    this.scrollListeners.add(listener)
+    return disposableOnce(() => this.scrollListeners.delete(listener))
+  }
+
   getScrollPosition(): Required<EditorScrollPosition> {
     const provisional = this.view.provisionalScrollPosition
     if (provisional) return provisional
@@ -2189,14 +2198,16 @@ export class Editor {
     )
     if (scrollTop === viewState.scrollTop && scrollLeft === viewState.scrollLeft) return
 
-    this.el.scrollTop = scrollTop
-    this.el.scrollLeft = scrollLeft
+    // Both axes first: the element's scrollTop setter is the virtualizer's, and on its own it would
+    // publish a position with the old scrollLeft to anything following the scroll.
     this.view.setScrollMetrics(
       scrollTop,
       viewState.viewportHeight,
       viewState.viewportWidth,
       scrollLeft,
     )
+    this.el.scrollTop = scrollTop
+    this.el.scrollLeft = scrollLeft
   }
 
   private currentSessionDocumentId(): string {
@@ -3028,7 +3039,7 @@ export class Editor {
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
       getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
       onDidChangeReservedOverlayWidth: (listener) => this.addReservedWidthListener(listener),
-      setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
+      setScrollPosition: (position) => this.applyScrollPosition(position),
       rowAtPoint: (clientX, clientY) => this.rowAtPoint(clientX, clientY),
       markerAtPoint: (clientX, clientY) => this.markerAtPoint(clientX, clientY),
       textOffsetFromPoint: (clientX, clientY) =>
@@ -3452,6 +3463,34 @@ export class Editor {
     for (const listener of [...this.typedTextListeners]) listener(text)
   }
 
+  private readonly scrollListeners = new Set<(position: Required<EditorScrollPosition>) => void>()
+  private reportedScroll: Required<EditorScrollPosition> | null = null
+
+  private reportScroll(): void {
+    if (this.scrollListeners.size === 0) return
+    const { scrollTop: top, scrollLeft: left } = this.view.getState()
+    const reported = this.reportedScroll
+    if (reported?.top === top && reported.left === left) return
+
+    this.reportedScroll = { top, left }
+    for (const listener of [...this.scrollListeners]) this.deliverScroll(listener, { top, left })
+  }
+
+  private deliverScroll(
+    listener: (position: Required<EditorScrollPosition>) => void,
+    position: Required<EditorScrollPosition>,
+  ): void {
+    try {
+      listener(position)
+    } catch (error) {
+      this.log({
+        action: 'editor.scroll_listener_failed',
+        level: 'error',
+        error: editorLogError(error),
+      })
+    }
+  }
+
   private readonly reservedWidthListeners = new Set<(side: EditorOverlaySide) => void>()
   private readonly pendingReservedWidthSides: EditorOverlaySide[] = []
   private notifyingReservedWidth = false
@@ -3659,13 +3698,6 @@ export class Editor {
     this.notifyViewContributions('layout', null)
   }
 
-  private setScrollTop(scrollTop: number): void {
-    this.applyScrollPosition({
-      top: scrollTop,
-      left: this.view.getState().scrollLeft,
-    })
-  }
-
   rowAtPoint(clientX: number, clientY: number): EditorPointHit | null {
     return this.view.rowAtPoint(clientX, clientY)
   }
@@ -3681,8 +3713,9 @@ export class Editor {
   private readonly readViewport = (): EditorViewportSnapshot => this.view.getViewport()
 
   private readonly handleViewportScroll = (): void => {
-    if (!this.viewContributions || this.committingPresentation || this.view.isProvisional) return
-    this.viewContributions.notifyViewport(this.readViewport)
+    if (this.committingPresentation || this.view.isProvisional) return
+    this.reportScroll()
+    this.viewContributions?.notifyViewport(this.readViewport)
   }
 
   private readonly handleViewportChange = (): void => {

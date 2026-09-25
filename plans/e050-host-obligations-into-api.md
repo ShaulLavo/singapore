@@ -296,6 +296,22 @@ reaches the listener while the contribution before it sees no second layout),
 the commit path writes the viewport directly), find `plugin.test.ts`. Platform scenario
 `editor-find` asserts the widget clears the minimap.
 
+## Row 8, 2026-09-25: a host hears the scroll it is looking at
+
+`Editor.onDidScroll(listener)` is called with `{ top, left }` after the position changes, from a
+gesture, a programmatic move or a clamp. It is raised from the virtualizer's scroll handler, which
+runs after the fold, so the position is current and nothing throttles it. `applyScrollPosition`
+now hands the view both axes before it writes the element: the element's `scrollTop` setter is the
+virtualizer's, and on its own it published a vertical-only move with the old `scrollLeft`, which a
+mirror would copy. The contribution context's vertical-only `setScrollTop` became
+`setScrollPosition({ top?, left? })`. Platform deleted `diff-scroll-bridge.ts` (a raw `scroll`
+listener plus a frame of delay) and subscribes; because the mirrored pane reports its move from
+inside `setScrollPosition`, `use-diff-panes.ts` recognises that report by a flag set around the
+write instead of matching positions. Tests: `editor.test.ts` (one report per new position, none
+after dispose; failed with a `{ top: 300, left: 0 }` intermediate before the reorder), Platform
+`use-diff-panes.test.tsx` (the double now reports synchronously) and the real-wheel browser test
+`diff-split-scroll`.
+
 ## Scope
 
 API design across `packages/editor` and the bundled plugins. Each section below ships on its own;
@@ -312,7 +328,7 @@ this document is the inventory and the contract, not one change.
 | Listener order plus `stopImmediatePropagation` | done: `registerPressParticipant`, and `registerNonCaretRows` for the arrow keys                                             |
 | Capture-phase `keydown`                        | done: `registerKeymapContextKey`, a `suggest` pack first in priority                                                        |
 | `MutationObserver` on `style`                  | done: `onDidChangeReservedOverlayWidth(side)`, raised by the viewport on every change                                       |
-| Raw `scroll` listener                          | `onDidScroll` fired after the virtualizer's fold, and a two-axis scroll setter                                              |
+| Raw `scroll` listener                          | done: `Editor.onDidScroll` after the fold; the context's `setScrollPosition` takes both axes                                |
 | `pointer-events: auto`                         | done: `interactive` on a gutter contribution; the merge-conflict lens needed no flag                                        |
 | Row elements by selector                       | a row presentation handle that survives recycling, or a reveal mode owned by the view                                       |
 | `TOKENS_WAIT_MS`                               | done: `idle` before a document, so every status but `idle` and `loading` is settled                                         |
