@@ -2140,12 +2140,6 @@
         },
         {
           "kind": "unknown",
-          "name": "forEachPieceTableTextChunk",
-          "source": "packages/editor/src/public/document.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "unknown",
           "name": "getDocumentMutationLeaseState",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -2352,6 +2346,12 @@
           "kind": "unknown",
           "name": "SERIALIZED_EDITOR_HISTORY_VERSION",
           "source": "packages/editor/src/historySerialization.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "streamPieceTableTextChunks",
+          "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -3234,12 +3234,6 @@
           "kind": "unknown",
           "name": "documentTextRoundTripStatus",
           "source": "@singapore-editor/textbuffer/internal/lineEndings",
-          "via": "packages/editor/src/public/document.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "forEachPieceTableTextChunk",
-          "source": "@singapore-editor/textbuffer",
           "via": "packages/editor/src/public/document.ts"
         },
         {

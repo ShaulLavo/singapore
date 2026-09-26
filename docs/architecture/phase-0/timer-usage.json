@@ -199,7 +199,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 1607,
+      "line": 1611,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -207,7 +207,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 1616,
+      "line": 1620,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -215,7 +215,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1528,
+      "line": 1549,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -335,7 +335,7 @@
       "file": "packages/plugin-ui/src/tooltip.ts",
       "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:89686cb98f",
       "justification": "A pointer grace period before the hover goes away, cancelled by re-entry; it schedules no editor work.",
-      "line": 184,
+      "line": 187,
       "snippet": "hideTimer = setTimeout(() => {"
     },
     {
@@ -343,7 +343,7 @@
       "file": "packages/plugin-ui/src/tooltip.ts",
       "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:8ff275af18",
       "justification": "Resets the copy button's label after the user has had time to read it; DOM only.",
-      "line": 611,
+      "line": 617,
       "snippet": "setTimeout(() => {"
     },
     {
@@ -375,7 +375,7 @@
       "file": "packages/typescript-lsp/src/worker/session.ts",
       "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:334b7e5e6a",
       "justification": "A request timeout inside the worker: it only rejects the pending request, and the answer clears it.",
-      "line": 835,
+      "line": 859,
       "snippet": "const timer = setTimeout(() => {"
     },
     {
@@ -383,7 +383,7 @@
       "file": "packages/typescript-lsp/src/worker/session.ts",
       "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:572f43e51e",
       "justification": "Coalesces diagnostic refresh requests inside the worker; one handle, cleared before every reschedule.",
-      "line": 614,
+      "line": 632,
       "snippet": "refreshTimer = setTimeout(() => {"
     },
     {
@@ -391,7 +391,7 @@
       "file": "packages/typescript-lsp/src/worker/session.ts",
       "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:6a06183b86",
       "justification": "Debounces diagnostics per document inside the worker, off the main thread; the handle is kept per URI and cleared on the next edit or close.",
-      "line": 578,
+      "line": 596,
       "snippet": "const timer = setTimeout(() => {"
     },
     {
@@ -399,7 +399,7 @@
       "file": "packages/typescript-lsp/src/worker/session.ts",
       "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:f09d0742f8",
       "justification": "Only resolves an awaited promise inside the worker; nothing renders from it.",
-      "line": 989,
+      "line": 1020,
       "snippet": "return new Promise((resolve) => setTimeout(resolve, milliseconds))"
     }
   ]
