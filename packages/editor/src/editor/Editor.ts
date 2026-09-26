@@ -181,7 +181,7 @@ import {
   type EditorTrackedPoint,
   type EditorTrackedRanges,
   type EditorViewContribution,
-  type EditorViewContributionContext,
+  type EditorInternalViewContributionContext,
   type EditorViewContributionProvider,
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
@@ -3159,9 +3159,16 @@ export class Editor {
   private createViewContributionContext(
     container: HTMLElement,
     owner: () => EditorViewContribution | null,
-  ): EditorViewContributionContext {
+  ): EditorInternalViewContributionContext {
     const claims = this.currentClaims()
     return {
+      unstableEditor: this,
+      getSelections: () => this.inputSelection.resolveViewSelections(),
+      applyEdits: (edits, timingName, selection) =>
+        this.inputSelection.applyFindEdits(edits, timingName, selection),
+      registerCommand: (command, handler) =>
+        this.claimedBy(claims, () => this.registerCommandHandler(command, handler)),
+      refreshInputs: () => this.viewContributions?.refreshInputs(),
       container,
       scrollElement: this.el,
       contentElement: this.view.contentElement,
