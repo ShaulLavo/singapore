@@ -907,6 +907,21 @@
         "Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)"
       ],
       "baseline": "c23cd306c22c107741a4c27ee5afc39b8b99ad59"
+    },
+    {
+      "id": "E058",
+      "file": "e058-spellcheck.md",
+      "title": "Spellcheck for text the editor paints itself",
+      "status": "Proposed",
+      "owner": "Cross-repo",
+      "kind": "Implementation",
+      "priority": "P2",
+      "effort": "L",
+      "dependsOn": [],
+      "topics": [
+        "Spellcheck for painted text"
+      ],
+      "baseline": "74e76bef2af674ad80b3c13024fa47f692e2bb7c"
     }
   ]
 }

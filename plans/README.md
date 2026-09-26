@@ -1,6 +1,6 @@
 # Editor backlog
 
-55 stable entries cover all 28 topics in the original [wishlist](../TODO.md).
+56 stable entries cover all 29 topics in the original [wishlist](../TODO.md).
 Executable plans include source evidence, scope, delivery steps, and acceptance checks.
 Completed entries link to permanent implementation references and measured results.
 The original inspected Editor baseline is `9abb944f3a2b8d6516953fdec75e8df5e1a94811` (2026-09-05).
@@ -13,10 +13,11 @@ E041 was inspected at `b6a265a786b08c61318a3e02b666f17cb7ef50fc` (2026-09-16), a
 E052 was inspected at `40d841583659d2889fc03f61979e607f56df4c86` (2026-09-24), after E036 landed.
 E053 was inspected at `206bc32eca5fd02a2d4573952312367c96500192` (2026-09-24).
 E054 was inspected at `ed5b2e20b9cdd3492ab33ae4e9676a133817b79d` (2026-09-25).
+E058 was inspected at `74e76bef2af674ad80b3c13024fa47f692e2bb7c` (2026-09-26).
 Recheck source before execution; these dates record planning, not feature completion.
 
-There are **45 Editor-owned entries, 9 requiring both repositories, and 1 Platform-owned entry**.
-By deliverable, there are **41 implementation entries, 11 research entries, and 3 design entries**.
+There are **45 Editor-owned entries, 10 requiring both repositories, and 1 Platform-owned entry**.
+By deliverable, there are **42 implementation entries, 11 research entries, and 3 design entries**.
 Editor ownership describes where the work lands; dependencies can still include shared work.
 [Platform's roadmap](../../platform/PLAN.md) remains the execution scheduler.
 [E002](../docs/performance/input-latency.md) is complete, with a verified local latency gate.
@@ -311,6 +312,15 @@ Platform's halves are [plans 130 to 133](../../platform/plans/README.md).
 | [E050 — Things every host must remember become things the API does](../docs/architecture/e050-host-obligations.md)                | Design         | Cross-repo | P2       | L    | [E047](../docs/display/e047-point-queries.md)          |
 | [E051 — Every fast path is pinned to the slow path it stands in for](../docs/display/e051-fast-path-equivalence.md)               | Implementation | Editor     | P1       | M    | —                                                      |
 
+## Prose in the editor
+
+Added 2026-09-26. The chat composer keeps Lexical until E058 lands
+([Platform Plan 171](../../platform/plans/171-composer-on-our-editor.md)).
+
+| Plan                                                                      | Kind           | Owner      | Priority | Size | Needs |
+| ------------------------------------------------------------------------- | -------------- | ---------- | -------- | ---- | ----- |
+| [E058 — Spellcheck for text the editor paints itself](e058-spellcheck.md) | Implementation | Cross-repo | P2       | L    | —     |
+
 ## Original wishlist coverage
 
 Every original second-level heading appears below. A topic can map to several independently
@@ -346,6 +356,7 @@ verifiable plans. This table preserves the source wording; current behavior is r
 | Proportional fonts: wrap and horizontal extent from measured advances | [E052](e052-proportional-font-extents.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Unnecessary code: fade in each token's own colour                     | [E053](../docs/display/diagnostic-overlays.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | TypeScript worker at language-server parity                           | [E054](../docs/architecture/e054-worker-language-server-parity.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Spellcheck for painted text | [E058](e058-spellcheck.md) |
 
 ## Maintaining the backlog
 

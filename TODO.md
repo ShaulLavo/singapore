@@ -632,3 +632,10 @@ semantic tokens, but not rename, symbols, signature help, code actions, formatti
 diagnostics (which it advertises). It also only knows the files the host pushes up front. A host with no server should
 get from the worker everything Platform gets from its server-side language servers for
 TypeScript.
+
+## Spellcheck for painted text
+
+Added 2026-09-26, from Platform Plans 111 and 171. The editor paints text outside its input
+element, and EditContext makes the browser's spellcheck unreachable, so no misspelling is ever
+marked. The chat composer keeps Lexical until the editor marks misspelled prose itself, offers
+suggestions and learns words, using permissively licensed dictionaries only.
