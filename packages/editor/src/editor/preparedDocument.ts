@@ -104,7 +104,7 @@ export type EditorPreparedDocument = {
   readonly fallbackReady: Promise<boolean>
 }
 
-export type EditorPreparedRuntimeSessionIds = {
+type EditorPreparedRuntimeSessionIds = {
   readonly highlighter: readonly string[]
   readonly structural: readonly string[]
 }

@@ -68,7 +68,7 @@ export type DisplayInjectedTextRow = MeasuredText & {
   readonly metadata?: unknown
 }
 
-export type DisplayTextRow = DisplayDocumentTextRow | DisplayInjectedTextRow
+type DisplayTextRow = DisplayDocumentTextRow | DisplayInjectedTextRow
 
 export type DisplayRow = DisplayTextRow
 
@@ -135,7 +135,7 @@ export type InlineReplacement = {
   readonly metadata?: unknown
 }
 
-export type InlineRowSegmentKind = 'source' | 'replacement'
+type InlineRowSegmentKind = 'source' | 'replacement'
 
 export type InlineRowSegment = {
   readonly kind: InlineRowSegmentKind

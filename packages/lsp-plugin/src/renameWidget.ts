@@ -9,7 +9,7 @@ export type RenameWidgetOptions = {
   readonly returnFocus?: () => void
 }
 
-export type RenameWidgetPrompt = {
+type RenameWidgetPrompt = {
   readonly anchor: DOMRect
   readonly currentName: string
   readonly signal: AbortSignal

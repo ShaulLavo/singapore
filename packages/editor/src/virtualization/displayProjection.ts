@@ -46,7 +46,6 @@ import type {
 export type {
   DisplayProjectionConfig,
   DisplayProjectionInput,
-  DisplayProjectionTransition,
   DisplayRowMetrics,
 } from './displayProjectionTypes'
 

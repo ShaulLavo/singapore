@@ -135,8 +135,6 @@ export const streamPieceTableTextChunks = (
   })
 }
 
-export const forEachPieceTableTextChunk = streamPieceTableTextChunks
-
 export type PieceTablePieceStreamEntry = {
   readonly piece: Piece
   readonly text: string

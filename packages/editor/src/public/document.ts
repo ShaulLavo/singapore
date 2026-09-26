@@ -8,7 +8,6 @@ export {
   createPieceTableWalker,
   deleteFromPieceTable,
   diffPieceTableSnapshots,
-  forEachPieceTableTextChunk,
   getPieceTableLength,
   insertIntoPieceTable,
   materializePieceTableFullText,

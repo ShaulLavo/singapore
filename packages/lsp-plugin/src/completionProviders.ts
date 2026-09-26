@@ -18,7 +18,7 @@ import { completionNeedsResolve, type LanguageServerCompletionTrigger } from './
  * second server has no reason to depend on this package, and restating the id is how they reach the
  * same list.
  */
-export const EDITOR_COMPLETION_SOURCE_ID = 'editor.completionSource'
+const EDITOR_COMPLETION_SOURCE_ID = 'editor.completionSource'
 
 /** What is being completed, in the text the caller has, not in a protocol position. */
 export type EditorCompletionRequest = {
@@ -50,7 +50,7 @@ export type EditorCompletionSource = {
   resolveCompletionItem?(item: lsp.CompletionItem): PromiseLike<lsp.CompletionItem> | null
 }
 
-export const EDITOR_COMPLETION_SOURCE = createEditorLanguageFeatureToken<EditorCompletionSource>(
+const EDITOR_COMPLETION_SOURCE = createEditorLanguageFeatureToken<EditorCompletionSource>(
   EDITOR_COMPLETION_SOURCE_ID,
 )
 

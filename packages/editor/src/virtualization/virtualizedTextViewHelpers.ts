@@ -1,5 +1,5 @@
 import type { TextContent } from '../textContent'
-import type { FoldMap, FoldPoint } from '../foldMap'
+import type { FoldMap } from '../foldMap'
 import type { InlineMap } from '../inlineMap'
 import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
 import type { EditorTokenStyle } from '../tokens'
@@ -696,10 +696,6 @@ export function foldMapMatchesText(foldMap: FoldMap | null, textLength: number):
 export function inlineMapMatchesText(inlineMap: InlineMap | null, textLength: number): boolean {
   if (!inlineMap) return false
   return inlineMap.snapshot.length === textLength
-}
-
-export function asFoldPoint(point: { readonly row: number; readonly column: number }): FoldPoint {
-  return point as FoldPoint
 }
 
 export function getDefaultHighlightRegistry(): HighlightRegistry | null {

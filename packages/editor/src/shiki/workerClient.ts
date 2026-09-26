@@ -37,7 +37,7 @@ export type ShikiPreloadRegistrations = {
   readonly themeRegistrations: readonly ShikiWorkerThemeRegistration[]
 }
 
-export type ShikiPreloadRegistrationSource =
+type ShikiPreloadRegistrationSource =
   | ShikiPreloadRegistrations
   | Promise<ShikiPreloadRegistrations>
   | (() => Promise<ShikiPreloadRegistrations> | ShikiPreloadRegistrations)

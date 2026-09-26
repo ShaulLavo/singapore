@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   createPieceTableSnapshot,
-  forEachPieceTableTextChunk,
+  streamPieceTableTextChunks,
   getPieceTableLength,
   insertIntoPieceTable,
   materializePieceTableFullText,
@@ -29,7 +29,7 @@ describe('piece table reads', () => {
     const edited = insertIntoPieceTable(initial, 3, 'XX')
     const chunks: string[] = []
 
-    forEachPieceTableTextChunk(edited, (text, start, end) => {
+    streamPieceTableTextChunks(edited, (text, start, end) => {
       chunks.push(`${start}:${end}:${text}`)
     })
 

@@ -26,7 +26,7 @@ import type { EditorFindOptions } from '../src/types'
 
 export type FindRangeTuple = readonly [number, number]
 
-export type FindSelectionFixture = {
+type FindSelectionFixture = {
   readonly anchor: number
   readonly head: number
   readonly affinity?: SelectionAffinity
@@ -44,7 +44,7 @@ export type FindFixture = {
  * it selected, and what the widget says. Asserted as one object so a case that
  * fixes the count but loses the highlight still fails.
  */
-export type FindObservedState = {
+type FindObservedState = {
   readonly matches: readonly FindRangeTuple[]
   readonly current: FindRangeTuple | null
   readonly scope: readonly FindRangeTuple[] | null

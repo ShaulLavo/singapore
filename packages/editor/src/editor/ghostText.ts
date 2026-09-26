@@ -23,7 +23,7 @@ export function isEditorInlineSuggestCommand(
 }
 
 /** One run of suggested text, hung off the offset it would be typed at. */
-export type GhostTextPart = {
+type GhostTextPart = {
   readonly offset: number
   readonly text: string
 }

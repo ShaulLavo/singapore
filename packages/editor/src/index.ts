@@ -78,7 +78,7 @@ export {
   deleteFromPieceTable,
   diffPieceTableSnapshots,
   documentTextRoundTripStatus,
-  forEachPieceTableTextChunk,
+  streamPieceTableTextChunks,
   getPieceTableLength,
   getDocumentMutationLeaseState,
   readPieceTableTextRange,

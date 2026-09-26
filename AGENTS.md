@@ -100,7 +100,7 @@ Run `bun run format` (oxfmt via Turborepo). It formats the **entire repo**, so w
 
 ### Dead-code checks
 
-`bun run knip` (config in `knip.jsonc`) finds unused files, exports, and dependencies across the workspace. Public API entry points are registered per-package from each package's `exports` map, so only genuinely-internal dead code is reported. A few real deps are referenced in ways knip can't see statically (CSS `@import`, wasm build tooling, the vitest playwright provider) and are listed under `ignoreDependencies` with the reason inline.
+`bun run knip` (config in `knip.ts`) finds unused files, exports, and dependencies across the workspace. Each package's entry points are computed from its `exports` map, so a new export needs no config and only genuinely-internal dead code is reported. A few real deps are referenced in ways knip can't see statically (wasm build tooling, the vitest playwright provider) and are listed under `ignoreDependencies` with the reason inline.
 
 <!-- opensrc:start -->
 

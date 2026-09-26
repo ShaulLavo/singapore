@@ -41,7 +41,7 @@ export type EditorColorTransform =
   | { readonly kind: 'transparent'; readonly value: EditorColorValue; readonly alpha: number }
   | { readonly kind: 'oneOf'; readonly values: readonly EditorColorValue[] }
 
-export type EditorColorThemeTypeDefaults = {
+type EditorColorThemeTypeDefaults = {
   readonly light?: EditorColorValue
   readonly dark?: EditorColorValue
   readonly highContrast?: EditorColorValue

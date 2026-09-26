@@ -30,7 +30,7 @@ import type { EditorSetSelectionOptions } from './editor/selectionReveal'
 
 export const EDITOR_MERGE_CONFLICT_FEATURE_ID = 'editor.mergeConflicts'
 
-export type MergeConflictNavigationDirection = 'next' | 'previous'
+type MergeConflictNavigationDirection = 'next' | 'previous'
 
 export type EditorMergeConflictFeature = {
   getConflicts(): readonly MergeConflictRegion[]

@@ -1,6 +1,6 @@
 export type HistoryNodeId = number
 
-export type EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction = never> = {
+type EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction = never> = {
   readonly snapshot: TSnapshot
   readonly selections: TSelectionState
   readonly transaction?: TTransaction
@@ -57,7 +57,7 @@ export type EditorHistoryCommitOptions<TSelectionState> = {
 // Every retained node pins the snapshot it was taken from, and a pinned snapshot
 // keeps alive every piece the document has ever deleted. Unbounded history therefore
 // makes a long session monotonically slower rather than merely larger.
-export const DEFAULT_RETAINED_HISTORY_STATES = 200
+const DEFAULT_RETAINED_HISTORY_STATES = 200
 
 type Node<S, Sel, T> = EditorHistoryNode<S, Sel, T>
 type Nodes<S, Sel, T> = Map<HistoryNodeId, Node<S, Sel, T>>

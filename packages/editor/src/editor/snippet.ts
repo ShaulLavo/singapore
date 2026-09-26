@@ -23,7 +23,7 @@ export type SnippetRange = {
   readonly transform?: (value: string) => string
 }
 
-export type SnippetStop = {
+type SnippetStop = {
   /** Tab-stop number. `0` is the exit stop and always sorts last. */
   readonly index: number
   /** Where this stop's text sits in the expanded string; several for a repeated stop. */
@@ -38,7 +38,7 @@ export type ParsedSnippet = {
 }
 
 /** Where a snippet is landing, which is what decides how its continuation lines are indented. */
-export type SnippetInsertion = {
+type SnippetInsertion = {
   readonly textSnapshot: TextReadSnapshot
   /** Offset of the snippet's first character, once whatever it replaces is gone. */
   readonly offset: number

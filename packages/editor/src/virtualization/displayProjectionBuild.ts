@@ -181,10 +181,3 @@ export function mergeLineRanges(ranges: readonly SourceLineRange[]): SourceLineR
   }
   return merged
 }
-
-export function sparseRanges(context: BuildContext): SourceLineRange[] {
-  return mergeLineRanges([
-    ...context.hidden,
-    ...context.sparseRows.map((row) => ({ start: row, end: row + 1 })),
-  ])
-}

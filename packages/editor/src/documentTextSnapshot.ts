@@ -1,6 +1,6 @@
 import { appendDocumentTextMeasurements } from './documentTextSourceCache'
 import {
-  forEachPieceTableTextChunk,
+  streamPieceTableTextChunks,
   materializePieceTableFullText,
   offsetToPoint,
   type PieceTableSnapshot,
@@ -189,7 +189,7 @@ class PieceTableDocumentTextSnapshot implements DocumentTextSnapshot {
     const retainedText = this.#retainedText
     if (retainedText === undefined) {
       let chunks = 0
-      forEachPieceTableTextChunk(this.snapshot, (text, start, end) => {
+      streamPieceTableTextChunks(this.snapshot, (text, start, end) => {
         chunks += 1
         visit(text, start, end)
       })

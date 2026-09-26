@@ -43,7 +43,7 @@ function throwingFullTextSnapshot(text: string): LspTextSnapshot {
   }
 }
 
-export function lineStartsOf(text: string): number[] {
+function lineStartsOf(text: string): number[] {
   const starts = [0]
   let index = text.indexOf('\n')
 

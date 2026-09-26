@@ -1,6 +1,6 @@
 import type { EditorVisibleSnapshotJSON } from '../plugins'
 
-export const MAX_EDITOR_SNAPSHOT_BYTES = 262_144
+const MAX_EDITOR_SNAPSHOT_BYTES = 262_144
 const MAX_ABSOLUTE_PAINT_EXTENT = 16_000_000
 
 type Segment = {

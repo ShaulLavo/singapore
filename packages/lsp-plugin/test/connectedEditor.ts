@@ -499,7 +499,7 @@ function activateHoverPlugin(
 }
 
 /** The core registry, reduced to what a single-document harness needs: order of registration. */
-export function providerRegistry(): Pick<
+function providerRegistry(): Pick<
   Required<EditorViewContributionContext>,
   'registerProvider' | 'getProviders'
 > {
