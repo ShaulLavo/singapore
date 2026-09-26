@@ -818,6 +818,8 @@ type ParseInjectionContext = ParseParsedDocumentOptions & {
   readonly reusableLayers: ReusableLayer[]
   readonly missingLanguages: Set<string>
   readonly reservedLayerIds: Set<string>
+  /** Layers already present, when a pass may find them again. */
+  readonly knownLayers?: ReadonlySet<string>
 }
 
 const parseRootLayer = (
@@ -855,7 +857,10 @@ const parseParsedDocument = async (
   try {
     const parsedLayers: ParsedLayer[] = []
     await appendInjectionLayers(parsedLayers, options.rootLayer, context)
-    if (options.injectionRanges) await appendCarriedLayers(parsedLayers, context)
+    if (options.injectionRanges) {
+      await appendCarriedLayers(parsedLayers, context)
+      await refillCappedLayers(parsedLayers, context)
+    }
     const layers = cappedLayers(orderParsedLayers(options.rootLayer, parsedLayers))
 
     return {
@@ -934,6 +939,7 @@ const appendInjectionLayers = async (
 
   for (const plan of plans) {
     if (layers.length >= MAX_INJECTION_LAYERS) break
+    if (options.knownLayers?.has(layerIdentity(plan))) continue
     if (isNonProgressingInjection(plan, parent, layers, options.rootLayer)) continue
     if (!languageDescriptors.has(plan.languageId)) {
       options.missingLanguages.add(plan.languageId)
@@ -953,6 +959,29 @@ const appendInjectionLayers = async (
       )
     }
   }
+}
+
+// A capped document never parsed the layers past the cap. Once an edit leaves room, the next ones
+// are found after the last kept layer, as a full parse would find them.
+const refillCappedLayers = async (
+  layers: ParsedLayer[],
+  options: ParseInjectionContext,
+): Promise<void> => {
+  const oldLayers = options.oldDocument?.layers.length ?? 0
+  if (oldLayers <= MAX_INJECTION_LAYERS || layers.length >= MAX_INJECTION_LAYERS) return
+
+  let tailStart = 0
+  for (const layer of layers) tailStart = Math.max(tailStart, rangeSpan(layer.ranges).endIndex)
+  await appendInjectionLayers(layers, options.rootLayer, {
+    ...options,
+    injectionRanges: [{ startIndex: tailStart, endIndex: options.source.length }],
+    knownLayers: new Set(layers.map(layerIdentity)),
+  })
+}
+
+const layerIdentity = (layer: Pick<ParsedLayer, 'languageId' | 'parentId' | 'ranges'>): string => {
+  const span = rangeSpan(layer.ranges)
+  return `${layer.languageId}\u0000${layer.parentId}\u0000${span.startIndex}\u0000${span.endIndex}`
 }
 
 const isNonProgressingInjection = (
