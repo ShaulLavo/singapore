@@ -30,8 +30,13 @@ import {
   type HoverPluginOptions,
 } from '@singapore-editor/plugin-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { LspConnectionPool } from '@singapore-editor/lsp-plugin'
 import type * as lsp from 'vscode-languageserver-protocol'
-import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
+import {
+  createTypeScriptLspPlugin,
+  TypeScriptLspWorkspace,
+  type TypeScriptLspDiagnosticSummary,
+} from '../src'
 import {
   createTestEditContributionContext,
   createTestKeymap,
@@ -172,6 +177,41 @@ describe('createTypeScriptLspPlugin', () => {
     },
   )
 
+  it('borrows one worker connection across two document plugins', async () => {
+    const pool = new LspConnectionPool({ idleGraceMs: 0 })
+    const worker = new FakeWorker()
+    const workerFactory = vi.fn(() => worker)
+    const workspace = new TypeScriptLspWorkspace()
+    workspace.setWorkspaceFiles([{ path: '/a.ts', text: 'a' }])
+    const options = { workerFactory, workspace, connectionProvider: pool.provider('project') }
+    const first = activatePlugin(createTypeScriptLspPlugin(options)).createContribution(
+      viewContributionContext(editorSnapshot({ documentId: 'a.ts' })),
+    )
+    const second = activatePlugin(createTypeScriptLspPlugin(options)).createContribution(
+      viewContributionContext(editorSnapshot({ documentId: 'b.ts' })),
+    )
+    try {
+      expect(workerFactory).toHaveBeenCalledTimes(1)
+      worker.receive(initializeResponse(message(worker.sent[0])))
+      await flushPromises()
+      expect(
+        sentMethods(worker).filter((method) => method === 'editor/typescript/setWorkspaceFiles'),
+      ).toHaveLength(1)
+      first?.dispose()
+      expect(worker.terminated).toBe(false)
+      workspace.upsertWorkspaceFiles([{ path: '/a.ts', text: 'b' }])
+      await flushPromises()
+      expect(latestMessage(worker.sent, 'editor/typescript/upsertFiles').params).toEqual({
+        files: [{ path: '/a.ts', text: 'b' }],
+      })
+      second?.dispose()
+    } finally {
+      first?.dispose()
+      second?.dispose()
+      pool.dispose()
+    }
+  })
+
   it('accepts explicit document filter functions', async () => {
     const worker = new FakeWorker()
     const plugin = createTypeScriptLspPlugin({
@@ -200,6 +240,27 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
     expect(textDocumentFor(worker.sent.find(hasMethod('textDocument/didOpen')))).toMatchObject({
       uri: 'file:///repo/mapped.ts',
+    })
+    contribution?.dispose()
+  })
+
+  it.each([
+    ['tsx', 'typescriptreact'],
+    ['jsx', 'javascriptreact'],
+  ])('syncs native %s syntax ids using their protocol language', async (languageId, protocolId) => {
+    const worker = new FakeWorker()
+    const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
+    const provider = activatePlugin(plugin)
+    const contribution = provider.createContribution(
+      viewContributionContext(
+        editorSnapshot({ languageId, documentId: `/src/index.${languageId}` }),
+      ),
+    )
+    worker.receive(initializeResponse(message(worker.sent[0])))
+    await flushPromises()
+    expect(sentMethods(worker)).toContain('textDocument/didOpen')
+    expect(textDocumentFor(worker.sent.find(hasMethod('textDocument/didOpen')))).toMatchObject({
+      languageId: protocolId,
     })
     contribution?.dispose()
   })

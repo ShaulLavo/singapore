@@ -1,3 +1,4 @@
+export { synchronizeLanguageServerBuffer } from './bufferSync'
 export {
   createLanguageServerDocument,
   LanguageServerDocument,

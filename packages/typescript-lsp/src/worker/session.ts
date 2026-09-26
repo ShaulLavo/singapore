@@ -135,6 +135,7 @@ type ServiceState = {
 }
 
 type InitializationOptions = {
+  readonly canonicalPaths?: Readonly<Record<string, string>>
   readonly compilerOptions?: ts.CompilerOptions
   readonly diagnosticDelayMs?: number
   readonly formatOptions?: ts.FormatCodeSettings
@@ -152,6 +153,7 @@ type PendingServerRequest = {
 export function createTypeScriptLanguageSession(
   options: TypeScriptLanguageSessionOptions,
 ): TypeScriptLanguageSession {
+  let canonicalPaths: Readonly<Record<string, string>> = {}
   let compilerOptionsOverride: ts.CompilerOptions = {}
   let diagnosticDelayMs = DEFAULT_DIAGNOSTIC_DELAY_MS
   let formatBase = defaultFormatSettings()
@@ -349,6 +351,7 @@ export function createTypeScriptLanguageSession(
 
   function initializeResult(params: unknown): lsp.InitializeResult {
     const initializationOptions = readInitializationOptions(params)
+    canonicalPaths = initializationOptions.canonicalPaths ?? {}
     compilerOptionsOverride = initializationOptions.compilerOptions ?? {}
     diagnosticDelayMs = initializationOptions.diagnosticDelayMs ?? DEFAULT_DIAGNOSTIC_DELAY_MS
     formatBase = { ...defaultFormatSettings(), ...initializationOptions.formatOptions }
@@ -421,7 +424,7 @@ export function createTypeScriptLanguageSession(
     const textDocument = textDocumentItemFromParams(params)
     if (!textDocument) return
 
-    const fileName = documentUriToFileName(textDocument.uri)
+    const fileName = canonicalName(documentUriToFileName(textDocument.uri))
     if (!fileName) return
     if (!isTypeScriptLspSourceFileName(fileName)) return
 
@@ -433,7 +436,13 @@ export function createTypeScriptLanguageSession(
       text: textDocument.text,
     }
     documents.set(document.uri, document)
-    void withProject((project) => project.setOpen(document.fileName, document.text))
+    void withProject((project) =>
+      project.setOpen(
+        documentUriToFileName(document.uri) ?? document.fileName,
+        document.text,
+        document.uri,
+      ),
+    )
     documentChanged(document.uri)
   }
 
@@ -450,7 +459,13 @@ export function createTypeScriptLanguageSession(
       text: applyContentChanges(current.text, change.contentChanges),
     }
     documents.set(document.uri, document)
-    void withProject((project) => project.setOpen(document.fileName, document.text))
+    void withProject((project) =>
+      project.setOpen(
+        documentUriToFileName(document.uri) ?? document.fileName,
+        document.text,
+        document.uri,
+      ),
+    )
     documentChanged(document.uri)
   }
 
@@ -463,7 +478,10 @@ export function createTypeScriptLanguageSession(
     clearScheduledDiagnostics(uri)
     projectRevision += 1
     if (pushesDiagnostics()) postDiagnostics(uri, document?.version ?? null, [])
-    if (document) void withProject((project) => project.closeOpen(document.fileName))
+    if (document)
+      void withProject((project) =>
+        project.closeOpen(documentUriToFileName(document.uri) ?? document.fileName, document.uri),
+      )
   }
 
   function handleSetWorkspaceFiles(params: unknown): void {
@@ -725,11 +743,9 @@ export function createTypeScriptLanguageSession(
   }
 
   function textOf(project: ProjectService, fileName: string): string | null {
-    const workspaceName = workspaceFileNameForResult(
-      workspaceFiles,
-      workspacePackageList(),
-      fileName,
-    )
+    const workspaceName = canonicalName(
+      workspaceFileNameForResult(workspaceFiles, workspacePackageList(), fileName),
+    )!
     const openDocument = documentForFileName(workspaceName)
     if (openDocument) return openDocument.text
 
@@ -754,11 +770,9 @@ export function createTypeScriptLanguageSession(
   }
 
   function uriOf(fileName: string): lsp.DocumentUri {
-    const workspaceName = workspaceFileNameForResult(
-      workspaceFiles,
-      workspacePackageList(),
-      fileName,
-    )
+    const workspaceName = canonicalName(
+      workspaceFileNameForResult(workspaceFiles, workspacePackageList(), fileName),
+    )!
     return documentForFileName(workspaceName)?.uri ?? fileNameToDocumentUri(workspaceName)
   }
 
@@ -766,13 +780,17 @@ export function createTypeScriptLanguageSession(
     const openDocument = documents.get(uri)
     if (openDocument) return openDocument
 
-    const fileName = documentUriToFileName(uri)
+    const fileName = canonicalName(documentUriToFileName(uri))
     if (!fileName) return null
 
     const text = workspaceFiles.get(fileName)
     if (text === undefined) return null
 
     return { uri, fileName, languageId: 'typescript', version: 0, text }
+  }
+
+  function canonicalName(fileName: string | null): string | null {
+    return fileName === null ? null : (canonicalPaths[fileName] ?? fileName)
   }
 
   function documentForFileName(fileName: string): WorkerDocument | null {
@@ -800,8 +818,14 @@ export function createTypeScriptLanguageSession(
       projectFileMap(libraryFiles, workspaceFiles),
       rootFileNames(workspaceFiles, config),
       compilerOptions,
+      canonicalPaths,
     )
-    for (const document of documents.values()) project.setOpen(document.fileName, document.text)
+    for (const document of documents.values())
+      project.setOpen(
+        documentUriToFileName(document.uri) ?? document.fileName,
+        document.text,
+        document.uri,
+      )
     return { project, config }
   }
 
@@ -959,6 +983,13 @@ function readInitializationOptions(params: unknown): InitializationOptions {
   if (!isRecord(options)) return {}
 
   return {
+    canonicalPaths: isRecord(options.canonicalPaths)
+      ? Object.fromEntries(
+          Object.entries(options.canonicalPaths).filter(
+            (entry): entry is [string, string] => typeof entry[1] === 'string',
+          ),
+        )
+      : undefined,
     compilerOptions: isRecord(options.compilerOptions)
       ? (options.compilerOptions as ts.CompilerOptions)
       : undefined,

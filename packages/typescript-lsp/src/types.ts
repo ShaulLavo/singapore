@@ -1,7 +1,10 @@
+import type { TypeScriptLspWorkspace, TypeScriptLspSourceFile } from './workspace'
+export type { TypeScriptLspSourceFile } from './workspace'
 import type { EditorDisposable, EditorPlugin } from '@singapore-editor/core/extensions'
 import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapore-editor/lsp'
 import type {
   LanguageServerConnectionContext,
+  LspConnectionProvider,
   LanguageServerDocumentSyncOptions,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticCounts,
@@ -16,11 +19,6 @@ import type {
 } from '@singapore-editor/lsp-plugin'
 import type ts from 'typescript'
 import type * as lsp from 'vscode-languageserver-protocol'
-
-export type TypeScriptLspSourceFile = {
-  readonly path: string
-  readonly text: string
-}
 
 /**
  * Where the worker's standard library comes from. `bundled`, the default, ships with this package
@@ -51,8 +49,12 @@ export type TypeScriptLspNavigationOptions = LanguageServerNavigationOptions
 export type TypeScriptLspReferencesResult = LanguageServerReferencesResult
 
 export type TypeScriptLspPluginOptions = {
+  readonly workspace?: TypeScriptLspWorkspace
+  readonly connectionProvider?: LspConnectionProvider
   readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly rootUri?: lsp.DocumentUri | null
+  /** Logical filesystem names mapped to their canonical source identity. */
+  readonly canonicalPaths?: Readonly<Record<string, string>>
   readonly compilerOptions?: ts.CompilerOptions
   readonly diagnosticDelayMs?: number
   /** The standard library: bundled with this package unless the host opts into the CDN or its own. */

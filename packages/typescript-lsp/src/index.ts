@@ -1,3 +1,4 @@
+export { TypeScriptLspWorkspace } from './workspace'
 export { type TypeScriptLspResolvedOptions } from './plugin'
 export { createTypeScriptLspPlugin } from './pluginWithWorker'
 export {
