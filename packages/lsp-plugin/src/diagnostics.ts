@@ -5,8 +5,10 @@ import type { LanguageServerDiagnosticSummary, LanguageServerDiagnosticsFreshnes
 
 export type LanguageServerDiagnosticSeverity = 'error' | 'warning' | 'information' | 'hint'
 
-/** A tag layer paints on top of the severity wash, so a deprecated hint is still a hint. */
-export type LanguageServerDiagnosticHighlightLayer = LanguageServerDiagnosticSeverity | 'deprecated'
+export type LanguageServerDiagnosticHighlightLayer =
+  | LanguageServerDiagnosticSeverity
+  | 'deprecated'
+  | 'unnecessary'
 
 export type LanguageServerDiagnosticHighlightGroups = Readonly<
   Record<LanguageServerDiagnosticHighlightLayer, readonly DiagnosticHighlightRange[]>
@@ -22,6 +24,7 @@ const WARNING = 2
 const INFORMATION = 3
 const HINT = 4
 
+const DIAGNOSTIC_TAG_UNNECESSARY = 1
 const DIAGNOSTIC_TAG_DEPRECATED = 2
 
 export function summarizeDiagnostics(
@@ -69,7 +72,10 @@ export function diagnosticHighlightGroups(
   for (const diagnostic of diagnostics) {
     const range = highlightRangeForDiagnostic(document, diagnostic)
     if (!range) continue
-    groups[severityForDiagnostic(diagnostic)].push(range)
+    const unnecessary = diagnostic.tags?.includes(DIAGNOSTIC_TAG_UNNECESSARY)
+    const severity = severityForDiagnostic(diagnostic)
+    if (!unnecessary || severity !== 'hint') groups[severity].push(range)
+    if (unnecessary) groups.unnecessary.push(range)
     if (diagnostic.tags?.includes(DIAGNOSTIC_TAG_DEPRECATED)) groups.deprecated.push(range)
   }
 
@@ -103,6 +109,7 @@ function emptyHighlightGroups(): Record<
     information: [],
     hint: [],
     deprecated: [],
+    unnecessary: [],
   }
 }
 

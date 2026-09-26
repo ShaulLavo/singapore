@@ -146,6 +146,56 @@ describe('createLanguageServerAdapterPlugin', () => {
     document.body.replaceChildren()
   })
 
+  it('repaints existing unnecessary diagnostics when the editor theme changes', async () => {
+    const transport = new FakeTransport()
+    const { features, provider } = activatePlugin(
+      createLanguageServerAdapterPlugin({
+        name: 'test.theme',
+        createTransport: () => transport,
+      }),
+      { applyEdits: vi.fn() },
+    )
+    const context = viewContributionContext(editorSnapshot(), { features })
+    const contribution = provider.createContribution(context)!
+    const computed = vi
+      .spyOn(window, 'getComputedStyle')
+      .mockReturnValue({ color: 'rgba(0, 0, 0, 0.25)' } as CSSStyleDeclaration)
+    try {
+      transport.receive(initializeResponse(jsonMessage(transport.sent[0])))
+      await flushPromises()
+      transport.receive({
+        jsonrpc: '2.0',
+        method: 'textDocument/publishDiagnostics',
+        params: {
+          uri: 'file:///README.md',
+          diagnostics: [
+            {
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+              message: 'unused',
+              severity: 4,
+              tags: [1],
+            },
+          ],
+        },
+      })
+      expect(context.setRangeHighlight).toHaveBeenCalledWith(
+        expect.stringContaining('unnecessary'),
+        [{ start: 0, end: 1 }],
+        { overlay: { dim: 0.25 } },
+      )
+      computed.mockReturnValue({ color: 'rgba(0, 0, 0, 0.75)' } as CSSStyleDeclaration)
+      contribution.update({ ...editorSnapshot(), theme: { type: 'light' } }, 'tokens')
+      expect(context.setRangeHighlight).toHaveBeenCalledWith(
+        expect.stringContaining('unnecessary'),
+        [{ start: 0, end: 1 }],
+        { overlay: { dim: 0.75 } },
+      )
+    } finally {
+      computed.mockRestore()
+      contribution.dispose()
+    }
+  })
+
   it('owns generic LSP document sync, diagnostics, and adapter naming', async () => {
     const transport = new FakeTransport()
     const completionToken = createEditorCapabilityToken<LanguageServerCompletionEditFeature>(
