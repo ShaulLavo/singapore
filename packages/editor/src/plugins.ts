@@ -666,7 +666,19 @@ export type EditorViewContributionUpdateKind =
  * happens to measure next rather than on whoever wrote — so an update takes every measurement it
  * needs first, into plain data, and writes only once the last of them is in hand.
  */
+/** What a view contribution can say it acts on; `document` and `clear` reach every contribution. */
+export type EditorViewContributionInput = Exclude<
+  EditorViewContributionUpdateKind,
+  'document' | 'clear'
+>
+
 export type EditorViewContribution = EditorDisposable & {
+  /**
+   * The update kinds this contribution acts on. Its `update` is called only for those, plus
+   * `document` and `clear`, and a pass whose kinds no contribution asked for builds no snapshot.
+   * Left out, every kind reaches it.
+   */
+  readonly inputs?: readonly EditorViewContributionInput[]
   /** Capture contributors opt into synchronous restoration with a configuration-specific key. */
   readonly snapshotKey?: string
   captureVisiblePaint?(snapshot: EditorViewSnapshot): EditorVisiblePaintCapture

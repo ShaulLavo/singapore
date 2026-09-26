@@ -56,6 +56,7 @@ export function createDocumentLinkPlugin(
 }
 
 class DocumentLinkController implements EditorViewContribution {
+  readonly inputs = ['content', 'tokens', 'viewport'] as const
   private readonly highlightName: string
   private links: readonly DocumentLink[] = []
   private painted = false

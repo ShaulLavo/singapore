@@ -360,6 +360,8 @@ class EditorMergeConflictController {
  * empty row injected above the `<<<<<<<` marker, and the overview-ruler marks in the minimap.
  */
 class MergeConflictViewContribution implements EditorViewContribution {
+  // Lenses sit on the mounted rows; the caret changes none of them.
+  readonly inputs = ['content', 'tokens', 'viewport', 'layout'] as const
   private readonly root: HTMLDivElement
   private readonly subscription: EditorDisposable
   private readonly minimap: EditorMinimapFeature | null

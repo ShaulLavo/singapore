@@ -5008,6 +5008,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorViewContributionInput",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorViewContributionProvider",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"

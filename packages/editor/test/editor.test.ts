@@ -2122,7 +2122,6 @@ describe('Editor', () => {
         activate: (context) => {
           context.registerViewContribution({
             createContribution: (view) => {
-              requester = view
               view.onDidChangeReservedOverlayWidth((side) => {
                 heard.push(view.getReservedOverlayWidth(side))
               })
@@ -2135,12 +2134,15 @@ describe('Editor', () => {
             },
           })
           context.registerViewContribution({
-            createContribution: (view) => ({
-              update: (_snapshot, kind) => {
-                if (kind === 'layout') view.reserveOverlayWidth('right', 64)
-              },
-              dispose: () => undefined,
-            }),
+            createContribution: (view) => {
+              requester = view
+              return {
+                update: (_snapshot, kind) => {
+                  if (kind === 'layout') view.reserveOverlayWidth('right', 64)
+                },
+                dispose: () => undefined,
+              }
+            },
           })
         },
       }
@@ -2150,9 +2152,9 @@ describe('Editor', () => {
 
       requireViewContributionContext(requester).requestViewUpdate()
 
-      // The layout pass that staked the claim is not re-run for the contribution before it.
-      expect(layouts).toEqual([0])
       expect(heard).toEqual([64])
+      // The request re-ran only the contribution that asked; the width reached the other as an event.
+      expect(layouts).toEqual([])
     })
 
     it('disposes view contributions with the editor', () => {

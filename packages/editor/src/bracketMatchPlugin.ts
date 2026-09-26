@@ -72,6 +72,7 @@ export function createBracketMatchPlugin(
 }
 
 class BracketMatchController implements EditorViewContribution {
+  readonly inputs = ['content', 'selection', 'tokens'] as const
   private readonly highlightName: string
   private painted: BracketMatch | null = null
 

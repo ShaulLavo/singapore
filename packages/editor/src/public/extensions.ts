@@ -129,6 +129,7 @@ export type {
   EditorPressParticipant,
   EditorViewContributionProvider,
   EditorViewContributionUpdateKind,
+  EditorViewContributionInput,
   EditorViewportSnapshot,
   EditorViewportSnapshotJSON,
   EditorViewSnapshot,
