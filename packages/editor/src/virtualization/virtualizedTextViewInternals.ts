@@ -1,4 +1,5 @@
-import type { WrapBreak } from './displayProjectionTypes'
+import type { WrapAdvance, WrapBreak } from './displayProjectionTypes'
+import type { GlyphAdvances } from './glyphAdvances'
 import type { HighlightOverlayRange } from './highlightOverlay'
 import type { ScrollViewport } from './scrollViewport'
 import type { FoldMarkerSource } from './foldMarkerSource'
@@ -123,6 +124,10 @@ export interface VirtualizedTextViewInternal {
   foldMarkerByKey: ReadonlyMap<string, VirtualizedFoldMarker>
   wrapEnabled: boolean
   wrapBreak: WrapBreak
+  /** The measured-width wrap in the projection's config, when the face is proportional. */
+  wrapAdvance: WrapAdvance | null
+  /** The face's glyph advances while it is proportional; null keeps every estimate on columns. */
+  glyphs: GlyphAdvances | null
   tabSize: number
   tokenGroups: Map<string, TokenGroup>
   rowTokenSignatures: Map<number, string>
