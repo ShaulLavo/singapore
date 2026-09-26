@@ -136,6 +136,12 @@ Out of scope:
    (`check(words) → misspelled`, `suggest(word, n)`), tokenizer and skip rules.
    - Evidence: node tests on the tokenizer; a bench script that reproduces the findings table on the
      same corpora.
+   - Done 2026-09-26 (`packages/spellcheck`). The dictionaries ship as one merged trie,
+     `english.trie.gz` (347 KB gzip): en_US's stored forms, the 2,440 en_GB words en_US lacks, and
+     the software terms. A suggestion walk costs about the same over a small trie as a large one,
+     so three tries tripled it (12 ms median). `bun run bench:engine` under Node 26: init 55 ms,
+     82,674 words checked in 27 ms, suggestions 4.3 ms median / 8.3 ms p95, top-1 71.6%, top-5
+     89.0%. The worker, with the dictionary inlined, is 407 KB gzip and loads on the first request.
 2. **View contribution (Editor, M).** Viewport window, verdict cache, sync-point mapping, caret-word
    hold-back, capture demand decoupled from replacement providers, prose ranges per language,
    feature token, demo.
