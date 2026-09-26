@@ -115,11 +115,11 @@ const INCOMING_HEADER_ROW: VirtualizedTextRowDecoration = {
 export function createMergeConflictPlugin(
   options: EditorMergeConflictPluginOptions = {},
 ): EditorPlugin {
-  let controller: EditorMergeConflictController | null = null
-
   return {
     name: EDITOR_MERGE_CONFLICT_FEATURE_ID,
     activate(context) {
+      // Per activation: one plugin object in two editors must not share a controller.
+      let controller: EditorMergeConflictController | null = null
       const internalContext = context as EditorInternalPluginContext
       const disposables: EditorDisposable[] = [
         internalContext.registerEditorFeatureContribution({

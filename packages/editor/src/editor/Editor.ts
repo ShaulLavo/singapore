@@ -327,11 +327,12 @@ export class Editor {
     symbol
   >()
   /**
-   * What the factory currently running has registered, held until it produces the contribution
-   * that would own it. A factory that fails part-way leaves no object to dispose, so without this
-   * its registrations answer for nobody and keep their ids taken against everyone else.
+   * What the contribution being created, or the one whose context is registering, has registered.
+   * A factory that fails part-way leaves no object to dispose, and a contribution whose dispose
+   * forgets a registration would leave it answering for nobody; both are released from here.
    */
-  private contributionClaims: EditorDisposable[] | null = null
+  private contributionClaims: ContributionClaims | null = null
+  private readonly claimsByContribution = new WeakMap<object, ContributionClaims>()
   private readonly commandContributions: EditorCommandContribution[] = []
   private readonly capabilityContributions: EditorCapabilityContribution[] = []
   private readonly editContributions: EditorEditContribution[] = []
@@ -750,6 +751,7 @@ export class Editor {
         const session = editorBufferSession(this.session)
         return !session || this.textSnapshot === session.getTextSnapshot()
       },
+      (contribution) => this.releaseClaimsOf(contribution, 'view'),
     )
     this.pluginHost.setEvents({
       onPluginInstalled: (name, durationMs) =>
@@ -2740,11 +2742,12 @@ export class Editor {
     // A factory is free to build a second contribution while it runs, and the inner one's claims
     // are its own; restoring the list rather than clearing it keeps them apart.
     const enclosing = this.contributionClaims
-    const claims: EditorDisposable[] = []
+    const claims = new ContributionClaims()
     this.contributionClaims = claims
     try {
       const contribution = create()
       if (!contribution) this.releaseContributionClaims(claims, kind)
+      else this.claimsByContribution.set(contribution, claims)
       return contribution
     } catch (error) {
       this.releaseContributionClaims(claims, kind)
@@ -2756,15 +2759,29 @@ export class Editor {
   }
 
   private claimForContribution(registration: EditorDisposable): EditorDisposable {
-    this.contributionClaims?.push(registration)
-    return registration
+    return this.contributionClaims?.add(registration) ?? registration
+  }
+
+  /** A context's registration, made at any time, belongs to the contribution the context serves. */
+  private claimedBy<T>(claims: ContributionClaims, register: () => T): T {
+    const enclosing = this.contributionClaims
+    this.contributionClaims = claims
+    try {
+      return register()
+    } finally {
+      this.contributionClaims = enclosing
+    }
+  }
+
+  private currentClaims(): ContributionClaims {
+    return this.contributionClaims ?? new ContributionClaims()
   }
 
   private releaseContributionClaims(
-    claims: readonly EditorDisposable[],
+    claims: ContributionClaims,
     kind: EditorContributionKind,
   ): void {
-    for (const claim of claims) this.disposeContributionSafely(claim, kind)
+    for (const claim of claims.release()) this.disposeContributionSafely(claim, kind)
   }
 
   private disposeContributionSafely(
@@ -2776,6 +2793,15 @@ export class Editor {
     } catch (error) {
       this.logContributionFailure(kind, 'dispose', error)
     }
+    this.releaseClaimsOf(contribution, kind)
+  }
+
+  private releaseClaimsOf(contribution: object, kind: EditorContributionKind): void {
+    const claims = this.claimsByContribution.get(contribution)
+    if (!claims) return
+
+    this.claimsByContribution.delete(contribution)
+    this.releaseContributionClaims(claims, kind)
   }
 
   private syncGutterContributions(): void {
@@ -3128,6 +3154,7 @@ export class Editor {
   }
 
   private createViewContributionContext(container: HTMLElement): EditorViewContributionContext {
+    const claims = this.currentClaims()
     return {
       container,
       scrollElement: this.el,
@@ -3136,14 +3163,19 @@ export class Editor {
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
       requestViewUpdate: () => this.notifyViewContributions('layout', null),
-      onDidType: (listener) => this.addTypedTextListener(listener),
-      registerPressParticipant: (participant) => this.registerPressParticipant(participant),
-      registerNonCaretRows: (isNonCaret) => this.registerNonCaretRows(isNonCaret),
-      registerKeymapContextKey: (key, read) => this.registerKeymapContextKey(key, read),
+      onDidType: (listener) => this.claimedBy(claims, () => this.addTypedTextListener(listener)),
+      registerPressParticipant: (participant) =>
+        this.claimedBy(claims, () => this.registerPressParticipant(participant)),
+      registerNonCaretRows: (isNonCaret) =>
+        this.claimedBy(claims, () => this.registerNonCaretRows(isNonCaret)),
+      registerKeymapContextKey: (key, read) =>
+        this.claimedBy(claims, () => this.registerKeymapContextKey(key, read)),
       getFeature: (key) => this.getFeature(key),
       getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
       registerProvider: (token, selector, provider) =>
-        this.registerLanguageFeatureProvider(token, selector, provider),
+        this.claimedBy(claims, () =>
+          this.registerLanguageFeatureProvider(token, selector, provider),
+        ),
       log: (event) => this.log(event),
       revealLine: (row) => this.view.scrollToRow(row),
       announce: (message) => this.announcer.status(message),
@@ -3154,7 +3186,8 @@ export class Editor {
         this.applyRequestedSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
       getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
-      onDidChangeReservedOverlayWidth: (listener) => this.addReservedWidthListener(listener),
+      onDidChangeReservedOverlayWidth: (listener) =>
+        this.claimedBy(claims, () => this.addReservedWidthListener(listener)),
       setScrollPosition: (position) => this.applyScrollPosition(position),
       getRowPresentation: (displayRow) => this.view.getRowPresentation(displayRow),
       rowAtPoint: (clientX, clientY) => this.rowAtPoint(clientX, clientY),
@@ -3227,20 +3260,27 @@ export class Editor {
   }
 
   private createCommandContributionContext(): EditorCommandContributionContext {
+    const claims = this.currentClaims()
     return {
-      registerCommand: (command, handler) => this.registerCommandHandler(command, handler),
+      registerCommand: (command, handler) =>
+        this.claimedBy(claims, () => this.registerCommandHandler(command, handler)),
     }
   }
 
   private createCapabilityContributionContext(): EditorCapabilityContributionContext {
+    const claims = this.currentClaims()
     return {
-      registerFeature: (key, feature) => this.registerFeature(key, feature),
+      registerFeature: (key, feature) =>
+        this.claimedBy(claims, () => this.registerFeature(key, feature)),
       registerProvider: (token, selector, provider) =>
-        this.registerLanguageFeatureProvider(token, selector, provider),
+        this.claimedBy(claims, () =>
+          this.registerLanguageFeatureProvider(token, selector, provider),
+        ),
     }
   }
 
   private createEditContributionContext(): EditorEditContributionContext {
+    const claims = this.currentClaims()
     return {
       hasDocument: () => this.session !== null,
       log: (event) => this.log(event),
@@ -3250,9 +3290,12 @@ export class Editor {
       changesSinceDocumentSyncPoint: (point, scope) =>
         this.currentDocumentEditChain().changesSince(point, scope),
       getSelections: () => this.inputSelection.resolveViewSelections(),
-      registerFeature: (key, feature) => this.registerFeature(key, feature),
+      registerFeature: (key, feature) =>
+        this.claimedBy(claims, () => this.registerFeature(key, feature)),
       registerProvider: (token, selector, provider) =>
-        this.registerLanguageFeatureProvider(token, selector, provider),
+        this.claimedBy(claims, () =>
+          this.registerLanguageFeatureProvider(token, selector, provider),
+        ),
       focusEditor: () => this.focus(),
       applyEdits: (edits, timingName, selection) =>
         this.inputSelection.applyFindEdits(edits, timingName, selection),
@@ -3282,6 +3325,7 @@ export class Editor {
     container: HTMLElement,
     owner: symbol,
   ): EditorFeatureContributionContext {
+    const claims = this.currentClaims()
     return {
       container,
       scrollElement: this.el,
@@ -3308,10 +3352,14 @@ export class Editor {
       setRowDecorations: (sourceId, decorations) =>
         this.setSourceRowDecorations(sourceId, decorations, owner),
       clearRowDecorations: (sourceId) => this.clearSourceRowDecorations(sourceId, owner),
-      registerCommand: (command, handler) => this.registerCommandHandler(command, handler),
-      registerFeature: (key, feature) => this.registerFeature(key, feature),
+      registerCommand: (command, handler) =>
+        this.claimedBy(claims, () => this.registerCommandHandler(command, handler)),
+      registerFeature: (key, feature) =>
+        this.claimedBy(claims, () => this.registerFeature(key, feature)),
       registerProvider: (token, selector, provider) =>
-        this.registerLanguageFeatureProvider(token, selector, provider),
+        this.claimedBy(claims, () =>
+          this.registerLanguageFeatureProvider(token, selector, provider),
+        ),
     }
   }
 
@@ -3573,7 +3621,7 @@ export class Editor {
 
   private addTypedTextListener(listener: (text: string) => void): EditorDisposable {
     this.typedTextListeners.add(listener)
-    return disposableOnce(() => this.typedTextListeners.delete(listener))
+    return this.claimForContribution(disposableOnce(() => this.typedTextListeners.delete(listener)))
   }
 
   private notifyTyped(text: string): void {
@@ -5033,6 +5081,32 @@ function coalescedPassChange(
 
   const lastEditing = flush.changes.findLast((pending) => pending.change.edits.length > 0)
   return { ...latest, edits, kind: lastEditing?.change.kind ?? latest.kind }
+}
+
+/** What one contribution registered; a registration arriving after release is undone at once. */
+class ContributionClaims {
+  private readonly claims = new Set<EditorDisposable>()
+  private released = false
+
+  add(registration: EditorDisposable): EditorDisposable {
+    if (this.released) {
+      registration.dispose()
+      return registration
+    }
+    const claim = disposableOnce(() => {
+      this.claims.delete(claim)
+      registration.dispose()
+    })
+    this.claims.add(claim)
+    return claim
+  }
+
+  release(): readonly EditorDisposable[] {
+    this.released = true
+    const claims = [...this.claims].toReversed()
+    this.claims.clear()
+    return claims
+  }
 }
 
 function disposableOnce(dispose: () => void): EditorDisposable {
