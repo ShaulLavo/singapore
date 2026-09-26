@@ -98,6 +98,10 @@ jobs:
         working-directory: packages/editor
         run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell
 
+      # The worker test imports built packages; turbo replays the build from the cache.
+      - name: Build packages
+        run: bun run build -- --filter='./packages/*'
+
       - name: Test tree-sitter browser worker
         run: bun run --cwd packages/tree-sitter test:browser
 
