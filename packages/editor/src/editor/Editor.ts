@@ -952,7 +952,8 @@ export class Editor {
         style.backgroundColor,
       ],
       devicePixelRatio: window.devicePixelRatio,
-      theme: this.resolvedTheme(),
+      // Merged from three sources, so key order depends on which arrived first; values decide.
+      theme: withSortedKeys(this.resolvedTheme()),
       // Row height only. With the font stack equal, a different cell width means a face is still
       // loading, and that must not veto the paint the loaded face is about to match.
       rowHeight: state.metrics.rowHeight,
@@ -4980,6 +4981,16 @@ function isTextSessionChange(change: DocumentSessionChange): boolean {
     change.kind === 'undo' ||
     change.kind === 'redo' ||
     change.kind === 'checkout'
+  )
+}
+
+function withSortedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withSortedKeys)
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .toSorted(([left], [right]) => (left < right ? -1 : 1))
+      .map(([key, entry]) => [key, withSortedKeys(entry)]),
   )
 }
 
