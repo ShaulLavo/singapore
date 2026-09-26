@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { snapshotText } from './factories/snapshotText'
 
 import { createBracketMatchPlugin } from '../src/bracketMatchPlugin'
-import type { EditorCommandId } from '../src/editor/commands'
+import type { EditorAnyCommandId as EditorCommandId } from '../src/editor/commandCatalog'
 import type {
   EditorCommandContribution,
   EditorCommandContributionProvider,

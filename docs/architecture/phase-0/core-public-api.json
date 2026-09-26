@@ -3508,6 +3508,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorAnyCommandId",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorBracketMatchPluginOptions",
           "source": "packages/editor/src/bracketMatchPlugin.ts",
           "via": "packages/editor/src/editor.ts"
@@ -5434,8 +5440,38 @@
         },
         {
           "kind": "type",
+          "name": "EditorAnyCommandId",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorCommandCategory",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorCommandDeclaration",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorCommandPack",
           "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorContributedCommandDeclaration",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorContributedCommandId",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
           "via": "packages/editor/src/public/keymap.ts"
         },
         {
@@ -5560,6 +5596,18 @@
         },
         {
           "kind": "unknown",
+          "name": "EDITOR_COMMANDS",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorCommandDeclaration",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorCommandMutates",
           "source": "packages/editor/src/keymap/conditions.ts",
           "via": "packages/editor/src/public/keymap.ts"
@@ -5616,6 +5664,12 @@
           "kind": "unknown",
           "name": "filterEditorKeymapLayersByCommandPacks",
           "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "isEditorCommandId",
+          "source": "packages/editor/src/editor/commandCatalog.ts",
           "via": "packages/editor/src/public/keymap.ts"
         },
         {
