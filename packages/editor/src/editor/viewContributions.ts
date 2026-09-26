@@ -65,6 +65,7 @@ export class EditorViewContributionController {
     private readonly createSnapshot: () => EditorViewSnapshot,
     private readonly onFailure: EditorViewContributionFailureHandler = () => undefined,
     private readonly canPresent: () => boolean = () => true,
+    private readonly onDisposed: (contribution: EditorViewContribution) => void = () => undefined,
   ) {
     this.contributions = Array.from(contributions)
     for (const contribution of contributions) {
@@ -415,6 +416,7 @@ export class EditorViewContributionController {
     } catch (error) {
       this.onFailure(contribution, 'dispose', error)
     }
+    this.onDisposed(contribution)
   }
 }
 

@@ -1213,6 +1213,18 @@ type InstalledEditorPlugin = {
   activationDisposable: EditorDisposable | null
   active: boolean
   installationDisposable: EditorDisposable | null
+  readonly context: EditorInternalPluginContext
+  readonly registrations: PluginRegistrations
+}
+
+/** Who owns a registration a plugin makes through its context, by when it makes it. */
+type PluginRegistrations = {
+  /** The running `install` or `activate` call's own store. */
+  scope: EditorDisposableStore | null
+  /** Later, while active: released when the plugin deactivates. */
+  active: EditorDisposableStore | null
+  /** Later, while installed but inactive: released when the plugin is removed. */
+  readonly installed: EditorDisposableStore
 }
 
 type EditorPluginActivation = {
@@ -1282,9 +1294,6 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly installedPlugins = new Map<EditorPlugin, InstalledEditorPlugin>()
   private readonly managedPlugins = new Set<EditorPlugin>()
   private readonly manualPlugins = new Set<EditorPlugin>()
-  private readonly lifecycleRegistrationStack: EditorDisposableStore[] = []
-  private readonly hostRegistrations = new EditorDisposableStore()
-  private readonly context = this.createContext()
   private events: EditorPluginHostEvents = {}
   private disposed = false
 
@@ -1517,7 +1526,6 @@ export class EditorPluginHost implements EditorDisposable {
 
       this.disposeInstalledPlugin(plugin)
     }
-    this.hostRegistrations.dispose()
     this.managedPlugins.clear()
     this.manualPlugins.clear()
     this.loggers.length = 0
@@ -1544,7 +1552,7 @@ export class EditorPluginHost implements EditorDisposable {
     if (!installedPlugin) return false
     if (installedPlugin.active) return true
 
-    const activation = this.activatePlugin(plugin)
+    const activation = this.activatePlugin(plugin, installedPlugin)
     if (!activation.activated) {
       this.disposeInstalledPlugin(plugin)
       return false
@@ -1559,16 +1567,33 @@ export class EditorPluginHost implements EditorDisposable {
     const installedPlugin = this.installedPlugins.get(plugin)
     if (installedPlugin) return installedPlugin
 
-    const installation = this.installPlugin(plugin)
-    if (!installation.installed) return null
-
-    const nextInstalledPlugin: InstalledEditorPlugin = {
-      active: false,
-      activationDisposable: null,
-      installationDisposable: installation.disposable,
+    const nextInstalledPlugin = this.createInstalledPlugin()
+    const installation = this.installPlugin(plugin, nextInstalledPlugin)
+    if (!installation.installed) {
+      nextInstalledPlugin.registrations.installed.dispose()
+      return null
     }
+
+    nextInstalledPlugin.installationDisposable = installation.disposable
     this.installedPlugins.set(plugin, nextInstalledPlugin)
     return nextInstalledPlugin
+  }
+
+  // Each plugin gets its own context, so a registration it makes from a timer or a promise is its
+  // own and goes when it does, and one plugin object in two editors keeps two separate owners.
+  private createInstalledPlugin(): InstalledEditorPlugin {
+    const registrations: PluginRegistrations = {
+      scope: null,
+      active: null,
+      installed: new EditorDisposableStore(),
+    }
+    return {
+      active: false,
+      activationDisposable: null,
+      installationDisposable: null,
+      context: this.createContext(registrations),
+      registrations,
+    }
   }
 
   private disposePluginIfUnowned(plugin: EditorPlugin): void {
@@ -1579,15 +1604,21 @@ export class EditorPluginHost implements EditorDisposable {
     this.disposeInstalledPlugin(plugin)
   }
 
-  private installPlugin(plugin: EditorPlugin): EditorPluginInstallation {
+  private installPlugin(
+    plugin: EditorPlugin,
+    installed: InstalledEditorPlugin,
+  ): EditorPluginInstallation {
     if (!plugin.install) return { installed: true, disposable: null }
 
     const start = nowMs()
     const registrations = new EditorDisposableStore()
-    this.lifecycleRegistrationStack.push(registrations)
+    installed.registrations.scope = registrations
 
     try {
-      const disposable = lifecycleDisposableFromResult(plugin.install(this.context), registrations)
+      const disposable = lifecycleDisposableFromResult(
+        plugin.install(installed.context),
+        registrations,
+      )
       this.events.onPluginInstalled?.(pluginName(plugin), nowMs() - start)
       return { installed: true, disposable }
     } catch (error) {
@@ -1595,17 +1626,24 @@ export class EditorPluginHost implements EditorDisposable {
       this.events.onPluginInstallFailed?.(pluginName(plugin), error, nowMs() - start)
       return { installed: false, disposable: null }
     } finally {
-      this.lifecycleRegistrationStack.pop()
+      installed.registrations.scope = null
     }
   }
 
-  private activatePlugin(plugin: EditorPlugin): EditorPluginActivation {
+  private activatePlugin(
+    plugin: EditorPlugin,
+    installed: InstalledEditorPlugin,
+  ): EditorPluginActivation {
     const start = nowMs()
     const registrations = new EditorDisposableStore()
-    this.lifecycleRegistrationStack.push(registrations)
+    installed.registrations.scope = registrations
+    installed.registrations.active = new EditorDisposableStore()
 
     try {
-      const disposable = lifecycleDisposableFromResult(plugin.activate(this.context), registrations)
+      const disposable = lifecycleDisposableFromResult(
+        plugin.activate(installed.context),
+        registrations,
+      )
       this.events.onPluginActivated?.(pluginName(plugin), nowMs() - start)
       return { activated: true, disposable }
     } catch (error) {
@@ -1613,7 +1651,7 @@ export class EditorPluginHost implements EditorDisposable {
       this.events.onPluginActivationFailed?.(pluginName(plugin), error, nowMs() - start)
       return { activated: false, disposable: null }
     } finally {
-      this.lifecycleRegistrationStack.pop()
+      installed.registrations.scope = null
     }
   }
 
@@ -1624,7 +1662,7 @@ export class EditorPluginHost implements EditorDisposable {
 
     const start = nowMs()
     try {
-      plugin.update(this.context, this.lifecycleStateFor(plugin, installedPlugin))
+      plugin.update(installedPlugin.context, this.lifecycleStateFor(plugin, installedPlugin))
       this.events.onPluginUpdated?.(pluginName(plugin), nowMs() - start)
     } catch (error) {
       this.events.onPluginUpdateFailed?.(pluginName(plugin), error, nowMs() - start)
@@ -1637,7 +1675,7 @@ export class EditorPluginHost implements EditorDisposable {
 
     const start = nowMs()
     try {
-      plugin.deactivate?.(this.context)
+      plugin.deactivate?.(installedPlugin.context)
       this.events.onPluginDeactivated?.(pluginName(plugin), nowMs() - start)
     } catch (error) {
       this.events.onPluginDeactivateFailed?.(pluginName(plugin), error, nowMs() - start)
@@ -1646,6 +1684,8 @@ export class EditorPluginHost implements EditorDisposable {
     installedPlugin.active = false
     installedPlugin.activationDisposable?.dispose()
     installedPlugin.activationDisposable = null
+    installedPlugin.registrations.active?.dispose()
+    installedPlugin.registrations.active = null
     this.events.onPluginDisposed?.(pluginName(plugin))
   }
 
@@ -1657,7 +1697,7 @@ export class EditorPluginHost implements EditorDisposable {
     this.installedPlugins.delete(plugin)
     const start = nowMs()
     try {
-      plugin.dispose?.(this.context)
+      plugin.dispose?.(installedPlugin.context)
     } catch (error) {
       // Teardown has to survive a plugin that throws on its way out: an escaping error would abort
       // the loop in dispose(), stranding every plugin behind it and everything the host's owner
@@ -1665,6 +1705,7 @@ export class EditorPluginHost implements EditorDisposable {
       this.events.onPluginDisposeFailed?.(pluginName(plugin), error, nowMs() - start)
     } finally {
       installedPlugin.installationDisposable?.dispose()
+      installedPlugin.registrations.installed.dispose()
     }
   }
 
@@ -1695,34 +1736,36 @@ export class EditorPluginHost implements EditorDisposable {
     return true
   }
 
-  private createContext(): EditorInternalPluginContext {
+  private createContext(owner: PluginRegistrations): EditorInternalPluginContext {
     return {
       log: (event) => this.logInput(event),
-      registerLogger: (logger) => this.ownRegistration(() => this.registerLogger(logger)),
+      registerLogger: (logger) => this.ownRegistration(owner, () => this.registerLogger(logger)),
       registerHighlighter: (provider) =>
-        this.ownRegistration(() => this.registerHighlighter(provider)),
+        this.ownRegistration(owner, () => this.registerHighlighter(provider)),
       registerSyntaxProvider: (provider) =>
-        this.ownRegistration(() => this.registerSyntaxProvider(provider)),
+        this.ownRegistration(owner, () => this.registerSyntaxProvider(provider)),
       registerViewContribution: (provider) =>
-        this.ownRegistration(() => this.registerViewContribution(provider)),
+        this.ownRegistration(owner, () => this.registerViewContribution(provider)),
       registerCommandContribution: (provider) =>
-        this.ownRegistration(() => this.registerCommandContribution(provider)),
+        this.ownRegistration(owner, () => this.registerCommandContribution(provider)),
       registerCapabilityContribution: (provider) =>
-        this.ownRegistration(() => this.registerCapabilityContribution(provider)),
+        this.ownRegistration(owner, () => this.registerCapabilityContribution(provider)),
       registerEditContribution: (provider) =>
-        this.ownRegistration(() => this.registerEditContribution(provider)),
+        this.ownRegistration(owner, () => this.registerEditContribution(provider)),
       registerDecorationContribution: (provider) =>
-        this.ownRegistration(() => this.registerDecorationContribution(provider)),
+        this.ownRegistration(owner, () => this.registerDecorationContribution(provider)),
       registerEditorFeatureContribution: (provider) =>
-        this.ownRegistration(() => this.registerEditorFeatureContribution(provider)),
+        this.ownRegistration(owner, () => this.registerEditorFeatureContribution(provider)),
       registerGutterContribution: (contribution) =>
-        this.ownRegistration(() => this.registerGutterContribution(contribution)),
+        this.ownRegistration(owner, () => this.registerGutterContribution(contribution)),
       registerInjectedTextRowProvider: (provider) =>
-        this.ownRegistration(() => this.registerInjectedTextRowProvider(provider)),
+        this.ownRegistration(owner, () => this.registerInjectedTextRowProvider(provider)),
       registerInlineReplacementProvider: (provider, options) =>
-        this.ownRegistration(() => this.registerInlineReplacementProvider(provider, options)),
+        this.ownRegistration(owner, () =>
+          this.registerInlineReplacementProvider(provider, options),
+        ),
       registerSelectionRangeProvider: (provider) =>
-        this.ownRegistration(() => this.registerSelectionRangeProvider(provider)),
+        this.ownRegistration(owner, () => this.registerSelectionRangeProvider(provider)),
     }
   }
 
@@ -2003,15 +2046,17 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   /**
-   * Registrations reach the host only through the context, so this is the one place that can name an
-   * owner for them. A plugin registering from a timer, a resolved promise or an event handler is
-   * past its install/activate body and has no scope left to unwind with, so the host owns those
-   * until teardown.
+   * Registrations reach the host only through a plugin's own context, so this is the one place that
+   * names their owner: the install or activate call that is running, else the plugin's current
+   * lifetime. A registration after the plugin is gone is undone at once.
    */
-  private ownRegistration(register: () => EditorDisposable): EditorDisposable {
+  private ownRegistration(
+    registrations: PluginRegistrations,
+    register: () => EditorDisposable,
+  ): EditorDisposable {
     if (this.disposed) return disposableOnce(() => undefined)
 
-    const owner = this.lifecycleRegistrationStack.at(-1) ?? this.hostRegistrations
+    const owner = registrations.scope ?? registrations.active ?? registrations.installed
     const registration = register()
     const owned: EditorDisposable = disposableOnce(() => {
       owner.delete(owned)

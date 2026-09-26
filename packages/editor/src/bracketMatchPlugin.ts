@@ -41,11 +41,12 @@ export type EditorBracketMatchPluginOptions = {
 export function createBracketMatchPlugin(
   options: EditorBracketMatchPluginOptions = {},
 ): EditorPlugin {
-  let controller: BracketMatchController | null = null
-
   return {
     name: EDITOR_BRACKET_MATCH_PLUGIN_ID,
     activate(context) {
+      // Per activation: one plugin object in two editors activates twice, and each editor's
+      // command must reach its own view.
+      let controller: BracketMatchController | null = null
       return [
         context.registerViewContribution({
           createContribution(contributionContext) {

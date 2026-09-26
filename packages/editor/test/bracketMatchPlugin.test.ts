@@ -109,6 +109,17 @@ describe('createBracketMatchPlugin', () => {
     })
   })
 
+  it('jumps within the editor whose command ran when one plugin object serves two editors', () => {
+    const plugin = createBracketMatchPlugin()
+    const first = activate({ caret: 3 }, plugin)
+    const second = activate({ brackets: [], caret: 3 }, plugin)
+
+    expect(first.runCommand('editor.action.jumpToBracket')).toBe(true)
+    expect(first.view.setSelection).toHaveBeenCalledTimes(1)
+    expect(second.view.setSelection).not.toHaveBeenCalled()
+    expect(second.runCommand('editor.action.jumpToBracket')).toBe(false)
+  })
+
   it('reports the jump as unhandled when there is no match', () => {
     const harness = activate({ caret: 1 })
 
@@ -177,7 +188,7 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
  * Activates the plugin against a fake host and returns the pieces a test drives: the view
  * contribution (which owns painting) and the command table it registered.
  */
-function activate(snapshotOptions: SnapshotOptions = {}) {
+function activate(snapshotOptions: SnapshotOptions = {}, plugin = createBracketMatchPlugin()) {
   const view = viewContext(() => snapshot(snapshotOptions))
   const commands = new Map<EditorCommandId, () => boolean>()
   let contribution: EditorViewContribution | null = null
@@ -213,7 +224,7 @@ function activate(snapshotOptions: SnapshotOptions = {}) {
     return contribution
   }
 
-  createBracketMatchPlugin().activate(context)
+  plugin.activate(context)
   const created = requireContribution()
 
   return {
