@@ -23,7 +23,7 @@ Keep the four new scope methods experimental until E025 decides stability.
 
 ## Proven in a real browser
 
-`packages/editor/test/modalInput.browser.test.ts`, on both input routes (EditContext and textarea),
+`examples/app/test/modalInput.browser.test.ts`, on both input routes (EditContext and textarea),
 with trusted keys and CDP IME input: `i`, typing, Escape, `3w`, `dw`, `u` (one undo entry); no command
 letters and no dictated text in normal mode; a composition commits in insert mode and is refused in
 normal mode; Escape drops a pending operator; a readonly view moves but does not delete; `diw` and

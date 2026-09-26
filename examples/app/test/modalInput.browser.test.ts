@@ -3,7 +3,7 @@ import { commands } from 'vitest/browser'
 import { createEditorBufferSession, createEditorTextBuffer } from '@singapore-editor/core/document'
 import { Editor } from '@singapore-editor/core/editor'
 import '@singapore-editor/core/style.css'
-import { createModalEditingPlugin } from '../../../examples/app/src/modal/modalPlugin'
+import { createModalEditingPlugin } from '../src/modal/modalPlugin'
 
 declare module 'vitest/browser' {
   interface BrowserCommands {

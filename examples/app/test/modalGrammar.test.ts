@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { modalStep, NORMAL, type ModalState } from '../../../examples/app/src/modal/grammar'
+import { modalStep, NORMAL, type ModalState } from '../src/modal/grammar'
 
 function run(keys: readonly string[], state: ModalState = NORMAL) {
   const actions = []
