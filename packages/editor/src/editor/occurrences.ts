@@ -139,7 +139,7 @@ function scanMatches(
   let next = from
   let size = Math.max(options.windows.first, query.length)
 
-  for (let start = from; start < to; ) {
+  for (let start = from; start < to;) {
     const end = Math.min(to, start + size)
     const readStart = Math.max(0, start - options.lead)
     const window = {

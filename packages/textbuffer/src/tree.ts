@@ -186,8 +186,11 @@ const slicePiece = (
 })
 
 // A piece with no line breaks has none on either side of a cut.
-const lineBreaksBefore = (buffers: PieceTableBuffers, piece: Piece, prefixLength: number): number =>
-  piece.lineBreaks === 0 ? 0 : countPieceLineBreaksBefore(buffers, piece, prefixLength)
+const lineBreaksBefore = (
+  buffers: PieceTableBuffers,
+  piece: Piece,
+  prefixLength: number,
+): number => (piece.lineBreaks === 0 ? 0 : countPieceLineBreaksBefore(buffers, piece, prefixLength))
 
 const appendRun = (
   tree: PieceTreeNode | null,

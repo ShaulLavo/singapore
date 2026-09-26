@@ -390,7 +390,7 @@ const updatedBranch = (
   updates: SlotUpdates,
 ): PieceTableReverseBranch => {
   const next = node.slice()
-  for (let at = from; at < to; ) {
+  for (let at = from; at < to;) {
     const child = (indices[at]! >>> level) & MASK
     let end = at
     while (end < to && ((indices[end]! >>> level) & MASK) === child) end++

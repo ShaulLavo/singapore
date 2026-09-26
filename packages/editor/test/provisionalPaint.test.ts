@@ -619,13 +619,13 @@ test('synthetic document attachment preserves the provisional visible scroll', (
 })
 
 test('selection paint survives provisionally without seeding document selection authority', () => {
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-    function (this: HTMLElement) {
-      if (this.classList.contains('editor-virtualized-selection-range'))
-        return new DOMRect(40, 10, 30, 19)
-      return new DOMRect(0, 0, 600, 120)
-    },
-  )
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.classList.contains('editor-virtualized-selection-range'))
+      return new DOMRect(40, 10, 30, 19)
+    return new DOMRect(0, 0, 600, 120)
+  })
   const original = mount({ documentKey: 'file-a' })
   original.editor.setText('selected text', { documentMode: 'static', languageId: null })
   original.editor.setSelection(0, 8)

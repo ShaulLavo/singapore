@@ -549,12 +549,10 @@ function foldingBindings(_platform: EditorPlatform): readonly EditorKeyBinding[]
     { chord: [prefix, key(']', { mod: true, shift: true })], command: 'editor.unfoldRecursively' },
     { chord: pair('0'), command: 'editor.foldAll' },
     { chord: pair('J'), command: 'editor.unfoldAll' },
-    ...EDITOR_FOLD_LEVELS.map(
-      (level): EditorKeyBinding => ({
-        chord: pair(String(level)),
-        command: `editor.foldLevel${level}`,
-      }),
-    ),
+    ...EDITOR_FOLD_LEVELS.map((level): EditorKeyBinding => ({
+      chord: pair(String(level)),
+      command: `editor.foldLevel${level}`,
+    })),
     { chord: pair(','), command: 'editor.createFoldingRangeFromSelection' },
     {
       chord: [prefix, key(',', { mod: true, shift: true })],

@@ -35,7 +35,7 @@ export function buildHighlightOverlayMask(
   const active = new Map<number, HighlightOverlay>()
   const mask: HighlightOverlayRange[] = []
   let previous = edges[0]?.at ?? 0
-  for (let index = 0; index < edges.length; ) {
+  for (let index = 0; index < edges.length;) {
     const at = edges[index]!.at
     appendOverlay(mask, previous, at, mergedOverlay(active.values()))
     while (index < edges.length && edges[index]!.at === at) {

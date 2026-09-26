@@ -249,7 +249,7 @@ function findNextOverString(
   const candidates = [range.end, 0].flatMap((from, pass) => {
     const found: ExactOccurrenceRange[] = []
     const end = pass === 0 ? text.length : range.end
-    for (let index = text.indexOf(query, from); index !== -1 && index < end; ) {
+    for (let index = text.indexOf(query, from); index !== -1 && index < end;) {
       found.push({ start: index, end: index + query.length })
       index = text.indexOf(query, index + 1)
     }
@@ -289,7 +289,7 @@ function expectNextMatches(
 
 function trimOverString(text: string): readonly TextEdit[] {
   const edits: TextEdit[] = []
-  for (let start = 0; start <= text.length; ) {
+  for (let start = 0; start <= text.length;) {
     const lineBreak = text.indexOf('\n', start)
     const end = lineBreak === -1 ? text.length : lineBreak
     const trimmedEnd = start + text.slice(start, end).replace(/[ \t]+$/, '').length

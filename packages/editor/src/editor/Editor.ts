@@ -3557,7 +3557,7 @@ export class Editor {
 
     this.notifyingReservedWidth = true
     try {
-      for (let next = this.pendingReservedWidthSides.shift(); next; ) {
+      for (let next = this.pendingReservedWidthSides.shift(); next;) {
         this.deliverReservedWidth(next)
         next = this.pendingReservedWidthSides.shift()
       }

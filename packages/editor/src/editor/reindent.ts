@@ -169,7 +169,7 @@ function scanLiterals(
   if (!opener) return { starts, ends }
 
   // Only a unit that can open a literal stops the scan; every other one is stepped over.
-  for (let index = cursor.search(opener, 0, limit); index !== -1; ) {
+  for (let index = cursor.search(opener, 0, limit); index !== -1;) {
     const end = literalEndAt(cursor, index, tokens)
     if (end !== null) {
       starts.push(index)

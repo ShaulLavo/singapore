@@ -236,14 +236,11 @@ describe('editor view snapshot serialization', () => {
 
   it('bounds token reads to the mounted exact chunk', () => {
     const text = 'x'.repeat(100_000)
-    const source = Array.from(
-      { length: 10_000 },
-      (_value, index): EditorToken => ({
-        start: index * 10,
-        end: index * 10 + 5,
-        style: { color: `#${index.toString(16).padStart(6, '0').slice(-6)}` },
-      }),
-    )
+    const source = Array.from({ length: 10_000 }, (_value, index): EditorToken => ({
+      start: index * 10,
+      end: index * 10 + 5,
+      style: { color: `#${index.toString(16).padStart(6, '0').slice(-6)}` },
+    }))
     const tokens = EditorTokenStore.fromTokens(source)
     const tokenReads = watchTokenReads(tokens)
     const harness = snapshotHarness({
@@ -263,14 +260,11 @@ describe('editor view snapshot serialization', () => {
     const red = { color: 'red' }
     const blue = { color: 'blue' }
     const tokens = EditorTokenStore.fromTokens(
-      Array.from(
-        { length: count },
-        (_value, index): EditorToken => ({
-          start: index,
-          end: index + 1,
-          style: index % 2 === 0 ? red : blue,
-        }),
-      ),
+      Array.from({ length: count }, (_value, index): EditorToken => ({
+        start: index,
+        end: index + 1,
+        style: index % 2 === 0 ? red : blue,
+      })),
     )
     const harness = snapshotHarness({
       text,
@@ -283,14 +277,11 @@ describe('editor view snapshot serialization', () => {
 
   it('reads each token once across many exact chunks', () => {
     const text = 'x'.repeat(2_000)
-    const source = Array.from(
-      { length: 200 },
-      (_value, index): EditorToken => ({
-        start: index * 10,
-        end: index * 10 + 5,
-        style: { color: 'red' },
-      }),
-    )
+    const source = Array.from({ length: 200 }, (_value, index): EditorToken => ({
+      start: index * 10,
+      end: index * 10 + 5,
+      style: { color: 'red' },
+    }))
     const tokens = EditorTokenStore.fromTokens(source)
     const tokenReads = watchTokenReads(tokens)
     const chunks = source.map((token) =>

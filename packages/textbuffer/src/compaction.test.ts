@@ -242,7 +242,7 @@ const longestStepMs = async (step: () => boolean): Promise<number> => {
   const observer = new PerformanceObserver((list) => pauses.push(...list.getEntries()))
   observer.observe({ entryTypes: ['gc'] })
   const timed: { start: number; end: number; cpu: number }[] = []
-  for (let done = false; !done; ) {
+  for (let done = false; !done;) {
     const start = performance.now()
     const cpu = cpuMs()
     done = step()

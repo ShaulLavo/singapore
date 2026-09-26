@@ -27,13 +27,7 @@ for (const [grammarDir, outputFile] of grammars) {
 function buildGrammar(grammarDir, outputFile) {
   const result = spawnSync(
     treeSitterBin,
-    [
-      'build',
-      '--wasm',
-      join(grammarRoot, grammarDir),
-      '-o',
-      join(outputRoot, outputFile),
-    ],
+    ['build', '--wasm', join(grammarRoot, grammarDir), '-o', join(outputRoot, outputFile)],
     { stdio: 'inherit' },
   )
 

@@ -32,7 +32,7 @@ export class TextCursor {
   }
 
   indexOf(token: string, from: number): number {
-    for (let start = from; start < this.length; ) {
+    for (let start = from; start < this.length;) {
       this.load(start)
       const found = this.#page.indexOf(token, start - this.#pageStart)
       if (found !== -1) return this.#pageStart + found

@@ -28,7 +28,7 @@ function sample(length) {
     }
     if (cycle % 1000 !== 999) continue
     const job = compactTombstones(snapshot)
-    for (let done = false; !done; ) {
+    for (let done = false; !done;) {
       const start = performance.now()
       const cpuStart = cpuMs()
       done = job.next().done === true

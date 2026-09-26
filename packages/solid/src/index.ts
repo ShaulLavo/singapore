@@ -269,30 +269,28 @@ function createConstructorOptions(
     ...constructorOptions
   } = options
 
-  return untrack(
-    (): EditorOptions => ({
-      ...constructorOptions,
-      editability: readReactive(editability),
-      fontFamily: readReactive(fontFamily),
-      fontSize: readReactive(fontSize),
-      hiddenCharacters: readReactive(hiddenCharacters),
-      keymap: readReactive(keymap),
-      lineHeight: readReactive(lineHeight),
-      rangeDecorations: readReactive(rangeDecorations),
-      rowGap: readReactive(rowGap),
-      scrollMode: readReactive(scrollMode),
-      suspiciousCharacters: readReactive(suspiciousCharacters),
-      tabMovesFocus: readReactive(tabMovesFocus),
-      tabSize: readReactive(tabSize),
-      theme: readReactive(theme) ?? undefined,
-      wordWrap: readReactive(wordWrap),
-      plugins: [createSolidSyncPlugin(runtime), ...(plugins ?? [])],
-      onChange: (state, change) => {
-        syncChange(runtime, state, change)
-        onChange?.(state, change)
-      },
-    }),
-  )
+  return untrack((): EditorOptions => ({
+    ...constructorOptions,
+    editability: readReactive(editability),
+    fontFamily: readReactive(fontFamily),
+    fontSize: readReactive(fontSize),
+    hiddenCharacters: readReactive(hiddenCharacters),
+    keymap: readReactive(keymap),
+    lineHeight: readReactive(lineHeight),
+    rangeDecorations: readReactive(rangeDecorations),
+    rowGap: readReactive(rowGap),
+    scrollMode: readReactive(scrollMode),
+    suspiciousCharacters: readReactive(suspiciousCharacters),
+    tabMovesFocus: readReactive(tabMovesFocus),
+    tabSize: readReactive(tabSize),
+    theme: readReactive(theme) ?? undefined,
+    wordWrap: readReactive(wordWrap),
+    plugins: [createSolidSyncPlugin(runtime), ...(plugins ?? [])],
+    onChange: (state, change) => {
+      syncChange(runtime, state, change)
+      onChange?.(state, change)
+    },
+  }))
 }
 
 function createReactiveEffects(

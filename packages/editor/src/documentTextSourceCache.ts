@@ -22,7 +22,7 @@ export function appendDocumentTextMeasurements(
     pages = new Map()
     sourcePages.set(owner, pages)
   }
-  for (let offset = start; offset < end; ) {
+  for (let offset = start; offset < end;) {
     const pageStart = Math.floor(offset / SOURCE_PAGE_LENGTH) * SOURCE_PAGE_LENGTH
     const to = Math.min(end, pageStart + SOURCE_PAGE_LENGTH)
     const cached = pages.get(pageStart) ?? []
