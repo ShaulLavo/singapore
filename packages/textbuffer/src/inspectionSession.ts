@@ -126,8 +126,6 @@ export function createPieceTreeInspectionSession() {
               subtreeVisibleLength: node.subtreeVisibleLength,
               subtreePieces: node.subtreePieces,
               subtreeLineBreaks: node.subtreeLineBreaks,
-              subtreeMinOrder: node.subtreeMinOrder,
-              subtreeMaxOrder: node.subtreeMaxOrder,
               subtreeMinBuffer: node.subtreeMinBuffer,
             }),
             excerpt: excerpt(snapshot, node.piece, length),

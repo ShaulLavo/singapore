@@ -58,14 +58,13 @@ See [`pieceTableTypes.ts`](src/pieceTableTypes.ts).
 
 Each node holds one piece and summaries of its subtree:
 
-| Field                                | Meaning                                                        |
-| ------------------------------------ | -------------------------------------------------------------- |
-| `subtreeOriginalLength`              | Length of the original buffer's pieces, deleted ones included. |
-| `subtreeVisibleLength`               | Length of the visible text.                                    |
-| `subtreePieces`                      | Number of stored pieces.                                       |
-| `subtreeLineBreaks`                  | Number of visible line breaks.                                 |
-| `subtreeMinOrder`, `subtreeMaxOrder` | The subtree's order range.                                     |
-| `subtreeMinBuffer`                   | The oldest buffer id in the subtree.                           |
+| Field                   | Meaning                                                        |
+| ----------------------- | -------------------------------------------------------------- |
+| `subtreeOriginalLength` | Length of the original buffer's pieces, deleted ones included. |
+| `subtreeVisibleLength`  | Length of the visible text.                                    |
+| `subtreePieces`         | Number of stored pieces.                                       |
+| `subtreeLineBreaks`     | Number of visible line breaks.                                 |
+| `subtreeMinBuffer`      | The oldest buffer id in the subtree.                           |
 
 Offset lookups use visible lengths to choose a branch. Line lookups use line-break counts. Anchor resolution descends by order, by original length for an anchor in the original text, and by oldest buffer to find the edges of a deleted piece's gap.
 

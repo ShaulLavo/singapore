@@ -54,25 +54,24 @@ type Report = (
   expected: PieceTreeIssue['expected'],
   actual: PieceTreeIssue['actual'],
 ) => void
-type Totals = Pick<
+type Stored = Pick<
   PieceTreeNode,
   | 'subtreeOriginalLength'
   | 'subtreeVisibleLength'
   | 'subtreePieces'
   | 'subtreeLineBreaks'
-  | 'subtreeMinOrder'
-  | 'subtreeMaxOrder'
   | 'subtreeMinBuffer'
 >
-const empty: Totals = {
+// Order bounds are not stored on nodes; they are recomputed to check ordering.
+type Totals = Stored & { readonly minOrder: number; readonly maxOrder: number }
+const stored: Stored = {
   subtreeOriginalLength: 0,
   subtreeVisibleLength: 0,
   subtreePieces: 0,
   subtreeLineBreaks: 0,
-  subtreeMinOrder: Infinity,
-  subtreeMaxOrder: -Infinity,
   subtreeMinBuffer: Infinity,
 }
+const empty: Totals = { ...stored, minOrder: Infinity, maxOrder: -Infinity }
 export const inspectionPieceFields = [
   'buffer',
   'start',
@@ -336,16 +335,15 @@ function checkTotals(
       left.subtreeVisibleLength + (p.visible ? p.length : 0) + right.subtreeVisibleLength,
     subtreePieces: left.subtreePieces + 1 + right.subtreePieces,
     subtreeLineBreaks: left.subtreeLineBreaks + (p.visible ? breaks : 0) + right.subtreeLineBreaks,
-    subtreeMinOrder: Math.min(left.subtreeMinOrder, p.order, right.subtreeMinOrder),
-    subtreeMaxOrder: Math.max(left.subtreeMaxOrder, p.order, right.subtreeMaxOrder),
     subtreeMinBuffer: Math.min(left.subtreeMinBuffer, p.buffer, right.subtreeMinBuffer),
+    minOrder: Math.min(left.minOrder, p.order, right.minOrder),
+    maxOrder: Math.max(left.maxOrder, p.order, right.maxOrder),
   }
-  for (const field of Object.keys(empty) as Array<keyof Totals>)
+  for (const field of Object.keys(stored) as Array<keyof Stored>)
     report('aggregate', id, field, result[field], node[field])
-  if (left.subtreeMaxOrder >= p.order)
-    report('ordering', id, 'left.order', `< ${p.order}`, left.subtreeMaxOrder)
-  if (right.subtreeMinOrder <= p.order)
-    report('ordering', id, 'right.order', `> ${p.order}`, right.subtreeMinOrder)
+  if (left.maxOrder >= p.order) report('ordering', id, 'left.order', `< ${p.order}`, left.maxOrder)
+  if (right.minOrder <= p.order)
+    report('ordering', id, 'right.order', `> ${p.order}`, right.minOrder)
   return result
 }
 

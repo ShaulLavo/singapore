@@ -117,8 +117,6 @@ export type PieceTreeNode = {
   subtreeVisibleLength: number
   subtreePieces: number
   subtreeLineBreaks: number
-  subtreeMinOrder: number
-  subtreeMaxOrder: number
   // The oldest buffer in the subtree. A deleted anchor's gap ends at the
   // nearest piece no newer than its own, and this finds that piece.
   subtreeMinBuffer: number

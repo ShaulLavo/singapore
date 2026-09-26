@@ -38,14 +38,12 @@ For raw results `L` and `R` from the children and piece `p`, the equations are:
 | `subtreeVisibleLength` | `L.visibleLength + (p.visible ? p.length : 0) + R.visibleLength` |
 | `subtreePieces` | `L.pieces + 1 + R.pieces` |
 | `subtreeLineBreaks` | `L.lineBreaks + (p.visible ? rawLFCount(p) : 0) + R.lineBreaks` |
-| `subtreeMinOrder` | minimum of the piece order and both raw child minima |
-| `subtreeMaxOrder` | maximum of the piece order and both raw child maxima |
 | `subtreeMinBuffer` | minimum of the piece buffer and both raw child minima |
 | snapshot `length` | root's raw visible length |
 | snapshot `pieceCount` | root's raw piece count |
 
-Null children contribute zero sums, positive infinity for minimum order, and negative infinity for
-maximum order. The checker scans LF characters directly in buffer ranges; it does not call tree
+Null children contribute zero sums. Nodes store no order bounds; the checker recomputes them to
+verify that orders rise in document order. The checker scans LF characters directly in buffer ranges; it does not call tree
 aggregate helpers or the buffer line-index cache. Invisible pieces still require valid bounds and
 raw line-break counts. Invalid ranges produce an issue before scanning.
 

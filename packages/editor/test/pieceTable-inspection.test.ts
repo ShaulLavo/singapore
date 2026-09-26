@@ -64,8 +64,6 @@ describe('piece tree inspection', () => {
       subtreeVisibleLength: 2,
       subtreePieces: 2,
       subtreeLineBreaks: 1,
-      subtreeMinOrder: 1,
-      subtreeMaxOrder: 2,
       subtreeMinBuffer: 0,
     })
     // Both pieces are original text, which the reverse index does not hold.
@@ -80,8 +78,6 @@ describe('piece tree inspection', () => {
     'subtreeVisibleLength',
     'subtreePieces',
     'subtreeLineBreaks',
-    'subtreeMinOrder',
-    'subtreeMaxOrder',
     'subtreeMinBuffer',
   ] as const)('identifies a corrupt %s independently of child caches', (field) => {
     const snapshot = control()

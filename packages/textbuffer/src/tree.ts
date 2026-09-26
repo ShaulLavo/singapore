@@ -22,8 +22,8 @@ import { join } from './join'
 import {
   createNode,
   getPieceVisibleLength,
-  getSubtreeMaxOrder,
-  getSubtreeMinOrder,
+  firstOrder,
+  lastOrder,
   getSubtreeVisibleLength,
   ORIGINAL_BUFFER,
   own,
@@ -226,8 +226,6 @@ const piecesForInsert = (
   return ordered.pieces
 }
 
-const finite = (order: number): number | null => (Number.isFinite(order) ? order : null)
-
 // Insert in one descent: no split and no merge. The landing places the new
 // pieces beside or inside its piece and every ancestor rejoins once, which
 // rebalances in constant work per level.
@@ -318,13 +316,13 @@ const insertAtLanding = (
 
   // Only the document's first piece is landed on at its start.
   if (localOffset === 0) {
-    const lower = next.left ? finite(getSubtreeMaxOrder(next.left)) : bounds[0]
+    const lower = next.left ? lastOrder(next.left) : bounds[0]
     const pieces = piecesForInsert(buffers, context, lower, piece.order)
     for (const added of pieces) context.changes.push(added)
     return join(appendRun(next.left, pieces, epoch), next, next.right, epoch)
   }
 
-  const upper = next.right ? finite(getSubtreeMinOrder(next.right)) : bounds[1]
+  const upper = next.right ? firstOrder(next.right) : bounds[1]
   if (localOffset === nodeLen) {
     const pieces = piecesForInsert(buffers, context, piece.order, upper)
     for (const added of pieces) context.changes.push(added)
@@ -393,7 +391,7 @@ const hidePieceRange = (
     return right
   }
 
-  const upper = right ? finite(getSubtreeMinOrder(right)) : upperOrder
+  const upper = right ? firstOrder(right) : upperOrder
   const breaksBeforeTo = to === length ? piece.lineBreaks : lineBreaksBefore(buffers, piece, to)
   const tail: Piece[] = []
   if (from === 0) {
@@ -563,7 +561,7 @@ export const hideVisibleRange = (
 
   const here = from >= leftLen ? pending : null
   if (here && cutFrom === 0) {
-    const lower = left ? finite(getSubtreeMaxOrder(left)) : lowerOrder
+    const lower = left ? lastOrder(left) : lowerOrder
     left = appendRun(left, placedPieces(buffers, here, lower, order), epoch)
   }
   right = hidePieceRange(next, cutFrom, cutTo, right, buffers, context, epoch, upperOrder, here)
