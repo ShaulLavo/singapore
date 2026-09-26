@@ -95,11 +95,7 @@ class OccurrenceHighlightController implements EditorViewContribution {
     const specs = painted.map(occurrenceDecorationSpec)
     if (!this.decorations.replaceOwner(EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID, specs)) return
 
-    if (painted.length === 0) {
-      this.context.clearRangeHighlight(this.highlightName)
-      return
-    }
-
+    // Empty, not cleared: the view keeps the group's rule for the next word.
     this.context.setRangeHighlight(this.highlightName, painted, this.style)
   }
 

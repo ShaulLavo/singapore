@@ -248,7 +248,7 @@ export function setRangeHighlight(
 ): void {
   validateRangeHighlightStyle(style)
   if (ranges.length === 0) {
-    clearRangeHighlight(view, name)
+    emptyRangeHighlight(view, name)
     return
   }
 
@@ -265,6 +265,23 @@ export function setRangeHighlight(
   group.style = style
   group.signature = staleRangeHighlightSignature()
   if (style.overlay || previousOverlay) {
+    refreshHighlightOverlayMask(view)
+    return
+  }
+  prepareRangeHighlightTwins(view, group)
+  renderRangeHighlight(view, name)
+  rebuildStyleRules(view)
+}
+
+// An emptied group keeps its rule, so only a style change rewrites the view's <style>. Occurrence
+// highlights empty and refill every few keys; dropping the rule restyled every mounted row each time.
+function emptyRangeHighlight(view: VirtualizedTextViewInternal, name: string): void {
+  const group = view.rangeHighlightGroups.get(name)
+  if (!group || group.ranges.length === 0) return
+
+  group.ranges = []
+  group.signature = staleRangeHighlightSignature()
+  if (group.style.overlay) {
     refreshHighlightOverlayMask(view)
     return
   }

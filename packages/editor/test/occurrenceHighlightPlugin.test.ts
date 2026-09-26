@@ -44,13 +44,23 @@ describe('occurrence highlight contribution', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('clears once when the caret leaves a word, and stays quiet after', () => {
+  it('empties once when the caret leaves a word, and stays quiet after', () => {
     const calls: HighlightCall[] = []
     const contribution = createContribution(calls)
 
     contribution.update(snapshotWithCaret(8), 'selection')
     contribution.update(snapshotWithCaret(5), 'selection')
     contribution.update(snapshotWithCaret(5), 'selection')
+
+    expect(calls).toEqual([expect.objectContaining({ kind: 'set' }), { kind: 'set', ranges: [] }])
+  })
+
+  it('clears the highlight when the view is cleared', () => {
+    const calls: HighlightCall[] = []
+    const contribution = createContribution(calls)
+
+    contribution.update(snapshotWithCaret(8), 'selection')
+    contribution.update(snapshotWithCaret(8), 'clear')
 
     expect(calls.map((call) => call.kind)).toEqual(['set', 'clear'])
   })
