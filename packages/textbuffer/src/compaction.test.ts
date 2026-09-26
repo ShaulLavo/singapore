@@ -229,35 +229,36 @@ describe('compaction between edits', () => {
   })
 })
 
+// Thread CPU time, so other work on the machine cannot fail a step. A major GC
+// lands in whichever step trips it, often collecting an earlier test's heap, so
+// its pause is subtracted.
+const cpuMs = (): number => {
+  const usage = process.threadCpuUsage()
+  return (usage.user + usage.system) / 1000
+}
+
+const longestStepMs = async (step: () => boolean): Promise<number> => {
+  const pauses: PerformanceEntry[] = []
+  const observer = new PerformanceObserver((list) => pauses.push(...list.getEntries()))
+  observer.observe({ entryTypes: ['gc'] })
+  const timed: { start: number; end: number; cpu: number }[] = []
+  for (let done = false; !done; ) {
+    const start = performance.now()
+    const cpu = cpuMs()
+    done = step()
+    timed.push({ start, end: performance.now(), cpu: cpuMs() - cpu })
+  }
+  // GC entries reach the observer on a later tick.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  observer.disconnect()
+  const paused = (from: number, to: number) =>
+    pauses
+      .filter((pause) => pause.startTime >= from && pause.startTime < to)
+      .reduce((sum, pause) => sum + pause.duration, 0)
+  return Math.max(...timed.map(({ start, end, cpu }) => cpu - paused(start, end)))
+}
+
 describe('work proportional to the tree, not the history', () => {
-  const cpuMs = (): number => {
-    const usage = process.threadCpuUsage()
-    return (usage.user + usage.system) / 1000
-  }
-
-  // A major GC of a large heap lands in whichever step trips it, so its pause
-  // is subtracted: the collector's cost scales with the heap, not the step.
-  const longestStepMs = async (step: () => boolean): Promise<number> => {
-    const pauses: PerformanceEntry[] = []
-    const observer = new PerformanceObserver((list) => pauses.push(...list.getEntries()))
-    observer.observe({ entryTypes: ['gc'] })
-    const timed: { start: number; end: number; cpu: number }[] = []
-    for (let done = false; !done; ) {
-      const start = performance.now()
-      const cpu = cpuMs()
-      done = step()
-      timed.push({ start, end: performance.now(), cpu: cpuMs() - cpu })
-    }
-    // GC entries reach the observer on a later tick.
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    observer.disconnect()
-    const paused = (from: number, to: number) =>
-      pauses
-        .filter((pause) => pause.startTime >= from && pause.startTime < to)
-        .reduce((sum, pause) => sum + pause.duration, 0)
-    return Math.max(...timed.map(({ start, end, cpu }) => cpu - paused(start, end)))
-  }
-
   const churnAtOneSpot = (cycles: number, passEvery: number) => {
     let snapshot = createPieceTableSnapshot('ab')
     const passSteps: number[] = []
@@ -278,15 +279,14 @@ describe('work proportional to the tree, not the history', () => {
 
   // Relabelling runs inside an edit. After a long compacted history it once
   // rebuilt an entry per insertion ever made: 45 ms at 100,000 of them.
-  test('a relabel after a long history touches only the live tree', () => {
+  test('a relabel after a long history touches only the live tree', async () => {
     let { snapshot } = churnAtOneSpot(50_000, 2000)
     expect(snapshot.pieceCount).toBeLessThan(200)
-    let longest = 0
-    for (let edit = 0; edit < 120; edit++) {
-      const start = cpuMs()
+    let edit = 0
+    const longest = await longestStepMs(() => {
       snapshot = insertIntoPieceTable(snapshot, 1, `${edit % 10}`)
-      longest = Math.max(longest, cpuMs() - start)
-    }
+      return ++edit === 120
+    })
     expect(longest).toBeLessThan(8)
     expectValid(snapshot)
   }, 60_000)
@@ -327,13 +327,7 @@ describe('work proportional to the tree, not the history', () => {
 describe('maintenance latency', () => {
   // Each cycle's deleted text is blocked by a different visible append, so one
   // trailing run holds a stand-in per cycle. Checking it once took 68 ms here.
-  // Timed in this thread's CPU time, so other work on the machine cannot fail it.
-  const cpuMs = (): number => {
-    const usage = process.threadCpuUsage()
-    return (usage.user + usage.system) / 1000
-  }
-
-  test('a long run of distinct stand-ins is planned in short steps', () => {
+  test('a long run of distinct stand-ins is planned in short steps', async () => {
     let snapshot = createPieceTableSnapshot('')
     let longest = 0
     let steps = 0
@@ -346,13 +340,13 @@ describe('maintenance latency', () => {
       if (cycle % 1000 !== 999) continue
       const job = compactTombstones(snapshot)
       steps = 0
-      for (let done = false; !done; steps++) {
-        const start = cpuMs()
+      const passLongest = await longestStepMs(() => {
+        steps++
         const step = job.next()
-        longest = Math.max(longest, cpuMs() - start)
-        done = step.done === true
-        if (done) expect(step.value.unverified).toBe(0)
-      }
+        if (step.done) expect(step.value.unverified).toBe(0)
+        return step.done === true
+      })
+      longest = Math.max(longest, passLongest)
     }
     // The last pass saw about 8,000 stand-ins and 2,000 new tombstones in one run.
     expect(steps).toBeGreaterThan(10_000 / 1024)
