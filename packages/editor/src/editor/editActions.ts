@@ -1,3 +1,4 @@
+import { type AtomicRanges, atomicDeleteRange, widenOverAtomicRanges } from '../atomicRanges'
 import type { DocumentSessionEditSelection } from '../documentSession'
 import type { TextReadSnapshot } from '../documentTextSnapshot'
 import { normalizeTabSize } from '../displayTransforms'
@@ -84,6 +85,8 @@ export type EditorEditActionOptions = {
   readonly injections?: readonly EditorSyntaxInjection[]
   readonly tabSize?: number
   readonly indentText?: string
+  /** Replacements a word delete takes whole instead of cutting into. */
+  readonly atomicRanges?: AtomicRanges
 }
 
 /** One row's text, without its terminator, together with the offset the row starts at. */
@@ -261,9 +264,11 @@ function deleteWordAction(
   options: EditorEditActionOptions,
 ): EditorEditActionResult {
   const separators = wordSeparatorsForLanguage(options.languageId)
+  const atomic = options.atomicRanges ?? []
   const ranges = selections
     .map((selection) => wordDeleteRange(source, selection, direction, granularity, separators))
     .filter((range) => range.start !== range.end)
+    .map((range) => widenOverAtomicRanges(atomic, range))
   const merged = mergeOffsetRanges(ranges)
   const edits = merged.map((range) => rangeToEdit(range, ''))
   const collapsedSelections = collapseSelectionsAfterRanges(merged)
@@ -275,6 +280,61 @@ function deleteWordAction(
     revealOffset: collapsedSelections[0]?.head,
     timingName: `input.delete${scope}${direction === 'left' ? 'Left' : 'Right'}`,
   }
+}
+
+/**
+ * Backspace or Delete where a selection meets an atomic replacement, which then goes whole. Null when
+ * no selection touches one, so the ordinary delete paths keep every other case.
+ */
+export function atomicDeleteAction(
+  source: TextReadSnapshot,
+  selections: readonly ResolvedSelection[],
+  direction: 'backward' | 'forward',
+  atomic: AtomicRanges,
+): EditorEditActionResult | null {
+  if (atomic.length === 0) return null
+  const spans = selections.map((selection) =>
+    atomicSelectionDeleteSpan(atomic, selection, direction),
+  )
+  if (spans.every((span) => span === null)) return null
+
+  const ranges = selections
+    .map((selection, index) => spans[index] ?? plainDeleteSpan(source, selection, direction))
+    .filter((range) => range.start !== range.end)
+  const merged = mergeOffsetRanges(ranges)
+  const collapsedSelections = collapseSelectionsAfterRanges(merged)
+  return {
+    edits: merged.map((range) => rangeToEdit(range, '')),
+    selections: collapsedSelections,
+    revealOffset: collapsedSelections[0]?.head,
+    timingName: direction === 'backward' ? 'input.backspace' : 'input.delete',
+  }
+}
+
+function atomicSelectionDeleteSpan(
+  atomic: AtomicRanges,
+  selection: ResolvedSelection,
+  direction: 'backward' | 'forward',
+): OffsetRange | null {
+  if (selection.collapsed) return atomicDeleteRange(atomic, selection.headOffset, direction)
+
+  const span = { start: selection.startOffset, end: selection.endOffset }
+  const widened = widenOverAtomicRanges(atomic, span)
+  return widened === span ? null : widened
+}
+
+function plainDeleteSpan(
+  source: TextReadSnapshot,
+  selection: ResolvedSelection,
+  direction: 'backward' | 'forward',
+): OffsetRange {
+  if (!selection.collapsed) return { start: selection.startOffset, end: selection.endOffset }
+
+  return rangeInRowWindow(source, selection.headOffset, (text, head) =>
+    direction === 'backward'
+      ? { start: previousCodePointOffset(text, head), end: head }
+      : { start: head, end: nextCodePointOffset(text, head) },
+  )
 }
 
 /**

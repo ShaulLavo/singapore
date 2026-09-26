@@ -28,6 +28,7 @@ export type {
   InlineMap,
   InlineMapUpdate,
   InlineReplacementRange,
+  InlineReplacementReveal,
   InlineReplacementSpec,
 } from '../inlineMap'
 export type {

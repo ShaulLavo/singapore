@@ -142,6 +142,7 @@ type InlineWidgetHost = {
 }
 
 type InlineWidgetRun = {
+  /** The mount's key: the replacement's `key`, else its id. */
   readonly id: string
   readonly localStart: number
   readonly localEnd: number
@@ -1103,7 +1104,7 @@ function inlineRowRuns(mapping: RowInlineMapping | null, text: TextContent): Inl
     // caret no side to stop on and the measured advance nothing to span.
     if (localStart < 0 || localEnd > text.length || localEnd <= localStart) continue
 
-    const id = segment.id
+    const id = segment.render ? (segment.key ?? segment.id) : segment.id
     const styling = className === undefined ? {} : { className }
     if (render) widgets.push({ id, localStart, localEnd, render, ...styling })
     else if (className !== undefined) classes.push({ id, localStart, localEnd, className })
@@ -1571,7 +1572,9 @@ function retireInlineWidgets(view: VirtualizedTextViewInternal): void {
 
   widgets.inlineMap = view.model.inlineMap
   const live = new Set<string>()
-  for (const range of view.model.inlineMap?.ranges ?? []) live.add(range.id)
+  for (const replacements of view.model.inlineMap?.rowReplacements.values() ?? []) {
+    for (const replacement of replacements) live.add(replacement.key ?? replacement.id)
+  }
 
   for (const [id, host] of widgets.hosts) {
     if (live.has(id)) continue

@@ -17,8 +17,9 @@ import type {
   VirtualizedTextViewScrollMode,
 } from '../virtualization/virtualizedTextViewTypes'
 import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
-import type { EditorInputRoute } from '../virtualization/virtualizedTextViewTypes'
+import type { EditorInputKind, EditorInputRoute } from '../virtualization/virtualizedTextViewTypes'
 import type { EditorKeymapOptions } from './keymap'
+import type { EditorAutoClosingPair } from './languageConfiguration'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'
 import type { EditorTokenInput } from '../syntax/tokenStore'
@@ -154,8 +155,20 @@ export type EditorOptions = {
    * textarea. Elsewhere, and by default, the textarea.
    */
   readonly inputRoute?: EditorInputRoute
+  /** The input's accessible name. Defaults to "Editor input". */
+  readonly inputLabel?: string
+  readonly inputKind?: EditorInputKind
+  /**
+   * Leaves room below the last row to scroll it to the top. On by default; a host that sizes itself
+   * to its text turns it off.
+   */
+  readonly scrollPastEnd?: boolean
   /** Soft-wraps long lines to the viewport width instead of scrolling horizontally. */
   readonly wordWrap?: boolean
+  /** Replaces every language's auto-closing pairs; an empty list turns auto-close off. */
+  readonly autoClosingPairs?: readonly EditorAutoClosingPair[]
+  /** What typing an opener over a selection wraps it with. Unset, the auto-closing pairs. */
+  readonly surroundingPairs?: readonly EditorAutoClosingPair[]
 }
 
 export type EditorSetTextOptions = {

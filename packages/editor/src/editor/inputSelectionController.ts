@@ -52,8 +52,10 @@ import {
   isEditorDocumentSelectionEditCommand,
   type EditorDocumentSelectionEditCommandId,
 } from './reindent'
+import { widenOverAtomicRanges } from '../atomicRanges'
 import { childContainingNode, childNodeIndex, elementBoundaryToTextOffset } from './domBoundary'
 import {
+  atomicDeleteAction,
   editActionForCommand,
   listItemLineBreak,
   trimTrailingWhitespaceAction,
@@ -132,6 +134,7 @@ import type { EditorSelectionSyncMode, EditorSessionOptions } from './types'
 import {
   autoClosingPairForClose,
   autoClosingPairForOpen,
+  autoClosingPairsForLanguage,
   shouldAutoClose,
   shouldDeletePair,
   shouldSurroundSelection,
@@ -169,6 +172,10 @@ export type InputSelectionControllerOptions = {
   readonly tabSize: number
   /** Whether Tab is the page's key for leaving the editor rather than the editor's for indenting. */
   readonly tabMovesFocus: boolean
+  /** Replaces the language's pairs; empty turns auto-close off. */
+  readonly autoClosingPairs?: readonly EditorAutoClosingPair[]
+  /** What typing an opener over a selection wraps it with; the auto-closing pairs when unset. */
+  readonly surroundingPairs?: readonly EditorAutoClosingPair[]
   readonly view: VirtualizedTextView
   getLanguageId(): EditorSyntaxLanguageId | null
   getSyntaxInjections(): readonly EditorSyntaxInjection[]
@@ -755,8 +762,8 @@ export class InputSelectionController {
 
     const caret = source.headOffset
 
-    const languageId = this.options.getLanguageId()
-    const closing = autoClosingPairForClose(languageId, text)
+    const pairs = this.autoClosingPairs()
+    const closing = autoClosingPairForClose(pairs, text)
     if (
       closing &&
       shouldTypeOverCloser({
@@ -768,7 +775,7 @@ export class InputSelectionController {
       return this.typeOverCloser(session, snapshot, caret)
     }
 
-    const opening = autoClosingPairForOpen(languageId, text)
+    const opening = autoClosingPairForOpen(pairs, text)
     if (!opening) return null
     if (!shouldAutoClose(opening, this.autoCloseContext(snapshot, caret))) return null
 
@@ -788,6 +795,12 @@ export class InputSelectionController {
     this.autoClose.track(change.snapshot, caret + opening.open.length, opening.close)
     this.markSessionSelectionForNextInput()
     return change
+  }
+
+  private autoClosingPairs(): readonly EditorAutoClosingPair[] {
+    return (
+      this.options.autoClosingPairs ?? autoClosingPairsForLanguage(this.options.getLanguageId())
+    )
   }
 
   /** The line the caret stands on, split at the caret, read without materializing the document. */
@@ -826,7 +839,7 @@ export class InputSelectionController {
 
     const charBefore = characterBefore(snapshot, caret)
     const pair =
-      charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
+      charBefore === null ? null : autoClosingPairForOpen(this.autoClosingPairs(), charBefore)
     if (
       !shouldDeletePair({
         charAfter: characterAt(snapshot, caret),
@@ -856,7 +869,10 @@ export class InputSelectionController {
    */
   private surroundSelection(session: DocumentSession, text: string): DocumentSessionChange | null {
     const languageId = this.options.getLanguageId()
-    const opening = autoClosingPairForOpen(languageId, text)
+    const opening = autoClosingPairForOpen(
+      this.options.surroundingPairs ?? this.autoClosingPairs(),
+      text,
+    )
     if (!opening) return null
 
     const snapshot = session.getSnapshot()
@@ -1078,17 +1094,35 @@ export class InputSelectionController {
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const selectionChange = this.selectionChangeBeforeEdit()
     const change =
-      direction === 'backward'
+      this.atomicDelete(session, direction) ??
+      (direction === 'backward'
         ? (this.deleteAutoClosedPair(session) ??
           this.mirrorBackspaceDelete(session) ??
           session.backspace(this.options.tabSize))
-        : (this.mirrorSelectionDelete(session) ?? session.deleteSelection())
+        : (this.mirrorSelectionDelete(session) ?? session.deleteSelection()))
     this.applyChange(
       mergeChangeTimings(change, selectionChange),
       direction === 'backward' ? 'input.backspace' : 'input.delete',
       start,
     )
     return true
+  }
+
+  /** A delete that meets an atomic replacement takes all of it, or null to delete as usual. */
+  private atomicDelete(
+    session: DocumentSession,
+    direction: 'backward' | 'forward',
+  ): DocumentSessionChange | null {
+    const atomic = this.options.view.atomicRanges()
+    if (atomic.length === 0) return null
+
+    const snapshot = session.getSnapshot()
+    const selections = session
+      .getSelections()
+      .selections.map((selection) => resolveSelection(snapshot, selection))
+    const action = atomicDeleteAction(session.getTextSnapshot(), selections, direction, atomic)
+    if (!action) return null
+    return session.applyEdits(action.edits, { selections: action.selections })
   }
 
   applyIndentCommand(direction: 'indent' | 'outdent', context: EditorCommandContext): boolean {
@@ -1145,6 +1179,7 @@ export class InputSelectionController {
       injections: this.options.getSyntaxInjections(),
       languageId: this.options.getLanguageId(),
       tabSize: this.options.tabSize,
+      atomicRanges: this.options.view.atomicRanges(),
     })
     const change = session.applyEdits(action.edits, {
       selections: action.selections,
@@ -1392,6 +1427,7 @@ export class InputSelectionController {
         wordSeparators,
         view: this.options.view,
         nonCaretOffset: this.options.nonCaretOffset,
+        atomicRanges: this.options.view.atomicRanges(),
       }),
     }))
     const primary = navigation[0]
@@ -2672,7 +2708,7 @@ export class InputSelectionController {
     event.preventDefault()
     // After the selection sync above, so a handler reads the carets the paste is actually landing
     // on rather than the ones the last gesture left in the session.
-    const handled = this.handledPasteFragments(transfer, text, metadata !== null)
+    const handled = this.handledPasteFragments(transfer, text, metadata !== null, 'paste')
     const pasted = handled?.join('') ?? text
     const textChange = handled
       ? this.applyDistributedPaste(session, handled, this.resolvedSelections())
@@ -2718,6 +2754,8 @@ export class InputSelectionController {
     transfer: DataTransfer | null,
     text: string,
     internal: boolean,
+    source: EditorPasteContext['source'],
+    targets: readonly EditorPasteTarget[] = this.pasteTargets(),
   ): readonly string[] | null {
     if (!transfer) return null
 
@@ -2725,12 +2763,12 @@ export class InputSelectionController {
     if (handlers.length === 0) return null
 
     const types = dataTransferTypes(transfer)
-    const targets = this.pasteTargets()
     const context: EditorPasteContext = {
       dataTransfer: transfer,
       files: Array.from(transfer.files ?? []),
       internal,
       languageId: this.options.getLanguageId(),
+      source,
       targets,
       text,
       types,
@@ -2799,8 +2837,9 @@ export class InputSelectionController {
     if (!this.options.canEditDocument()) return
 
     // Normalized for the same reason as the pasted payload above.
+    const transfer = event.dataTransfer ?? null
     const text = normalizeLineEndings(dropPlainText(event))
-    if (text.length === 0) {
+    if (text.length === 0 && !this.hasPasteHandlerForTransfer(transfer)) {
       // The drag was claimed on its way across the text, whatever it turned out to be carrying, and
       // claiming it put a caret under the pointer to aim the drop with. Nothing else takes that
       // caret back down: the drop element is the one element a browser never fires dragleave at,
@@ -2817,13 +2856,24 @@ export class InputSelectionController {
     }
 
     const { offset } = position
+    // Handlers read a drop as they read a paste, so a dragged file row can land as a mention.
+    const handled = this.handledPasteFragments(transfer, text, false, 'drop', [
+      { start: offset, end: offset, text: '' },
+    ])
+    if (!handled && text.length === 0) {
+      this.syncSessionSelectionHighlight()
+      return
+    }
+
     this.transitionInputState({ text, type: 'drop-pending' })
     const start = eventStartMs(event)
     const selectionChange = session.setSelection(offset, offset, { affinity: position.affinity })
     this.markSessionSelectionForNextInput()
     // After the caret has been put where the text landed, which is the range this insertion runs
     // over: text dropped into a placeholder or a tag name is that name changing like any other.
-    const textChange = this.mirroredEdit(session, offset, offset, text) ?? session.applyText(text)
+    const textChange = handled
+      ? this.applyDistributedPaste(session, handled, this.resolvedSelections())
+      : (this.mirroredEdit(session, offset, offset, text) ?? session.applyText(text))
     const change = mergeChangeTimings(textChange, selectionChange)
     this.transitionInputState({ type: 'transaction-committed' })
     this.applyChange(change, 'input.drop', start, {
@@ -3098,13 +3148,15 @@ export class InputSelectionController {
     // correction away entirely rather than apply it imperfectly. Each caret takes only what the one
     // in front of it left, so the text is replaced once and every caret still gets the insertion.
     let replacedThrough = 0
+    // A soft keyboard deletes by rewriting the text around the caret, and a chip goes whole there too.
+    const atomic = deduced.text.length === 0 ? this.options.view.atomicRanges() : []
     for (const selection of resolved) {
-      const from = clamp(
-        selection.startOffset - deduced.replacePrevCharCnt,
-        replacedThrough,
-        snapshot.length,
-      )
-      const to = clamp(selection.endOffset + deduced.replaceNextCharCnt, from, snapshot.length)
+      const reached = widenOverAtomicRanges(atomic, {
+        start: selection.startOffset - deduced.replacePrevCharCnt,
+        end: selection.endOffset + deduced.replaceNextCharCnt,
+      })
+      const from = clamp(reached.start, replacedThrough, snapshot.length)
+      const to = clamp(reached.end, from, snapshot.length)
       edits.push({ from, text: deduced.text, to })
       const caret = from + shift + deduced.text.length
       selections.push(selectionOffsetsWithAffinity(selection, caret, caret))

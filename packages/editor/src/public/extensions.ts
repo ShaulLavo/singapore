@@ -92,6 +92,8 @@ export type {
   EditorInjectedTextRowProviderContext,
   EditorInlineReplacementContext,
   EditorInlineReplacementProvider,
+  EditorInlineReplacementProviderOptions,
+  EditorInlineReplacementTrigger,
   EditorLanguageFeatureSelector,
   EditorLanguageFeatureToken,
   EditorLogEditorContext,

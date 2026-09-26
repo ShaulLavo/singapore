@@ -124,9 +124,15 @@ import {
   type EditorViewContributionFailurePhase,
 } from './viewContributions'
 import type { FoldMap } from '../foldMap'
-import { createInlineMap, type InlineMap, type InlineReplacementSpec } from '../inlineMap'
+import { createInlineMap, inlineSpecsAtSnapshot, type InlineMap } from '../inlineMap'
 import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
-import type { EditorInlineReplacementProvider } from '../plugins'
+import type {
+  EditorInlineReplacementContext,
+  EditorInlineReplacementProvider,
+  EditorInlineReplacementProviderOptions,
+  EditorInlineReplacementSource,
+  EditorResolvedSelection,
+} from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
 import type { InjectedTextRow } from '../displayTransforms'
 import {
@@ -370,7 +376,8 @@ export class Editor {
   private readonly decorations = new EditorDecorationStore()
   private readonly highlightPrefix: string
   private sessionChangeVersion = 0
-  private inlineReplacementProvider: EditorInlineReplacementProvider | null = null
+  private inlineReplacementProvider: EditorInlineReplacementSource | null = null
+  private syntaxInlineMap: InlineMap | null = null
   private syntaxCaptures: readonly EditorSyntaxCapture[] = []
   /**
    * Regions the user drew rather than any provider describing them. They are held here and merged in
@@ -533,6 +540,10 @@ export class Editor {
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
       inputRoute: options.inputRoute,
+      inputLabel: options.inputLabel,
+      inputKind: options.inputKind,
+      scrollPastEnd: options.scrollPastEnd,
+      onContentHeightChange: (height) => this.notifyContentHeight(height),
       wrap: options.wordWrap ?? false,
       onFoldToggle: this.handleFoldToggle,
       onViewportChange: this.handleViewportChange,
@@ -576,7 +587,8 @@ export class Editor {
       clearSyntaxFolds: () => this.clearSyntaxFolds(),
       setSyntaxFolds: (folds) => this.setSyntaxFolds(folds),
       setSyntaxCaptures: (captures) => this.setSyntaxCaptures(captures),
-      needsSyntaxCaptures: () => this.inlineReplacementProviders().length > 0,
+      needsSyntaxCaptures: () =>
+        this.inlineReplacementProviders().some((source) => source.trigger === 'syntax'),
       notifyChange: (change) => this.notifyChange(change),
       notifyViewUpdate: () => this.notifyViewContributions('tokens', null),
       onInitialPaint: (event) => {
@@ -623,6 +635,8 @@ export class Editor {
       rtlMoveVisually: options.rtlMoveVisually ?? defaultRtlMoveVisually(detectPlatform()),
       nonCaretOffset: (offset) => this.isNonCaretOffset(offset),
       selectionSyncMode: normalizeEditorSelectionSyncMode(options.selectionSyncMode),
+      autoClosingPairs: options.autoClosingPairs,
+      surroundingPairs: options.surroundingPairs,
       get tabSize(): number {
         return effectiveTabSize()
       },
@@ -1318,8 +1332,13 @@ export class Editor {
    * is rebuilt whenever fresh captures land, so a markdown view stays in step with the parse without
    * the host scheduling anything itself. Passing null removes the transform.
    */
-  setInlineReplacementProvider(provider: EditorInlineReplacementProvider | null): void {
+  setInlineReplacementProvider(
+    provider: EditorInlineReplacementProvider | null,
+    options: EditorInlineReplacementProviderOptions = {},
+  ): void {
     this.inlineReplacementProvider = provider
+      ? { provide: provider, trigger: options.trigger ?? 'syntax' }
+      : null
     this.handleInlineReplacementProvidersChanged()
   }
 
@@ -1329,12 +1348,12 @@ export class Editor {
    */
   private handleInlineReplacementProvidersChanged(): void {
     this.syntax.syncCaptureRequirement()
-    this.refreshInlineMap()
+    this.refreshInlineMap('rerun')
   }
 
   private setSyntaxCaptures(captures: readonly EditorSyntaxCapture[]): void {
     this.syntaxCaptures = captures
-    this.refreshInlineMap()
+    this.refreshInlineMap('rerun')
   }
 
   /**
@@ -1347,37 +1366,63 @@ export class Editor {
     return shown
   }
 
-  private refreshInlineMap(): void {
-    const providers = this.inlineReplacementProviders()
+  /**
+   * Syntax-triggered providers read captures, which describe the text of the last parse: they run
+   * only when captures land or providers change (`'rerun'`), and between parses their map is carried
+   * to the current text by its anchors (`'carry'`). A new document drops it (`'drop'`). Edit-triggered
+   * providers run every time.
+   */
+  private refreshInlineMap(syntax: 'rerun' | 'carry' | 'drop' = 'carry'): void {
     const snapshot = this.session?.getSnapshot()
     if (!snapshot) {
+      this.syntaxInlineMap = null
       this.view.setInlineMap(null)
       return
     }
 
+    const providers = this.inlineReplacementProviders()
+    const context = this.inlineReplacementContext()
+    if (syntax === 'drop') this.syntaxInlineMap = null
+    if (syntax === 'rerun') this.syntaxInlineMap = this.syntaxDerivedInlineMap(providers, context)
+    const carried = this.syntaxInlineMap
+      ? inlineSpecsAtSnapshot(this.syntaxInlineMap, snapshot)
+      : []
+    const derived = providers
+      .filter((source) => source.trigger === 'edit')
+      .flatMap((source) => source.provide(context))
     // The suggestion joins the same map rather than one of its own: a document rendering itself
     // through replacements is still that document, and ghost text has to take its columns from what
     // is on screen rather than from text the reader cannot see.
-    const suggestion = this.inputSelection.inlineSuggestionSpecs()
-    const specs =
-      providers.length === 0 ? suggestion : this.providedInlineSpecs(providers, suggestion)
+    const specs = [...carried, ...derived, ...this.inputSelection.inlineSuggestionSpecs()]
     this.view.setInlineMap(specs.length === 0 ? null : createInlineMap(snapshot, specs))
   }
 
-  private providedInlineSpecs(
-    providers: readonly EditorInlineReplacementProvider[],
-    suggestion: readonly InlineReplacementSpec[],
-  ): readonly InlineReplacementSpec[] {
-    const context = {
+  private syntaxDerivedInlineMap(
+    providers: readonly EditorInlineReplacementSource[],
+    context: EditorInlineReplacementContext,
+  ): InlineMap | null {
+    const snapshot = this.session?.getSnapshot()
+    const specs = providers
+      .filter((source) => source.trigger === 'syntax')
+      .flatMap((source) => source.provide(context))
+    return snapshot && specs.length > 0 ? createInlineMap(snapshot, specs) : null
+  }
+
+  private inlineReplacementContext(): EditorInlineReplacementContext {
+    return {
       textSnapshot: this.getTextSnapshot(),
       languageId: this.languageId,
       captures: this.syntaxCaptures,
+      selections: this.inputSelection.resolveViewSelections(),
     }
-
-    return providers.flatMap((provider) => provider(context)).concat(suggestion)
   }
 
-  private inlineReplacementProviders(): readonly EditorInlineReplacementProvider[] {
+  private editRederivesInlineMap(changes: readonly unknown[]): boolean {
+    if (changes.length === 0) return false
+    return this.inlineReplacementProviders().some((source) => source.trigger === 'edit')
+  }
+
+  private inlineReplacementProviders(): readonly EditorInlineReplacementSource[] {
     const registered = this.pluginHost.getInlineReplacementProviders()
     const direct = this.inlineReplacementProvider
     if (!direct) return registered
@@ -1566,6 +1611,11 @@ export class Editor {
     this.notifyChange(null)
   }
 
+  /** Every selection as document offsets, primary first. */
+  getSelections(): readonly EditorResolvedSelection[] {
+    return this.inputSelection.resolveViewSelections()
+  }
+
   getState(): EditorState {
     const snapshot = this.session?.getSnapshot()
     const length = snapshot?.length ?? this.textSnapshot.length
@@ -1714,6 +1764,23 @@ export class Editor {
   onDidScroll(listener: (position: Required<EditorScrollPosition>) => void): EditorDisposable {
     this.scrollListeners.add(listener)
     return disposableOnce(() => this.scrollListeners.delete(listener))
+  }
+
+  /**
+   * Called with the rows' total height in pixels whenever it changes: lines added or removed, wrap
+   * reflowing, the font changing. A host that grows with its text sizes itself from this.
+   */
+  onDidChangeContentHeight(listener: (height: number) => void): EditorDisposable {
+    this.contentHeightListeners.add(listener)
+    return disposableOnce(() => this.contentHeightListeners.delete(listener))
+  }
+
+  getContentHeight(): number {
+    return this.view.getContentHeight()
+  }
+
+  private notifyContentHeight(height: number): void {
+    for (const listener of this.contentHeightListeners) listener(height)
   }
 
   getScrollPosition(): Required<EditorScrollPosition> {
@@ -3513,6 +3580,7 @@ export class Editor {
   }
 
   private readonly scrollListeners = new Set<(position: Required<EditorScrollPosition>) => void>()
+  private readonly contentHeightListeners = new Set<(height: number) => void>()
   private reportedScroll: Required<EditorScrollPosition> | null = null
 
   private reportScroll(): void {
@@ -3998,7 +4066,8 @@ export class Editor {
     for (const pending of flush.changes) this.decorations.applyEdits(pending.change.edits)
 
     let timedChange = flush.latest.change
-    if (this.inputSelection.syncInlineSuggestion(timedChange.snapshot)) this.refreshInlineMap()
+    const suggestionMoved = this.inputSelection.syncInlineSuggestion(timedChange.snapshot)
+    if (suggestionMoved || this.editRederivesInlineMap(flush.changes)) this.refreshInlineMap()
     if (flush.revealOffset !== null) {
       const revealStart = nowMs()
       if (flush.revealAffinity) {
@@ -4339,6 +4408,9 @@ export class Editor {
     change: DocumentSessionChange | null,
     options: { readonly delayMs?: number } = {},
   ): void {
+    // A new document: edit-triggered replacements are derived from its text at once, and the old
+    // document's syntax-derived ones go.
+    if (!change) this.refreshInlineMap('drop')
     this.syntax.refresh(documentVersion, change, options)
   }
 
