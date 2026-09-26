@@ -4,7 +4,11 @@ import type { TextContent } from './textContent'
 import type { EditorDecorationRange, EditorDecorationStore } from './editor/decorationStore'
 import type { DocumentSessionChange } from './documentSession'
 import type { DocumentTextSnapshot, TextReadSnapshot } from './documentTextSnapshot'
-import type { EditorCommandContext, EditorCommandId } from './editor/commands'
+import type { EditorCommandContext } from './editor/commands'
+import type {
+  EditorAnyCommandId,
+  EditorContributedCommandDeclaration,
+} from './editor/commandCatalog'
 import { EditorDisposableStore, MutableEditorDisposable } from './editor/disposables'
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type { SnippetMirrorRange, SnippetSessionStop } from './editor/snippetSession'
@@ -758,7 +762,7 @@ type EditorRowDecorationContributionContext = {
 }
 
 export type EditorCommandContributionContext = {
-  registerCommand(command: EditorCommandId, handler: EditorCommandHandler): EditorDisposable
+  registerCommand(command: EditorAnyCommandId, handler: EditorCommandHandler): EditorDisposable
 }
 
 export type EditorCapabilityContributionContext = {
@@ -1049,7 +1053,7 @@ export type EditorInternalViewContributionContext = EditorViewContributionContex
   readonly unstableEditor: unknown
   getSelections(): readonly EditorResolvedSelection[]
   applyEdits(edits: readonly TextEdit[], timingName: string, selection?: EditorSelectionRange): void
-  registerCommand(command: EditorCommandId, handler: EditorCommandHandler): EditorDisposable
+  registerCommand(command: EditorAnyCommandId, handler: EditorCommandHandler): EditorDisposable
   /** A contribution whose `inputs` changed after it was created asks for its routing to be rebuilt. */
   refreshInputs(): void
 }
@@ -1062,6 +1066,8 @@ export type EditorInternalPluginContext = EditorPluginContext & {
 
 export type EditorPlugin = {
   readonly name?: string
+  /** Commands the plugin contributes, as data: listed by hosts, removed with the plugin. */
+  readonly commands?: readonly EditorContributedCommandDeclaration[]
   install?(context: EditorPluginContext): void | EditorDisposable | readonly EditorDisposable[]
   activate(context: EditorPluginContext): void | EditorDisposable | readonly EditorDisposable[]
   update?(context: EditorPluginContext, state: EditorPluginLifecycleState): void
@@ -1503,6 +1509,15 @@ export class EditorPluginHost implements EditorDisposable {
 
   public getViewContributionProviders(): readonly EditorViewContributionProvider[] {
     return this.viewContributions
+  }
+
+  /** The commands the active plugins contribute, in plugin order. */
+  public getContributedCommands(): readonly EditorContributedCommandDeclaration[] {
+    const commands: EditorContributedCommandDeclaration[] = []
+    for (const [plugin, installed] of this.installedPlugins) {
+      if (installed.active) commands.push(...(plugin.commands ?? []))
+    }
+    return commands
   }
 
   public getCommandContributionProviders(): readonly EditorCommandContributionProvider[] {

@@ -55,6 +55,13 @@ import {
   traceEditorPerformanceTask,
 } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
+import {
+  EDITOR_COMMANDS,
+  isEditorCommandId,
+  type EditorAnyCommandId,
+  type EditorCommandDeclaration,
+  type EditorContributedCommandDeclaration,
+} from './commandCatalog'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorAmbientPluginController } from './ambientPlugins'
 import { EditorCommandRouter } from './commandRouter'
@@ -2006,8 +2013,9 @@ export class Editor {
     })
   }
 
-  dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
+  dispatchCommand(command: EditorAnyCommandId, context: EditorCommandContext = {}): boolean {
     if (this.view.isProvisional) return false
+    if (this.refusesContributedMutation(command)) return false
     const scope = beginEditorPerformanceCommand(command)
     try {
       return this.dispatchCommandInOperation(command, context)
@@ -2016,8 +2024,24 @@ export class Editor {
     }
   }
 
+  /** The commands this editor knows: every built-in, then those its plugins contribute. */
+  getCommandDeclarations(): readonly (
+    | EditorCommandDeclaration<EditorCommandId>
+    | EditorContributedCommandDeclaration
+  )[] {
+    return [...EDITOR_COMMANDS, ...this.pluginHost.getContributedCommands()]
+  }
+
+  // A built-in mutation is refused by its own handler and by the keymap's writable condition; a
+  // contributed one only says it mutates in its declaration.
+  private refusesContributedMutation(command: EditorAnyCommandId): boolean {
+    if (isEditorCommandId(command)) return false
+    const declared = this.pluginHost.getContributedCommands().find((entry) => entry.id === command)
+    return declared?.mutates === true && !this.canEditDocument()
+  }
+
   private dispatchCommandInOperation(
-    command: EditorCommandId,
+    command: EditorAnyCommandId,
     context: EditorCommandContext,
   ): boolean {
     const start = nowMs()
@@ -3834,7 +3858,7 @@ export class Editor {
   }
 
   private registerCommandHandler(
-    command: EditorCommandId,
+    command: EditorAnyCommandId,
     handler: EditorCommandHandler,
   ): EditorDisposable {
     return this.claimForContribution(this.commandRouter.registerCommandHandler(command, handler))

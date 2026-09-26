@@ -251,6 +251,85 @@ describe('createPlugin view scope', () => {
     editor.setPlugins([])
     expect(disposals).toBe(1)
   })
+
+  test('a contributed command dispatches in its own editor, lists, and goes with its plugin', () => {
+    const align = { id: 'test.align.run', title: 'Align', mutates: true } as const
+    const ran: string[] = []
+    const plugin = (label: string) =>
+      createPlugin({
+        name: 'test.align',
+        commands: [align],
+        view: (scope) =>
+          scope.handle(align, () => {
+            ran.push(label)
+            return true
+          }),
+      })
+    const first = createEditorWith([plugin('first')])
+    const second = createEditorWith([plugin('second')])
+
+    expect(first.dispatchCommand('test.align.run')).toBe(true)
+    expect(second.dispatchCommand('test.align.run')).toBe(true)
+    expect(ran).toEqual(['first', 'second'])
+    expect(first.getCommandDeclarations().some((entry) => entry.id === 'test.align.run')).toBe(true)
+
+    first.setPlugins([])
+    expect(first.dispatchCommand('test.align.run')).toBe(false)
+    expect(first.getCommandDeclarations().some((entry) => entry.id === 'test.align.run')).toBe(
+      false,
+    )
+  })
+
+  test('refuses a command id outside the plugin namespace or naming a built-in', () => {
+    const outside = { id: 'other.run', title: 'Run', mutates: false } as const
+    const builtIn = { id: 'editor.action.rename', title: 'Rename', mutates: true } as const
+
+    expect(() => createPlugin({ name: 'test.ns', commands: [outside] })).toThrow(/namespace/)
+    expect(() => createPlugin({ name: 'editor.action', commands: [builtIn] })).toThrow(/namespace/)
+  })
+
+  test('a readonly editor refuses a contributed command that mutates', () => {
+    let ran = 0
+    const command = { id: 'test.write.go', title: 'Write', mutates: true } as const
+    const plugin = createPlugin({
+      name: 'test.write',
+      commands: [command],
+      view: (scope) => scope.handle(command, () => ((ran += 1), true)),
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, {
+      defaultText: 'alpha',
+      editability: 'readonly',
+      plugins: [plugin],
+    })
+    editors.push(editor)
+
+    expect(editor.dispatchCommand('test.write.go')).toBe(false)
+    expect(ran).toBe(0)
+  })
+
+  test('one contributed command invocation is one undo entry', () => {
+    const upper = { id: 'test.upper.run', title: 'Upper', mutates: true } as const
+    const plugin = createPlugin({
+      name: 'test.upper',
+      commands: [upper],
+      view: (scope) =>
+        scope.handle(upper, () => {
+          scope.applyEdits([
+            { from: 0, to: 1, text: 'A' },
+            { from: 2, to: 3, text: 'P' },
+          ])
+          return true
+        }),
+    })
+    const editor = createEditorWith([plugin])
+
+    editor.dispatchCommand('test.upper.run')
+    expect(editor.materializeFullText()).toBe('AlPha')
+    editor.dispatchCommand('undo')
+    expect(editor.materializeFullText()).toBe('alpha')
+  })
 })
 
 function createEditorWith(plugins: readonly EditorPlugin[]): Editor {

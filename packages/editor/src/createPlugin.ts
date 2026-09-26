@@ -1,4 +1,8 @@
-import type { EditorCommandId } from './editor/commands'
+import {
+  isEditorCommandId,
+  type EditorAnyCommandId,
+  type EditorContributedCommandDeclaration,
+} from './editor/commandCatalog'
 import type { Editor } from './editor/Editor'
 import { EditorDisposableStore } from './editor/disposables'
 import { createError } from './logging/evlog'
@@ -137,7 +141,11 @@ export type EditorViewScope = {
   state<T>(initial: T): EditorViewState<T>
   /** Adds a value to a channel in this editor, for as long as the scope lives. */
   provide<T>(channel: EditorChannel<T, unknown>, value: T | EditorInput<T>): void
-  handle(command: EditorCommandId, run: EditorCommandHandler): void
+  /** Runs a built-in command's handler for this view, or one of the plugin's own commands. */
+  handle(
+    command: EditorAnyCommandId | EditorContributedCommandDeclaration,
+    run: EditorCommandHandler,
+  ): void
   getSelections(): readonly EditorResolvedSelection[]
   applyEdits(edits: readonly TextEdit[], selection?: EditorSelectionRange): void
   onDispose(cleanup: () => void): void
@@ -152,14 +160,18 @@ export type EditorPluginDefinition = {
    * stays while any does, and is set up before the plugin that uses it.
    */
   readonly uses?: readonly EditorPlugin[]
+  /** The plugin's own commands; each id starts with the plugin's name and a dot. */
+  readonly commands?: readonly EditorContributedCommandDeclaration[]
   /** Once per editor view the plugin is installed in. */
   view?(scope: EditorViewScope): void
 }
 
 /** The one way to author a plugin; experimental. It lowers onto `EditorPlugin`. */
 export function createPlugin(definition: EditorPluginDefinition): EditorPlugin {
+  for (const command of definition.commands ?? []) assertOwnCommand(definition.name, command.id)
   return {
     name: definition.name,
+    commands: definition.commands,
     activate(context) {
       const internal = context as EditorInternalPluginContext
       const registrations = (definition.uses ?? []).map((used) => internal.usePlugin(used))
@@ -174,6 +186,19 @@ export function createPlugin(definition: EditorPluginDefinition): EditorPlugin {
       return registrations
     },
   }
+}
+
+// A contributed id lives under its plugin's name, so two plugins cannot claim one id, and a
+// built-in id is never contributed.
+function assertOwnCommand(plugin: string, command: string): void {
+  if (command.startsWith(`${plugin}.`) && !isEditorCommandId(command)) return
+  throw createError({
+    code: 'EDITOR_PLUGIN_COMMAND_NAMESPACE',
+    message: `Plugin ${plugin} declares command ${command} outside its namespace`,
+    why: 'A contributed command id starts with its plugin name and a dot, and never names a built-in command.',
+    fix: `Rename the command to ${plugin}.<name>.`,
+    internal: { plugin, command },
+  })
 }
 
 /**
@@ -358,7 +383,10 @@ function createScopeContribution(
       owned.add(provided)
       if (input) scope.watch(input, (next) => provided.set(next))
     },
-    handle: (command, run) => void owned.add(context.registerCommand(command, run)),
+    handle: (command, run) =>
+      void owned.add(
+        context.registerCommand(typeof command === 'string' ? command : command.id, run),
+      ),
     getSelections: () => context.getSelections(),
     applyEdits: (edits, selection) =>
       context.applyEdits(edits, 'editor.plugin.applyEdits', selection),
