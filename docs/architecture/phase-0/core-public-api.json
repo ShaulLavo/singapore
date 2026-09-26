@@ -4522,6 +4522,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorChannel",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorChannelPolicy",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorCommandContribution",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -5196,6 +5208,12 @@
           "kind": "type",
           "name": "TextReadSnapshot",
           "source": "packages/editor/src/documentTextSnapshot.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createChannel",
+          "source": "packages/editor/src/createPlugin.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {

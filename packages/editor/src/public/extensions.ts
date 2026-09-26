@@ -62,6 +62,7 @@ export type {
 export type { EditorSnippetMirror, EditorSnippetStop } from '../plugins'
 // Experimental: the one authoring model for plugins (Plan 122 phase 3).
 export {
+  createChannel,
   createPlugin,
   derive,
   documentInput,
@@ -73,6 +74,8 @@ export {
   visibleRowsInput,
 } from '../createPlugin'
 export type {
+  EditorChannel,
+  EditorChannelPolicy,
   EditorInput,
   EditorPluginDefinition,
   EditorViewScope,

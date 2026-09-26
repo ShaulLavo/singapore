@@ -1,9 +1,11 @@
 import type { EditorCommandId } from './editor/commands'
 import type { Editor } from './editor/Editor'
 import { EditorDisposableStore } from './editor/disposables'
+import { createError } from './logging/evlog'
 import type {
   EditorCommandHandler,
   EditorDisposable,
+  EditorInternalPluginContext,
   EditorInternalViewContributionContext,
   EditorPlugin,
   EditorResolvedSelection,
@@ -28,13 +30,14 @@ import type { TextEdit } from './tokens'
 export type EditorInput<T> = {
   readonly id: string
   readonly kinds: readonly EditorViewContributionInput[]
-  read(snapshot: EditorViewSnapshot): T
+  /** `editor` identifies the editor asking, for values kept per editor (channels). */
+  read(snapshot: EditorViewSnapshot, editor: object): T
   // A method, so an input of a narrower value still counts as an input of `unknown` among sources.
   equals?(left: T, right: T): boolean
   /** Set on a derived input: recomputed only when one of these changed. */
   readonly sources?: readonly EditorInput<unknown>[]
-  /** Set on scope state: changes arrive from `set`, outside any view pass. */
-  readonly subscribe?: (listener: () => void) => EditorDisposable
+  /** Set on inputs that change outside any view pass (state, channels). */
+  subscribe?(listener: () => void, editor: object): EditorDisposable
 }
 
 export const selectionInput: EditorInput<readonly EditorResolvedSelection[]> = {
@@ -92,10 +95,16 @@ export function derive<const Sources extends readonly EditorInput<unknown>[], T>
   return {
     id: `derive(${sources.map((source) => source.id).join(',')})`,
     kinds: [...kinds],
-    read: (snapshot) =>
-      compute(...(sources.map((source) => source.read(snapshot)) as InputValues<Sources>)),
+    read: (snapshot, editor) =>
+      compute(...(sources.map((source) => source.read(snapshot, editor)) as InputValues<Sources>)),
     equals,
     sources,
+    subscribe: sources.some((source) => source.subscribe)
+      ? (listener, editor) => {
+          const subscriptions = sources.map((source) => source.subscribe?.(listener, editor))
+          return { dispose: () => subscriptions.forEach((subscription) => subscription?.dispose()) }
+        }
+      : undefined,
   }
 }
 
@@ -126,6 +135,8 @@ export type EditorViewScope = {
     listener: (value: T, snapshot: EditorViewSnapshot) => void,
   ): EditorDisposable
   state<T>(initial: T): EditorViewState<T>
+  /** Adds a value to a channel in this editor, for as long as the scope lives. */
+  provide<T>(channel: EditorChannel<T, unknown>, value: T | EditorInput<T>): void
   handle(command: EditorCommandId, run: EditorCommandHandler): void
   getSelections(): readonly EditorResolvedSelection[]
   applyEdits(edits: readonly TextEdit[], selection?: EditorSelectionRange): void
@@ -136,6 +147,11 @@ export type EditorViewScope = {
 export type EditorPluginDefinition = {
   /** Identity for dedup and the namespace a plugin's commands will live under. */
   readonly name: string
+  /**
+   * Plugins this one builds on. Each is installed once per editor however many plugins use it,
+   * stays while any does, and is set up before the plugin that uses it.
+   */
+  readonly uses?: readonly EditorPlugin[]
   /** Once per editor view the plugin is installed in. */
   view?(scope: EditorViewScope): void
 }
@@ -145,12 +161,136 @@ export function createPlugin(definition: EditorPluginDefinition): EditorPlugin {
   return {
     name: definition.name,
     activate(context) {
+      const internal = context as EditorInternalPluginContext
+      const registrations = (definition.uses ?? []).map((used) => internal.usePlugin(used))
       const view = definition.view
-      if (!view) return
-      return context.registerViewContribution({
-        createContribution: (viewContext) =>
-          createScopeContribution(viewContext as EditorInternalViewContributionContext, view),
-      })
+      if (!view) return registrations
+      registrations.push(
+        context.registerViewContribution({
+          createContribution: (viewContext) =>
+            createScopeContribution(viewContext as EditorInternalViewContributionContext, view),
+        }),
+      )
+      return registrations
+    },
+  }
+}
+
+/**
+ * How a channel turns the values its providers gave into the one value its readers see: `one`
+ * takes a single provider, `many` keeps them all in order, a combine function folds them.
+ */
+export type EditorChannelPolicy<T, Value> =
+  | { readonly kind: 'one' }
+  | { readonly kind: 'many' }
+  | { readonly kind: 'combine'; readonly combine: (values: readonly T[]) => Value }
+
+/** An extension point any library can define; others provide to it and watch its value. */
+export type EditorChannel<T, Value> = {
+  readonly id: string
+  readonly policy: EditorChannelPolicy<T, Value>
+  /** The channel's value in the editor that reads it. */
+  readonly input: EditorInput<Value>
+}
+
+export function createChannel<T>(
+  id: string,
+  policy: { readonly kind: 'one' },
+): EditorChannel<T, T | null>
+export function createChannel<T>(
+  id: string,
+  policy: { readonly kind: 'many' },
+): EditorChannel<T, readonly T[]>
+export function createChannel<T, Value>(
+  id: string,
+  policy: { readonly kind: 'combine'; readonly combine: (values: readonly T[]) => Value },
+): EditorChannel<T, Value>
+export function createChannel<T, Value>(
+  id: string,
+  policy: EditorChannelPolicy<T, Value>,
+): EditorChannel<T, Value> {
+  const channel: EditorChannel<T, Value> = {
+    id,
+    policy,
+    input: {
+      id: `channel(${id})`,
+      kinds: [],
+      read: (_snapshot, editor) => channelValue(channel, editor),
+      subscribe: (listener, editor) => channelEntries(channel, editor).subscribe(listener),
+    },
+  }
+  return channel
+}
+
+type ChannelEntries = {
+  readonly values: { current: unknown }[]
+  subscribe(listener: () => void): EditorDisposable
+  changed(): void
+}
+
+// Channel values are per editor: two editors with the same plugin never see each other's values.
+const channelsByEditor = new WeakMap<object, Map<string, ChannelEntries>>()
+
+type ChannelIdentity = { readonly id: string; readonly policy: { readonly kind: string } }
+
+function channelEntries(channel: ChannelIdentity, editor: object): ChannelEntries {
+  const channels = channelsByEditor.get(editor) ?? new Map<string, ChannelEntries>()
+  channelsByEditor.set(editor, channels)
+  const existing = channels.get(channel.id)
+  if (existing) return existing
+
+  const listeners = new Set<() => void>()
+  const entries: ChannelEntries = {
+    values: [],
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return { dispose: () => void listeners.delete(listener) }
+    },
+    changed: () => {
+      for (const listener of [...listeners]) listener()
+    },
+  }
+  channels.set(channel.id, entries)
+  return entries
+}
+
+function channelValue<T, Value>(channel: EditorChannel<T, Value>, editor: object): Value {
+  const values = channelEntries(channel, editor).values.map((entry) => entry.current as T)
+  const policy = channel.policy
+  if (policy.kind === 'combine') return policy.combine(values)
+  if (policy.kind === 'many') return values as Value
+  return (values[0] ?? null) as Value
+}
+
+function provideToChannel(
+  channel: ChannelIdentity,
+  editor: object,
+  value: unknown,
+): { set(value: unknown): void; dispose(): void } {
+  const entries = channelEntries(channel, editor)
+  if (channel.policy.kind === 'one' && entries.values.length > 0) {
+    throw createError({
+      code: 'EDITOR_CHANNEL_ALREADY_PROVIDED',
+      message: `Editor channel ${channel.id} takes one provider and already has one`,
+      why: 'A channel with the one policy stands for a single owner in each editor.',
+      fix: 'Give the channel the many or combine policy, or provide it from one plugin only.',
+      internal: { channel: channel.id },
+    })
+  }
+  const entry = { current: value }
+  entries.values.push(entry)
+  entries.changed()
+  return {
+    set: (next) => {
+      if (Object.is(next, entry.current)) return
+      entry.current = next
+      entries.changed()
+    },
+    dispose: () => {
+      const index = entries.values.indexOf(entry)
+      if (index === -1) return
+      entries.values.splice(index, 1)
+      entries.changed()
     },
   }
 }
@@ -170,12 +310,13 @@ function createScopeContribution(
   const watchers = new Set<Watcher>()
   let settingUp = true
 
+  const editor = context.unstableEditor as object
   const deliver = (watcher: Watcher, snapshot: EditorViewSnapshot, force: boolean) => {
-    const sources = watcher.input.sources?.map((source) => source.read(snapshot)) ?? null
+    const sources = watcher.input.sources?.map((source) => source.read(snapshot, editor)) ?? null
     if (!force && sources && watcher.sources && sameValues(watcher.input, sources, watcher.sources))
       return
     watcher.sources = sources
-    const next = watcher.input.read(snapshot)
+    const next = watcher.input.read(snapshot, editor)
     const previous = watcher.value
     if (!force && previous && sameValue(watcher.input, previous.current, next)) return
     watcher.value = { current: next }
@@ -185,7 +326,7 @@ function createScopeContribution(
   const scope: EditorViewScope = {
     editor: context.unstableEditor as Editor,
     view: context,
-    read: (input) => input.read(context.getSnapshot()),
+    read: (input) => input.read(context.getSnapshot(), editor),
     watch: (input, listener) => {
       const watcher: Watcher = {
         input: input as EditorInput<unknown>,
@@ -193,7 +334,7 @@ function createScopeContribution(
         sources: null,
         value: null,
       }
-      const local = input.subscribe?.(() => deliver(watcher, context.getSnapshot(), false))
+      const local = input.subscribe?.(() => deliver(watcher, context.getSnapshot(), false), editor)
       watchers.add(watcher)
       if (!settingUp) context.refreshInputs()
       deliver(watcher, context.getSnapshot(), true)
@@ -207,6 +348,16 @@ function createScopeContribution(
       return registration
     },
     state: (initial) => createState(initial),
+    provide: (channel, value) => {
+      const input = isInput(value) ? value : null
+      const provided = provideToChannel(
+        channel,
+        editor,
+        input ? input.read(context.getSnapshot(), editor) : value,
+      )
+      owned.add(provided)
+      if (input) scope.watch(input, (next) => provided.set(next))
+    },
     handle: (command, run) => void owned.add(context.registerCommand(command, run)),
     getSelections: () => context.getSelections(),
     applyEdits: (edits, selection) =>
@@ -233,14 +384,21 @@ function createScopeContribution(
     update(snapshot: EditorViewSnapshot, kind: EditorViewContributionUpdateKind) {
       const every = kind === 'document' || kind === 'clear'
       for (const watcher of [...watchers]) {
-        // State changes arrive from `set`, never from a view pass.
-        if (watcher.input.subscribe) continue
         if (!every && !watcher.input.kinds.includes(kind)) continue
         deliver(watcher, snapshot, false)
       }
     },
     dispose: () => owned.dispose(),
   }
+}
+
+function isInput(value: unknown): value is EditorInput<unknown> {
+  if (typeof value !== 'object' || value === null) return false
+  return (
+    'kinds' in value &&
+    'read' in value &&
+    typeof (value as EditorInput<unknown>).read === 'function'
+  )
 }
 
 function createState<T>(initial: T): EditorViewState<T> {

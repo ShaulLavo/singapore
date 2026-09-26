@@ -1056,6 +1056,8 @@ export type EditorInternalViewContributionContext = EditorViewContributionContex
 
 export type EditorInternalPluginContext = EditorPluginContext & {
   registerEditorFeatureContribution(provider: EditorFeatureContributionProvider): EditorDisposable
+  /** Installs a plugin this one uses, once per editor however many use it, until the last lets go. */
+  usePlugin(plugin: EditorPlugin): EditorDisposable
 }
 
 export type EditorPlugin = {
@@ -1071,6 +1073,8 @@ export type EditorPluginLifecycleState = {
   readonly active: boolean
   readonly managed: boolean
   readonly manual: boolean
+  /** Another plugin in this editor uses it. */
+  readonly used: boolean
 }
 
 export type EditorPluginHostEvents = {
@@ -1317,6 +1321,7 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly installedPlugins = new Map<EditorPlugin, InstalledEditorPlugin>()
   private readonly managedPlugins = new Set<EditorPlugin>()
   private readonly manualPlugins = new Set<EditorPlugin>()
+  private readonly usedPlugins = new Map<EditorPlugin, number>()
   private events: EditorPluginHostEvents = {}
   private disposed = false
 
@@ -1551,6 +1556,7 @@ export class EditorPluginHost implements EditorDisposable {
     }
     this.managedPlugins.clear()
     this.manualPlugins.clear()
+    this.usedPlugins.clear()
     this.loggers.length = 0
     this.highlighters.length = 0
     this.syntaxProviders.length = 0
@@ -1622,6 +1628,7 @@ export class EditorPluginHost implements EditorDisposable {
   private disposePluginIfUnowned(plugin: EditorPlugin): void {
     if (this.managedPlugins.has(plugin)) return
     if (this.manualPlugins.has(plugin)) return
+    if (this.usedPlugins.has(plugin)) return
 
     this.deactivatePlugin(plugin)
     this.disposeInstalledPlugin(plugin)
@@ -1740,6 +1747,7 @@ export class EditorPluginHost implements EditorDisposable {
       active: installedPlugin.active,
       managed: this.managedPlugins.has(plugin),
       manual: this.manualPlugins.has(plugin),
+      used: this.usedPlugins.has(plugin),
     }
   }
 
@@ -1749,6 +1757,26 @@ export class EditorPluginHost implements EditorDisposable {
     this.updatePlugin(plugin)
     this.disposePluginIfUnowned(plugin)
     return true
+  }
+
+  private usePlugin(plugin: EditorPlugin): EditorDisposable {
+    const count = this.usedPlugins.get(plugin) ?? 0
+    if (count === 0 && !this.ensurePluginActive(plugin)) return disposableOnce(() => undefined)
+
+    this.usedPlugins.set(plugin, count + 1)
+    if (count === 0) this.updatePlugin(plugin)
+    return disposableOnce(() => this.releaseUsedPlugin(plugin))
+  }
+
+  private releaseUsedPlugin(plugin: EditorPlugin): void {
+    const count = this.usedPlugins.get(plugin) ?? 0
+    if (count > 1) {
+      this.usedPlugins.set(plugin, count - 1)
+      return
+    }
+    this.usedPlugins.delete(plugin)
+    this.updatePlugin(plugin)
+    this.disposePluginIfUnowned(plugin)
   }
 
   private removeManualPlugin(plugin: EditorPlugin): boolean {
@@ -1789,6 +1817,7 @@ export class EditorPluginHost implements EditorDisposable {
         ),
       registerSelectionRangeProvider: (provider) =>
         this.ownRegistration(owner, () => this.registerSelectionRangeProvider(provider)),
+      usePlugin: (plugin) => this.ownRegistration(owner, () => this.usePlugin(plugin)),
     }
   }
 

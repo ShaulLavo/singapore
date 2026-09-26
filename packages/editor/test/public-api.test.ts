@@ -53,6 +53,7 @@ import {
 import {
   createEditorCapabilityToken,
   createEditorLanguageFeatureToken,
+  createChannel,
   createPlugin,
   derive,
   selectionInput,
@@ -554,6 +555,9 @@ describe('public API facade', () => {
     expect(plugin.name).toBe('test.caret')
     expect(plugin.activate).toBeTypeOf('function')
     expect(caret.kinds).toEqual(selectionInput.kinds)
+    expect(createChannel<string>('test.channel', { kind: 'many' }).input.id).toBe(
+      'channel(test.channel)',
+    )
   })
 
   it('exposes the pass and cursor-history methods hosts drive the editor through', () => {
