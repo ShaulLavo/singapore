@@ -599,6 +599,7 @@ function dispatchDefaultKey(command: EditorCommandId): KeyboardEvent {
       typeof hotkey === 'string'
         ? parseHotkey(hotkey, platform)
         : rawHotkeyToParsedHotkey(hotkey, platform)
+    if (parsed.key === undefined) throw new Error(`${command} has a physical-code chord`)
     return dispatchEditorKey(parsed.key, {
       altKey: parsed.alt,
       ctrlKey: parsed.ctrl,

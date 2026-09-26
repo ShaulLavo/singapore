@@ -1,4 +1,4 @@
-import { detectPlatform, type RawHotkey } from '@tanstack/hotkeys'
+import { detectPlatform, type RawHotkey, type RawModifiers } from '@tanstack/hotkeys'
 import { EDITOR_FOLD_LEVELS, type EditorCommandId } from '../editor/commands'
 import type { KeyChord } from './types'
 import { type EditorKeyCondition, editorCommandMutates } from './conditions'
@@ -393,12 +393,12 @@ function navigationBindings(platform: EditorPlatform): readonly EditorKeyBinding
   return horizontalNavigationBindings(platform).concat(verticalNavigationBindings(platform))
 }
 
-const key = (keyName: string, modifiers: Omit<RawHotkey, 'key'> = {}): RawHotkey => ({
+const key = (keyName: string, modifiers: RawModifiers = {}): RawHotkey => ({
   key: keyName,
   ...modifiers,
 })
 
-const WORD_PART_MODIFIER: Omit<RawHotkey, 'key'> = { alt: true, ctrl: true }
+const WORD_PART_MODIFIER: RawModifiers = { alt: true, ctrl: true }
 
 function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   const platformBindings: readonly EditorKeyBinding[] =

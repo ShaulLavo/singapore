@@ -47,7 +47,7 @@ Generation validates all input files before writing outputs. The lock includes n
 source revisions where published, source and query hashes, parser ABI, emitted WASM hashes and
 mapped-query hashes. `NOTICE` retains upstream licenses. npm sources are exact versions. Their
 compiler provenance is explicitly unknown when the upstream package does not publish it.
-Astro is built from the revision in `languages.json` with tree-sitter 0.26.13 and wasi-sdk 29.
+Astro is built from the revision in `languages.json` with tree-sitter 0.27.0 and wasi-sdk 34.
 `astro-build.lock.json` records that build's inputs and output; `languages:build -- --check`
 rebuilds it and compares the lock. Set `TMPDIR` for build scratch on machines without `/work`.
 Updating revisions is an explicit manifest edit, followed by regeneration and verification.

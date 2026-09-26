@@ -564,20 +564,6 @@ function sourceSideForRow(row: DiffRenderRow, side: DiffSyntaxSide): DiffSyntaxS
   return 'new'
 }
 
-function shikiLanguageForFile(file: DiffFile): string | null {
-  const languageId = file.languageId ?? languageIdForPath(file.path)
-  if (languageId === 'typescript' && pathExtension(file.path) === '.tsx') return 'tsx'
-  if (languageId === 'javascript' && pathExtension(file.path) === '.jsx') return 'jsx'
-  return languageId
-}
-
-function pathExtension(path: string): string {
-  const fileName = path.slice(path.lastIndexOf('/') + 1)
-  const dotIndex = fileName.lastIndexOf('.')
-  if (dotIndex === -1) return ''
-  return fileName.slice(dotIndex).toLowerCase()
-}
-
 function lineStartsForLines(lines: readonly string[]): readonly number[] {
   const starts: number[] = []
   let offset = 0

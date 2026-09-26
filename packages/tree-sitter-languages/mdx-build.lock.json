@@ -6,9 +6,9 @@
   "patchSha256": "c774472938d26885c53635b2808c844a9d805e55ec05c47fb0af13084717e42c",
   "scannerSha256": "60c3ad4c1a8319739a4ba99f6bd2df1c3f957a730600e2d15ba9b1b62b4a6d0d",
   "parserABI": 15,
-  "compiler": "wasi-sdk 29; tree-sitter 0.26.13",
-  "cliVersion": "tree-sitter 0.26.13",
-  "wasmSha256": "eea3d77bced02c509458e105d0f1352ea2c5f01c0cbefcb5273e5b2a75f7eb29",
+  "compiler": "wasi-sdk 34; tree-sitter 0.27.0",
+  "cliVersion": "tree-sitter 0.27.0",
+  "wasmSha256": "71c92f82a0805e336b60b08a62d1cc48be287cb699cc943acad8640829624245",
   "querySources": [
     {
       "file": "queries/highlights.scm",

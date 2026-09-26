@@ -35,7 +35,7 @@ function adaptQuery(query) {
 
 try {
   const cliVersion = run(cli, ['--version'])
-  assert(/^tree-sitter 0[.]26[.]13(?: |$)/.test(cliVersion), `Unexpected compiler: ${cliVersion}`)
+  assert(/^tree-sitter 0[.]27[.]0(?: |$)/.test(cliVersion), `Unexpected compiler: ${cliVersion}`)
   const response = await fetch(`${source.repository}/archive/${source.revision}.tar.gz`)
   assert(response.ok, `SQL source download: ${response.status}`)
   const archive = Buffer.from(await response.arrayBuffer())

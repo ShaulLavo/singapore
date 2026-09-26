@@ -574,7 +574,7 @@
       "revision": "213f6e6973d9b456c6e50e86f19f66877e7ef0ee",
       "queryRevision": "213f6e6973d9b456c6e50e86f19f66877e7ef0ee",
       "license": "MIT",
-      "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+      "compiler": "wasi-sdk 34; tree-sitter 0.27.0"
     },
     "tree-sitter-python": {
       "package": "tree-sitter-python",
@@ -728,14 +728,14 @@
       "revision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
       "queryRevision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
       "license": "MIT",
-      "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+      "compiler": "wasi-sdk 34; tree-sitter 0.27.0"
     },
     "mdx": {
       "repository": "https://github.com/srazzak/tree-sitter-mdx",
       "revision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
       "queryRevision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
       "license": "MIT",
-      "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+      "compiler": "wasi-sdk 34; tree-sitter 0.27.0"
     }
   },
   "captureMappings": {

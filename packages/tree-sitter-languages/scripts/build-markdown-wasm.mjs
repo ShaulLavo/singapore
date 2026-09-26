@@ -30,7 +30,6 @@ function buildGrammar(grammarDir, outputFile) {
     [
       'build',
       '--wasm',
-      '--docker',
       join(grammarRoot, grammarDir),
       '-o',
       join(outputRoot, outputFile),

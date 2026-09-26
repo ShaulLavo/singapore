@@ -150,6 +150,7 @@ function runSeed(seed) {
     finishCompaction(pending, true)
     if (pending) checkAnchors(state.parent, anchors, step, false)
     pending = null
+    // oxlint-disable-next-line no-dupe-else-if -- random() draws again on each call
     if (random(5) === 0) compact(state.candidate)
     else if (random(5) === 0) pending = startCompaction(state.candidate, 1 + random(40))
     checkAnchors(state, anchors, step, step % 50 === 0)

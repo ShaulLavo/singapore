@@ -449,6 +449,7 @@ const runDifferential = (seed: number, steps: number, text: string): void => {
     expect(materializePieceTableFullText(state.candidate), label).toBe(
       materializePieceTableFullText(state.control),
     )
+    // oxlint-disable-next-line no-dupe-else-if -- random() draws again on each call
     if (random(6) === 0) compact(state.candidate)
     else if (random(6) === 0) pending = startCompaction(state.candidate, random(40))
     expectSameResolution(state, anchors, label, step % 20 === 0)

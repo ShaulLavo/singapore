@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "manifestHash": "fcf0320e4c534c738bed8f63137db49b1182416bc5532ad47b49e8cae75a6e47",
+  "manifestHash": "f985086df27f9a16a81d5bc288080efeb98cfd4b79923cdd0dc67fe9cff3e2dc",
   "languages": [
     {
       "id": "javascript",
@@ -750,7 +750,7 @@
       "files": [
         {
           "file": "./grammars/tree-sitter-markdown.wasm",
-          "sha256": "1c416f01be25112976035eed39d9463a045585d264df95350413ac708928dec1"
+          "sha256": "054ea000b038a1e88398f85ad159cf0b4f3af9cccb9da6de24012d130a88bc41"
         },
         {
           "file": "./queries/markdown-highlights.scm",
@@ -871,7 +871,7 @@
       "files": [
         {
           "file": "./grammars/tree-sitter-markdown-inline.wasm",
-          "sha256": "43c294f941a7dd078fe7f94729ff2d65fcb170d0cc3b1b2a8e60c0f4329e44a2"
+          "sha256": "d35397995d53ac89259266e9738c5a3e82a7dff45e1b8814056b7bfe20e893b0"
         },
         {
           "file": "./queries/markdown-inline-highlights.scm",
@@ -905,13 +905,13 @@
         "revision": "213f6e6973d9b456c6e50e86f19f66877e7ef0ee",
         "queryRevision": "213f6e6973d9b456c6e50e86f19f66877e7ef0ee",
         "license": "MIT",
-        "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+        "compiler": "wasi-sdk 34; tree-sitter 0.27.0"
       },
       "sourceFiles": [],
       "files": [
         {
           "file": "./grammars/tree-sitter-astro.wasm",
-          "sha256": "2458cbe28a987c39a18495b3ec51b5a8a8617e1595cb5afc9fc9ceccf6405c48"
+          "sha256": "602004854e05205f4a0f4890283c4693e0533f1a497e42053a38572610aa3163"
         },
         {
           "file": "./queries/astro-highlights.scm",
@@ -2086,13 +2086,13 @@
         "revision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
         "queryRevision": "97614d051eebfd3bc5d97c0bdb5a1638719ca811",
         "license": "MIT",
-        "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+        "compiler": "wasi-sdk 34; tree-sitter 0.27.0"
       },
       "sourceFiles": [],
       "files": [
         {
           "file": "./grammars/tree-sitter-sql.wasm",
-          "sha256": "5bd67016608428ae79dcd98f1c18f43e14a0c35004f6f62e6fbb2d5ed0eb26fb"
+          "sha256": "13df5dd065a3870728b32f37089b3bf6f54ec0868c3840d718d60ffb084a6365"
         },
         {
           "file": "./queries/sql-highlights.scm",
@@ -2122,13 +2122,13 @@
         "revision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
         "queryRevision": "3aa29e8de1bf0213948a04fe953039b6ab73777b",
         "license": "MIT",
-        "compiler": "wasi-sdk 29; tree-sitter 0.26.13"
+        "compiler": "wasi-sdk 34; tree-sitter 0.27.0"
       },
       "sourceFiles": [],
       "files": [
         {
           "file": "./grammars/tree-sitter-mdx.wasm",
-          "sha256": "eea3d77bced02c509458e105d0f1352ea2c5f01c0cbefcb5273e5b2a75f7eb29"
+          "sha256": "71c92f82a0805e336b60b08a62d1cc48be287cb699cc943acad8640829624245"
         },
         {
           "file": "./queries/mdx-highlights.scm",

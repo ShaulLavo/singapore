@@ -204,7 +204,7 @@ function explicitlyRelative(workerPath: string): string {
 }
 
 function emittedWorkerPattern(): RegExp {
-  return /new Worker\(\s*new URL\(\s*\/\* @vite-ignore \*\/\s*"" \+ new URL\(("[^"]+"), import\.meta\.url\)\.href,\s*"" \+ import\.meta\.url\s*\),\s*\{\s*type: "module"\s*\}\s*\)/g
+  return /new Worker\(\s*new URL\(\s*\/\* @vite-ignore \*\/\s*(?:"" \+ )?new URL\(("[^"]+"), import\.meta\.url\)\.href,\s*"" \+ import\.meta\.url\s*\),\s*\{\s*type: "module"\s*\}\s*\)/g
 }
 
 async function assertWorkersAreCanonical(workerReferences: readonly string[]): Promise<void> {
