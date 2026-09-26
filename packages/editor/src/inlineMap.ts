@@ -123,6 +123,33 @@ export const updateInlineMapForEdit = (
 }
 
 /**
+ * The map's replacements as specs at a later snapshot, found through their anchors: what a provider
+ * that only reruns when its input changes keeps contributing while the text moves under it.
+ */
+export const inlineSpecsAtSnapshot = (
+  map: InlineMap,
+  snapshot: PieceTableSnapshot,
+): readonly InlineReplacementSpec[] =>
+  inlineMapFromRanges(snapshot, map.ranges).ranges.map(inlineSpecFromRange)
+
+const inlineSpecFromRange = (range: InlineReplacementRange): InlineReplacementSpec => ({
+  id: range.id,
+  startIndex: range.startOffset,
+  endIndex: range.endOffset,
+  text: range.text,
+  ...(range.insertion === undefined ? {} : { insertion: range.insertion }),
+  ...(range.kind === undefined ? {} : { kind: range.kind }),
+  ...(range.className === undefined ? {} : { className: range.className }),
+  ...(range.cursorStops === undefined ? {} : { cursorStops: range.cursorStops }),
+  ...(range.render === undefined ? {} : { render: range.render }),
+  ...(range.groupId === undefined ? {} : { groupId: range.groupId }),
+  ...(range.reveal === undefined ? {} : { reveal: range.reveal }),
+  ...(range.atomic === undefined ? {} : { atomic: range.atomic }),
+  ...(range.key === undefined ? {} : { key: range.key }),
+  ...(range.metadata === undefined ? {} : { metadata: range.metadata }),
+})
+
+/**
  * Drops every replacement the given ranges touch, along with the rest of each touched group. Feeding
  * the caret and selections through this is what makes markdown source reappear under the cursor:
  * mapping and painting both read the revealed map, so they can never disagree about what is hidden.

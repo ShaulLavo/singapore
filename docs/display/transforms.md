@@ -243,6 +243,11 @@ captures land, and captures stay on while it is registered) or `'edit'` (rerun i
 operation that edits text or moves a selection, with no capture demand). The context carries the
 resolved selections, so an edit-triggered provider can leave the token being typed as text.
 
+Captures describe the text of the last parse, so a syntax-triggered provider never reruns on an edit:
+the map it made is carried to the current text by its anchors and merged with what the
+edit-triggered providers derive, until fresh captures land. A new document drops it and derives the
+edit-triggered part from the new text at once.
+
 ### InlineMap Invalidation Analysis
 
 | Edit location                        | Output invalidation                                  |
@@ -300,8 +305,8 @@ spans, by adjacency for links and images.
 
 - Wrapping may split a multi-character replacement across rows; the wrap pass does not yet treat
   replacements as unbreakable units.
-- `'syntax'` providers' maps are carried across an edit by `updateInlineMapForEdit` until the next
-  parse supplies a fresh one; `'edit'` providers replace it within the edit's operation.
+- Carrying a syntax-derived map re-resolves every range on each refresh; with many replacements and
+  an edit-triggered provider on one editor that is O(ranges) per keystroke until Phase 4's range set.
 
 ---
 

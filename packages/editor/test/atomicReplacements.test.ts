@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Editor } from '../src/editor/Editor'
 import type { EditorOptions } from '../src/editor/types'
 import type { InlineReplacementSpec } from '../src/inlineMap'
-import type { EditorInlineReplacementContext } from '../src/plugins'
+import type { EditorInlineReplacementContext, EditorPlugin } from '../src/plugins'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import { VirtualizedTextView } from '../src/virtualization'
 import { createVisibleEditor } from './factories/visibleEditor'
@@ -102,6 +102,21 @@ function textView(): VirtualizedTextView {
 
 function viewState(): ReturnType<VirtualizedTextView['getState']> {
   return textView().getState()
+}
+
+/** Hides the characters at 2–4 of the text it was first given, as a parse of `abXXcd` would. */
+function hideXXPlugin(): EditorPlugin {
+  return {
+    name: 'test.hideXX',
+    activate: (context) =>
+      context.registerInlineReplacementProvider?.(() => [
+        { id: 'xx', startIndex: 2, endIndex: 4, text: '' },
+      ]) ?? { dispose: () => undefined },
+  }
+}
+
+function rowText(): string {
+  return container.querySelector('[data-editor-virtual-row="0"]')?.textContent ?? ''
 }
 
 function editorRoot(): HTMLElement {
@@ -257,6 +272,34 @@ describe('providers triggered by edits', () => {
     expect(widgets()).toHaveLength(1)
     expect(chips.renders).toBe(1)
     expect(chips.disposals).toBe(0)
+  })
+})
+
+describe('providers of both triggers on one editor', () => {
+  it('carries syntax-derived replacements to the text an edit produced', () => {
+    editor = createVisibleEditor(container, { rtlMoveVisually: false, plugins: [hideXXPlugin()] })
+    editor.setText('abXXcd')
+    editor.setInlineReplacementProvider(() => [], { trigger: 'edit' })
+    expect(rowText()).toBe('abcd')
+
+    editor.edit({ from: 0, to: 0, text: 'Z' })
+
+    expect(rowText()).toBe('Zabcd')
+  })
+
+  it('derives edit-triggered replacements for text set after the provider', () => {
+    const chips: Chips = { renders: 0, disposals: 0, contexts: [] }
+    editor = createVisibleEditor(container, { rtlMoveVisually: false })
+    editor.setInlineReplacementProvider((context) => mentionSpecs(chips, context), {
+      trigger: 'edit',
+    })
+
+    editor.setText(TEXT)
+
+    expect(widgets()).toHaveLength(1)
+    editor.setSelection(CHIP_END)
+    editor.dispatchCommand('cursorLeft')
+    expect(caret()).toBe(CHIP_START)
   })
 })
 

@@ -124,9 +124,10 @@ import {
   type EditorViewContributionFailurePhase,
 } from './viewContributions'
 import type { FoldMap } from '../foldMap'
-import { createInlineMap, type InlineMap, type InlineReplacementSpec } from '../inlineMap'
+import { createInlineMap, inlineSpecsAtSnapshot, type InlineMap } from '../inlineMap'
 import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type {
+  EditorInlineReplacementContext,
   EditorInlineReplacementProvider,
   EditorInlineReplacementProviderOptions,
   EditorInlineReplacementSource,
@@ -376,6 +377,7 @@ export class Editor {
   private readonly highlightPrefix: string
   private sessionChangeVersion = 0
   private inlineReplacementProvider: EditorInlineReplacementSource | null = null
+  private syntaxInlineMap: InlineMap | null = null
   private syntaxCaptures: readonly EditorSyntaxCapture[] = []
   /**
    * Regions the user drew rather than any provider describing them. They are held here and merged in
@@ -1346,12 +1348,12 @@ export class Editor {
    */
   private handleInlineReplacementProvidersChanged(): void {
     this.syntax.syncCaptureRequirement()
-    this.refreshInlineMap()
+    this.refreshInlineMap('rerun')
   }
 
   private setSyntaxCaptures(captures: readonly EditorSyntaxCapture[]): void {
     this.syntaxCaptures = captures
-    this.refreshInlineMap()
+    this.refreshInlineMap('rerun')
   }
 
   /**
@@ -1364,35 +1366,55 @@ export class Editor {
     return shown
   }
 
-  private refreshInlineMap(): void {
-    const providers = this.inlineReplacementProviders()
+  /**
+   * Syntax-triggered providers read captures, which describe the text of the last parse: they run
+   * only when captures land or providers change (`'rerun'`), and between parses their map is carried
+   * to the current text by its anchors (`'carry'`). A new document drops it (`'drop'`). Edit-triggered
+   * providers run every time.
+   */
+  private refreshInlineMap(syntax: 'rerun' | 'carry' | 'drop' = 'carry'): void {
     const snapshot = this.session?.getSnapshot()
     if (!snapshot) {
+      this.syntaxInlineMap = null
       this.view.setInlineMap(null)
       return
     }
 
+    const providers = this.inlineReplacementProviders()
+    const context = this.inlineReplacementContext()
+    if (syntax === 'drop') this.syntaxInlineMap = null
+    if (syntax === 'rerun') this.syntaxInlineMap = this.syntaxDerivedInlineMap(providers, context)
+    const carried = this.syntaxInlineMap
+      ? inlineSpecsAtSnapshot(this.syntaxInlineMap, snapshot)
+      : []
+    const derived = providers
+      .filter((source) => source.trigger === 'edit')
+      .flatMap((source) => source.provide(context))
     // The suggestion joins the same map rather than one of its own: a document rendering itself
     // through replacements is still that document, and ghost text has to take its columns from what
     // is on screen rather than from text the reader cannot see.
-    const suggestion = this.inputSelection.inlineSuggestionSpecs()
-    const specs =
-      providers.length === 0 ? suggestion : this.providedInlineSpecs(providers, suggestion)
+    const specs = [...carried, ...derived, ...this.inputSelection.inlineSuggestionSpecs()]
     this.view.setInlineMap(specs.length === 0 ? null : createInlineMap(snapshot, specs))
   }
 
-  private providedInlineSpecs(
+  private syntaxDerivedInlineMap(
     providers: readonly EditorInlineReplacementSource[],
-    suggestion: readonly InlineReplacementSpec[],
-  ): readonly InlineReplacementSpec[] {
-    const context = {
+    context: EditorInlineReplacementContext,
+  ): InlineMap | null {
+    const snapshot = this.session?.getSnapshot()
+    const specs = providers
+      .filter((source) => source.trigger === 'syntax')
+      .flatMap((source) => source.provide(context))
+    return snapshot && specs.length > 0 ? createInlineMap(snapshot, specs) : null
+  }
+
+  private inlineReplacementContext(): EditorInlineReplacementContext {
+    return {
       textSnapshot: this.getTextSnapshot(),
       languageId: this.languageId,
       captures: this.syntaxCaptures,
       selections: this.inputSelection.resolveViewSelections(),
     }
-
-    return providers.flatMap((source) => source.provide(context)).concat(suggestion)
   }
 
   private editRederivesInlineMap(changes: readonly unknown[]): boolean {
@@ -4386,6 +4408,9 @@ export class Editor {
     change: DocumentSessionChange | null,
     options: { readonly delayMs?: number } = {},
   ): void {
+    // A new document: edit-triggered replacements are derived from its text at once, and the old
+    // document's syntax-derived ones go.
+    if (!change) this.refreshInlineMap('drop')
     this.syntax.refresh(documentVersion, change, options)
   }
 
