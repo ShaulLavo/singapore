@@ -545,6 +545,7 @@ export class Editor {
       scrollPastEnd: options.scrollPastEnd,
       onContentHeightChange: (height) => this.notifyContentHeight(height),
       wrap: options.wordWrap ?? false,
+      wrapBreak: options.wordWrapBreak,
       onFoldToggle: this.handleFoldToggle,
       onViewportChange: this.handleViewportChange,
       onViewportScroll: this.handleViewportScroll,

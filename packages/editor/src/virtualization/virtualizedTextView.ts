@@ -417,6 +417,7 @@ export class VirtualizedTextView {
       foldMarkerByStartRow: new Map(),
       foldMarkerByKey: new Map(),
       wrapEnabled: options.wrap ?? false,
+      wrapBreak: options.wrapBreak ?? 'character',
       tabSize,
       tokenGroups: new Map(),
       rowTokenSignatures: new Map(),

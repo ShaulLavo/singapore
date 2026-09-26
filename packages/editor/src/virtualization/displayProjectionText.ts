@@ -14,8 +14,10 @@ import type {
   InlineSummary,
   InlineTextPart,
   ProjectionCounters,
+  WrapBreak,
   WrapSummary,
 } from './displayProjectionTypes'
+import { appendWordWrapText, createWordWrapLine, type UnbreakableRuns } from './wordWrap'
 
 export function inlineSummary(
   length: number,
@@ -124,10 +126,17 @@ export function summarizeDocumentWrap(
   width: number | null,
   tabSize: number,
   counters: ProjectionCounters,
+  wrapBreak: WrapBreak = 'character',
 ): WrapSummary {
   const length = inline?.mapping.displayLength ?? end - start
   if (!width || !Number.isFinite(width) || width <= 0) return uniformWrap(length, null)
   counters.summaryLinesMeasured += 1
+  if (wrapBreak === 'word') {
+    const readRange = inline
+      ? (from: number, to: number) => readProjectedText(snapshot, start, inline, from, to, counters)
+      : (from: number, to: number) => read(snapshot, start + from, start + to, counters)
+    return summarizeWordWrap(length, readRange, width, tabSize, unbreakableRuns(inline))
+  }
   if (inline)
     return summarizeReadWrap(
       length,
@@ -169,8 +178,10 @@ export function summarizeReadWrap(
   readRange: (start: number, end: number) => string,
   width: number | null,
   tabSize: number,
+  wrapBreak: WrapBreak = 'character',
 ): WrapSummary {
   if (!width || !Number.isFinite(width) || width <= 0) return uniformWrap(length, null)
+  if (wrapBreak === 'word') return summarizeWordWrap(length, readRange, width, tabSize, [])
   const ends: number[] = []
   const state = { visual: 0, segmentVisual: 0, hasTabs: false }
   const normalizedWidth = Math.max(1, Math.floor(width))
@@ -187,6 +198,38 @@ export function summarizeReadWrap(
   if (!state.hasTabs) return uniformWrap(length, width)
   ends.push(length)
   return { kind: 'indexed', length, ends: Uint32Array.from(ends), rows: ends.length }
+}
+
+/**
+ * Word breaks always come back explicit: a line that never breaks can still be wider than a row
+ * (spaces hanging past the edge, a run too wide to split), which a uniform summary would cut.
+ */
+function summarizeWordWrap(
+  length: number,
+  readRange: (start: number, end: number) => string,
+  width: number,
+  tabSize: number,
+  runs: UnbreakableRuns,
+): WrapSummary {
+  const line = createWordWrapLine()
+  const normalizedWidth = Math.max(1, Math.floor(width))
+  for (let start = 0; start < length; start += 4096) {
+    const text = readRange(start, Math.min(length, start + 4096))
+    appendWordWrapText(line, text, 0, text.length, normalizedWidth, tabSize, runs)
+  }
+  if (line.ends.length === 0 && Math.max(length, line.visual) <= normalizedWidth) {
+    return uniformWrap(length, null)
+  }
+  const ends = Uint32Array.from([...line.ends, length])
+  return { kind: 'indexed', length, ends, rows: ends.length }
+}
+
+/** A replacement is painted as one box, so no row break may fall inside its display span. */
+function unbreakableRuns(inline: InlineSummary | null): UnbreakableRuns {
+  if (!inline) return []
+  return inline.parts
+    .filter((part) => part.replacement !== null && part.end > part.start)
+    .map((part) => [part.start, part.end] as const)
 }
 
 function appendWrapEnds(

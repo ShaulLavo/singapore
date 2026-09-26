@@ -1,6 +1,12 @@
 import { join, wrappedNode, type ProjectionNode } from './displayProjectionIndex'
 import { read } from './displayProjectionText'
 import type { BuildContext } from './displayProjectionBuild'
+import {
+  appendWordWrapText,
+  createWordWrapLine,
+  resetWordWrapLine,
+  type WordWrapLine,
+} from './wordWrap'
 
 const BLOCK_LINES = 256
 const READ_WINDOW = 16384
@@ -13,11 +19,13 @@ type WrapScan = {
   visual: number
   segmentVisual: number
   rows: number
-  hasTabs: boolean
+  explicitEnds: boolean
   ends: number[]
   completed: number
   readonly width: number
   readonly tabSize: number
+  /** Present when rows end at word boundaries; the character path leaves it null. */
+  readonly word: WordWrapLine | null
 }
 
 export function buildWrappedSpan(
@@ -46,11 +54,12 @@ function buildWrappedBlock(
     visual: 0,
     segmentVisual: 0,
     rows: 1,
-    hasTabs: false,
+    explicitEnds: false,
     ends: [],
     completed: 0,
     width: Math.max(1, Math.floor(config.wrapColumn!)),
     tabSize: config.tabSize,
+    word: config.wrapBreak === 'word' ? createWordWrapLine() : null,
   }
   const start = snapshot.lineStart(startRow)
   const end = endRow >= snapshot.lineCount ? snapshot.length : snapshot.lineStart(endRow)
@@ -60,14 +69,18 @@ function buildWrappedBlock(
   if (state.completed < endRow - startRow) finishLine(state)
   counters.summaryLinesMeasured += endRow - startRow
   counters.indexEntriesTouched += 1
-  const tabs =
+  const breaks =
     state.tabEnds.length > 0
       ? { offsets: Uint32Array.from(state.tabOffsets), ends: Uint32Array.from(state.tabEnds) }
       : null
-  return wrappedNode(Uint32Array.from(state.prefixes), state.width, tabs)
+  return wrappedNode(Uint32Array.from(state.prefixes), state.width, breaks)
 }
 
 function scanWrapChunk(text: string, state: WrapScan): void {
+  if (state.word) {
+    scanWordWrapChunk(text, state, state.word)
+    return
+  }
   for (let index = 0; index < text.length; index += 1) {
     const code = text.charCodeAt(index)
     if (code === 10) {
@@ -78,11 +91,21 @@ function scanWrapChunk(text: string, state: WrapScan): void {
   }
 }
 
+function scanWordWrapChunk(text: string, state: WrapScan, word: WordWrapLine): void {
+  let start = 0
+  for (let end = text.indexOf('\n'); end !== -1; end = text.indexOf('\n', start)) {
+    appendWordWrapText(word, text, start, end, state.width, state.tabSize)
+    finishLine(state)
+    start = end + 1
+  }
+  appendWordWrapText(word, text, start, text.length, state.width, state.tabSize)
+}
+
 function appendCodeUnit(code: number, state: WrapScan): void {
-  if (code === 9 && !state.hasTabs) discoverTabs(state)
+  if (code === 9 && !state.explicitEnds) discoverTabs(state)
   const cells = code === 9 ? state.tabSize - (state.visual % state.tabSize) : 1
   if (state.segmentVisual > 0 && state.segmentVisual + cells > state.width) {
-    if (state.hasTabs) state.ends.push(state.length)
+    if (state.explicitEnds) state.ends.push(state.length)
     state.rows += 1
     state.segmentVisual = 0
   }
@@ -92,12 +115,13 @@ function appendCodeUnit(code: number, state: WrapScan): void {
 }
 
 function discoverTabs(state: WrapScan): void {
-  state.hasTabs = true
+  state.explicitEnds = true
   for (let row = 1; row < state.rows; row += 1) state.ends.push(row * state.width)
 }
 
 function finishLine(state: WrapScan): void {
-  if (state.hasTabs) appendTabbedLine(state)
+  if (state.word) adoptWordLine(state, state.word)
+  if (state.explicitEnds) appendTabbedLine(state)
   state.prefixes.push(state.prefixes[state.prefixes.length - 1]! + state.rows)
   state.tabOffsets.push(state.tabEnds.length)
   state.completed += 1
@@ -105,11 +129,23 @@ function finishLine(state: WrapScan): void {
   state.visual = 0
   state.segmentVisual = 0
   state.rows = 1
-  state.hasTabs = false
+  state.explicitEnds = false
   state.ends = []
 }
 
 function appendTabbedLine(state: WrapScan): void {
   for (const end of state.ends) state.tabEnds.push(end)
   state.tabEnds.push(state.length)
+}
+
+/** A word-wrapped line with breaks stores them explicitly, the way a tabbed line does. */
+function adoptWordLine(state: WrapScan, word: WordWrapLine): void {
+  state.length = word.length
+  state.rows = word.ends.length + 1
+  // A line wider than a row stays explicit even unbroken: its spaces hang past the edge.
+  if (word.ends.length > 0 || Math.max(word.length, word.visual) > state.width) {
+    state.explicitEnds = true
+    state.ends = word.ends.slice()
+  }
+  resetWordWrapLine(word)
 }
