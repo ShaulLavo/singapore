@@ -235,6 +235,29 @@ describe('work proportional to the tree, not the history', () => {
     return (usage.user + usage.system) / 1000
   }
 
+  // A major GC of a large heap lands in whichever step trips it, so its pause
+  // is subtracted: the collector's cost scales with the heap, not the step.
+  const longestStepMs = async (step: () => boolean): Promise<number> => {
+    const pauses: PerformanceEntry[] = []
+    const observer = new PerformanceObserver((list) => pauses.push(...list.getEntries()))
+    observer.observe({ entryTypes: ['gc'] })
+    const timed: { start: number; end: number; cpu: number }[] = []
+    for (let done = false; !done; ) {
+      const start = performance.now()
+      const cpu = cpuMs()
+      done = step()
+      timed.push({ start, end: performance.now(), cpu: cpuMs() - cpu })
+    }
+    // GC entries reach the observer on a later tick.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    observer.disconnect()
+    const paused = (from: number, to: number) =>
+      pauses
+        .filter((pause) => pause.startTime >= from && pause.startTime < to)
+        .reduce((sum, pause) => sum + pause.duration, 0)
+    return Math.max(...timed.map(({ start, end, cpu }) => cpu - paused(start, end)))
+  }
+
   const churnAtOneSpot = (cycles: number, passEvery: number) => {
     let snapshot = createPieceTableSnapshot('ab')
     const passSteps: number[] = []
@@ -277,7 +300,7 @@ describe('work proportional to the tree, not the history', () => {
   }, 60_000)
 
   // Fragmented buffers the pass does not compact must cost it nothing.
-  test('a pass does not read the entries of fragments it leaves alone', () => {
+  test('a pass does not read the entries of fragments it leaves alone', async () => {
     let snapshot = createPieceTableSnapshot('fragments: ')
     for (let paste = 0; paste < 64; paste++) {
       const at = snapshot.length
@@ -291,14 +314,11 @@ describe('work proportional to the tree, not the history', () => {
     }
     for (let cycle = 0; cycle < 50; cycle++) snapshot = churn(snapshot, 3, `churn ${cycle}`)
     const job = compactTombstones(snapshot)
-    let longest = 0
-    for (let done = false; !done; ) {
-      const start = cpuMs()
+    const longest = await longestStepMs(() => {
       const step = job.next()
-      longest = Math.max(longest, cpuMs() - start)
-      done = step.done === true
-      if (done) expect(step.value.runs).toBe(1)
-    }
+      if (step.done) expect(step.value.runs).toBe(1)
+      return step.done === true
+    })
     expect(longest).toBeLessThan(8)
     expectValid(snapshot)
   }, 60_000)
