@@ -1,6 +1,7 @@
 import { Window } from 'happy-dom'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
+  createChannel,
   createPlugin,
   derive,
   selectionInput,
@@ -8,6 +9,7 @@ import {
   type EditorViewScope,
 } from './createPlugin'
 import { setHighlightRegistry } from './editor/runtime'
+import type { EditorPlugin } from './plugins'
 import { Editor } from './editor/Editor'
 
 type TestWindow = Window & typeof globalThis
@@ -165,4 +167,96 @@ describe('createPlugin view scope', () => {
 
     expect(counts.updates).toBe(0)
   })
+
+  test('two contributors and one consumer share an annotation channel in one editor', () => {
+    const annotations = createChannel<string>('test.annotations', { kind: 'many' })
+    const seen: (readonly string[])[] = []
+    const lint = createPlugin({
+      name: 'test.lint',
+      view: (scope) => scope.provide(annotations, 'lint'),
+    })
+    const spell = createPlugin({
+      name: 'test.spell',
+      view: (scope) => {
+        const word = scope.state('spell')
+        scope.provide(annotations, word.input)
+        setSpell = word.set
+      },
+    })
+    let setSpell: ((value: string) => void) | null = null
+    const gutter = createPlugin({
+      name: 'test.gutter',
+      view: (scope) => void scope.watch(annotations.input, (values) => seen.push(values)),
+    })
+    const editor = createEditorWith([gutter, lint, spell])
+
+    expect(seen.at(-1)).toEqual(['lint', 'spell'])
+    setSpell!('typo')
+    expect(seen.at(-1)).toEqual(['lint', 'typo'])
+    editor.setPlugins([gutter, spell])
+    expect(seen.at(-1)).toEqual(['typo'])
+  })
+
+  test('refuses a second provider on a channel that takes one', () => {
+    const owner = createChannel<string>('test.owner', { kind: 'one' })
+    const seen: (string | null)[] = []
+    const first = createPlugin({ name: 'test.a', view: (scope) => scope.provide(owner, 'a') })
+    const second = createPlugin({ name: 'test.b', view: (scope) => scope.provide(owner, 'b') })
+    const reader = createPlugin({
+      name: 'test.owner-reader',
+      view: (scope) => void scope.watch(owner.input, (value) => seen.push(value)),
+    })
+    createEditorWith([reader, first, second])
+
+    expect(seen.at(-1)).toBe('a')
+  })
+
+  test('keeps channel values apart between editors', () => {
+    const count = createChannel<number, number>('test.count', {
+      kind: 'combine',
+      combine: (values) => values.reduce((sum, value) => sum + value, 0),
+    })
+    const totals: number[] = []
+    const provider = createPlugin({
+      name: 'test.provider',
+      view: (scope) => scope.provide(count, 1),
+    })
+    const reader = createPlugin({
+      name: 'test.reader',
+      view: (scope) => void scope.watch(count.input, (total) => totals.push(total)),
+    })
+    createEditorWith([provider, reader])
+    createEditorWith([reader])
+
+    expect(totals).toEqual([1, 0])
+  })
+
+  test('installs a used plugin once per editor and keeps it while any user remains', () => {
+    let activations = 0
+    let disposals = 0
+    const shared: EditorPlugin = {
+      name: 'test.shared',
+      activate: () => {
+        activations += 1
+        return { dispose: () => void (disposals += 1) }
+      },
+    }
+    const first = createPlugin({ name: 'test.first', uses: [shared] })
+    const second = createPlugin({ name: 'test.second', uses: [shared] })
+    const editor = createEditorWith([first, second])
+
+    expect(activations).toBe(1)
+    editor.setPlugins([second])
+    expect(disposals).toBe(0)
+    editor.setPlugins([])
+    expect(disposals).toBe(1)
+  })
 })
+
+function createEditorWith(plugins: readonly EditorPlugin[]): Editor {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const editor = new Editor(container, { defaultText: 'alpha', plugins: [...plugins] })
+  editors.push(editor)
+  return editor
+}
