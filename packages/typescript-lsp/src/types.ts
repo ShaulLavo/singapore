@@ -5,6 +5,7 @@ import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapore-edi
 import type {
   LanguageServerConnectionContext,
   LspConnectionProvider,
+  LanguageServerDiagnosticActions,
   LanguageServerDocumentSyncOptions,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticCounts,
@@ -93,6 +94,7 @@ export type TypeScriptLspPluginOptions = {
    * reports that instead.
    */
   readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
+  readonly getDiagnosticActions?: LanguageServerDiagnosticActions
   readonly onRequestError?: (method: string, error: unknown) => void
   readonly onError?: (error: unknown) => void
 }

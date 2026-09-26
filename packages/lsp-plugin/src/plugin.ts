@@ -90,6 +90,7 @@ import type { TextEdit } from '@singapore-editor/core'
 import type {
   LanguageServerConnectionContext,
   LanguageServerDefinitionTarget,
+  LanguageServerDiagnosticActions,
   LanguageServerDiagnosticMarkerClaim,
   LanguageServerDiagnosticMarkerEvent,
   LanguageServerDiagnosticSummary,
@@ -193,6 +194,7 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
   onConnected?(context: LanguageServerConnectionContext): void
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly getDiagnosticActions?: LanguageServerDiagnosticActions
   readonly onDidNavigateDiagnostic?: (
     event: LanguageServerDiagnosticMarkerEvent,
   ) => LanguageServerDiagnosticMarkerClaim
@@ -233,6 +235,7 @@ type LanguageServerResolvedAdapterOptions = {
   readonly commands: readonly LanguageServerCommandSpec[]
   readonly semanticTokens?: LanguageServerSemanticTokensFactory
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly getDiagnosticActions?: LanguageServerDiagnosticActions
   readonly onDidNavigateDiagnostic?: (
     event: LanguageServerDiagnosticMarkerEvent,
   ) => LanguageServerDiagnosticMarkerClaim
@@ -265,6 +268,7 @@ export function createLanguageServerPlugin(
     semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
     onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
+    getDiagnosticActions: options.getDiagnosticActions,
     onDefinitionLinkHover: options.onDefinitionLinkHover,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
@@ -524,6 +528,7 @@ class LanguageServerContribution implements EditorViewContribution {
             this.servers.requestHover(params, requestOptions, onUpdate),
           getActiveDocument: () => this.activeDocument(),
           getDiagnostics: () => this.diagnostics.diagnostics,
+          getDiagnosticActions: options.getDiagnosticActions,
           openLocation: (target) => {
             options.onOpenDefinition?.(target)
           },
@@ -1070,6 +1075,7 @@ function resolveAdapterOptions(
     semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
     onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
+    getDiagnosticActions: options.getDiagnosticActions,
     onDefinitionLinkHover: options.onDefinitionLinkHover,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
@@ -1106,6 +1112,7 @@ function resolveLanguageServerSetOptions(
     semanticTokens: options.semanticTokens,
     onDiagnostics: options.onDiagnostics,
     onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
+    getDiagnosticActions: options.getDiagnosticActions,
     onInteractiveReady: options.onInteractiveReady,
     onDefinitionLinkHover: options.onDefinitionLinkHover,
     onOpenDefinition: options.onOpenDefinition,

@@ -95,3 +95,9 @@ For shared sessions, pass `onApplyWorkspaceEdit` to `createLanguageServerDocumen
 The document uses it both to advertise workspace-edit support during initialization and to
 apply edits requested by its views. It cannot be supplied on a plugin borrowing that document.
 The connection-only plugin still accepts `onApplyWorkspaceEdit` directly.
+
+### Diagnostic hover actions
+
+`getDiagnosticActions({ documentUri, textVersion, diagnostic })` supplies actions beside each diagnostic note. It is supported by the server, server-set and adapter plugins, including `createTypeScriptLspPlugin`. Return an empty array when no action applies. Each action has a `label` and `run(): void | Promise<void>`.
+
+The tooltip prevents repeated invocation while an action is pending, preserves keyboard focus, and shows a rejected action's message beside its button. Progressive hover replies retain pending actions and their errors. An action refuses to run after its document, text version or diagnostic changes; the user can reopen the hover for a fresh action. The host owns application behavior and async operation state.

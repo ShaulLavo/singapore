@@ -60,7 +60,7 @@ const lastTooltipDimensions = new WeakMap<Document, TooltipDimensions>()
 
 export type TooltipAction = {
   readonly label: string
-  readonly run: () => void
+  readonly run: () => void | Promise<void>
 }
 
 /** A place a note points at, opened by the host: the other half of a duplicate, a related site. */
@@ -81,6 +81,7 @@ export type TooltipNote = {
   /** Makes the code a link to its documentation. */
   readonly codeHref?: string
   readonly related?: readonly TooltipNoteLink[]
+  readonly actions?: readonly TooltipAction[]
 }
 
 /** One row group of the tooltip; shown in the order given. */
@@ -130,6 +131,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
   const tooltip = createTooltipElement(document, classNamespace)
   document.body.append(tooltip)
 
+  let actionRows = new WeakMap<TooltipAction, HTMLElement>()
   let hideTimer: ReturnType<typeof setTimeout> | null = null
   let pointerDown = false
   let keyboardFocusOwned = false
@@ -171,6 +173,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     anchorRect = null
     surface.release()
     tooltip.replaceChildren()
+    actionRows = new WeakMap()
     if (restoreFocus) options.onRequestEditorFocus?.()
     options.onDidHide?.()
   }
@@ -199,6 +202,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     syncEditorThemeVariables(tooltip, themeSource)
     applyTooltipDimensions(tooltip, reentryElement, tooltip.hidden !== false)
     renderTooltip(tooltip, {
+      actionRows,
       hoverText: showOptions.hoverText,
       parts,
       theme: showOptions.theme,
@@ -370,6 +374,7 @@ function createTooltipElement(document: Document, classNamespace: string): HTMLD
 }
 
 type TooltipContent = {
+  readonly actionRows: WeakMap<TooltipAction, HTMLElement>
   readonly hoverText: string | null
   readonly parts: readonly TooltipPart[]
   readonly theme?: EditorTheme | null
@@ -476,6 +481,7 @@ function noteSection(content: TooltipContent, document: Document, note: TooltipN
   section.setAttribute('role', 'document')
   section.setAttribute('aria-label', noteCopyText(note))
   section.append(noteRow(document, note))
+  for (const action of note.actions ?? []) section.append(tooltipAction(document, content, action))
   const copyText = noteCopyText(note)
   const button = createCopyButton(document, copyText, content.classNamespace)
   section.append(button)
@@ -886,7 +892,11 @@ function tooltipBody(element: HTMLElement): HTMLElement | null {
   return element.querySelector<HTMLElement>(`.${tooltipClassNameForElement(element, 'body')}`)
 }
 
-type TooltipFocusState = { readonly partIndex: string | null; readonly inside: boolean }
+type TooltipFocusState = {
+  readonly partIndex: string | null
+  readonly inside: boolean
+  readonly element: HTMLElement | null
+}
 type TooltipScrollState = { readonly left: number; readonly top: number }
 
 function tooltipScrollState(tooltip: HTMLElement): TooltipScrollState {
@@ -902,9 +912,13 @@ function restoreTooltipScroll(tooltip: HTMLElement, state: TooltipScrollState): 
 }
 
 function tooltipFocusState(tooltip: HTMLElement, active: Element | null): TooltipFocusState {
-  if (!active || !tooltip.contains(active)) return { partIndex: null, inside: false }
+  if (!active || !tooltip.contains(active)) return { partIndex: null, inside: false, element: null }
   const part = active.closest<HTMLElement>('[data-hover-part-index]')
-  return { partIndex: part?.dataset.hoverPartIndex ?? null, inside: true }
+  return {
+    partIndex: part?.dataset.hoverPartIndex ?? null,
+    inside: true,
+    element: active instanceof HTMLElement ? active : null,
+  }
 }
 
 function restoreTooltipFocus(
@@ -913,6 +927,7 @@ function restoreTooltipFocus(
   requested: boolean,
 ): void {
   if (!previous.inside && !requested) return
+  if (previous.element && tooltip.contains(previous.element)) return previous.element.focus()
   if (previous.partIndex !== null) {
     const part = tooltip.querySelector<HTMLElement>(
       `[data-hover-part-index="${previous.partIndex}"]`,
@@ -1005,12 +1020,34 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(value, maximum))
 }
 
+async function runTooltipAction(
+  button: HTMLButtonElement,
+  failure: HTMLElement,
+  action: TooltipAction,
+): Promise<void> {
+  if (button.getAttribute('aria-disabled') === 'true') return
+  button.setAttribute('aria-disabled', 'true')
+  button.setAttribute('aria-busy', 'true')
+  failure.textContent = ''
+  try {
+    await action.run()
+  } catch (error) {
+    failure.textContent = error instanceof Error ? error.message : 'Could not complete action.'
+  } finally {
+    button.removeAttribute('aria-disabled')
+    button.removeAttribute('aria-busy')
+  }
+}
+
 function tooltipAction(
   document: Document,
   content: TooltipContent,
   action: TooltipAction,
 ): HTMLElement {
+  const existing = content.actionRows.get(action)
+  if (existing) return existing
   const row = createTooltipRow(content, document, 'action')
+  content.actionRows.set(action, row)
   const button = document.createElement('button')
   button.type = 'button'
   button.textContent = action.label
@@ -1022,7 +1059,11 @@ function tooltipAction(
     font: 'inherit',
     textDecoration: 'underline',
   })
-  button.addEventListener('click', action.run)
-  row.append(button)
+  const failure = document.createElement('span')
+  failure.setAttribute('role', 'status')
+  button.addEventListener('click', () => {
+    void runTooltipAction(button, failure, action)
+  })
+  row.append(button, failure)
   return row
 }
