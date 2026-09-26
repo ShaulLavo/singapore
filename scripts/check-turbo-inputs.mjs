@@ -17,12 +17,17 @@ const SOURCE_FILE = /\.(?:[cm]?[jt]sx?)$/
 const CONFIG_FILE = /^(?:vitest|vite)\.config\.[cm]?[jt]s$|^tsconfig.*\.json$/
 const SKIPPED_DIRECTORIES = new Set(['node_modules', 'dist', '.turbo', 'coverage'])
 const RESOLVED_SUFFIXES = ['', '.ts', '.tsx', '.js', '.mjs', '/index.ts', '/index.js']
-const RELATIVE_LITERAL = /(['"`])(\.{1,2}\/[^'"`\n$]*)\1/g
+// A quoted path from the file (`./`, `../`) or from the package directory (`${process.cwd()}/`),
+// read up to its first interpolation: `../docs/e034-${name}.json.gz` reads from `../docs`.
+const RELATIVE_LITERAL = /(['"`])((?:\.{1,2}\/|\$\{process\.cwd\(\)\}\/)[^'"`\n]*)\1/g
+const CWD_PREFIX = '${process.cwd()}/'
 const RELATIVE_ARGUMENT = /(?<=^|\s)\.{1,2}\/[^\s'"&|;]+/g
 // Relative paths that are not reads, each with why.
 const NOT_READS = new Set([
   // Vite's `server.fs.allow` root: it permits serving, the tests read nothing through it.
   'packages/tree-sitter/vitest.config.ts reads .',
+  // The directory a capture runs in; the test only reaches the validation that fails before it.
+  'examples/stress/fallback-experiment.mjs reads .',
 ])
 
 const turbo = JSON.parse(readFileSync(path.join(repoRoot, 'turbo.json'), 'utf8'))
@@ -100,9 +105,15 @@ function checkWorkspace(workspace) {
   const manifest = path.join(workspace.directory, 'package.json')
   const reads = [
     ...workspaceFiles(workspace.directory).flatMap((file) =>
-      relativeReads(file, RELATIVE_LITERAL, 2).map((target) => ({ file, target })),
+      relativeReads(file, RELATIVE_LITERAL, 2, workspace.directory).map((target) => ({
+        file,
+        target,
+      })),
     ),
-    ...relativeReads(manifest, RELATIVE_ARGUMENT, 0).map((target) => ({ file: manifest, target })),
+    ...relativeReads(manifest, RELATIVE_ARGUMENT, 0, workspace.directory).map((target) => ({
+      file: manifest,
+      target,
+    })),
   ]
   for (const { file, target } of reads) {
     if (isInside(workspace.directory, target)) continue
@@ -114,7 +125,9 @@ function checkWorkspace(workspace) {
     const tasks = isImportable(target)
       ? readingTasks(workspace, file)
       : readingTasks(workspace, file).filter((name) => name !== 'typecheck')
-    const cachedTasks = tasks.filter((name) => task(workspace, name).cache !== false)
+    const cachedTasks = tasks.filter(
+      (name) => task(workspace, name).cache !== false && !isDeclaredInput(workspace, name, target),
+    )
     if (!owner && cachedTasks.length > 0) {
       found.push(`${where}: outside the workspaces, cached by ${cachedTasks.join(', ')}`)
       continue
@@ -131,27 +144,69 @@ function isImportable(target) {
   return ['index.ts', 'index.js'].some((entry) => existsSync(path.join(target, entry)))
 }
 
+/** A `$TURBO_ROOT$/…` entry in the task's `inputs` inside what it reads. */
+function isDeclaredInput(workspace, taskName, target) {
+  const relative = path.relative(repoRoot, target)
+  return (task(workspace, taskName).inputs ?? []).some((input) => {
+    if (!input.startsWith('$TURBO_ROOT$/')) return false
+    const pattern = input.slice('$TURBO_ROOT$/'.length)
+    return new Bun.Glob(pattern).match(relative) || pattern.startsWith(`${relative}/`)
+  })
+}
+
 function isGlobalDependency(target) {
   const relative = path.relative(repoRoot, target)
   return globalGlobs.some((glob) => glob.match(relative))
 }
 
-function relativeReads(file, pattern, group) {
+function relativeReads(file, pattern, group, packageDirectory) {
   const source = readFileSync(file, 'utf8')
   const reads = []
   for (const match of source.matchAll(pattern)) {
-    const target = path.resolve(path.dirname(file), match[group])
-    if (RESOLVED_SUFFIXES.some((suffix) => existsSync(target + suffix))) reads.push(target)
+    const target = readTarget(file, match[group], packageDirectory)
+    if (target) reads.push(target)
   }
   return reads
 }
 
+function readTarget(file, literal, packageDirectory) {
+  const fromCwd = literal.startsWith(CWD_PREFIX)
+  const relative = fromCwd ? literal.slice(CWD_PREFIX.length) : literal
+  const base = fromCwd ? packageDirectory : path.dirname(file)
+  const interpolated = relative.indexOf('${')
+  const fixed = interpolated === -1 ? relative : relative.slice(0, interpolated)
+  const target = path.resolve(base, fixed)
+  if (RESOLVED_SUFFIXES.some((suffix) => existsSync(target + suffix))) return target
+  // A partial name (`e034-${name}`): the directory it names a file in is what is read.
+  if (interpolated === -1 || fixed.endsWith('/')) return null
+  const directory = path.dirname(target)
+  return existsSync(directory) ? directory : null
+}
+
+/**
+ * Sources, tests, scripts and tool configs, plus every workspace file they import by relative
+ * path (a test importing `../fallback-validation.mjs` reads what that module reads).
+ */
 function workspaceFiles(directory) {
   const configs = readdirSync(directory)
     .filter((entry) => CONFIG_FILE.test(entry))
     .map((entry) => path.join(directory, entry))
   const trees = SCANNED_DIRECTORIES.map((entry) => path.join(directory, entry)).filter(existsSync)
-  return [...configs, ...trees.flatMap(sourceFiles)]
+  const files = new Set([...configs, ...trees.flatMap(sourceFiles)])
+  for (const file of files) {
+    for (const target of relativeReads(file, RELATIVE_LITERAL, 2, directory)) {
+      const imported = importedFile(target)
+      if (imported && isInside(directory, imported)) files.add(imported)
+    }
+  }
+  return [...files]
+}
+
+function importedFile(target) {
+  const file = RESOLVED_SUFFIXES.map((suffix) => target + suffix).find(
+    (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
+  )
+  return file && SOURCE_FILE.test(file) ? file : null
 }
 
 function sourceFiles(directory) {
