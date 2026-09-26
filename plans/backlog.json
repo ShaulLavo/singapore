@@ -393,7 +393,7 @@
       "id": "E026",
       "file": "e026-command-metadata.md",
       "title": "Declare Editor command metadata once",
-      "status": "Proposed",
+      "status": "In progress",
       "owner": "Cross-repo",
       "kind": "Implementation",
       "priority": "P2",
