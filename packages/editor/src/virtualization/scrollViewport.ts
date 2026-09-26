@@ -1,4 +1,4 @@
-import { scrollElementPadding } from './virtualizedTextViewHelpers'
+import { invalidateScrollElementPadding, scrollElementPadding } from './virtualizedTextViewHelpers'
 
 type ScrollLayer = ReturnType<typeof createScrollLayer>
 
@@ -39,6 +39,7 @@ export class ScrollViewport {
     if (this.scrollElement.style[property] === value) return false
 
     this.scrollElement.style[property] = value
+    invalidateScrollElementPadding(this.scrollElement)
     this.synchronizeOrigin()
     this.onReservedOverlayWidthChange?.(side)
     return true
@@ -58,6 +59,8 @@ export class ScrollViewport {
     const nextWidth = `${width}px`
     const nextHeight = `${height}px`
 
+    // A host stylesheet that changes the padding also changes the content box, which lands here.
+    invalidateScrollElementPadding(this.scrollElement)
     this.synchronizeOrigin()
     this.frame.style.width = nextWidth
     this.frame.style.height = nextHeight

@@ -844,6 +844,7 @@ describe('VirtualizedTextView', () => {
     })
     view.setText('\tX')
     view.setScrollMetrics(0, 20)
+    view.focusInput()
 
     const charWidth = view.getState().metrics.characterWidth
     const marker = container.querySelector('[data-editor-hidden-character="tab"]') as HTMLElement
@@ -1818,6 +1819,7 @@ describe('VirtualizedTextView', () => {
   it('paints multiple selections and positions multiple carets', () => {
     view.setText('abc\ndef\nxyz')
     view.setScrollMetrics(0, 80)
+    view.focusInput()
     view.setSelections([
       { anchorOffset: 1, headOffset: 2 },
       { anchorOffset: 5, headOffset: 7 },
@@ -1836,6 +1838,7 @@ describe('VirtualizedTextView', () => {
   it('animates all carets through one shared blink layer', () => {
     view.setText('abc\ndef\nxyz')
     view.setScrollMetrics(0, 80)
+    view.focusInput()
     view.setSelections([
       { anchorOffset: 1, headOffset: 1 },
       { anchorOffset: 5, headOffset: 5 },
@@ -1874,6 +1877,7 @@ describe('VirtualizedTextView', () => {
     try {
       view.setText('abcd\ndef')
       view.setScrollMetrics(0, 40)
+      view.focusInput()
       view.setSelection(2, 2)
     } finally {
       restoreRangeGetClientRects(originalGetClientRects)
@@ -1887,6 +1891,7 @@ describe('VirtualizedTextView', () => {
   it('positions a caret at the end of a selection', () => {
     view.setText('abcd\ndef')
     view.setScrollMetrics(0, 40)
+    view.focusInput()
     view.setSelection(1, 6)
 
     const caret = container.querySelector('.editor-virtualized-caret') as HTMLElement
@@ -1897,6 +1902,7 @@ describe('VirtualizedTextView', () => {
   it('positions a caret at the head of a reversed selection', () => {
     view.setText('abcd\ndef')
     view.setScrollMetrics(0, 40)
+    view.focusInput()
     view.setSelection(6, 1)
 
     const caret = container.querySelector('.editor-virtualized-caret') as HTMLElement
@@ -2913,6 +2919,7 @@ describe('VirtualizedTextView', () => {
   it('renders control characters as visible cells with selection geometry', () => {
     view.setText('\u0000PNG\u0000\uFFFD')
     view.setScrollMetrics(0, 20)
+    view.focusInput()
     view.setSelection(0, 6)
 
     const range = selectionRanges(container)[0]!
