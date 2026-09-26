@@ -15,6 +15,7 @@ import { nextGraphemeBoundary, previousGraphemeBoundary } from '../graphemes'
 import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { type AtomicRanges, atomicRangesForInlineMap } from '../atomicRanges'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
+import type { TextOffsetRange } from '../textRanges'
 import { normalizeTabSize, type InjectedTextRow } from '../displayTransforms'
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
 import { firstBatchChangeEndingAtOrAfter, type TextEditBatch } from '../textEditBatch'
@@ -736,6 +737,14 @@ export class VirtualizedTextView {
       return
     }
     this.setFoldState(this.view.foldMarkers, foldMap)
+  }
+
+  /** Spans of source the painted map stands something else in for; insertions cover none. */
+  public inlineReplacementRanges(): readonly TextOffsetRange[] {
+    const ranges = this.view.model.inlineMap?.ranges ?? []
+    return ranges
+      .filter((range) => range.insertion !== true)
+      .map((range) => ({ start: range.startOffset, end: range.endOffset }))
   }
 
   public setInlineMap(inlineMap: InlineMap | null): void {

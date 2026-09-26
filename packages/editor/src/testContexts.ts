@@ -117,6 +117,9 @@ export function createTestViewContributionContext(
     trackPoint: (anchor) => ({ resolve: () => ({ kind: 'live', offset: anchor.offset }) }),
     setRangeHighlight: () => undefined,
     clearRangeHighlight: () => undefined,
+    requestSyntaxCaptures: () => noDisposal,
+    getSyntaxCaptures: () => null,
+    getInlineReplacementRanges: () => [],
   }
   return { ...defaults, ...overrides }
 }

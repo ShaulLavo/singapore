@@ -86,6 +86,7 @@ Out of scope:
   nspell had a 97 ms maximum and 81.3% top-5. typo-js took 430 ms per suggestion. Harper is an
   8 MB wasm using 284 MB. SymSpell used 105 MB. A home-grown `Set` engine had an 84 ms p95. The
   choice between the dependency and our own code is owner question 1.
+
 - **Dictionaries are vendored data, not packages.** en_US is cspell's `en_US.trie.gz` (298 KB,
   SCOWL size 70). en_GB is built from SCOWL's hunspell pair with `hunspell-reader` and
   `cspell-trie-lib` (123k words, 153 KB gzip). `scripts/build-dictionaries.ts` (proposed) is run by
@@ -110,6 +111,7 @@ Out of scope:
 
   A per-language `*-spell.scm` query with `@spell` / `@nospell` (Neovim's model) replaces the
   capture-name rules wherever the colour names are wrong.
+
 - **What runs when.** The contribution checks the mounted rows plus one screen above and below. A
   60-line viewport tokenizes in 0.2 ms. Only words missing from a per-document verdict cache go to
   the worker. Before painting, the reply is mapped from its sync point to the current text with
@@ -136,17 +138,37 @@ Out of scope:
    (`check(words) → misspelled`, `suggest(word, n)`), tokenizer and skip rules.
    - Evidence: node tests on the tokenizer; a bench script that reproduces the findings table on the
      same corpora.
-   - Done 2026-09-26 (`packages/spellcheck`). The dictionaries ship as one merged trie,
-     `english.trie.gz` (347 KB gzip): en_US's stored forms, the 2,440 en_GB words en_US lacks, and
-     the software terms. A suggestion walk costs about the same over a small trie as a large one,
-     so three tries tripled it (12 ms median). `bun run bench:engine` under Node 26: init 55 ms,
+   - Done 2026-09-26 (`packages/spellcheck`). `bun run bench:engine` under Node 26: init 55 ms,
      82,674 words checked in 27 ms, suggestions 4.3 ms median / 8.3 ms p95, top-1 71.6%, top-5
      89.0%. The worker, with the dictionary inlined, is 407 KB gzip and loads on the first request.
+   - Decided 2026-09-26: recommendation (wave 2). One merged trie, `english.trie.gz` (347 KB gzip):
+     en_US's stored forms, the 2,440 en_GB words en_US lacks, and the software terms. A suggestion
+     walk costs about the same over a small trie as a large one: three tries measured 12 ms median,
+     one trie 4.3 ms.
 2. **View contribution (Editor, M).** Viewport window, verdict cache, sync-point mapping, caret-word
    hold-back, capture demand decoupled from replacement providers, prose ranges per language,
    feature token, demo.
    - Evidence: a Chromium, Firefox and WebKit paint test (as E053 did) and a typing test showing no
      mark on the word in progress.
+   - Done 2026-09-26 (`createSpellcheckPlugin`, `EDITOR_SPELLCHECK_FEATURE`, demo in
+     `examples/app`). Core gained `requestSyntaxCaptures`, `getSyntaxCaptures` and
+     `getInlineReplacementRanges` on the view contribution context, and a public
+     `Editor.getFeature`. Tests: a paint test and the worker in Chromium, Firefox and WebKit; a
+     typing test with real keys; a Markdown test with the real grammar; happy-dom tests for a reply
+     landing after an edit, hold-back, replace and undo, accepted words and chips.
+   - Decided 2026-09-26: recommendation (wave 2). The worker answers with a verdict per word, never
+     offsets, and marks are re-derived from the current text on every update, so a late reply cannot
+     paint stale ranges; the sync-point mapping is not needed.
+   - Decided 2026-09-26: recommendation (wave 2). The mark is an `overlay` text decoration, not a
+     `zIndex` style: WebKit draws a highlight's wavy line only when the highlight also sets a text
+     colour, and the overlay paints each token's own colour back. WebKit draws it straight at small
+     sizes. An LSP error on the same word draws its own line.
+   - Markdown skips `text.reference`, which covers link text as well as labels.
+   - Measured (`bun run bench:typing`, Chromium, 2,000 lines, 300 keystrokes): spellcheck's own work
+     is 1.2 ms median per keystroke with no marks on screen. With marks it is 5 ms, most of it the
+     E053 overlay mask, which the view rebuilds on every text change while any overlay is mounted and
+     again on each overlay update. Tokenization is about 1 ms, so moving it to the worker would not
+     remove this; making the overlay mask incremental would.
 3. **Platform wiring (Platform, M).**
    - Settings keys:
      - `editor.spellcheck`: `'off' | 'prose' | 'proseAndCode'`, default `'prose'`
@@ -191,6 +213,7 @@ Out of scope:
   **Decided 2026-09-26: owner — (a).** The owner asked about harvesting the browser's native
   spellcheck through the hidden input first; it cannot work (the input holds a slice, no API exposes
   misspellings, EditContext disables it).
+
 - **Owner question 2: which English.**
   - (a) en-US
   - (b) en-GB
@@ -199,6 +222,7 @@ Out of scope:
   **Recommendation:** (c). The repository writes both (`behavior` 177, `behaviour` 94), and (c)
   flags the fewest words (166 distinct against 182).
   **Decided 2026-09-26: recommendation (coordinator) — (c).**
+
 - **Decided 2026-09-26: research recommendation.** English only. Permissive dictionaries exist for
   English, Dutch and Russian, and Hebrew exists only as AGPL-3.0 hspell, so Hebrew words are skipped,
   never marked.

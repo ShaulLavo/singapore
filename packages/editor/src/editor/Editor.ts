@@ -379,6 +379,9 @@ export class Editor {
   private inlineReplacementProvider: EditorInlineReplacementSource | null = null
   private syntaxInlineMap: InlineMap | null = null
   private syntaxCaptures: readonly EditorSyntaxCapture[] = []
+  private syntaxCaptureDemand = 0
+  // Whether the captures held are from a parse that was asked for them, on the current document.
+  private syntaxCapturesLanded = false
   /**
    * Regions the user drew rather than any provider describing them. They are held here and merged in
    * at the fan-in instead of being registered as a contribution, because the contribution set is
@@ -588,6 +591,7 @@ export class Editor {
       setSyntaxFolds: (folds) => this.setSyntaxFolds(folds),
       setSyntaxCaptures: (captures) => this.setSyntaxCaptures(captures),
       needsSyntaxCaptures: () =>
+        this.syntaxCaptureDemand > 0 ||
         this.inlineReplacementProviders().some((source) => source.trigger === 'syntax'),
       notifyChange: (change) => this.notifyChange(change),
       notifyViewUpdate: () => this.notifyViewContributions('tokens', null),
@@ -1354,6 +1358,26 @@ export class Editor {
   private setSyntaxCaptures(captures: readonly EditorSyntaxCapture[]): void {
     this.syntaxCaptures = captures
     this.refreshInlineMap('rerun')
+    if (this.syntaxCaptureDemand === 0) return
+    this.syntaxCapturesLanded = true
+    // With a highlighter attached, no token adoption follows a structural parse to say it landed.
+    this.notifyViewContributions('tokens', null)
+  }
+
+  private requestSyntaxCaptures(): EditorDisposable {
+    // A parse from before the first request carried none, whatever it left in `syntaxCaptures`.
+    if (this.syntaxCaptureDemand === 0) this.syntaxCapturesLanded = false
+    this.syntaxCaptureDemand += 1
+    this.syntax.syncCaptureRequirement()
+    let released = false
+    return {
+      dispose: () => {
+        if (released) return
+        released = true
+        this.syntaxCaptureDemand -= 1
+        this.syntax.syncCaptureRequirement()
+      },
+    }
   }
 
   /**
@@ -2063,6 +2087,7 @@ export class Editor {
         structural: preparedTransferStage(prepared?.structural),
         highlighter: preparedTransferStage(prepared?.highlighter),
       })
+      this.syntaxCapturesLanded = false
       this.syntax.startDocument(syntaxDocument, prepared)
       this.lifecycleSummary.document.startedCount += 1
       this.syncViewEditability()
@@ -2182,6 +2207,7 @@ export class Editor {
     const attachment = this.document.resetOwnedDocument(document, options)
     this.subscribeToBufferSession(attachment.session)
     if (this.view.isProvisional) this.snapshotGeneration = attachment.documentVersion
+    this.syntaxCapturesLanded = false
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
       languageId: attachment.languageId,
@@ -3165,6 +3191,9 @@ export class Editor {
       trackRanges: (ranges, bias) => this.trackDocumentRanges(ranges, bias),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
       clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
+      requestSyntaxCaptures: () => this.requestSyntaxCaptures(),
+      getSyntaxCaptures: () => (this.syntaxCapturesLanded ? this.syntaxCaptures : null),
+      getInlineReplacementRanges: () => this.view.inlineReplacementRanges(),
     }
   }
 
@@ -3794,7 +3823,8 @@ export class Editor {
     this.editorFeatureTokensById.delete(token.id)
   }
 
-  private getFeature<T>(token: EditorCapabilityToken<T>): T | null {
+  /** A capability a plugin registered on this editor, such as spellcheck; null while none has. */
+  getFeature<T>(token: EditorCapabilityToken<T>): T | null {
     if (this.editorFeatures.has(token)) {
       return (this.editorFeatures.get(token) as T | undefined) ?? null
     }

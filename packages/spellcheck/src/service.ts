@@ -21,6 +21,8 @@ export class SpellcheckService {
   private disposed = false
   private nextId = 1
   private acceptedWords: readonly string[] = []
+  private accepted = new Set<string>()
+  private readonly acceptedListeners = new Set<() => void>()
   private readonly pending = new Map<number, Pending>()
 
   public constructor(private readonly options: SpellcheckServiceOptions = {}) {}
@@ -35,15 +37,28 @@ export class SpellcheckService {
     return this.request((id) => ({ type: 'suggest', id, word, limit }))
   }
 
-  /** Replaces the accepted list; it survives a worker restart. */
+  /** Replaces the accepted list for every editor sharing the service; it survives a worker restart. */
   public setAcceptedWords(words: readonly string[]): void {
     this.acceptedWords = words
+    this.accepted = new Set(words)
     if (this.worker) this.worker.postMessage({ type: 'setAcceptedWords', words })
+    for (const listener of this.acceptedListeners) listener()
+  }
+
+  /** Answered here, so a verdict the worker gave before the word was accepted never needs asking again. */
+  public isAccepted(word: string): boolean {
+    return this.accepted.has(word) || this.accepted.has(word.toLowerCase())
+  }
+
+  public onDidChangeAcceptedWords(listener: () => void): { dispose(): void } {
+    this.acceptedListeners.add(listener)
+    return { dispose: () => this.acceptedListeners.delete(listener) }
   }
 
   public dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.acceptedListeners.clear()
     this.stop(new Error('The spellcheck service was disposed'))
   }
 
