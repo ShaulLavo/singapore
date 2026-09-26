@@ -6,6 +6,7 @@ import type { EditorTokenStyle } from '../tokens'
 import { clamp } from '../style-utils'
 import type { FixedRowVirtualizerOptions, FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
 import type {
+  EditorInputKind,
   EditorInputRoute,
   DocumentWithCaretHitTesting,
   HighlightRegistry,
@@ -128,6 +129,7 @@ export function createVirtualizerOptions(
   overscan: number,
   rowGap?: number,
   scrollMode?: VirtualizedTextViewScrollMode,
+  scrollPastEnd = true,
 ): FixedRowVirtualizerOptions {
   return {
     count: 1,
@@ -136,6 +138,7 @@ export function createVirtualizerOptions(
     overscan,
     enabled: true,
     scrollMode: normalizeScrollMode(scrollMode),
+    scrollPastEnd,
   }
 }
 
@@ -160,19 +163,28 @@ export function createScrollElement(
   return scrollElement
 }
 
-export function createInputElement(container: HTMLElement, route: EditorInputRoute): HTMLElement {
+export function createInputElement(
+  container: HTMLElement,
+  route: EditorInputRoute,
+  label = 'Editor input',
+  kind: EditorInputKind = 'code',
+): HTMLElement {
   const view = container.ownerDocument.defaultView
-  if (route === 'edit-context' && view && 'EditContext' in view) {
-    return createEditContextInput(container)
-  }
-  return createTextareaInput(container)
+  const input =
+    route === 'edit-context' && view && 'EditContext' in view
+      ? createEditContextInput(container)
+      : createTextareaInput(container)
+  input.setAttribute('aria-label', label)
+  // Attributes rather than properties: the EditContext host is a div, and keyboards read both.
+  input.setAttribute('autocapitalize', kind === 'prose' ? 'sentences' : 'off')
+  input.setAttribute('autocorrect', kind === 'prose' ? 'on' : 'off')
+  return input
 }
 
 function createEditContextInput(container: HTMLElement): HTMLDivElement {
   const input = container.ownerDocument.createElement('div')
   input.className = 'editor-virtualized-input'
   input.tabIndex = 0
-  input.setAttribute('aria-label', 'Editor input')
   input.setAttribute('role', 'textbox')
   input.setAttribute('aria-multiline', 'true')
   input.setAttribute('aria-readonly', 'true')
@@ -182,11 +194,9 @@ function createEditContextInput(container: HTMLElement): HTMLDivElement {
 function createTextareaInput(container: HTMLElement): HTMLTextAreaElement {
   const input = container.ownerDocument.createElement('textarea')
   input.className = 'editor-virtualized-input'
-  input.autocapitalize = 'off'
   input.autocomplete = 'off'
   input.readOnly = true
   input.spellcheck = false
-  input.setAttribute('aria-label', 'Editor input')
   // Said out loud because the element carries a window of the document rather than a line of it: a
   // reader told this is a multi-line text box navigates it by line, which is how code is read.
   input.setAttribute('role', 'textbox')

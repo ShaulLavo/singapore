@@ -29,6 +29,12 @@ export type InlinePoint = Point & {
   readonly [inlinePointBrand]: true
 }
 
+/**
+ * When a caret or selection shows the source under a replacement: on touching it (edges included),
+ * only from strictly inside it, or never.
+ */
+export type InlineReplacementReveal = 'touch' | 'inside' | 'never'
+
 export type InlineReplacementSpec = {
   readonly id: string
   readonly startIndex: number
@@ -43,6 +49,15 @@ export type InlineReplacementSpec = {
   readonly render?: InlineReplacementRender
   /** Replacements sharing a group reveal together, so both `**` fences of one construct unhide. */
   readonly groupId?: string
+  /** Defaults to `'touch'`. */
+  readonly reveal?: InlineReplacementReveal
+  /** Deletes take the whole span, and caret motion never rests strictly inside it. */
+  readonly atomic?: boolean
+  /**
+   * Identity of a rendered node across maps. A replacement whose key a live mount already holds keeps
+   * that node, so an id derived from an offset does not remount the widget on every edit before it.
+   */
+  readonly key?: string
   readonly metadata?: unknown
 }
 
@@ -61,6 +76,9 @@ export type InlineReplacementRange = {
   readonly cursorStops?: InlineCursorStops
   readonly render?: InlineReplacementRender
   readonly groupId?: string
+  readonly reveal?: InlineReplacementReveal
+  readonly atomic?: boolean
+  readonly key?: string
   readonly metadata?: unknown
 }
 
@@ -118,8 +136,10 @@ export const revealInlineMap = (map: InlineMap, ranges: readonly TextOffsetRange
 
   for (const range of map.ranges) {
     if (isPhantomInlineRange(range)) continue
+    const reveal = range.reveal ?? 'touch'
+    if (reveal === 'never') continue
     const span = revealSpanForRange(range, groupSpans)
-    if (!ranges.some((target) => spanTouchesOffsetRange(span, target))) continue
+    if (!ranges.some((target) => spanRevealedBy(span, target, reveal))) continue
     revealedIds.add(range.id)
     if (range.groupId !== undefined) revealedGroups.add(range.groupId)
   }
@@ -128,6 +148,7 @@ export const revealInlineMap = (map: InlineMap, ranges: readonly TextOffsetRange
 
   const remaining = map.ranges.filter((range) => {
     if (isPhantomInlineRange(range)) return true
+    if (range.reveal === 'never') return true
     if (revealedIds.has(range.id)) return false
     return range.groupId === undefined || !revealedGroups.has(range.groupId)
   })
@@ -204,6 +225,9 @@ const inlineRangeFromSpec = (
     ...(spec.kind === undefined ? {} : { kind: spec.kind }),
     ...(spec.groupId === undefined ? {} : { groupId: spec.groupId }),
     ...(spec.render === undefined ? {} : { render: spec.render }),
+    ...(spec.reveal === undefined ? {} : { reveal: spec.reveal }),
+    ...(spec.atomic === true ? { atomic: true } : {}),
+    ...(spec.key === undefined ? {} : { key: spec.key }),
     ...(spec.metadata === undefined ? {} : { metadata: spec.metadata }),
   }
 }
@@ -296,9 +320,14 @@ const rowReplacementIndex = (
   ranges: readonly InlineReplacementRange[],
 ): ReadonlyMap<number, readonly InlineReplacement[]> => {
   const index = new Map<number, InlineReplacement[]>()
+  const keys = new Set<string>()
 
   for (const range of ranges) {
-    replacementsAtBufferRow(index, range.startPoint.row).push(inlineReplacementFromRange(range))
+    // One node cannot paint in two places, so a repeated key falls back to the replacement's id.
+    const key = range.key === undefined || keys.has(range.key) ? undefined : range.key
+    if (key !== undefined) keys.add(key)
+    const replacement = inlineReplacementFromRange(range, key)
+    replacementsAtBufferRow(index, range.startPoint.row).push(replacement)
   }
 
   return index
@@ -316,7 +345,10 @@ const replacementsAtBufferRow = (
   return replacements
 }
 
-const inlineReplacementFromRange = (range: InlineReplacementRange): InlineReplacement => ({
+const inlineReplacementFromRange = (
+  range: InlineReplacementRange,
+  key: string | undefined,
+): InlineReplacement => ({
   id: range.id,
   startColumn: range.startPoint.column,
   endColumn: range.endPoint.column,
@@ -326,6 +358,7 @@ const inlineReplacementFromRange = (range: InlineReplacementRange): InlineReplac
   ...(range.cursorStops === undefined ? {} : { cursorStops: range.cursorStops }),
   ...(range.kind === undefined ? {} : { kind: range.kind }),
   ...(range.render === undefined ? {} : { render: range.render }),
+  ...(key === undefined ? {} : { key }),
   ...(range.metadata === undefined ? {} : { metadata: range.metadata }),
 })
 
@@ -434,11 +467,17 @@ const revealSpanForRange = (
   return span ?? { start: range.startOffset, end: range.endOffset }
 }
 
-const spanTouchesOffsetRange = (span: TextOffsetRange, target: TextOffsetRange): boolean => {
+const spanRevealedBy = (
+  span: TextOffsetRange,
+  target: TextOffsetRange,
+  reveal: 'touch' | 'inside',
+): boolean => {
   const low = Math.min(target.start, target.end)
   const high = Math.max(target.start, target.end)
-  if (high < span.start) return false
-  return low <= span.end
+  if (reveal === 'touch') return high >= span.start && low <= span.end
+  // A caret needs to sit strictly between the edges; a selection needs to overlap the interior.
+  if (low === high) return low > span.start && low < span.end
+  return high > span.start && low < span.end
 }
 
 const mergeInlineInvalidations = (

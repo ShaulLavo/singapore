@@ -198,6 +198,29 @@ describe('InlineMap reveal', () => {
     expect(revealInlineMap(map, [{ start: 10, end: 10 }]).ranges).toEqual([])
     expect(revealInlineMap(map, [{ start: 12, end: 12 }]).ranges).toHaveLength(2)
   })
+
+  it('keeps a construct that reveals from inside hidden while the caret is on its edge', () => {
+    const snapshot = createPieceTableSnapshot(BOLD_LINE)
+    const map = createInlineMap(
+      snapshot,
+      boldSpecs().map((spec) => ({ ...spec, reveal: 'inside' as const })),
+    )
+
+    expect(revealInlineMap(map, [{ start: 2, end: 2 }]).ranges).toHaveLength(2)
+    expect(revealInlineMap(map, [{ start: 10, end: 10 }]).ranges).toHaveLength(2)
+    expect(revealInlineMap(map, [{ start: 5, end: 5 }]).ranges).toEqual([])
+    expect(revealInlineMap(map, [{ start: 0, end: 4 }]).ranges).toEqual([])
+  })
+
+  it('never reveals a replacement that asked not to be', () => {
+    const snapshot = createPieceTableSnapshot('see @src/a.ts now\n')
+    const map = createInlineMap(snapshot, [
+      { id: 'chip', startIndex: 4, endIndex: 13, text: 'a.ts', reveal: 'never' },
+    ])
+
+    expect(revealInlineMap(map, [{ start: 13, end: 13 }])).toBe(map)
+    expect(revealInlineMap(map, [{ start: 0, end: 17 }])).toBe(map)
+  })
 })
 
 describe('InlineMap insertions', () => {

@@ -13,6 +13,7 @@ import type { TextContent } from '../textContent'
 import type { FoldMap } from '../foldMap'
 import { nextGraphemeBoundary, previousGraphemeBoundary } from '../graphemes'
 import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
+import { type AtomicRanges, atomicRangesForInlineMap } from '../atomicRanges'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
 import { normalizeTabSize, type InjectedTextRow } from '../displayTransforms'
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
@@ -302,6 +303,8 @@ export class VirtualizedTextView {
   private atomicRenderDepth = 0
   private atomicRenderPending = false
   private applyingEdit = false
+  private contentHeight = -1
+  private readonly onContentHeightChange: ((height: number) => void) | null
   private pendingReveal: {
     readonly offset: number
     readonly block: RevealBlock
@@ -309,6 +312,7 @@ export class VirtualizedTextView {
   } | null = null
 
   public constructor(container: HTMLElement, options: VirtualizedTextViewOptions = {}) {
+    this.onContentHeightChange = options.onContentHeightChange ?? null
     const overscan = options.overscan ?? DEFAULT_OVERSCAN
     const gutterContributions = options.gutterContributions ?? []
     const gutterWidthProvider = normalizeGutterWidthProvider(options.gutterWidth)
@@ -328,7 +332,12 @@ export class VirtualizedTextView {
     const rowGap = normalizeRowGap(options.rowGap)
     const scrollMode = normalizeScrollMode(options.scrollMode)
     const rowPositioning = options.rowPositioning ?? 'transform'
-    const inputElement = createInputElement(container, options.inputRoute ?? 'textarea')
+    const inputElement = createInputElement(
+      container,
+      options.inputRoute ?? 'textarea',
+      options.inputLabel,
+      options.inputKind,
+    )
     const viewport = new ScrollViewport(scrollElement)
     const contentElement = viewport.textContent
     const spacer = viewport.textSpacer
@@ -342,7 +351,7 @@ export class VirtualizedTextView {
     )
     const tabSize = normalizeTabSize(options.tabSize)
     const virtualizer = new FixedRowVirtualizer(
-      createVirtualizerOptions(rowHeight, overscan, rowGap, scrollMode),
+      createVirtualizerOptions(rowHeight, overscan, rowGap, scrollMode, options.scrollPastEnd),
     )
     const initialTextSnapshot = createStringTextSnapshot('')
     const initialInjectedTextRows = options.injectedTextRows ?? []
@@ -1151,6 +1160,11 @@ export class VirtualizedTextView {
     scrollOffsetIntoView(view, offset, affinity)
   }
 
+  /** The rendered replacements a caret steps over whole and a delete takes whole. */
+  public atomicRanges(): AtomicRanges {
+    return atomicRangesForInlineMap(this.view.model.inlineMap)
+  }
+
   public visualHorizontalTarget(
     offset: number,
     affinity: SelectionAffinity,
@@ -1490,6 +1504,17 @@ export class VirtualizedTextView {
     clearRangeHighlight(this.view, name)
   }
 
+  /** The rows' own height, wrapped rows included, so a host can size itself to its text. */
+  public getContentHeight(): number {
+    return this.view.virtualizer.getSnapshot().totalSize
+  }
+
+  private reportContentHeight(height: number): void {
+    if (height === this.contentHeight) return
+    this.contentHeight = height
+    this.onContentHeightChange?.(height)
+  }
+
   private renderSnapshot(snapshot: FixedRowVirtualizerSnapshot): void {
     if (this.view.provisional) {
       this.freezeProvisionalScroll()
@@ -1504,6 +1529,7 @@ export class VirtualizedTextView {
     const view = this.view
     this.synchronizeScrollPaint(snapshot)
     this.view.viewport.setViewportSize(snapshot.viewportWidth, snapshot.viewportHeight)
+    this.reportContentHeight(snapshot.totalSize)
     const visible = snapshot.viewportHeight > 0
     if (visible) {
       const first = snapshot.virtualItems[0]?.index ?? 0

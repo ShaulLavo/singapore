@@ -598,6 +598,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorInputKind",
+          "source": "packages/editor/src/virtualization/index.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorInputRoute",
           "source": "packages/editor/src/virtualization/index.ts",
           "via": "packages/editor/src/index.ts"
@@ -4720,6 +4726,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorInlineReplacementProviderOptions",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorInlineReplacementTrigger",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorLanguageConfiguration",
           "source": "packages/editor/src/editor/languageConfiguration.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -5766,6 +5784,12 @@
           "kind": "type",
           "name": "InlineReplacementRender",
           "source": "packages/editor/src/displayTransforms.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "InlineReplacementReveal",
+          "source": "packages/editor/src/inlineMap.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
         {

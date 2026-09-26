@@ -93,7 +93,18 @@ export type VirtualizedTextViewOptions = {
   readonly textMetrics?: BrowserTextMetrics
   /** Defaults to the textarea; EditContext is taken only where the engine has it. */
   readonly inputRoute?: EditorInputRoute
+  /** The input's accessible name. Defaults to "Editor input". */
+  readonly inputLabel?: string
+  readonly inputKind?: EditorInputKind
+  readonly scrollPastEnd?: boolean
+  readonly onContentHeightChange?: (height: number) => void
 }
+
+/**
+ * `'prose'` asks soft keyboards to capitalize sentences and autocorrect; `'code'` (the default)
+ * turns both off.
+ */
+export type EditorInputKind = 'code' | 'prose'
 
 /**
  * How typed text reaches the editor. EditContext hands over every edit with the range it replaced,

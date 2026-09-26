@@ -45,6 +45,8 @@ export type FixedRowVirtualizerOptions = {
   readonly enabled?: boolean
   readonly maxScrollHeight?: number
   readonly scrollMode?: FixedRowScrollMode
+  /** Room below the last row to scroll it to the top. On by default. */
+  readonly scrollPastEnd?: boolean
 }
 
 type FixedRowScrollMode = 'virtualized' | 'static'
@@ -990,6 +992,7 @@ function normalizeOptions(
     enabled: options.enabled ?? true,
     maxScrollHeight: normalizeMaxScrollHeight(options.maxScrollHeight),
     scrollMode: normalizeScrollMode(options.scrollMode),
+    scrollPastEnd: options.scrollPastEnd ?? true,
   }
 }
 
@@ -1005,6 +1008,7 @@ function denormalizeOptions(
     enabled: options.enabled,
     maxScrollHeight: options.maxScrollHeight,
     scrollMode: options.scrollMode,
+    scrollPastEnd: options.scrollPastEnd,
   }
 }
 
@@ -1020,6 +1024,7 @@ function sameNormalizedOptions(
     left.enabled === right.enabled &&
     left.maxScrollHeight === right.maxScrollHeight &&
     left.scrollMode === right.scrollMode &&
+    left.scrollPastEnd === right.scrollPastEnd &&
     sameRowSizes(left.rowSizes, right.rowSizes)
   )
 }
@@ -1101,7 +1106,7 @@ function scrollPaddingEnd(
   options: NormalizedFixedRowVirtualizerOptions,
   viewportHeight: number,
 ): number {
-  if (options.count === 0) return 0
+  if (options.count === 0 || !options.scrollPastEnd) return 0
 
   return Math.max(0, viewportHeight - lastRowHeight(options))
 }

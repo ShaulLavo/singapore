@@ -1,6 +1,7 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
 import { offsetToPoint, type PieceTableSnapshot, pointToOffset } from '@singapore-editor/textbuffer'
 
+import { type AtomicRanges, atomicCaretOffset } from '../atomicRanges'
 import { SelectionGoal, type ResolvedSelection, type SelectionAffinity } from '../selections'
 import {
   nextCodePointOffset,
@@ -67,6 +68,7 @@ type NavigationTargetContext = {
   readonly view: NavigationTargetView
   /** Whether the offset sits on a row a contribution keeps the caret off. */
   readonly nonCaretOffset?: (offset: number) => boolean
+  readonly atomicRanges?: AtomicRanges
 }
 
 // Consecutive non-caret rows a move steps over before it gives up in that direction.
@@ -110,7 +112,21 @@ export function navigationTargetForCommand(
   const target = commandNavigationTarget(context)
   if (!target) return null
 
-  return caretRowTarget(context, renderedRowTarget(context, target))
+  return atomicTarget(context, caretRowTarget(context, renderedRowTarget(context, target)))
+}
+
+/** A move that lands inside an atomic replacement carries on to the edge it was heading for. */
+function atomicTarget(
+  context: NavigationTargetContext,
+  target: NavigationTarget,
+): NavigationTarget {
+  const ranges = context.atomicRanges
+  if (!ranges || ranges.length === 0) return target
+
+  const direction = target.offset < context.resolved.headOffset ? -1 : 1
+  const offset = atomicCaretOffset(ranges, target.offset, direction)
+  if (offset === target.offset) return target
+  return targetAtLogicalOffset(target, offset)
 }
 
 /**

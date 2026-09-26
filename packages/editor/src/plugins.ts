@@ -842,6 +842,8 @@ export type EditorPasteContext = {
   readonly languageId: EditorSyntaxLanguageId | null
   /** The payload was copied out of an editor in this process, so a move within one is visible. */
   readonly internal: boolean
+  /** A drop lands at the pointer: its one target is the caret the drop placed there. */
+  readonly source: 'paste' | 'drop'
   /** Where it lands, in document order. */
   readonly targets: readonly EditorPasteTarget[]
 }
@@ -956,6 +958,8 @@ export type EditorInlineReplacementContext = {
   readonly textSnapshot: TextReadSnapshot
   readonly languageId: EditorSyntaxLanguageId | null
   readonly captures: readonly EditorSyntaxCapture[]
+  /** Where the carets are, so a provider can leave the token being typed as text. */
+  readonly selections: readonly EditorResolvedSelection[]
 }
 
 /**
@@ -967,6 +971,22 @@ export type EditorInlineReplacementContext = {
 export type EditorInlineReplacementProvider = (
   context: EditorInlineReplacementContext,
 ) => readonly InlineReplacementSpec[]
+
+/**
+ * `'syntax'` (the default) reruns a provider when captures land and turns captures on while it is
+ * registered. `'edit'` reruns it inside every operation that edits or moves a selection, so a span
+ * it derives from the text itself is in the map that operation paints; it asks for no captures.
+ */
+export type EditorInlineReplacementTrigger = 'syntax' | 'edit'
+
+export type EditorInlineReplacementProviderOptions = {
+  readonly trigger?: EditorInlineReplacementTrigger
+}
+
+export type EditorInlineReplacementSource = {
+  readonly provide: EditorInlineReplacementProvider
+  readonly trigger: EditorInlineReplacementTrigger
+}
 
 export type EditorSelectionRangeContext = {
   readonly textSnapshot: TextReadSnapshot
@@ -1004,7 +1024,10 @@ export type EditorPluginContext = {
   registerDecorationContribution(provider: EditorDecorationContributionProvider): EditorDisposable
   registerGutterContribution(contribution: EditorGutterContribution): EditorDisposable
   registerInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): EditorDisposable
-  registerInlineReplacementProvider(provider: EditorInlineReplacementProvider): EditorDisposable
+  registerInlineReplacementProvider(
+    provider: EditorInlineReplacementProvider,
+    options?: EditorInlineReplacementProviderOptions,
+  ): EditorDisposable
   registerSelectionRangeProvider(provider: EditorSelectionRangeProvider): EditorDisposable
 }
 
@@ -1250,7 +1273,7 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly editorFeatureContributions: EditorFeatureContributionProvider[] = []
   private readonly gutterContributions: EditorGutterContribution[] = []
   private readonly injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
-  private readonly inlineReplacementProviders: EditorInlineReplacementProvider[] = []
+  private readonly inlineReplacementProviders: EditorInlineReplacementSource[] = []
   private readonly selectionRangeProviders: EditorSelectionRangeProvider[] = []
   private readonly injectedTextRowProviderInvalidationDisposables = new Map<
     EditorInjectedTextRowProvider,
@@ -1429,7 +1452,7 @@ export class EditorPluginHost implements EditorDisposable {
     return [...this.gutterContributions]
   }
 
-  public getInlineReplacementProviders(): readonly EditorInlineReplacementProvider[] {
+  public getInlineReplacementProviders(): readonly EditorInlineReplacementSource[] {
     return this.inlineReplacementProviders
   }
 
@@ -1696,8 +1719,8 @@ export class EditorPluginHost implements EditorDisposable {
         this.ownRegistration(() => this.registerGutterContribution(contribution)),
       registerInjectedTextRowProvider: (provider) =>
         this.ownRegistration(() => this.registerInjectedTextRowProvider(provider)),
-      registerInlineReplacementProvider: (provider) =>
-        this.ownRegistration(() => this.registerInlineReplacementProvider(provider)),
+      registerInlineReplacementProvider: (provider, options) =>
+        this.ownRegistration(() => this.registerInlineReplacementProvider(provider, options)),
       registerSelectionRangeProvider: (provider) =>
         this.ownRegistration(() => this.registerSelectionRangeProvider(provider)),
     }
@@ -1914,16 +1937,18 @@ export class EditorPluginHost implements EditorDisposable {
 
   private registerInlineReplacementProvider(
     provider: EditorInlineReplacementProvider,
+    options: EditorInlineReplacementProviderOptions = {},
   ): EditorDisposable {
-    this.inlineReplacementProviders.push(provider)
-    const disposable = disposableOnce(() => this.unregisterInlineReplacementProvider(provider))
+    const source = { provide: provider, trigger: options.trigger ?? 'syntax' }
+    this.inlineReplacementProviders.push(source)
+    const disposable = disposableOnce(() => this.unregisterInlineReplacementProvider(source))
     notifyRegistrationAdded(disposable, () => this.events.onInlineReplacementProvidersChanged?.())
 
     return disposable
   }
 
-  private unregisterInlineReplacementProvider(provider: EditorInlineReplacementProvider): void {
-    const index = this.inlineReplacementProviders.indexOf(provider)
+  private unregisterInlineReplacementProvider(source: EditorInlineReplacementSource): void {
+    const index = this.inlineReplacementProviders.indexOf(source)
     if (index === -1) return
 
     this.inlineReplacementProviders.splice(index, 1)
