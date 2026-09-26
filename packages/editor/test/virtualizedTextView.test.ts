@@ -24,6 +24,7 @@ import {
   measureBrowserTextMetrics,
 } from '../src/virtualization/browserMetrics'
 import { type VirtualizedTextHighlightRegistry, VirtualizedTextView } from '../src/virtualization'
+import type { VirtualizedTextViewInternal } from '../src/virtualization/virtualizedTextViewInternals'
 
 const highlightsMap = new Map<string, Highlight>()
 let registrySets = 0
@@ -590,16 +591,37 @@ describe('VirtualizedTextView', () => {
     expect(highlightClears).toBe(clearCount)
   })
 
-  it('removes custom range highlights when ranges become empty', () => {
+  it('empties custom range highlights and keeps their rule when ranges become empty', () => {
+    view.setText('alpha\nbeta\ngamma')
+    view.setScrollMetrics(0, 20)
+    const style = { backgroundColor: 'rgba(234, 179, 8, 0.34)' }
+    const styleElement = (Reflect.get(view, 'view') as VirtualizedTextViewInternal).styleEl
+
+    view.setRangeHighlight('test-find', [{ start: 0, end: 5 }], style)
+    const highlight = highlightsMap.get('test-find')
+    const rules = styleElement.textContent
+    const ruleWrites = vi.spyOn(styleElement, 'textContent', 'set')
+    view.setRangeHighlight('test-find', [], style)
+
+    expect(highlightsMap.get('test-find')?.size).toBe(0)
+    expect(registryDeletes).toBe(0)
+
+    view.setRangeHighlight('test-find', [{ start: 6, end: 10 }], style)
+
+    expect(highlightsMap.get('test-find')).toBe(highlight)
+    expect(highlightsMap.get('test-find')?.size).toBe(1)
+    expect(styleElement.textContent).toBe(rules)
+    expect(ruleWrites).not.toHaveBeenCalled()
+  })
+
+  it('removes custom range highlights when they are cleared', () => {
     view.setText('alpha\nbeta\ngamma')
     view.setScrollMetrics(0, 20)
 
     view.setRangeHighlight('test-find', [{ start: 0, end: 5 }], {
       backgroundColor: 'rgba(234, 179, 8, 0.34)',
     })
-    view.setRangeHighlight('test-find', [], {
-      backgroundColor: 'rgba(234, 179, 8, 0.34)',
-    })
+    view.clearRangeHighlight('test-find')
 
     expect(highlightsMap.has('test-find')).toBe(false)
     expect(registryDeletes).toBe(1)
