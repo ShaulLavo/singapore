@@ -8,7 +8,9 @@ import { EditorDisposableStore } from './editor/disposables'
 import { createError } from './logging/evlog'
 import type {
   EditorCommandHandler,
+  EditorCursorStyle,
   EditorDisposable,
+  EditorKeyParticipant,
   EditorInternalPluginContext,
   EditorInternalViewContributionContext,
   EditorPlugin,
@@ -147,7 +149,17 @@ export type EditorViewScope = {
     run: EditorCommandHandler,
   ): void
   getSelections(): readonly EditorResolvedSelection[]
-  applyEdits(edits: readonly TextEdit[], selection?: EditorSelectionRange): void
+  /** One batch against one snapshot, one undo entry; `selection` may be one range or one per caret. */
+  applyEdits(
+    edits: readonly TextEdit[],
+    selection?: EditorSelectionRange | readonly EditorSelectionRange[],
+  ): void
+  /** Experimental: sees printable keys before either keymap; see `EditorKeyParticipant`. */
+  keyParticipant(participant: EditorKeyParticipant): void
+  /** Experimental: while `accepts` answers false, text input (typing, IME, paste, drop) is refused. */
+  textGate(accepts: () => boolean): void
+  /** How this view draws its caret, until the scope goes. */
+  cursorStyle(style: EditorCursorStyle): void
   onDispose(cleanup: () => void): void
   own(disposable: EditorDisposable): void
 }
@@ -334,6 +346,7 @@ function createScopeContribution(
   const owned = new EditorDisposableStore()
   const watchers = new Set<Watcher>()
   let settingUp = true
+  let styled = false
 
   const editor = context.unstableEditor as object
   const deliver = (watcher: Watcher, snapshot: EditorViewSnapshot, force: boolean) => {
@@ -390,6 +403,14 @@ function createScopeContribution(
     getSelections: () => context.getSelections(),
     applyEdits: (edits, selection) =>
       context.applyEdits(edits, 'editor.plugin.applyEdits', selection),
+    keyParticipant: (participant) => void owned.add(context.registerKeyParticipant(participant)),
+    textGate: (accepts) => void owned.add(context.registerTextGate(accepts)),
+    cursorStyle: (style) => {
+      context.setCursorStyle(style)
+      if (styled || style === 'line') return
+      styled = true
+      owned.add({ dispose: () => context.setCursorStyle('line') })
+    },
     onDispose: (cleanup) => void owned.add({ dispose: cleanup }),
     own: (disposable) => void owned.add(disposable),
   }

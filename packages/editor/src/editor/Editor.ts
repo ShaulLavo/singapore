@@ -183,6 +183,8 @@ import {
   type EditorOverlaySide,
   type EditorPlugin,
   type EditorPressParticipant,
+  type EditorKeyParticipant,
+  type EditorCursorStyle,
   type EditorSelectionRange,
   type EditorTextAnchor,
   type EditorTrackedPoint,
@@ -267,6 +269,7 @@ type EditorContributionFailurePhase =
   | EditorViewContributionFailurePhase
   | 'factory'
   | 'press'
+  | 'key'
   | 'reserved-width'
   | 'non-caret-row'
 
@@ -664,6 +667,8 @@ export class Editor {
       getEditorTheme: () => this.resolvedTheme(),
       getTextSnapshot: () => this.getTextSnapshot(),
       canEditDocument: () => this.canEditDocument(),
+      acceptsText: () => [...this.textGates].every((accepts) => accepts()),
+      offerKey: (event) => this.offerKey(event),
       beginPointerJump: () => {
         this.cursorHistoryForSession()
         const location = this.captureJump()
@@ -3193,6 +3198,10 @@ export class Editor {
       registerCommand: (command, handler) =>
         this.claimedBy(claims, () => this.registerCommandHandler(command, handler)),
       refreshInputs: () => this.viewContributions?.refreshInputs(),
+      registerKeyParticipant: (participant) =>
+        this.claimedBy(claims, () => this.registerKeyParticipant(participant)),
+      registerTextGate: (accepts) => this.claimedBy(claims, () => this.registerTextGate(accepts)),
+      setCursorStyle: (style) => this.setCursorStyle(style),
       container,
       scrollElement: this.el,
       contentElement: this.view.contentElement,
@@ -3762,6 +3771,51 @@ export class Editor {
   }
 
   private readonly pressParticipants = new Set<EditorPressParticipant>()
+  private readonly keyParticipants = new Set<EditorKeyParticipant>()
+  private readonly textGates = new Set<() => boolean>()
+
+  private registerKeyParticipant(participant: EditorKeyParticipant): EditorDisposable {
+    this.keyParticipants.add(participant)
+    return this.claimForContribution(disposableOnce(() => this.keyParticipants.delete(participant)))
+  }
+
+  private registerTextGate(accepts: () => boolean): EditorDisposable {
+    this.textGates.add(accepts)
+    return this.claimForContribution(disposableOnce(() => this.textGates.delete(accepts)))
+  }
+
+  // Owner decision (Plan 122 Q2, c): printable keys reach a participant first; a chord with Ctrl,
+  // Cmd or Alt stays with the host's keymap, so app shortcuts keep working in a modal view.
+  private offerKey(event: KeyboardEvent): boolean {
+    if (this.keyParticipants.size === 0) return false
+    if (event.ctrlKey || event.metaKey || event.altKey) return false
+    const context = this.getKeymapContext()
+    for (const participant of [...this.keyParticipants]) {
+      if (this.keyConsumedBy(participant, event, context)) return true
+    }
+    return false
+  }
+
+  private keyConsumedBy(
+    participant: EditorKeyParticipant,
+    event: KeyboardEvent,
+    context: EditorKeymapContext,
+  ): boolean {
+    try {
+      return participant(event, context) === 'consume'
+    } catch (error) {
+      this.logContributionFailure('view', 'key', error)
+      return false
+    }
+  }
+
+  private setCursorStyle(style: EditorCursorStyle): void {
+    if (style === 'line') {
+      this.el.removeAttribute('data-editor-cursor-style')
+      return
+    }
+    this.el.setAttribute('data-editor-cursor-style', style)
+  }
 
   private registerPressParticipant(participant: EditorPressParticipant): EditorDisposable {
     this.pressParticipants.add(participant)
