@@ -182,6 +182,9 @@ Out of scope:
 
   **Recommendation:** (a). It has the best bounded suggestion latency measured, and (b) rebuilds
   the same thing.
+  **Decided 2026-09-26: owner — (a).** The owner asked about harvesting the browser's native
+  spellcheck through the hidden input first; it cannot work (the input holds a slice, no API exposes
+  misspellings, EditContext disables it).
 - **Owner question 2: which English.**
   - (a) en-US
   - (b) en-GB
@@ -189,6 +192,7 @@ Out of scope:
 
   **Recommendation:** (c). The repository writes both (`behavior` 177, `behaviour` 94), and (c)
   flags the fewest words (166 distinct against 182).
+  **Decided 2026-09-26: recommendation (coordinator) — (c).**
 - **Decided 2026-09-26: research recommendation.** English only. Permissive dictionaries exist for
   English, Dutch and Russian, and Hebrew exists only as AGPL-3.0 hspell, so Hebrew words are skipped,
   never marked.
