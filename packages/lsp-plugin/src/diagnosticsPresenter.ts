@@ -5,7 +5,12 @@ import {
   type EditorViewContributionContext,
 } from '@singapore-editor/core/extensions'
 import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
-import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
+import {
+  editorThemesEqual,
+  type EditorTheme,
+  type VirtualizedTextHighlightStyle,
+} from '@singapore-editor/core/rendering'
+import { readColorAlpha } from './colorAlpha'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
@@ -19,6 +24,7 @@ import {
   DEPRECATED_DIAGNOSTIC_STYLE,
   DIAGNOSTIC_MARKER_COLORS,
   DIAGNOSTIC_STYLES,
+  UNNECESSARY_DIAGNOSTIC_OPACITY,
 } from './plugin.styles'
 import type { OffsetRange } from '@singapore-editor/plugin-ui/offset-range'
 import type {
@@ -41,6 +47,7 @@ const DIAGNOSTIC_LAYERS: readonly LanguageServerDiagnosticHighlightLayer[] = [
   'information',
   'hint',
   'deprecated',
+  'unnecessary',
 ]
 
 const DIAGNOSTIC_LAYER_STYLES: Record<
@@ -49,6 +56,7 @@ const DIAGNOSTIC_LAYER_STYLES: Record<
 > = {
   ...DIAGNOSTIC_STYLES,
   deprecated: DEPRECATED_DIAGNOSTIC_STYLE,
+  unnecessary: { overlay: { dim: 1 } },
 }
 
 const DIAGNOSTIC_MINIMAP_Z_INDEX: Record<LanguageServerDiagnosticSeverity, number> = {
@@ -80,6 +88,7 @@ export class DiagnosticsPresenter {
   private readonly highlightNames: Record<LanguageServerDiagnosticHighlightLayer, string>
   private markerClaim: Extract<LanguageServerDiagnosticMarkerClaim, { kind: 'claimed' }> | null =
     null
+  private unnecessaryDimCache: number | null = null
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -92,6 +101,10 @@ export class DiagnosticsPresenter {
   public render(document: LspTextDocumentSnapshot, diagnostics: readonly lsp.Diagnostic[]): void {
     this.renderHighlights(document, diagnostics)
     this.renderMinimapMarkers(diagnostics)
+  }
+
+  public invalidateTheme(): void {
+    this.unnecessaryDimCache = null
   }
 
   public clear(): void {
@@ -167,9 +180,20 @@ export class DiagnosticsPresenter {
       this.context.setRangeHighlight(
         this.highlightNames[layer],
         groups[layer],
-        DIAGNOSTIC_LAYER_STYLES[layer],
+        layer === 'unnecessary' && groups.unnecessary.length > 0
+          ? { overlay: { dim: this.unnecessaryDim() } }
+          : DIAGNOSTIC_LAYER_STYLES[layer],
       )
     }
+  }
+
+  // Reading the alpha forces a style recalc, and it only moves with the theme.
+  private unnecessaryDim(): number {
+    this.unnecessaryDimCache ??= readColorAlpha(
+      this.context.scrollElement,
+      UNNECESSARY_DIAGNOSTIC_OPACITY,
+    )
+    return this.unnecessaryDimCache
   }
 
   private renderMinimapMarkers(diagnostics: readonly lsp.Diagnostic[]): void {
@@ -210,6 +234,15 @@ export type CompositeDiagnosticsLanePresenter = {
 }
 
 export class CompositeDiagnosticsPresenter {
+  private theme: EditorTheme | null = null
+
+  public updateTheme(theme: EditorTheme | null): void {
+    if (editorThemesEqual(this.theme, theme)) return
+    this.theme = theme
+    this.presenter.invalidateTheme()
+    this.renderCombined()
+  }
+
   readonly #batches = new Map<string, DiagnosticBatch>()
   readonly #freshness = new Map<string, LanguageServerDiagnosticsFreshness>()
   #diagnostics: readonly lsp.Diagnostic[] = []
@@ -352,6 +385,7 @@ function createHighlightNames(
     information: `${prefix}-${namespace}-information`,
     hint: `${prefix}-${namespace}-hint`,
     deprecated: `${prefix}-${namespace}-deprecated`,
+    unnecessary: `${prefix}-${namespace}-unnecessary`,
   }
 }
 

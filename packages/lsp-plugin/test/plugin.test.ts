@@ -146,6 +146,56 @@ describe('createLanguageServerAdapterPlugin', () => {
     document.body.replaceChildren()
   })
 
+  it('repaints existing unnecessary diagnostics when the editor theme changes', async () => {
+    const transport = new FakeTransport()
+    const { features, provider } = activatePlugin(
+      createLanguageServerAdapterPlugin({
+        name: 'test.theme',
+        createTransport: () => transport,
+      }),
+      { applyEdits: vi.fn() },
+    )
+    const context = viewContributionContext(editorSnapshot(), { features })
+    const contribution = provider.createContribution(context)!
+    const computed = vi
+      .spyOn(window, 'getComputedStyle')
+      .mockReturnValue({ color: 'rgba(0, 0, 0, 0.25)' } as CSSStyleDeclaration)
+    try {
+      transport.receive(initializeResponse(jsonMessage(transport.sent[0])))
+      await flushPromises()
+      transport.receive({
+        jsonrpc: '2.0',
+        method: 'textDocument/publishDiagnostics',
+        params: {
+          uri: 'file:///README.md',
+          diagnostics: [
+            {
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+              message: 'unused',
+              severity: 4,
+              tags: [1],
+            },
+          ],
+        },
+      })
+      expect(context.setRangeHighlight).toHaveBeenCalledWith(
+        expect.stringContaining('unnecessary'),
+        [{ start: 0, end: 1 }],
+        { overlay: { dim: 0.25 } },
+      )
+      computed.mockReturnValue({ color: 'rgba(0, 0, 0, 0.75)' } as CSSStyleDeclaration)
+      contribution.update({ ...editorSnapshot(), theme: { type: 'light' } }, 'tokens')
+      expect(context.setRangeHighlight).toHaveBeenCalledWith(
+        expect.stringContaining('unnecessary'),
+        [{ start: 0, end: 1 }],
+        { overlay: { dim: 0.75 } },
+      )
+    } finally {
+      computed.mockRestore()
+      contribution.dispose()
+    }
+  })
+
   it('owns generic LSP document sync, diagnostics, and adapter naming', async () => {
     const transport = new FakeTransport()
     const completionToken = createEditorCapabilityToken<LanguageServerCompletionEditFeature>(
@@ -217,7 +267,7 @@ describe('createLanguageServerAdapterPlugin', () => {
 
   // A formatter answers with the whole file even when one line moved, and applying that verbatim
   // retires every anchor, decoration, fold and selection inside it.
-  it('applies a whole-document formatting reply as the one edit that differs', async () => {
+  it.each([0, 22])('formats a smaller document with the caret at %s', async (caret) => {
     const transport = new FakeTransport()
     const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
     const text = '# Notes\n\n- one\n-  two\n'
@@ -230,7 +280,21 @@ describe('createLanguageServerAdapterPlugin', () => {
       { applyEdits },
     )
     const contribution = provider.createContribution(
-      viewContributionContext(editorSnapshot(text), { features }),
+      viewContributionContext(
+        {
+          ...editorSnapshot(text),
+          selections: [
+            {
+              anchorOffset: caret,
+              headOffset: caret,
+              startOffset: caret,
+              endOffset: caret,
+              affinity: 'after',
+            },
+          ],
+        },
+        { features },
+      ),
     )
     if (!contribution) throw new Error('missing contribution')
 
@@ -258,7 +322,7 @@ describe('createLanguageServerAdapterPlugin', () => {
     expect(applyEdits).toHaveBeenCalledWith(
       [{ from: 17, text: '', to: 18 }],
       'testLsp.completion.accept',
-      { anchor: 0, head: 0 },
+      { anchor: Math.min(caret, text.length - 1), head: Math.min(caret, text.length - 1) },
     )
   })
 

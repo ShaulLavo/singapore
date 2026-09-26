@@ -55,15 +55,18 @@ export const FIND_HIGHLIGHT_Z_INDEX = {
 } as const
 
 const FIND_MATCH_STYLE = {
+  dimmable: false,
   backgroundColor: 'rgba(234, 179, 8, 0.34)',
   zIndex: FIND_HIGHLIGHT_Z_INDEX.match,
 }
 const FIND_CURRENT_STYLE = {
+  dimmable: false,
   backgroundColor: 'rgba(245, 158, 11, 0.72)',
   color: '#111827',
   zIndex: FIND_HIGHLIGHT_Z_INDEX.current,
 }
 const FIND_SCOPE_STYLE = {
+  dimmable: false,
   backgroundColor: 'rgba(59, 130, 246, 0.22)',
   zIndex: FIND_HIGHLIGHT_Z_INDEX.scope,
 }

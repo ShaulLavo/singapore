@@ -1,3 +1,4 @@
+import type { HighlightOverlayRange } from './highlightOverlay'
 import type { ScrollViewport } from './scrollViewport'
 import type { FoldMarkerSource } from './foldMarkerSource'
 import type { InlineMap } from '../inlineMap'
@@ -18,6 +19,7 @@ import type {
   VirtualizedTextViewRowPositioning,
   VirtualizedTextViewScrollMode,
   VirtualizedTextRowDecoration,
+  VirtualizedTextHighlightStyle,
 } from './virtualizedTextViewTypes'
 
 // 'center-if-outside' leaves a target already on screen where the reader is looking
@@ -46,15 +48,7 @@ export type VirtualizedTextHighlightRange = {
   readonly end: number
 }
 
-export type VirtualizedTextHighlightStyle = {
-  readonly backgroundColor?: string
-  readonly color?: string
-  readonly textDecoration?: string
-  // Stacking against other highlight groups, highest paints last. Without it
-  // the CSS highlight registry falls back to registration order, which shifts
-  // as groups scroll in and out of the mounted window.
-  readonly zIndex?: number
-}
+export type { VirtualizedTextHighlightStyle } from './virtualizedTextViewTypes'
 
 export type VirtualizedTextHighlightGroup = {
   readonly name: string
@@ -63,6 +57,8 @@ export type VirtualizedTextHighlightGroup = {
   style: VirtualizedTextHighlightStyle
   registered: boolean
   signature: string
+  paintRanges?: readonly VirtualizedTextHighlightRange[]
+  twins?: Map<string, VirtualizedTextHighlightGroup>
 }
 
 export type SameLineTokenEdit = {
@@ -101,6 +97,9 @@ export interface VirtualizedTextViewInternal {
   readonly selectionHighlightName: string
   readonly selectionHighlight: Highlight | null
   readonly rangeHighlightGroups: Map<string, VirtualizedTextHighlightGroup>
+  highlightOverlaySnapshot: VirtualizedTextViewModelState['textSnapshot'] | null
+  highlightOverlayMask: readonly HighlightOverlayRange[]
+  readonly overlayBaseGroups: Map<string, VirtualizedTextHighlightGroup>
   // A range rule depends only on a group's name and style, so a repaint that moves ranges around
   // cannot change the rule set. Counting the changes that *can* — a group added, removed, or
   // restyled — is what keeps `rebuildStyleRules` off the O(groups^2) path a per-keystroke repaint

@@ -848,9 +848,8 @@
     },
     {
       "id": "E053",
-      "file": "e053-unnecessary-code-fade.md",
       "title": "Diagnostic tags paint in each token's own colour, in every engine",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P2",
@@ -859,7 +858,8 @@
       "topics": [
         "Unnecessary code: fade in each token's own colour"
       ],
-      "baseline": "206bc32eca5fd02a2d4573952312367c96500192"
+      "baseline": "206bc32eca5fd02a2d4573952312367c96500192",
+      "reference": "../docs/display/diagnostic-overlays.md"
     },
     {
       "id": "E054",

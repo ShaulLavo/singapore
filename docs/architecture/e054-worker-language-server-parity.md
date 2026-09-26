@@ -13,21 +13,21 @@ across files, applies a quick fix, formats, and shows an outline with no server 
 a capability advertised without a row fails the suite. Run against the worker as it stood at
 `ed5b2e2`, the same harness produced the left column.
 
-| Method | Before (`ed5b2e2`) | After |
-| --- | --- | --- |
-| hover, definition, references, implementation, typeDefinition | supported | supported |
-| completion | supported | supported |
-| `completionItem/resolve` | not advertised | supported (detail, documentation, auto-import edits) |
-| signatureHelp | not advertised | supported (label offsets, active parameter, rest parameters) |
-| documentHighlight | not advertised | supported (read and write kinds) |
-| documentSymbol | not advertised | supported (tree in document order, or flat with containers) |
-| `workspace/symbol` | not advertised | supported (standard library left out) |
-| prepareRename, rename | not advertised | supported (versioned `documentChanges` or a `changes` map) |
-| codeAction | not advertised | supported (quick fixes with VS Code's preferred-fix ranking, refactors, organize imports) |
-| `codeAction/resolve` | not advertised | supported (refactor edits computed when chosen) |
-| formatting, rangeFormatting, onTypeFormatting | not advertised | supported (the request's indentation, the document's line ending) |
-| `textDocument/diagnostic` | **advertised, not handled** | supported (`resultId`, `unchanged`, debounced, cancellable) |
-| semanticTokens full, range | supported | supported |
+| Method                                                        | Before (`ed5b2e2`)          | After                                                                                     |
+| ------------------------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------- |
+| hover, definition, references, implementation, typeDefinition | supported                   | supported                                                                                 |
+| completion                                                    | supported                   | supported                                                                                 |
+| `completionItem/resolve`                                      | not advertised              | supported (detail, documentation, auto-import edits)                                      |
+| signatureHelp                                                 | not advertised              | supported (label offsets, active parameter, rest parameters)                              |
+| documentHighlight                                             | not advertised              | supported (read and write kinds)                                                          |
+| documentSymbol                                                | not advertised              | supported (tree in document order, or flat with containers)                               |
+| `workspace/symbol`                                            | not advertised              | supported (standard library left out)                                                     |
+| prepareRename, rename                                         | not advertised              | supported (versioned `documentChanges` or a `changes` map)                                |
+| codeAction                                                    | not advertised              | supported (quick fixes with VS Code's preferred-fix ranking, refactors, organize imports) |
+| `codeAction/resolve`                                          | not advertised              | supported (refactor edits computed when chosen)                                           |
+| formatting, rangeFormatting, onTypeFormatting                 | not advertised              | supported (the request's indentation, the document's line ending)                         |
+| `textDocument/diagnostic`                                     | **advertised, not handled** | supported (`resultId`, `unchanged`, debounced, cancellable)                               |
+| semanticTokens full, range                                    | supported                   | supported                                                                                 |
 
 A client that declares pull diagnostics is no longer pushed to: every `LspClient` declares it, and
 both paths computing the same diagnostics per keystroke was the waste. A document change with more
@@ -52,13 +52,13 @@ Step 4 measured preload against synchronous pull on Platform's `apps/web`
 opening `src/features/git/components/change-file-row.tsx`, in a Bun worker. Reproduce with
 `bun bench/fileProvider.ts --project <apps/web> --config tsconfig.app.json --target <file>`.
 
-| Strategy | Latency per host call | First diagnostics | Program files | Host round trips | Worker heap | After 50 external edits |
-| --- | --- | --- | --- | --- | --- | --- |
-| preload (ideal set, one message) | n/a | 2,758 ms | 9,341 | 0 | 1,117 MB | 306 ms |
-| synchronous pull, whole project | 0 ms | 3,196 ms | 9,341 | 40,341 | 1,084 MB | 309 ms |
-| synchronous pull, open file's closure | 0 ms | 2,314 ms | 6,207 | 27,181 | 771 MB | 276 ms |
-| synchronous pull, whole project | 1 ms | 45,867 ms | 9,341 | 40,341 | 1,076 MB | 371 ms |
-| synchronous pull, open file's closure | 1 ms | 31,060 ms | 6,207 | 27,181 | 766 MB | 298 ms |
+| Strategy                              | Latency per host call | First diagnostics | Program files | Host round trips | Worker heap | After 50 external edits |
+| ------------------------------------- | --------------------- | ----------------- | ------------- | ---------------- | ----------- | ----------------------- |
+| preload (ideal set, one message)      | n/a                   | 2,758 ms          | 9,341         | 0                | 1,117 MB    | 306 ms                  |
+| synchronous pull, whole project       | 0 ms                  | 3,196 ms          | 9,341         | 40,341           | 1,084 MB    | 309 ms                  |
+| synchronous pull, open file's closure | 0 ms                  | 2,314 ms          | 6,207         | 27,181           | 771 MB      | 276 ms                  |
+| synchronous pull, whole project       | 1 ms                  | 45,867 ms         | 9,341         | 40,341           | 1,076 MB    | 371 ms                  |
+| synchronous pull, open file's closure | 1 ms                  | 31,060 ms         | 6,207         | 27,181           | 766 MB      | 298 ms                  |
 
 Synchronous pull blocks once per uncached question, and TypeScript's module resolution asks tens of
 thousands of them. At one millisecond each, a cheap local HTTP round trip, first diagnostics take
@@ -89,7 +89,7 @@ through the connection pool too: the first borrower with a handler answers.
 
 `TypeScriptLspWorkerOwner` posts `$/serverExited` (`LSP_SERVER_EXITED` in `@singapore-editor/lsp`)
 with the worker's error before it fails the transport, in the same shape Platform's server path
-sends as `$/platform/serverExited`. `LspConnection` records the notification and reports the close
+sends as `$/serverExited`. `LspConnection` records the notification and reports the close
 that follows as `LspServerExitedError`, once, with status `error`; before, a worker crash reached
 `onError` twice and said nothing about why. The WebSocket session in `./server` forwards the
 notification to its socket.
@@ -103,7 +103,7 @@ notification to its socket.
 - `bun run test` in `packages/lsp-plugin`: server-request handlers through the pool, and a close
   after `$/serverExited` reported as that exit.
 - `bunx playwright test` in `examples/app`: `fixes, formats, renames across files and outlines with
-  no language server`, with the CDN routed to fail.
+no language server`, with the CDN routed to fail.
 
 ## Left for later
 
@@ -113,3 +113,15 @@ notification to its socket.
   typed closers.
 - Refactors that need more input (`isInteractive`) and fix-all source actions are not offered.
 - The program's memory is not bounded by the worker.
+
+## Host project identity and live buffers
+
+A host can pass `canonicalPaths` when a package is reachable through a symlink and its real path.
+The worker uses one canonical identity for source files, roots, versions and unsaved overlays,
+while workspace edits retain the URI of an open document. Native `tsx` and `jsx` syntax ids are
+accepted and mapped to the protocol's `typescriptreact` and `javascriptreact` ids.
+
+`synchronizeLanguageServerBuffer` in `lsp-plugin` attaches another live text buffer to a connection
+without mounting another editor. It uses the same document synchronization controller and exact
+text snapshots as view synchronization, including edit provenance and repeated URI transitions.
+Dispose the attachment when its buffer leaves the host's live document store.
