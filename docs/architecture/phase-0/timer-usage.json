@@ -372,6 +372,14 @@
     },
     {
       "api": "setTimeout",
+      "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
+      "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:74252f76bf",
+      "justification": "Runs once after the parse answer is posted; it re-checks that the document is still cached and idle, so a late or stale callback does nothing.",
+      "line": 430,
+      "snippet": "setTimeout(() => reparseIdleDocument(runtimeSessionId, document, runtime), 0)"
+    },
+    {
+      "api": "setTimeout",
       "file": "packages/typescript-lsp/src/worker/session.ts",
       "id": "packages/typescript-lsp/src/worker/session.ts:setTimeout:334b7e5e6a",
       "justification": "A request timeout inside the worker: it only rejects the pending request, and the answer clears it.",
