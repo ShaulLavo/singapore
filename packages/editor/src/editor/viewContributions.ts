@@ -235,6 +235,11 @@ export class EditorViewContributionController {
     this.run(rootUpdate(kinds, change, null))
   }
 
+  /** Rebuilds the per-kind routing after a contribution's `inputs` changed. */
+  refreshInputs(): void {
+    this.subscribers = null
+  }
+
   /** Re-runs one contribution and the paint capture; the others' state has not changed. */
   requestUpdate(contribution: EditorViewContribution | null): void {
     if (!contribution) {

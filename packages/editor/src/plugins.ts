@@ -1043,6 +1043,17 @@ export type EditorPluginContext = {
   registerSelectionRangeProvider(provider: EditorSelectionRangeProvider): EditorDisposable
 }
 
+/** The view context `createPlugin`'s scope is built on: the combined per-view context. */
+export type EditorInternalViewContributionContext = EditorViewContributionContext & {
+  /** The owning editor, typed where it is used; unstable. */
+  readonly unstableEditor: unknown
+  getSelections(): readonly EditorResolvedSelection[]
+  applyEdits(edits: readonly TextEdit[], timingName: string, selection?: EditorSelectionRange): void
+  registerCommand(command: EditorCommandId, handler: EditorCommandHandler): EditorDisposable
+  /** A contribution whose `inputs` changed after it was created asks for its routing to be rebuilt. */
+  refreshInputs(): void
+}
+
 export type EditorInternalPluginContext = EditorPluginContext & {
   registerEditorFeatureContribution(provider: EditorFeatureContributionProvider): EditorDisposable
 }

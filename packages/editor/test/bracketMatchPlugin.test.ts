@@ -86,7 +86,8 @@ describe('createBracketMatchPlugin', () => {
     const harness = activate()
 
     harness.update(snapshot({ caret: 3 }), 'selection')
-    harness.update(snapshot({ caret: 3 }), 'clear')
+    // A cleared view has no parse left to pair against.
+    harness.update(snapshot({ brackets: [], caret: 3 }), 'clear')
 
     expect(harness.view.clearRangeHighlight).toHaveBeenCalledWith('test-bracket-match')
   })
@@ -189,8 +190,8 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
  * contribution (which owns painting) and the command table it registered.
  */
 function activate(snapshotOptions: SnapshotOptions = {}, plugin = createBracketMatchPlugin()) {
-  const view = viewContext(() => snapshot(snapshotOptions))
   const commands = new Map<EditorCommandId, () => boolean>()
+  const view = viewContext(() => snapshot(snapshotOptions), commands)
   let contribution: EditorViewContribution | null = null
 
   const context = createTestPluginContext({
@@ -235,7 +236,10 @@ function activate(snapshotOptions: SnapshotOptions = {}, plugin = createBracketM
   }
 }
 
-function viewContext(getSnapshot: () => EditorViewSnapshot): EditorViewContributionContext {
+function viewContext(
+  getSnapshot: () => EditorViewSnapshot,
+  commands: Map<EditorCommandId, () => boolean>,
+): EditorViewContributionContext {
   const container = document.createElement('div')
   const scrollElement = document.createElement('div')
   container.appendChild(scrollElement)
@@ -249,5 +253,9 @@ function viewContext(getSnapshot: () => EditorViewSnapshot): EditorViewContribut
     contentElement: scrollElement,
     setRangeHighlight: vi.fn(),
     setSelection: vi.fn(),
+    registerCommand: (command, handler) => {
+      commands.set(command, () => handler({}))
+      return { dispose: () => commands.delete(command) }
+    },
   })
 }

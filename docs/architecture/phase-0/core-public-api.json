@@ -4744,6 +4744,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorInput",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorLanguageConfiguration",
           "source": "packages/editor/src/editor/languageConfiguration.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4884,6 +4890,12 @@
           "kind": "type",
           "name": "EditorPluginContext",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPluginDefinition",
+          "source": "packages/editor/src/createPlugin.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -5038,6 +5050,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorViewScope",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorViewSnapshot",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -5046,6 +5064,12 @@
           "kind": "type",
           "name": "EditorViewSnapshotJSON",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorViewState",
+          "source": "packages/editor/src/createPlugin.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -5188,8 +5212,26 @@
         },
         {
           "kind": "unknown",
+          "name": "createPlugin",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "createSemanticTokenLayer",
           "source": "packages/editor/src/semanticTokenLayer.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "derive",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "documentInput",
+          "source": "packages/editor/src/createPlugin.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -5290,6 +5332,12 @@
         },
         {
           "kind": "unknown",
+          "name": "selectionInput",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "SEMANTIC_TOKEN_Z_INDEX",
           "source": "packages/editor/src/semanticTokenLayer.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -5322,6 +5370,36 @@
           "kind": "unknown",
           "name": "snippetInitialSelection",
           "source": "packages/editor/src/editor/snippet.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "textInput",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "themeInput",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "tokensInput",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "viewportInput",
+          "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "visibleRowsInput",
+          "source": "packages/editor/src/createPlugin.ts",
           "via": "packages/editor/src/public/extensions.ts"
         }
       ],
