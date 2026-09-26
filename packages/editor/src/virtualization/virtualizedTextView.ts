@@ -55,6 +55,7 @@ import {
   setFontVariable,
   setStyleValue,
   normalizeScrollMode,
+  invalidateScrollElementPadding,
   scrollElementPadding,
 } from './virtualizedTextViewHelpers'
 import {
@@ -64,9 +65,11 @@ import {
   clearRowTokenState,
   clearSelection,
   clearSelectionHighlight,
+  cancelDeferredCaret,
   clearTokenHighlights,
   clearTokenHighlightsFromRow,
   deleteTokenRangesForRow,
+  flushDeferredCaret,
   rebuildStyleRules,
   renderRangeHighlight,
   renderSelectionHighlight,
@@ -381,6 +384,7 @@ export class VirtualizedTextView {
       gutterWidthProvider,
       caretLayerElement,
       caretElement,
+      deferredCaret: null,
       secondaryCaretElements: [],
       styleEl,
       highlightScope,
@@ -489,6 +493,7 @@ export class VirtualizedTextView {
     this.cancelContentWidthMeasurement?.()
     this.cancelContentWidthMeasurement = null
     this.disposeForegroundHighlightRestore()
+    cancelDeferredCaret(view)
     clearSelectionHighlight(view)
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
     clearTokenHighlights(view)
@@ -579,12 +584,15 @@ export class VirtualizedTextView {
 
   public measureInitialViewport(): void {
     if (this.view.virtualizer.hasMeasuredViewport()) return
+    // Layout first: the padding read after it finds style already clean.
+    const clientWidth = this.scrollElement.clientWidth
+    const clientHeight = this.scrollElement.clientHeight
     const padding = scrollElementPadding(this.scrollElement)
     this.view.virtualizer.setScrollMetrics({
       scrollTop: 0,
       scrollLeft: 0,
-      viewportWidth: Math.max(0, this.scrollElement.clientWidth - padding.left - padding.right),
-      viewportHeight: Math.max(0, this.scrollElement.clientHeight - padding.top - padding.bottom),
+      viewportWidth: Math.max(0, clientWidth - padding.left - padding.right),
+      viewportHeight: Math.max(0, clientHeight - padding.top - padding.bottom),
       borderBoxWidth: this.scrollElement.offsetWidth,
       borderBoxHeight: this.scrollElement.offsetHeight,
     })
@@ -806,6 +814,7 @@ export class VirtualizedTextView {
 
   public refreshMetrics(): BrowserTextMetrics {
     const view = this.view
+    invalidateScrollElementPadding(this.scrollElement)
     const face = measuredTextFace(this.scrollElement, view.textMetrics)
     view.monospace = face.monospace
     const rowHeightValue = normalizeRowHeight(view.lineHeightOverride ?? face.metrics.rowHeight)
@@ -816,6 +825,7 @@ export class VirtualizedTextView {
   /** Re-measures and applies a reading that differs from the one in use; null when none does. */
   public remeasureMetrics(): BrowserTextMetrics | null {
     const view = this.view
+    invalidateScrollElementPadding(this.scrollElement)
     const face = measuredTextFace(this.scrollElement, view.textMetrics)
     const rowHeight = normalizeRowHeight(view.lineHeightOverride ?? face.metrics.rowHeight)
     const unchanged =
@@ -1012,6 +1022,7 @@ export class VirtualizedTextView {
     const snapshot = view.virtualizer.getSnapshot()
     const scrollTop = snapshot.scrollTop
     const scrollLeft = this.scrollElement.scrollLeft
+    flushDeferredCaret(view)
     positionInputAtCaret(view)
     // Focus and nothing more: the value and the caret inside it belong to whoever knows the
     // document, and are rewritten from it on every selection change. Emptying them here would take

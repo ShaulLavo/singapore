@@ -3654,6 +3654,7 @@ describe('Editor', () => {
       const session = createDocumentSession('abc\ndef')
       session.setSelections([{ anchor: 3 }, { anchor: 7 }])
       editor.attachSession(session)
+      editor.focus()
 
       dispatchEditorKey('ArrowLeft')
 
@@ -3708,6 +3709,7 @@ describe('Editor', () => {
       const session = createDocumentSession('abcdef')
       session.setSelections([{ anchor: 2 }, { anchor: 5 }])
       editor.attachSession(session)
+      editor.focus()
 
       dispatchEditorKey('ArrowRight', { shiftKey: true })
 
@@ -3963,6 +3965,7 @@ describe('Editor', () => {
       session.setSelection(1)
       session.addSelection(4)
       editor.attachSession(session)
+      editor.focus()
 
       dispatchEditorKey('Escape')
 
@@ -4059,6 +4062,7 @@ describe('Editor', () => {
       const session = createDocumentSession('foo bar foo')
       session.setSelection(1)
       editor.attachSession(session)
+      editor.focus()
 
       dispatchEditorKey('d', primaryModifier())
 
