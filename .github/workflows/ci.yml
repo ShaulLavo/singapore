@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup Bun
+        id: bun
         uses: oven-sh/setup-bun@v2
 
       # `bun run test` runs each package's `vitest run`, and vitest's bin is a Node script — so the
@@ -45,6 +46,19 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Turbo replays a task whose inputs are unchanged, so a PR re-runs only what its change can
+      # reach. Keyed by commit, falling back to this branch's newest cache, then main's. The check
+      # fails when a package reads a file its task's hash does not cover.
+      - name: Restore turbo cache
+        uses: actions/cache@v6
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-${{ github.sha }}
+          restore-keys: turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-
+
+      - name: Check turbo inputs
+        run: bun scripts/check-turbo-inputs.mjs
 
       - name: Check native language catalog
         run: bun run --cwd packages/tree-sitter-languages languages:generate -- --check
@@ -72,3 +86,9 @@ jobs:
       # Serial package execution keeps browser processes within the runner's capacity.
       - name: Test
         run: bun run test -- --concurrency=1
+
+      # Every save carries the restored entries forward, so entries written over three days ago go;
+      # one still in use is rebuilt once.
+      - name: Prune turbo cache
+        if: ${{ always() }}
+        run: find .turbo/cache -type f -mtime +3 -delete 2>/dev/null || true
