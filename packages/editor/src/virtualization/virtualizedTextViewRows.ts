@@ -96,6 +96,8 @@ import {
   renderHiddenCharacters,
 } from './virtualizedTextViewHiddenCharacters'
 import { memoizedContainsRTL } from './virtualizedTextViewBidi'
+import type { GlyphAdvances } from './glyphAdvances'
+import { columnAtPixels, pixelsBeforeColumn } from './proportionalRows'
 
 const GUTTER_CELL_CLASS = 'editor-virtualized-gutter-cell'
 const CURSOR_LINE_ROW_CLASS = 'editor-virtualized-cursor-line-row'
@@ -1129,7 +1131,7 @@ function setInlineRunRowText(
     .map((run) => inlineWidgetPlacement(view, run))
   const classes = inlineClassesInWindow(runs.classes, window)
   const leftWidth =
-    estimatedDisplayCellForColumn(content, window.start, view.tabSize) * characterWidth(view) +
+    textPixelsBeforeColumn(view, content, window.start) +
     inlineWidgetAdvanceDelta(view, content, runs.widgets, window.start)
   setLeftSpacerWidth(row, Math.round(leftWidth))
   const chunk = row.chunks[0]
@@ -1610,9 +1612,7 @@ function setChunkedRowText(
 ): void {
   const { text } = content
   const window = horizontalChunkWindow(view, content, snapshot)
-  const leftSpacerWidth = Math.round(
-    estimatedDisplayCellForColumn(content, window.start, view.tabSize) * characterWidth(view),
-  )
+  const leftSpacerWidth = Math.round(textPixelsBeforeColumn(view, content, window.start))
   setLeftSpacerWidth(row, leftSpacerWidth)
   if (reuseRowChunks(view, row, text, window, startOffset, mapping)) return
 
@@ -1929,12 +1929,25 @@ function rowChunkKey(
   return `${window.start}:${window.end}`
 }
 
+/** How far along the row its text reaches by `column`: measured advances in a proportional face. */
+function textPixelsBeforeColumn(
+  view: VirtualizedTextViewInternal,
+  content: MeasuredText,
+  column: number,
+): number {
+  if (view.glyphs) return pixelsBeforeColumn(content.text, column, view.glyphs, view.tabSize)
+  return estimatedDisplayCellForColumn(content, column, view.tabSize) * characterWidth(view)
+}
+
 function horizontalChunkWindow(
   view: VirtualizedTextViewInternal,
   content: MeasuredText,
   snapshot = view.virtualizer.getSnapshot(),
   widgets: readonly InlineWidgetRun[] = [],
 ): HorizontalChunkWindow {
+  if (view.glyphs && widgets.length === 0) {
+    return proportionalChunkWindow(view, content, snapshot, view.glyphs)
+  }
   const { text } = content
   const viewportColumns = horizontalViewportColumns(view, snapshot.viewportWidth)
   const leftColumn = Math.max(
@@ -1963,6 +1976,31 @@ function horizontalChunkWindow(
   return {
     start: start === 0 ? 0 : previousGraphemeBoundary(text, start + 1),
     end: graphemeChunkEnd(text, clampedEnd),
+  }
+}
+
+/**
+ * The window a scroll offset reaches along a row in a proportional face, found from measured
+ * advances: column arithmetic would mount text far from where the spacer puts the viewport.
+ */
+function proportionalChunkWindow(
+  view: VirtualizedTextViewInternal,
+  content: MeasuredText,
+  snapshot: FixedRowVirtualizerSnapshot,
+  glyphs: GlyphAdvances,
+): HorizontalChunkWindow {
+  const { text } = content
+  const left = horizontalTextScrollLeft(view, snapshot.scrollLeft)
+  const overscan = view.horizontalOverscanColumns * characterWidth(view)
+  const right = left + Math.max(0, snapshot.viewportWidth - gutterWidth(view)) + overscan
+  const startColumn = columnAtPixels(text, left - overscan, glyphs, view.tabSize, 'before')
+  const endColumn = columnAtPixels(text, right, glyphs, view.tabSize, 'after')
+  const start = alignChunkStart(startColumn, view.longLineChunkSize)
+  const end = clamp(alignChunkEnd(endColumn, view.longLineChunkSize), start, text.length)
+  if (isSimpleRowText(content)) return { start, end }
+  return {
+    start: start === 0 ? 0 : previousGraphemeBoundary(text, start + 1),
+    end: graphemeChunkEnd(text, end),
   }
 }
 
@@ -2671,11 +2709,14 @@ function scanVisualColumns(
 }
 
 // Only document text contributes to the horizontal extent; injected rows are measured for real
-// once they mount.
+// once they mount. A proportional row counts in average-width columns of its measured advances.
 function estimatedDisplayRowColumns(view: VirtualizedTextViewInternal, rowIndex: number): number {
   const displayRow = view.model.projection.getRow(rowIndex)
   if (!isDocumentTextDisplayRow(displayRow)) return 0
-  return visualColumnLength(displayRow, view.tabSize)
+  const glyphs = view.glyphs
+  if (!glyphs) return visualColumnLength(displayRow, view.tabSize)
+  const { text } = displayRow
+  return pixelsBeforeColumn(text, text.length, glyphs, view.tabSize) / characterWidth(view)
 }
 
 function applyContentWidth(view: VirtualizedTextViewInternal, visualColumns: number): void {
