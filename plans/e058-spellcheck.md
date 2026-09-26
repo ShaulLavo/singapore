@@ -223,6 +223,21 @@ Out of scope:
   flags the fewest words (166 distinct against 182).
   **Decided 2026-09-26: recommendation (coordinator) — (c).**
 
+- **Owner question 3: typing cost of marks in files.** `bun run bench:typing` (Chromium, 2,000
+  lines, 300 keystrokes): spellcheck's own work per keystroke is 1.2 ms median with no marks on
+  screen and about 5 ms with marks; the whole keystroke costs about 9 ms more than with spellcheck
+  off. Tokenization is about 1 ms. The rest is the E053 overlay mask, which the view rebuilds on
+  every text change while any overlay is mounted, and again on each overlay update.
+  - (a) Make the overlay mask incremental in core (a follow-up for lane E1).
+  - (b) Paint a plain highlight outside WebKit, which draws the wavy line only when the highlight
+    sets a colour; this means detecting the engine.
+  - (c) Keep the overlay, and default `editor.spellcheck` to `'off'` for files until (a) lands, with
+    `chat.spellcheck` on: composer text is a few lines.
+
+  **Recommendation:** (c) now, then (a).
+  **Decided 2026-09-26: recommendation (wave 2) — (c).** The incremental overlay mask is recorded as
+  a core follow-up for lane E1.
+
 - **Decided 2026-09-26: research recommendation.** English only. Permissive dictionaries exist for
   English, Dutch and Russian, and Hebrew exists only as AGPL-3.0 hspell, so Hebrew words are skipped,
   never marked.
