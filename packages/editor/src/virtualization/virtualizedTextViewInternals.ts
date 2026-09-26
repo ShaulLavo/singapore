@@ -1,3 +1,4 @@
+import type { WrapBreak } from './displayProjectionTypes'
 import type { HighlightOverlayRange } from './highlightOverlay'
 import type { ScrollViewport } from './scrollViewport'
 import type { FoldMarkerSource } from './foldMarkerSource'
@@ -121,6 +122,7 @@ export interface VirtualizedTextViewInternal {
   foldMarkerByStartRow: ReadonlyMap<number, VirtualizedFoldMarker>
   foldMarkerByKey: ReadonlyMap<string, VirtualizedFoldMarker>
   wrapEnabled: boolean
+  wrapBreak: WrapBreak
   tabSize: number
   tokenGroups: Map<string, TokenGroup>
   rowTokenSignatures: Map<number, string>

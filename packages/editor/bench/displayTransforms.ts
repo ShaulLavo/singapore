@@ -93,6 +93,12 @@ for (const lines of LINE_COUNTS) {
   }
   measure('plain', input)
   measure('folds + wraps', { ...input, foldMap: foldMapFor(input, pieceSnapshot), wrapColumn: 80 })
+  measure('folds + word wraps', {
+    ...input,
+    foldMap: foldMapFor(input, pieceSnapshot),
+    wrapColumn: 80,
+    wrapBreak: 'word',
+  })
   const projection = new DisplayProjection(input)
   const after = createDocumentTextSnapshot(insertIntoPieceTable(pieceSnapshot, 0, 'new\n'))
   const counters = captureSourceReads()

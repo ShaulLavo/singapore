@@ -9,8 +9,13 @@ export type DisplayProjectionConfig = {
   readonly inlineMap: InlineMap | null
   readonly injectedTextRows: readonly InjectedTextRow[]
   readonly wrapColumn: number | null
+  /** Where a wrapped row may end. Defaults to `'character'`. */
+  readonly wrapBreak?: WrapBreak
   readonly tabSize: number
 }
+
+/** `'character'` ends a row at the column that fills it; `'word'` at the last word boundary. */
+export type WrapBreak = 'character' | 'word'
 
 export type DisplayProjectionInput = DisplayProjectionConfig & {
   readonly textSnapshot: TextSnapshot
@@ -60,7 +65,8 @@ export type WrappedEntry = {
   readonly rows: number
   readonly prefixes: Uint32Array
   readonly width: number
-  readonly tabs: { readonly offsets: Uint32Array; readonly ends: Uint32Array } | null
+  /** Explicit row ends for the lines whose rows are not `width` apart: tabs, or word breaks. */
+  readonly breaks: { readonly offsets: Uint32Array; readonly ends: Uint32Array } | null
 }
 
 export type ProjectionEntry =

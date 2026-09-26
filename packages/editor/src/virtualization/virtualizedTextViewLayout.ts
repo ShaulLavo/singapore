@@ -163,6 +163,7 @@ export function refreshDisplayProjection(
     inlineMap: view.model.inlineMap,
     injectedTextRows: view.model.injectedTextRows,
     wrapColumn: view.wrapEnabled ? viewportColumns : null,
+    wrapBreak: view.wrapBreak,
     tabSize: view.tabSize,
   })
   view.model.wrapColumn = view.wrapEnabled ? viewportColumns : null

@@ -140,6 +140,7 @@ function buildLine(context: BuildContext, row: number): ProjectionNode {
     config.wrapColumn,
     config.tabSize,
     counters,
+    config.wrapBreak,
   )
   const injections = context.injected.get(row) ?? []
   const before = injections
@@ -161,6 +162,7 @@ function injectedSummary(input: InjectedTextRow, config: DisplayProjectionConfig
       (from, to) => input.text.slice(from, to),
       config.wrapColumn,
       config.tabSize,
+      config.wrapBreak,
     ),
   }
 }

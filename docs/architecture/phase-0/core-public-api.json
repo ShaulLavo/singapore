@@ -1318,6 +1318,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorWrapBreak",
+          "source": "packages/editor/src/virtualization/index.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "FoldRange",
           "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
