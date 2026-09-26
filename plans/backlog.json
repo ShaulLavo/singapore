@@ -419,9 +419,9 @@
     },
     {
       "id": "E028",
-      "file": "e028-modal-input-prototype.md",
+      "reference": "../docs/architecture/modal-input-findings.md",
       "title": "Prove modal editing through public extensions",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Research",
       "priority": "P2",

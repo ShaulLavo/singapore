@@ -73,6 +73,7 @@ export {
   viewportInput,
   visibleRowsInput,
 } from '../createPlugin'
+export type { EditorCursorStyle, EditorKeyDecision, EditorKeyParticipant } from '../plugins'
 export type {
   EditorChannel,
   EditorChannelPolicy,

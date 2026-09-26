@@ -1047,12 +1047,35 @@ export type EditorPluginContext = {
   registerSelectionRangeProvider(provider: EditorSelectionRangeProvider): EditorDisposable
 }
 
+/** What a key participant does with a key: takes it, or hands it to the keymaps and text input. */
+export type EditorKeyDecision = 'consume' | 'delegate'
+
+/**
+ * Asked for each unmodified or Shift-only key before either keymap sees it; Ctrl, Cmd and Alt chords
+ * go to the host's keymap. Never asked during a composition.
+ */
+export type EditorKeyParticipant = (
+  event: KeyboardEvent,
+  context: Readonly<Record<string, boolean>>,
+) => EditorKeyDecision
+
+/** How the caret is drawn in one view. */
+export type EditorCursorStyle = 'line' | 'block' | 'underline'
+
 /** The view context `createPlugin`'s scope is built on: the combined per-view context. */
 export type EditorInternalViewContributionContext = EditorViewContributionContext & {
   /** The owning editor, typed where it is used; unstable. */
   readonly unstableEditor: unknown
   getSelections(): readonly EditorResolvedSelection[]
-  applyEdits(edits: readonly TextEdit[], timingName: string, selection?: EditorSelectionRange): void
+  applyEdits(
+    edits: readonly TextEdit[],
+    timingName: string,
+    selection?: EditorSelectionRange | readonly EditorSelectionRange[],
+  ): void
+  registerKeyParticipant(participant: EditorKeyParticipant): EditorDisposable
+  /** While `accepts` answers false, typed, composed, pasted and dropped text is refused. */
+  registerTextGate(accepts: () => boolean): EditorDisposable
+  setCursorStyle(style: EditorCursorStyle): void
   registerCommand(command: EditorAnyCommandId, handler: EditorCommandHandler): EditorDisposable
   /** A contribution whose `inputs` changed after it was created asks for its routing to be rebuilt. */
   refreshInputs(): void

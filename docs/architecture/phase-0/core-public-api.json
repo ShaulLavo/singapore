@@ -4576,6 +4576,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorCursorStyle",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorDecoration",
           "source": "packages/editor/src/editor/decorationStore.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4764,6 +4770,18 @@
           "kind": "type",
           "name": "EditorInput",
           "source": "packages/editor/src/createPlugin.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeyDecision",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeyParticipant",
+          "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
