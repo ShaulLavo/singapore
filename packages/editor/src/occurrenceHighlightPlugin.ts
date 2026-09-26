@@ -64,6 +64,7 @@ export function createOccurrenceHighlightPlugin(
 }
 
 class OccurrenceHighlightController implements EditorViewContribution {
+  readonly inputs = ['content', 'selection', 'tokens', 'viewport'] as const
   private readonly highlightName: string
   private readonly decorations = new EditorDecorationStore()
 

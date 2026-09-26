@@ -2366,9 +2366,12 @@ export class Editor {
   private createViewContribution(
     provider: EditorViewContributionProvider,
   ): EditorViewContribution | null {
-    return this.createContributionSafely('view', () =>
-      provider.createContribution(this.createViewContributionContext(this.container)),
+    let owner: EditorViewContribution | null = null
+    const contribution = this.createContributionSafely('view', () =>
+      provider.createContribution(this.createViewContributionContext(this.container, () => owner)),
     )
+    owner = contribution
+    return contribution
   }
 
   private createInitialCommandContributions(
@@ -3153,7 +3156,10 @@ export class Editor {
     return projections.length > 0
   }
 
-  private createViewContributionContext(container: HTMLElement): EditorViewContributionContext {
+  private createViewContributionContext(
+    container: HTMLElement,
+    owner: () => EditorViewContribution | null,
+  ): EditorViewContributionContext {
     const claims = this.currentClaims()
     return {
       container,
@@ -3162,7 +3168,7 @@ export class Editor {
       highlightPrefix: this.highlightPrefix,
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
-      requestViewUpdate: () => this.notifyViewContributions('layout', null),
+      requestViewUpdate: () => this.requestViewUpdate(owner()),
       onDidType: (listener) => this.claimedBy(claims, () => this.addTypedTextListener(listener)),
       registerPressParticipant: (participant) =>
         this.claimedBy(claims, () => this.registerPressParticipant(participant)),
@@ -3752,6 +3758,7 @@ export class Editor {
   private notifyViewContributions(
     kind: EditorViewContributionUpdateKind,
     change?: DocumentSessionChange | null,
+    also: readonly EditorViewContributionUpdateKind[] = [],
   ): void {
     if (!this.viewContributions || this.committingPresentation) return
     if (this.view.isProvisional) {
@@ -3759,7 +3766,16 @@ export class Editor {
       this.commitSnapshotIfReady()
       return
     }
-    this.viewContributions.notify(kind, change ?? null)
+    this.viewContributions.notify(kind, change ?? null, also)
+  }
+
+  private requestViewUpdate(contribution: EditorViewContribution | null): void {
+    if (!this.viewContributions || this.committingPresentation) return
+    if (this.view.isProvisional) {
+      this.notifyViewContributions('layout', null)
+      return
+    }
+    this.viewContributions.requestUpdate(contribution)
   }
 
   private notifyEditorFeatureContributions(change: DocumentSessionChange | null): void {
@@ -4132,7 +4148,8 @@ export class Editor {
 
     if (flush.syncDomSelection) {
       const selectionStart = nowMs()
-      this.inputSelection.syncDomSelection()
+      // Its `selection` rides on this pass's notification below, so one operation is one pass.
+      this.inputSelection.syncDomSelection({ notify: false })
       timedChange = appendTiming(timedChange, 'editor.syncDomSelection', selectionStart)
     }
     const finalChange = appendTiming(timedChange, flush.latest.totalName, flush.latest.totalStart)
@@ -4152,7 +4169,11 @@ export class Editor {
     const passChange = coalescedPassChange(flush, finalChange)
     this.sessionOptions.onChange?.(passChange)
     measureEditorPerformance('editor.notifyViewContributions', () =>
-      this.notifyViewContributions(flush.contributionKind, passChange),
+      this.notifyViewContributions(
+        flush.contributionKind,
+        passChange,
+        flush.syncDomSelection ? ['selection'] : [],
+      ),
     )
     measureEditorPerformance('editor.notifyChangeWithTiming', () =>
       this.notifyChangeWithTiming(passChange),
