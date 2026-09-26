@@ -27,7 +27,15 @@ export default defineConfig({
         // Geometry that only a real engine can answer: caret rects, hit tests
         // and measured advances under a CSS transform. happy-dom reports every
         // rect empty, so these assertions are meaningless anywhere else.
-        optimizeDeps: { exclude: ['web-tree-sitter'] },
+        // Discovered mid-run, these make Vite reload and strand the browser test that was loading.
+        optimizeDeps: {
+          exclude: ['web-tree-sitter'],
+          include: [
+            '@shikijs/engine-oniguruma',
+            '@shikijs/engine-oniguruma/wasm-inlined',
+            'shiki/core',
+          ],
+        },
         test: {
           name: 'browser',
           // Keep browser timing probes clear of Node/DOM workers and other browser files.
