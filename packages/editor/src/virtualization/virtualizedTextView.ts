@@ -584,12 +584,15 @@ export class VirtualizedTextView {
 
   public measureInitialViewport(): void {
     if (this.view.virtualizer.hasMeasuredViewport()) return
+    // Layout first: the padding read after it finds style already clean.
+    const clientWidth = this.scrollElement.clientWidth
+    const clientHeight = this.scrollElement.clientHeight
     const padding = scrollElementPadding(this.scrollElement)
     this.view.virtualizer.setScrollMetrics({
       scrollTop: 0,
       scrollLeft: 0,
-      viewportWidth: Math.max(0, this.scrollElement.clientWidth - padding.left - padding.right),
-      viewportHeight: Math.max(0, this.scrollElement.clientHeight - padding.top - padding.bottom),
+      viewportWidth: Math.max(0, clientWidth - padding.left - padding.right),
+      viewportHeight: Math.max(0, clientHeight - padding.top - padding.bottom),
       borderBoxWidth: this.scrollElement.offsetWidth,
       borderBoxHeight: this.scrollElement.offsetHeight,
     })

@@ -30,7 +30,8 @@ export class ScrollViewport {
     this.frame.append(text.clip, gutter.clip)
     this.extent.append(this.frame)
     scrollElement.append(this.extent)
-    this.synchronizeOrigin()
+    // The origin waits for the first viewport size: reading padding here would force a style pass
+    // on every editor built, before the open that lays it out anyway.
   }
 
   public reserveOverlayWidth(side: 'left' | 'right', width: number): boolean {
