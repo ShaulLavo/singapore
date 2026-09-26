@@ -181,6 +181,12 @@ Out of scope:
      section at the caret.
    - Evidence: an `editor-spellcheck` scenario (type, look, right-click, pick, add a word, reload)
      and `look` screenshots.
+   - Done 2026-09-26 on Platform branch `w2/e2-e058`. `editor.spellcheck` defaults to `'off'`
+     (owner question 3). `chat.spellcheck` is registered with its consumer, the composer (Plan 171
+     phase 3). `spellcheck.language` is dropped: English is the only dictionary and nothing would
+     read it. Dictionary words are written by a `spellcheck.setWord` settings operation into the
+     chosen layer's own record. The scenario reopens the workspace in place of a bare reload,
+     because a bare reload of a fixture workspace answers `fs/read` with 404.
 4. **Composer (Platform, inside Plan 171 phase 3, S).** Register the contribution in the composer
    host. Chips are skipped as replacements.
    - Evidence: a `chat-composer-editing` scenario step with a misspelled word.
