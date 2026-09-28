@@ -202,7 +202,7 @@
         "oxlint": "1.85.0",
         "typescript": "~6.0.3",
         "vitest": "^5.0.2",
-        "web-tree-sitter": "^0.27.0",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#c5049e2",
       },
     },
     "packages/minimap": {
@@ -362,7 +362,7 @@
       "version": "0.1.1",
       "dependencies": {
         "@singapore-editor/core": "workspace:*",
-        "web-tree-sitter": "^0.27.0",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#c5049e2",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -413,7 +413,7 @@
         "tree-sitter-cli": "0.27.0",
         "typescript": "~6.0.3",
         "vitest": "^5.0.2",
-        "web-tree-sitter": "^0.27.0",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#c5049e2",
       },
       "peerDependencies": {
         "@singapore-editor/core": "workspace:*",
@@ -1162,7 +1162,7 @@
 
     "walk-up-path": ["walk-up-path@4.0.0", "", {}, "sha512-3hu+tD8YzSLGuFYtPRb48vdhKMi0KQV5sn+uWr8+7dMEq/2G/dtLrdDinkLjqq5TIbIBjYJ4Ax/n3YiaW7QM8A=="],
 
-    "web-tree-sitter": ["web-tree-sitter@0.27.0", "", {}, "sha512-XK08gj6RwTMQatAG7uVRP8MunqotL/XC19vHgkSPKmELgbGPBj4ECvB8haHOUnyj6ls2B8t42UTro14zxGgAHg=="],
+    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#c5049e2", {}, "ShaulLavo-tree-sitter-x-c5049e2", "sha512-bGhpFN1kjrzCTS8F0n0e7QQr+Loe2t3Xm/vTIK6wRFoW9Y+BDeSl9z3xiNZzdF4Tll0qYHlAFTl1qhGecqaiyA=="],
 
     "whatwg-mimetype": ["whatwg-mimetype@3.0.0", "", {}, "sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q=="],
 
