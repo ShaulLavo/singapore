@@ -56,7 +56,12 @@ Not in scope: replacing LSP features where a server is running; `redactions`.
 1. `outline` for TypeScript, JavaScript and Markdown. Evidence: breadcrumbs update while typing in a 5,000-line file within the existing frame budget (`bench:input`).
 2. `textobjects` + expand/shrink selection. Evidence: tests select the enclosing function, parameter and comment in each language.
 3. `overrides`. Evidence: typing `'` inside a string inserts one quote; comment toggle inside a Markdown code block uses the code language's comment.
-4. Error squiggles. Evidence: a missing `}` shows one diagnostic, and it disappears after the fix without a full reparse.
+4. Research, then error squiggles. First record how Zed and VS Code handle syntax errors next to
+   LSP diagnostics: whether tree-sitter errors show at all when a server is running, how duplicates
+   are merged or suppressed, how long they wait after typing, and how they treat recoverable
+   errors versus a genuinely missing token. Decide our rules from that write-up. Evidence: the
+   write-up in this plan, then a missing `}` shows one diagnostic (never a duplicate of the
+   server's) and it disappears after the fix without a full reparse.
 5. `runnables`, only if a host asks for it.
 
 ## Verification
@@ -72,4 +77,6 @@ Not in scope: replacing LSP features where a server is running; `redactions`.
 - Zed's capture names differ per kind; adapting them is the main cost, and grammar version skew can
   make a query fail to compile. Compile every query in tests.
 - Queries over large ranges can stall the worker. Bound them to the viewport and use match limits.
+- Syntax errors and LSP diagnostics overlap, and the right interaction is not obvious; step 4
+  starts with research into Zed and VS Code, and does not ship squiggles before that decision.
 - Stop after step 2 if the outline and text objects do not get used; the rest are refinements.
