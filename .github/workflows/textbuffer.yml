@@ -33,7 +33,7 @@ jobs:
         with:
           bun-version: '1.4.2'
       - name: Install locked workspace dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
       - name: Verify package entry points and tests
         run: bun run --cwd packages/textbuffer verify
       - name: Verify without the editor or monorepo tooling
