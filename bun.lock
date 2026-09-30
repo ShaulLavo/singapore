@@ -381,7 +381,7 @@
       "dependencies": {
         "@singapore-editor/core": "workspace:*",
         "tree-sitter-md": "0.1.1",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#e2985e0",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#ba4f1d2",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -432,7 +432,7 @@
         "tree-sitter-cli": "0.27.0",
         "typescript": "~6.0.3",
         "vitest": "^5.0.2",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#e2985e0",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#ba4f1d2",
       },
       "peerDependencies": {
         "@singapore-editor/core": "workspace:*",
@@ -1181,7 +1181,7 @@
 
     "walk-up-path": ["walk-up-path@4.0.0", "", {}, "sha512-3hu+tD8YzSLGuFYtPRb48vdhKMi0KQV5sn+uWr8+7dMEq/2G/dtLrdDinkLjqq5TIbIBjYJ4Ax/n3YiaW7QM8A=="],
 
-    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#e2985e0", {}, "ShaulLavo-tree-sitter-x-e2985e0", "sha512-lq4zLvvfasW+Iiy4Mv2yfoOOkRSsPDD73NuUihEhnlCePmEaaZdHP8vLywtwiCW/521twM6otnzfSYggiIvQBg=="],
+    "web-tree-sitter": ["@singapore-editor/tree-sitter-x@github:ShaulLavo/tree-sitter-x#ba4f1d2", {}, "ShaulLavo-tree-sitter-x-ba4f1d2", "sha512-WotNdedgIRHr4hTS+D8ax0rDrimmT756KyAh51w7bNdrfKNTpCKV3CpJ4pW6k0oG1Vipv0UR7zXm0npjSHjNmA=="],
 
     "whatwg-mimetype": ["whatwg-mimetype@3.0.0", "", {}, "sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q=="],
 
