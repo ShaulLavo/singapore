@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
 import { createRequire } from 'node:module'
@@ -42,7 +43,9 @@ async function packagePages(): Promise<string[]> {
   const entries = await readdir(packageRoot, { withFileTypes: true })
   for (const entry of entries.filter((item) => item.isDirectory())) {
     const directory = join(packageRoot, entry.name)
-    const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'))
+    const manifestPath = join(directory, 'package.json')
+    if (!existsSync(manifestPath)) continue
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
     if (manifest.private) continue
     readmes.push(join(directory, 'README.md'))
     addExports(manifest.name, manifest.exports, directory)

@@ -8,11 +8,11 @@ The typing and open clocks end at animation-frame opportunities. They do not mea
 
 ## Reproduce
 
-The [committed benchmark](https://github.com/ShaulLavo/fregat/tree/main/editor/bench/compare) runs from a fresh Fregat checkout with Bun and Node. The root lockfile pins Singapore's dependencies. The standalone benchmark lockfile pins the competitors and browser tooling.
+The [committed benchmark](https://github.com/ShaulLavo/fregat/tree/main/packages/singapore/bench/compare) runs from a fresh Fregat checkout with Bun and Node. The root lockfile pins Singapore's dependencies. The standalone benchmark lockfile pins the competitors and browser tooling.
 
 ```sh
 bun install --frozen-lockfile
-cd editor/bench/compare
+cd packages/singapore/bench/compare
 bun install --frozen-lockfile
 bunx playwright install chromium
 bun run test
@@ -21,7 +21,7 @@ bun run bench --condition noisy --keys 20 --scroll-frames 60 --timeout 300000 --
 node summarize.mjs ./results/experiment.json
 ```
 
-The [benchmark README](https://github.com/ShaulLavo/fregat/blob/main/editor/bench/compare/README.md) lists the smoke run, injected-delay control, installed-browser option and resume command. A host's heavy-job scheduler is optional. The committed scripts have no dependency on that host integration.
+The [benchmark README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/bench/compare/README.md) lists the smoke run, injected-delay control, installed-browser option and resume command. A host's heavy-job scheduler is optional. The committed scripts have no dependency on that host integration.
 
 ## What runs on each page
 
@@ -209,13 +209,13 @@ The ordinary bench job ran from 08:57:43.964 to 09:05:16.788 UTC, including the 
 
 The following evidence is committed alongside this method:
 
-- [Raw accepted matrix](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/experiment.json.gz), [aggregate summary](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/summary.json), [six-row pilot](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/pilot.json.gz) and [120 ms control](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/control-120.json.gz).
-- [Redacted scheduler receipt and reconstructed overlaps](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/scheduler.json), plus a [live registry snapshot](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/scheduler-live.json).
-- Reviewed 10 MiB screenshots for [Singapore](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/singapore-10-0.png), [Monaco](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/monaco-10-0.png) and [CodeMirror](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/codemirror-10-0.png). Each shows colored TypeScript at the specified font and line height. Raw geometry records the real 720 px scroll viewport and bounded row pool.
-- Representative 10 MiB traces for [Singapore](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/singapore-10-scroll.trace.json.gz), [Monaco](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/monaco-10-scroll.trace.json.gz) and [CodeMirror](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08/codemirror-10-scroll.trace.json.gz). Each has 61 frame marks delimiting 60 measured intervals. The measured runner used a fixed 10 MiB filename, so its later 10 MiB traces overwrote the earlier 1 MiB files. The committed trace-name regression fix preserves both sizes on future runs. The accepted matrix's retained 10 MiB traces and reduced per-frame observations are unaffected.
-- [Invalid setup archive](https://github.com/ShaulLavo/fregat/tree/main/editor/docs/performance/browser-compare-2026-10-08/invalid-layout), explicitly labeled inside each experiment JSON and excluded from these tables. Its crashes are no evidence of an editor crash under the corrected setup.
+- [Raw accepted matrix](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/experiment.json.gz), [aggregate summary](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/summary.json), [six-row pilot](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/pilot.json.gz) and [120 ms control](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/control-120.json.gz).
+- [Redacted scheduler receipt and reconstructed overlaps](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/scheduler.json), plus a [live registry snapshot](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/scheduler-live.json).
+- Reviewed 10 MiB screenshots for [Singapore](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/singapore-10-0.png), [Monaco](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/monaco-10-0.png) and [CodeMirror](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/codemirror-10-0.png). Each shows colored TypeScript at the specified font and line height. Raw geometry records the real 720 px scroll viewport and bounded row pool.
+- Representative 10 MiB traces for [Singapore](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/singapore-10-scroll.trace.json.gz), [Monaco](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/monaco-10-scroll.trace.json.gz) and [CodeMirror](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08/codemirror-10-scroll.trace.json.gz). Each has 61 frame marks delimiting 60 measured intervals. The measured runner used a fixed 10 MiB filename, so its later 10 MiB traces overwrote the earlier 1 MiB files. The committed trace-name regression fix preserves both sizes on future runs. The accepted matrix's retained 10 MiB traces and reduced per-frame observations are unaffected.
+- [Invalid setup archive](https://github.com/ShaulLavo/fregat/tree/main/packages/singapore/docs/performance/browser-compare-2026-10-08/invalid-layout), explicitly labeled inside each experiment JSON and excluded from these tables. Its crashes are no evidence of an editor crash under the corrected setup.
 
-To verify the committed matrix from `editor/bench/compare`:
+To verify the committed matrix from `packages/singapore/bench/compare`:
 
 ```sh
 node summarize.mjs ../../docs/performance/browser-compare-2026-10-08/experiment.json.gz

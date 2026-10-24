@@ -34,9 +34,9 @@ commands separately so a failed command keeps its exit status. Each suite writes
 run records alongside normal test output:
 
 ```sh
-bun run --cwd editor/packages/typescript-lsp test test/parity.test.ts test/parity-contract.test.ts > "$evidence/worker.log" 2>&1
+bun run --cwd packages/singapore/packages/typescript-lsp test test/parity.test.ts test/parity-contract.test.ts > "$evidence/worker.log" 2>&1
 bun run --cwd apps/server test src/lsp/tests/typescript-feature-parity.test.ts > "$evidence/server.log" 2>&1
-bun run --cwd editor/packages/typescript-lsp test:browser > "$evidence/browser.log" 2>&1
+bun run --cwd packages/singapore/packages/typescript-lsp test:browser > "$evidence/browser.log" 2>&1
 bun scripts/typescript-parity-capture.mjs "$evidence/matrix.json" "$evidence/worker.log" "$evidence/server.log" "$evidence/browser.log"
 bun scripts/typescript-parity.mjs baseline "$evidence/matrix.json"
 bun scripts/typescript-parity.mjs qualify "$evidence/matrix.json"

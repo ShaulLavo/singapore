@@ -272,10 +272,10 @@ From the repository root:
 ```sh
 bunx turbo run build --filter=@singapore-editor/collaboration...
 bunx playwright install chromium
-bun run --cwd editor/packages/collaboration typecheck
-bun run --cwd editor/packages/collaboration test
-COLLABORATION_LONG_RUN=1 bun run --cwd editor/packages/collaboration test
-bun run --cwd editor/packages/collaboration test:browser -- test/presence.browser.test.ts
+bun run --cwd packages/singapore/packages/collaboration typecheck
+bun run --cwd packages/singapore/packages/collaboration test
+COLLABORATION_LONG_RUN=1 bun run --cwd packages/singapore/packages/collaboration test
+bun run --cwd packages/singapore/packages/collaboration test:browser -- test/presence.browser.test.ts
 ```
 
 The default run has nine deterministic seeds per window, three per scenario, covering
@@ -509,7 +509,7 @@ Give each member only their own token; member names are local quota identities:
 ```sh
 umask 077
 bun -e 'for (const member of ["alice", "bob"]) console.log(member, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url"))' > admission-members
-bun editor/packages/collaboration/examples/signaling-server.ts \
+bun packages/singapore/packages/collaboration/examples/signaling-server.ts \
   127.0.0.1 8789 ./admission-members http://localhost:5173
 ```
 
@@ -521,9 +521,9 @@ WebSocket reconnects re-subscribe and announce; they do not carry document edits
 ### Verification and TURN qualification
 
 ```sh
-bun run --cwd editor/packages/collaboration test
-bun run --cwd editor/packages/collaboration test:server
-bun run --cwd editor/packages/collaboration test:browser
+bun run --cwd packages/singapore/packages/collaboration test
+bun run --cwd packages/singapore/packages/collaboration test:server
+bun run --cwd packages/singapore/packages/collaboration test:browser
 ```
 
 Chromium tests start a local Bun broker and use separate real pages. Three WebRTC
@@ -544,7 +544,7 @@ local fixture, and allow loopback peers. Supply the resulting ICE entry:
 
 ```sh
 COLLABORATION_TEST_TURN='[{"urls":"turn:127.0.0.1:3478?transport=udp","username":"test","credential":"test-secret"}]' \
-  bun run --cwd editor/packages/collaboration test:browser
+  bun run --cwd packages/singapore/packages/collaboration test:browser
 ```
 
 That case uses `iceTransportPolicy: 'relay'`, so a passing connection requires TURN.

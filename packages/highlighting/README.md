@@ -6,7 +6,7 @@ Part of [Singapore](https://singapore.shaulavo.dev/). A code editor for the brow
 
 ## Install
 
-Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/development.md#set-up).
+Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/development.md#set-up).
 
 ## Usage
 
@@ -35,8 +35,8 @@ await service.dispose()
 You can use this package on its own. `@singapore-editor/core` owns editor views; optional packages add syntax, search, gutters, and language features.
 Use a bundler that serves the package worker and data assets. See the [hosting guide](https://singapore.shaulavo.dev/docs/guides/bundling/).
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/editor/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/editor/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)

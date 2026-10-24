@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ShaulLavo/fregat.git",
-    "directory": "editor/packages/diff"
+    "directory": "packages/singapore/packages/diff"
   },
   "files": [
     "README.md",

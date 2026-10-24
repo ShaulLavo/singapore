@@ -12,7 +12,7 @@ Text-buffer tests measure storage operations. Browser layout, input, highlights 
 
 A public number needs its script, file size and shape, machine, browser and package versions, date, warmup and run count. Compare the same feature set and preserve both wins and losses.
 
-The [stress examples](https://github.com/ShaulLavo/fregat/tree/main/editor/examples/stress) and [research report](https://github.com/ShaulLavo/fregat/blob/main/docs/research/packages-as-products/singapore.md) provide starting points. Any experiment you run is evidence for that setup until broader measurements establish otherwise.
+The [stress examples](https://github.com/ShaulLavo/fregat/tree/main/packages/singaporeexamples/stress) and [research report](https://github.com/ShaulLavo/fregat/blob/main/docs/research/packages-as-products/singapore.md) provide starting points. Any experiment you run is evidence for that setup until broader measurements establish otherwise.
 
 ## Separate size from responsiveness
 

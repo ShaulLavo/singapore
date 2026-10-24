@@ -38,8 +38,8 @@ export function EditorPanel() {
 
 `@singapore-editor/core` owns the editor view. This optional package adds Solid lifecycle and state bindings. Choose the other plugins your app needs.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/editor/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/editor/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)

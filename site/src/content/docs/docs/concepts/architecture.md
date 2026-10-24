@@ -22,4 +22,4 @@ Rows have fixed height today. Variable-height rows and complete long-line horizo
 
 ## Engineering sources
 
-The [architecture document](https://github.com/ShaulLavo/fregat/blob/main/editor/ARCHITECTURE.md) shows the layers, the typing flow and the open design questions. The [worker topology](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/architecture/worker-topology.md) records current worker ownership, including the main-thread canonical document, and the [ADRs](https://github.com/ShaulLavo/fregat/tree/main/editor/docs/adr) record why.
+The [architecture document](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/ARCHITECTURE.md) shows the layers, the typing flow and the open design questions. The [worker topology](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/architecture/worker-topology.md) records current worker ownership, including the main-thread canonical document, and the [ADRs](https://github.com/ShaulLavo/fregat/tree/main/packages/singapore/docs/adr) record why.

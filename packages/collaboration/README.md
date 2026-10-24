@@ -6,7 +6,7 @@ Part of [Singapore](https://singapore.shaulavo.dev/). A code editor for the brow
 
 ## Install
 
-Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/development.md#set-up).
+Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/development.md#set-up).
 
 ## Usage
 
@@ -31,7 +31,7 @@ peers are:
 - **Browsers on different machines:** WebRTC, which needs three things you run or choose:
   - A **signaling broker** that introduces peers. It only relays encrypted packets and keeps no
     history. Run the included Bun broker from `@singapore-editor/collaboration/server`
-    ([example](https://github.com/ShaulLavo/fregat/blob/main/editor/packages/collaboration/examples/signaling-server.ts)) or any service with the same protocol, behind TLS,
+    ([example](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/collaboration/examples/signaling-server.ts)) or any service with the same protocol, behind TLS,
     with an origin allowlist and an admission token per member.
   - **STUN servers** so peers can find a direct route.
   - A **TURN relay** (for example coturn) for networks where a direct route fails, with
@@ -40,11 +40,11 @@ peers are:
   people yourself, for example in the fragment of a link; they never go through the broker.
 
 Pass the broker URLs, ICE servers and credentials to the transports when joining. The
-[integration guide](https://github.com/ShaulLavo/fregat/blob/main/editor/packages/collaboration/docs/integration.md#browser-transports) covers each option.
+[integration guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/collaboration/docs/integration.md#browser-transports) covers each option.
 
 ## No end-to-end quick start yet
 
-There is no step-by-step guide that takes two editors from nothing to a synchronized document, and the example above does not start a session. To see the pieces wired together, read the demo app's collaboration page: [`collaboration.html`](https://github.com/ShaulLavo/fregat/blob/main/editor/examples/app/collaboration.html) and [`collaboration.ts`](https://github.com/ShaulLavo/fregat/blob/main/editor/examples/app/src/collaboration.ts). It is source to read, not a tested tutorial. The [integration guide](https://github.com/ShaulLavo/fregat/blob/main/editor/packages/collaboration/docs/integration.md#editor-attachment) covers attaching the plugin to an editor.
+There is no step-by-step guide that takes two editors from nothing to a synchronized document, and the example above does not start a session. To see the pieces wired together, read the demo app's collaboration page: [`collaboration.html`](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/examples/app/collaboration.html) and [`collaboration.ts`](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/examples/app/src/collaboration.ts). It is source to read, not a tested tutorial. The [integration guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/collaboration/docs/integration.md#editor-attachment) covers attaching the plugin to an editor.
 
 ## API highlights
 
@@ -56,7 +56,7 @@ There is no step-by-step guide that takes two editors from nothing to a synchron
 
 [Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/collaboration/overview/)
 
-[Integration guide](https://github.com/ShaulLavo/fregat/blob/main/editor/packages/collaboration/docs/integration.md)
+[Integration guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/collaboration/docs/integration.md)
 
 ## Confirmed merge review
 
@@ -164,8 +164,8 @@ connect fails the test.
 
 You can use this package on its own. `@singapore-editor/core` owns editor views; optional packages add syntax, search, gutters, and language features.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/editor/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/editor/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)

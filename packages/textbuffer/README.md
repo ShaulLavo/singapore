@@ -40,8 +40,8 @@ materializePieceTableFullText(branch) // 'say hello'
 
 You can use this package on its own. `@singapore-editor/core` owns editor views; optional packages add syntax, search, gutters, and language features.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/editor/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/editor/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)

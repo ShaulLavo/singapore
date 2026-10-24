@@ -29,4 +29,4 @@ const resolved = resolveAnchor(snapshot, anchor)
 console.log(resolved) // { offset: 1, liveness: 'live' }
 ```
 
-The [anchor design](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/positions/anchors.md) explains resolution and liveness. The generated `textbuffer` reference documents creation and resolution functions.
+The [anchor design](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/positions/anchors.md) explains resolution and liveness. The generated `textbuffer` reference documents creation and resolution functions.

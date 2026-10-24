@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ShaulLavo/fregat.git",
-    "directory": "editor/packages/scope-lines"
+    "directory": "packages/singapore/packages/scope-lines"
   },
   "files": [
     "README.md",

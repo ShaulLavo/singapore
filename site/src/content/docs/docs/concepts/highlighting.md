@@ -20,4 +20,4 @@ The EditContext input route is Chromium-specific. Highlight painting and highlig
 
 Screen-reader completeness has no published audit. Test keyboard navigation and assistive technology on your required browsers before adopting the editor for those workflows.
 
-The [browser virtualization design](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/display/browser-virtualization.md) explains mounted rows and browser-owned geometry.
+The [browser virtualization design](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/display/browser-virtualization.md) explains mounted rows and browser-owned geometry.

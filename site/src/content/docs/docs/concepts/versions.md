@@ -20,4 +20,4 @@ Monaco uses a mutable red-black piece tree. CodeMirror 6 uses an immutable tree 
 
 The data structure alone does not prove editor-level speed or memory superiority. Measure open, edit, navigation and retention against the workload your application serves.
 
-Read the [piece-table design](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/storage/piece-table.md) and the generated `textbuffer` reference for the storage API.
+Read the [piece-table design](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/storage/piece-table.md) and the generated `textbuffer` reference for the storage API.

@@ -12,18 +12,18 @@ const workspaceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
 const SOURCE_PATHS = [
   'bun.lock',
   'package.json',
-  'editor/package.json',
-  'editor/scripts/browser-test-responses.ts',
-  'editor/scripts/workspace-root.ts',
-  'editor/packages/lsp/src',
-  'editor/packages/lsp/package.json',
-  'editor/packages/lsp-plugin/src',
-  'editor/packages/lsp-plugin/package.json',
-  'editor/packages/typescript-lsp/src',
-  'editor/packages/typescript-lsp/package.json',
-  'editor/packages/typescript-lsp/test',
-  'editor/packages/typescript-lsp/vitest.config.ts',
-  'editor/packages/typescript-lsp/vitest.browser.config.ts',
+  'packages/singapore/package.json',
+  'packages/singapore/scripts/browser-test-responses.ts',
+  'packages/singapore/scripts/workspace-root.ts',
+  'packages/singapore/packages/lsp/src',
+  'packages/singapore/packages/lsp/package.json',
+  'packages/singapore/packages/lsp-plugin/src',
+  'packages/singapore/packages/lsp-plugin/package.json',
+  'packages/singapore/packages/typescript-lsp/src',
+  'packages/singapore/packages/typescript-lsp/package.json',
+  'packages/singapore/packages/typescript-lsp/test',
+  'packages/singapore/packages/typescript-lsp/vitest.config.ts',
+  'packages/singapore/packages/typescript-lsp/vitest.browser.config.ts',
   'apps/server/src/lsp',
   'apps/server/test/factories/typescript-runtime.ts',
   'apps/server/test/factories/typescript-parity.ts',
@@ -37,8 +37,8 @@ export function paritySourceIdentity(root = workspaceRoot) {
   const dirty = git(['status', '--porcelain'], root).length > 0
   const paths =
     root === editorRoot
-      ? SOURCE_PATHS.filter((path) => path.startsWith('editor/')).map((path) =>
-          path.slice('editor/'.length),
+      ? SOURCE_PATHS.filter((path) => path.startsWith('packages/singapore/')).map((path) =>
+          path.slice('packages/singapore/'.length),
         )
       : SOURCE_PATHS
   const files = git(

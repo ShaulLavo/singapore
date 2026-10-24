@@ -145,7 +145,7 @@ let results = {
     ),
   ),
   rootLockSha256: createHash('sha256')
-    .update(await readFile(resolve(root, '../../../bun.lock')))
+    .update(await readFile(resolve(root, '../../../../bun.lock')))
     .digest('hex'),
   benchmarkSha256: createHash('sha256')
     .update(
@@ -172,7 +172,7 @@ let results = {
             'summarize.mjs',
             'summarize-open.mjs',
             'verify-control.mjs',
-            '../../../bun.lock',
+            '../../../../bun.lock',
           ].map((file) => readFile(resolve(root, file))),
         )
       )

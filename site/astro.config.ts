@@ -59,12 +59,14 @@ export default defineConfig({
       components: { Head: './src/components/Head.astro' },
       description: 'Documentation for the Singapore browser code editor.',
       customCss: ['./src/styles/site.css'],
-      editLink: { baseUrl: 'https://github.com/ShaulLavo/fregat/edit/main/editor/site/' },
+      editLink: {
+        baseUrl: 'https://github.com/ShaulLavo/fregat/edit/main/packages/singapore/site/',
+      },
       social: [
         {
           icon: 'github',
           label: 'Source on GitHub',
-          href: 'https://github.com/ShaulLavo/fregat/tree/main/editor',
+          href: 'https://github.com/ShaulLavo/fregat/tree/main/packages/singapore',
         },
       ],
       sidebar: SECTIONS.map((section) => ({

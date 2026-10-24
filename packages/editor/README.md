@@ -45,14 +45,14 @@ Touch menu chrome is opt-in through `createTouchSelectionPlugin` from `@singapor
 What tests cover it:
 
 - Unit tests for the gesture recognizer (`test/touchSelection.test.ts` in this package) and the menu and plugin (`packages/plugin-ui/test/touchSelection*.test.ts`).
-- Playwright specs in `examples/app/test/mobile-*.spec.ts`, which run in Chromium and WebKit with an iPhone 13 profile. The repository's CI workflows do not run them. Run them with `bun run --cwd editor/examples/app test:e2e`.
-- Notes on a Mobile Safari run on the iOS 26.5 simulator in [Browser quirks](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/display/browser-quirks.md#ios-native-long-press-selection).
+- Playwright specs in `examples/app/test/mobile-*.spec.ts`, which run in Chromium and WebKit with an iPhone 13 profile. The repository's CI workflows do not run them. Run them with `bun run --cwd packages/singapore/examples/app test:e2e`.
+- Notes on a Mobile Safari run on the iOS 26.5 simulator in [Browser quirks](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/display/browser-quirks.md#ios-native-long-press-selection).
 
-The automated tests above do not run on a physical phone, and [Browser quirks](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/display/browser-quirks.md#touch-haptic-availability) lists physical-device haptic feedback as unverified.
+The automated tests above do not run on a physical phone, and [Browser quirks](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/display/browser-quirks.md#touch-haptic-availability) lists physical-device haptic feedback as unverified.
 
 ## Shiki entry point
 
-`@singapore-editor/core/shiki` is a subpath export of this package. It holds the Shiki-based tokenizer that runs in a worker (`createShikiWorkerOwner`, `ShikiWorkerOwner`), `createShikiHighlighterPlugin` for editors that bring their own Shiki grammar and theme loaders, and theme converters such as `editorThemeFromVscodeTheme`. The [Themes guide](https://singapore.shaulavo.dev/docs/guides/themes/) uses the converters. For editor syntax colors, use the [`tree-sitter`](https://github.com/ShaulLavo/fregat/blob/main/editor/packages/tree-sitter/README.md) package instead. The unpublished `highlighting` package builds on this entry point for snippets and diffs. Worker details are in [Worker topology](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/architecture/worker-topology.md#shiki-tokenizer-worker).
+`@singapore-editor/core/shiki` is a subpath export of this package. It holds the Shiki-based tokenizer that runs in a worker (`createShikiWorkerOwner`, `ShikiWorkerOwner`), `createShikiHighlighterPlugin` for editors that bring their own Shiki grammar and theme loaders, and theme converters such as `editorThemeFromVscodeTheme`. The [Themes guide](https://singapore.shaulavo.dev/docs/guides/themes/) uses the converters. For editor syntax colors, use the [`tree-sitter`](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/tree-sitter/README.md) package instead. The unpublished `highlighting` package builds on this entry point for snippets and diffs. Worker details are in [Worker topology](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/architecture/worker-topology.md#shiki-tokenizer-worker).
 
 ## API highlights
 
@@ -66,8 +66,8 @@ The automated tests above do not run on a physical phone, and [Browser quirks](h
 
 Start with `@singapore-editor/core`. Add optional packages for gutters, search, syntax, or language server features.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/editor/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/editor/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)

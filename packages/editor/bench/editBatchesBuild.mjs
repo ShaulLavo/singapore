@@ -35,12 +35,11 @@ export async function rebuildPackage(path, expectedName) {
 }
 
 async function buildInputs(packagePath) {
-  // NOT-PORTABLE: Reads untracked editor/bun.lock; Platform commits the root lockfile.
   const files = {
     packageJson: packagePath,
     buildScript,
     tsconfig: join(repository, 'tsconfig.json'),
-    lockfile: join(repository, 'bun.lock'),
+    lockfile: join(repository, '../../bun.lock'),
   }
   const hashes = {}
   for (const [name, path] of Object.entries(files)) {

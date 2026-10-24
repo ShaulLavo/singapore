@@ -1,6 +1,6 @@
 # Develop Singapore
 
-How to build, test and check the `editor/` packages. This folder lives in the [Fregat](https://github.com/ShaulLavo/fregat) monorepo. Read the [contribution guide](https://github.com/ShaulLavo/fregat/blob/main/CONTRIBUTING.md) first for the policy on issues, pull requests and AI-assisted changes. [AGENTS.md](../AGENTS.md) lists the conventions that tests do not enforce.
+How to build, test and check the `packages/singapore/` packages. This folder lives in the [Fregat](https://github.com/ShaulLavo/fregat) monorepo. Read the [contribution guide](https://github.com/ShaulLavo/fregat/blob/main/CONTRIBUTING.md) first for the policy on issues, pull requests and AI-assisted changes. [AGENTS.md](../AGENTS.md) lists the conventions that tests do not enforce.
 
 ## Set up
 
@@ -8,7 +8,7 @@ You need [Bun](https://bun.sh/) 1.4.4, the version in `packageManager` that CI u
 
 ```sh
 bun install --frozen-lockfile
-bun x turbo run build --filter='./editor/packages/*'
+bun x turbo run build --filter='./packages/singapore/packages/*'
 ```
 
 The second command writes `dist/` for all 23 packages. Packages import each other through `dist/`, so rebuild after you change a package that another one consumes.
@@ -16,7 +16,7 @@ The second command writes `dist/` for all 23 packages. Packages import each othe
 ## Run the demo app
 
 ```sh
-bun run --cwd editor/examples/app dev
+bun run --cwd packages/singapore/examples/app dev
 ```
 
 Vite prints the address. The app shows a file tree beside the editor and exercises most packages. It includes a history panel for the undo graph, and `?modal` turns on a modal-editing plugin.
@@ -26,16 +26,16 @@ Vite prints the address. The app shows a file tree beside the editor and exercis
 Use package scripts. Do not use `bun test`, which skips the configured Vitest environments.
 
 ```sh
-bun run --cwd editor/packages/textbuffer test
-cd editor/packages/editor
+bun run --cwd packages/singapore/packages/textbuffer test
+cd packages/singapore/packages/editor
 bun x vitest run --project dom test/autoClose.test.ts
 ```
 
-Each package defines its own `test`, `typecheck`, `lint` and `format:check` scripts. In `packages/editor`, Vitest has projects named `node`, `dom` and `browser`, plus browser projects for layout and paint. The browser projects drive Playwright. Install the browsers they use with `bun --cwd editor/site x playwright install chromium`, and add `firefox` and `webkit` for the cross-engine projects. On Arch Linux, run `scripts/playwright-webkit-arch.sh` from the Fregat root after downloading WebKit.
+Each package defines its own `test`, `typecheck`, `lint` and `format:check` scripts. In `packages/editor`, Vitest has projects named `node`, `dom` and `browser`, plus browser projects for layout and paint. The browser projects drive Playwright. Install the browsers they use with `bun --cwd packages/singapore/site x playwright install chromium`, and add `firefox` and `webkit` for the cross-engine projects. On Arch Linux, run `scripts/playwright-webkit-arch.sh` from the Fregat root after downloading WebKit.
 
 ## Check the whole workspace
 
-Run these from `editor/`:
+Run these from `packages/singapore/`:
 
 - `bun run typecheck`: typechecks every package through Turborepo.
 - `bun run lint`: runs oxlint on the scripts and every package.
@@ -62,4 +62,4 @@ Package READMEs follow a fixed template that `package-pages:check` enforces: `In
 
 TypeDoc generates the pages under `reference/api` at build time, and the repository does not commit them. To change one, edit the doc comments in the package source. The [site README](../site/README.md) explains how to build the site.
 
-Link to files inside `editor/` with relative paths. They resolve in Fregat and in the read-only [singapore](https://github.com/ShaulLavo/singapore) mirror. Links to anything above `editor/` must be absolute URLs.
+Link to files inside `packages/singapore/` with relative paths. They resolve in Fregat and in the read-only [singapore](https://github.com/ShaulLavo/singapore) mirror. Links to anything above `packages/singapore/` must be absolute URLs.

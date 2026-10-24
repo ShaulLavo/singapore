@@ -34,7 +34,7 @@ export async function sourceIdentity(root) {
     'codemirror.js',
     'build.mjs',
     'provenance.mjs',
-    '../../../bun.lock',
+    '../../../../bun.lock',
   ])
     files.push([
       file,

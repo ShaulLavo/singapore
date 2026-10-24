@@ -18,7 +18,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ShaulLavo/fregat.git",
-    "directory": "editor/packages/tree-sitter"
+    "directory": "packages/singapore/packages/tree-sitter"
   },
   "files": [
     "README.md",

@@ -18,7 +18,7 @@ At 10 MiB, Singapore now records 147.9 ms against the supplied earlier reference
 
 The supplied historical reference combines two experiments. Singapore's 1,464 ms came from the instrumented open diagnostic; the earlier uninstrumented comparison recorded 1,517.7 ms. The 169 ms and 56 ms competitor references round the uninstrumented values of 169.4 ms and 56.1 ms. The historical runs were noisy. This rerun matches their machine, browser, fixture identities and competitor versions, but it is not a controlled before/after pair and establishes no causal speedup ratio.
 
-The [earlier comparison](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/performance/browser-compare-2026-10-08.md) and [earlier diagnostic](https://github.com/ShaulLavo/fregat/tree/main/editor/docs/performance/singapore-open-2026-10-08) retain those runs. `historical-reference.json` records the exact reference values and source commits.
+The [earlier comparison](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08.md) and [earlier diagnostic](https://github.com/ShaulLavo/fregat/tree/main/packages/singapore/docs/performance/singapore-open-2026-10-08) retain those runs. `historical-reference.json` records the exact reference values and source commits.
 
 ## Whole-document reference at 10 MiB
 

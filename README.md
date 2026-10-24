@@ -202,7 +202,7 @@ The [known limits page](docs/limitations.md) lists exact ceilings, such as the 3
 
 Singapore borrows ideas from [CodeMirror](https://codemirror.net/), [Monaco and VS Code](https://github.com/microsoft/monaco-editor), [Fred](https://github.com/cdacamar/fredbuf), Cameron DaCamara's editor, and [Zed](https://zed.dev/).
 
-Development happens in [Fregat](https://github.com/ShaulLavo/fregat/tree/main/editor). This repository is a read-only mirror of its `editor/` folder, so open issues and pull requests in Fregat. Read the [contribution guide and AI policy](https://github.com/ShaulLavo/fregat/blob/main/CONTRIBUTING.md) first. Report security problems through the [security policy](https://github.com/ShaulLavo/fregat/blob/main/SECURITY.md).
+Development happens in [Fregat](https://github.com/ShaulLavo/fregat/tree/main/packages/singapore). This repository is a read-only mirror of its `packages/singapore/` folder, so open issues and pull requests in Fregat. Read the [contribution guide and AI policy](https://github.com/ShaulLavo/fregat/blob/main/CONTRIBUTING.md) first. Report security problems through the [security policy](https://github.com/ShaulLavo/fregat/blob/main/SECURITY.md).
 
 ## License
 

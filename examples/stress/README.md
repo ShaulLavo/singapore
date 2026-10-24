@@ -312,7 +312,7 @@ replacement generations, would classify the rejection. The first attempted cohor
 valid comparisons.
 Not covered: full historical agreement, expanded final-identity loaded and historical proofs, and
 full-matrix timing. Minimap acceptance is excluded until its undo source-correctness fix lands.
-See the [acceptance record](../../../docs/document-contributions/paired-input-latency.md#minimap-proof-retention-correction).
+See the [acceptance record](../../../../docs/document-contributions/paired-input-latency.md#minimap-proof-retention-correction).
 
 Compare complete frozen package sets from the Fregat or Editor root. Replace the example paths
 with your frozen baseline and candidate directories. Follow the execution host's resource policy
@@ -432,7 +432,7 @@ document session before the next burst, outside captured input. Raw reset eviden
 rejected receipt and reload duration. Correct receipts automatically skip that reload. Full
 minimap acceptance awaits the product fix.
 
-See [paired method and validation](../../../docs/document-contributions/paired-input-latency.md)
+See [paired method and validation](../../../../docs/document-contributions/paired-input-latency.md)
 for statistical limits, historical comparison, and measured wall times. The old absolute input
 calibration and proof commands have been removed. Historical evidence stays unchanged.
 

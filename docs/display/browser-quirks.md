@@ -1,6 +1,6 @@
 # Browser quirks
 
-[Known limits](https://github.com/ShaulLavo/fregat/blob/main/editor/docs/limitations.md)
+[Known limits](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/limitations.md)
 records measurement ceilings, analysis budgets and bounded package behavior.
 This page records browser bugs, platform limits, and their workarounds.
 
@@ -82,7 +82,7 @@ plain-text colours agree with live paint.
 The link should be red and the following text black. WebKit paints the following
 text red. Changing the span to `user-select: text` restores the intended paint.
 Regression coverage lives in
-[highlightPaint.browser.test.ts](https://github.com/ShaulLavo/fregat/blob/main/editor/packages/editor/test/highlightPaint.browser.test.ts).
+[highlightPaint.browser.test.ts](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/editor/test/highlightPaint.browser.test.ts).
 It checks light and dark Markdown preview at 390 px, exact live/snapshot pixels,
 and the endpoints of both native range types in all three engines.
 
@@ -417,7 +417,7 @@ against a production build with the membership-refresh loop removed. It checked
 native syntax pixels after home/manual takeover, including light/dark themes, cold
 reloads, desktop WebKit, phone-width WebKit and the iPhone descriptor. The ordinary
 HTML manual retired that takeover and probe. Its successor,
-`editor/site/tests/manual.browser.ts`, checks captured colour spans on every
+`packages/singapore/site/tests/manual.browser.ts`, checks captured colour spans on every
 reload frame and static/live example pixels in Chromium and WebKit. Static
 examples keep their captured colours in HTML; explicit live examples still use
 native highlights. Screenshot animations must remain enabled: disabling them

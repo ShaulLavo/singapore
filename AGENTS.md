@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Instructions for AI coding agents working in `editor/` (Singapore). The [README](README.md) maps the packages, and [ARCHITECTURE.md](ARCHITECTURE.md) explains the design. Read [docs/development.md](docs/development.md) for setup.
+Instructions for AI coding agents working in `packages/singapore/` (Singapore). The [README](README.md) maps the packages, and [ARCHITECTURE.md](ARCHITECTURE.md) explains the design. Read [docs/development.md](docs/development.md) for setup.
 
 ## Plans
 
-Fregat's [PLAN.md](https://github.com/ShaulLavo/fregat/blob/main/PLAN.md) schedules all work. Write Editor plans in Fregat's root `plans/`, following the [Editor inventory](https://github.com/ShaulLavo/fregat/blob/main/plans/editor-backlog.md) and [authoring contract](https://github.com/ShaulLavo/fregat/blob/main/plans/editor-authoring.md). Run `bun run plans:check` from the Fregat root after you edit the inventory. Do not add `plans/` or `PLAN.md` inside `editor/`.
+Fregat's [PLAN.md](https://github.com/ShaulLavo/fregat/blob/main/PLAN.md) schedules all work. Write Editor plans in Fregat's root `plans/`, following the [Editor inventory](https://github.com/ShaulLavo/fregat/blob/main/plans/editor-backlog.md) and [authoring contract](https://github.com/ShaulLavo/fregat/blob/main/plans/editor-authoring.md). Run `bun run plans:check` from the Fregat root after you edit the inventory. Do not add `plans/` or `PLAN.md` inside `packages/singapore/`.
 
 ## The simple API comes first
 
@@ -27,7 +27,7 @@ Every feature works on an editor that was only given text: `new Editor(element)`
 
 - Call the text-slice record a Piece. Other editors say "fragment".
 - Combine arrays with `concat` and use fresh array results directly, following Fregat's array construction rules. Keep copies needed for ownership, iterable or typed-array conversion, tuple typing, or sparse-array behavior. A performance exception needs measurements.
-- Link files inside `editor/` with relative paths. Links above `editor/` are absolute URLs, because the [singapore](https://github.com/ShaulLavo/singapore) mirror holds only this folder.
+- Link files inside `packages/singapore/` with relative paths. Links above `packages/singapore/` are absolute URLs, because the [singapore](https://github.com/ShaulLavo/singapore) mirror holds only this folder.
 - Package READMEs follow the template that `bun run package-pages:check` enforces from the Fregat root. A package that `npm view` does not find says `Not on npm yet.` in its Install section.
 
 ## Generated files
@@ -40,7 +40,7 @@ Every feature works on an editor that was only given text: `new Editor(element)`
 
 Turborepo with Bun. Run tests through package scripts with `bun run test`. Do not use `bun test`; it bypasses the configured Vitest environments.
 
-Before you commit, run the narrowest package test, then from `editor/`:
+Before you commit, run the narrowest package test, then from `packages/singapore/`:
 
 1. `bun run format:check`. `bun run format` formats the whole workspace, so it touches unrelated files when formatting has drifted. Keep those incidental changes.
 2. `bun run typecheck` and `bun run lint`.
