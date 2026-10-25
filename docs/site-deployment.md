@@ -11,12 +11,15 @@ Use Bun 1.4.4 and Node.js 26 or newer:
 
 ```sh
 bun install --frozen-lockfile
+bun x --cwd site playwright install chromium
 bash scripts/product-sites/build.sh dist
 ```
 
 The output directory must not exist before the build. Remove only the generated `dist/`
-directory before a new local build. The build runs the selected workspace package builds,
-then builds the docs with `/` and the demo with `/demo/`.
+directory before a new local build. The browser install uses the exact Playwright version
+declared by `site/package.json` and provides Chromium for the build-time capture. The build
+runs the selected workspace package builds, then builds the docs with `/` and the demo with
+`/demo/`.
 
 ## Dry-run and deploy
 

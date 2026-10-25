@@ -42,6 +42,8 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Check exact domain configuration and cache headers
         run: python3 -m unittest discover -s scripts/product-sites -p 'test_*.py'
+      - name: Install the pinned site capture browser
+        run: bun x --cwd site playwright install chromium
       - name: Build the docs and demo deployment
         run: bash scripts/product-sites/build.sh "$RUNNER_TEMP/singapore-site-dist"
       - name: Check the published routes
