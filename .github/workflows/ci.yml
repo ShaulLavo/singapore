@@ -65,6 +65,11 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
+      # The site has its own pinned Playwright release for build-time capture.
+      - name: Install site Playwright Chromium
+        working-directory: site
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+
       - name: Check turbo inputs
         run: bun scripts/check-turbo-inputs.mjs
 
@@ -153,6 +158,11 @@ jobs:
       - name: Install Playwright browsers
         working-directory: packages/editor
         run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit
+
+      # The site build runs as a dependency of package tests and uses its own pinned Playwright.
+      - name: Install site Playwright Chromium
+        working-directory: site
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       # The worker test imports built packages; turbo replays the build from the cache.
       - name: Build packages
