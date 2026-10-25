@@ -5,6 +5,7 @@
 ### Patch Changes
 
 - Fixed packed grammar and query modules so browser bundlers can load every lazy language asset.
+- Fixed missing grammar attribution files in `notices/` so consumers can generate license notices from the installed package.
 
 ## 0.2.9
 

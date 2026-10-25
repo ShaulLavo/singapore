@@ -1,4 +1,5 @@
-import { cp, readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { cp, readFile, readdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '..')
@@ -35,6 +36,7 @@ export async function prepareBrowserConsumer(consumer: string): Promise<void> {
   const fixtures = path.join(root, 'packages/tree-sitter-languages/test/fixtures')
   await cp(path.join(fixtures, 'native.ts'), path.join(consumer, 'native.ts'))
   await cp(path.join(fixtures, 'sql.ts'), path.join(consumer, 'sql.ts'))
+  await prepareNoticeInventory(consumer)
   await writeFile(
     path.join(consumer, 'vite.config.mjs'),
     `export default { logLevel: 'warn', worker: { format: 'es' } }\n`,
@@ -43,6 +45,19 @@ export async function prepareBrowserConsumer(consumer: string): Promise<void> {
     path.join(consumer, 'index.html'),
     '<!doctype html><html><body><script type="module" src="/main.ts"></script></body></html>\n',
   )
+}
+
+async function prepareNoticeInventory(consumer: string): Promise<void> {
+  const languagePackage = path.join(root, 'packages/tree-sitter-languages')
+  const files = ['NOTICE'].concat(
+    (await readdir(path.join(languagePackage, 'notices'))).map((name) => `notices/${name}`),
+  )
+  const inventory: Record<string, string> = {}
+  for (const file of files.toSorted()) {
+    const content = await readFile(path.join(languagePackage, file))
+    inventory[file] = createHash('sha256').update(content).digest('hex')
+  }
+  await writeFile(path.join(consumer, 'notices.expected.json'), JSON.stringify(inventory))
 }
 
 async function installedVersion(relativePath: string): Promise<string> {

@@ -22,7 +22,8 @@
   "files": [
     "README.md",
     "dist",
-    "NOTICE"
+    "NOTICE",
+    "notices"
   ],
   "type": "module",
   "sideEffects": false,

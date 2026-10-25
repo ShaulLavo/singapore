@@ -80,7 +80,8 @@ bun run release:tarballs:validate -- --out release
 
 The build command compiles every package once, packs the complete package set,
 installs those tarballs with their external peer dependencies in a fresh Bun
-consumer, imports every package entry point, then builds a Vite browser consumer of the
+consumer, checks the installed grammar `NOTICE` and `notices/` inventory against
+the source files, imports every package entry point, then builds a Vite browser consumer of the
 packed highlighting, language catalog and metadata entry points. Headless Chromium
 loads every lazy catalog grammar and the simple JavaScript, JSX, TypeScript and
 TSX variants in a worker, initializes their WASM, parses samples and compiles and

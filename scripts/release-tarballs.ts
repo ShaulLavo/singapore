@@ -247,6 +247,7 @@ async function testCleanConsumer(
     await writeFile(path.join(consumer, 'smoke.mjs'), smokeScript(releasePackages, packages))
     await prepareBrowserConsumer(consumer)
     await run(['bun', 'install', '--no-progress'], consumer, signal)
+    await run(['node', 'notices.mjs'], consumer, signal)
     await run(['bun', 'smoke.mjs'], consumer, signal)
     await run(['bun', 'x', '--no-install', 'tsc', '-p', 'tsconfig.json'], consumer, signal)
     await run(
