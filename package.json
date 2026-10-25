@@ -9,7 +9,7 @@
       "site"
     ],
     "catalog": {
-      "@fregat/hotkeys": "https://github.com/ShaulLavo/fregat/releases/download/hotkeys-0.0.2-68d8aaf6f631-260650623e7e/fregat-hotkeys-0.0.2-68d8aaf6f631-260650623e7e.tgz",
+      "@fregat/hotkeys": "https://github.com/ShaulLavo/hotkeys/releases/download/hotkeys-3de9d21e2299d2b94ed2d8b012c25bf9358dcfbd/fregat-hotkeys-3de9d21e2299d2b94ed2d8b012c25bf9358dcfbd.tgz",
       "@types/bun": "1.4.2",
       "vite": "8.3.1"
     }
@@ -30,6 +30,8 @@
     "health:write": "bun scripts/architecture-health.mjs --write",
     "publish:packages": "bun scripts/publish-packages.ts",
     "publish:packages:dry-run": "bun scripts/publish-packages.ts --dry-run",
+    "release:tarballs": "bun scripts/release-tarballs.ts",
+    "release:tarballs:validate": "bun scripts/release-tarballs.ts --validate-only",
     "test": "turbo test",
     "stress:build": "turbo build --filter=@singapore-editor/core --filter=@singapore-editor/file-animation --filter=@singapore-editor/find --filter=@singapore-editor/lsp --filter=@singapore-editor/markdown --filter=@singapore-editor/minimap --filter=@singapore-editor/scope-lines --filter=@singapore-editor/tree-sitter-languages --filter=@singapore-editor/paged",
     "bench:stress": "bun run stress:build && bun run --cwd examples/stress bench",

@@ -1,65 +1,106 @@
 # Develop Singapore
 
-How to build, test and check the `packages/singapore/` packages. This folder lives in the [Fregat](https://github.com/ShaulLavo/fregat) monorepo. Read the [contribution guide](https://github.com/ShaulLavo/fregat/blob/main/CONTRIBUTING.md) first for the policy on issues, pull requests and AI-assisted changes. [AGENTS.md](../AGENTS.md) lists the conventions that tests do not enforce.
+Singapore is a standalone Bun workspace. The repository owns the packages,
+examples, documentation site and release tooling.
 
 ## Set up
 
-You need [Bun](https://bun.sh/) 1.4.4, the version in `packageManager` that CI uses, and Node.js 26 or newer, because the Tree-sitter parser needs `WebAssembly.Memory.prototype.toResizableBuffer()` and Vitest and grammar generation run in Node. From the Fregat root:
+You need [Bun](https://bun.sh/) 1.4.4 and Node.js 26 or newer. The parser and
+browser tests also need a current browser supported by the selected Playwright
+projects.
 
 ```sh
 bun install --frozen-lockfile
-bun x turbo run build --filter='./packages/singapore/packages/*'
+bun run build
 ```
 
-The second command writes `dist/` for all 23 packages. Packages import each other through `dist/`, so rebuild after you change a package that another one consumes.
+Packages import one another through their built `dist/` directories. Rebuild
+after changing a package that another package consumes.
 
 ## Run the demo app
 
 ```sh
-bun run --cwd packages/singapore/examples/app dev
+bun run --cwd examples/app dev
 ```
 
-Vite prints the address. The app shows a file tree beside the editor and exercises most packages. It includes a history panel for the undo graph, and `?modal` turns on a modal-editing plugin.
+Vite prints the address. The app shows a file tree beside the editor and
+exercises the package integrations.
 
-## Run tests
+## Run checks
 
-Use package scripts. Do not use `bun test`, which skips the configured Vitest environments.
+Use package scripts. Do not use `bun test`, which skips the configured Vitest
+environments.
 
 ```sh
-bun run --cwd packages/singapore/packages/textbuffer test
-cd packages/singapore/packages/editor
-bun x vitest run --project dom test/autoClose.test.ts
+bun run --cwd packages/textbuffer test
+bun run --cwd packages/editor test
+bun run format:check
+bun run typecheck
+bun run lint
+bun run health
 ```
 
-Each package defines its own `test`, `typecheck`, `lint` and `format:check` scripts. In `packages/editor`, Vitest has projects named `node`, `dom` and `browser`, plus browser projects for layout and paint. The browser projects drive Playwright. Install the browsers they use with `bun --cwd packages/singapore/site x playwright install chromium`, and add `firefox` and `webkit` for the cross-engine projects. On Arch Linux, run `scripts/playwright-webkit-arch.sh` from the Fregat root after downloading WebKit.
+The editor and several packages have browser projects. Install the browsers
+needed by the package you are checking with its pinned Playwright executable,
+for example:
 
-## Check the whole workspace
+```sh
+bun --cwd packages/editor x playwright install chromium firefox webkit
+```
 
-Run these from `packages/singapore/`:
+The documentation site has its own checks:
 
-- `bun run typecheck`: typechecks every package through Turborepo.
-- `bun run lint`: runs oxlint on the scripts and every package.
-- `bun run format:check`: checks formatting with oxfmt. `bun run format` fixes it across the whole workspace.
-- `bun run health`: checks the full-text boundary, the command reference and the architecture baselines.
-- `bun run commands:reference`: regenerates [`docs/commands.md`](commands.md). `health` fails when the file is stale.
-- `bun run --cwd site docs:check`: compiles every TypeScript example in the site pages and the package READMEs.
+```sh
+bun run --cwd site docs:check
+bun run --cwd site build
+bun run --cwd site test:browser
+```
 
-From the Fregat root, `bun run package-pages:check` checks the package metadata and README structure that npm renders, and `bun run plans:check` checks the Editor plan index and the files it links.
+## Release package tarballs
 
-## Where things live
+A Singapore release contains all 23 package tarballs from one verified build. It
+is distributed as a draft GitHub Release, not as npm artifacts. The manifest
+records the exact source commit, tag, package versions, release URLs and
+checksums; `SHA256SUMS` covers every tarball.
 
-- `packages/<name>`: one published package, with `src/`, `test/`, `README.md`, optional `docs/` and `bench/`.
-- `examples/app`: the demo app.
-- `examples/stress`: the stress and input-latency harness, with committed results.
-- `bench/compare`: the Singapore, Monaco and CodeMirror comparison.
-- `site`: the documentation site, with hand-written pages in `src/content/docs` and generated API reference.
-- `scripts`: workspace tooling, such as the architecture health check and the command reference.
-- `docs`: [design documents](README.md).
+Run the complete local qualification without publishing:
 
-## Write documentation
+```sh
+bun run release:tarballs -- --out release
+bun run release:tarballs:validate -- --out release
+```
 
-Package READMEs follow a fixed template that `package-pages:check` enforces: `Install`, `Usage`, `API highlights` and `License` headings, one TypeScript example, absolute HTTPS links, and either an `npm install` line or a line that starts `Not on npm yet.` The site compiles the example, so keep it runnable. The README for a package that `npm view` does not find says `Not on npm yet.`
+The build command compiles every package once, packs the complete package set,
+installs those tarballs with their external peer dependencies in a fresh Bun
+consumer, imports every package entry point, writes `release-manifest.json` and
+`SHA256SUMS`, then validates the result. The validator checks the exact package
+directories, names, versions, source commit, `singapore-<full-commit>` tag and
+all checksums.
 
-TypeDoc generates the pages under `reference/api` at build time, and the repository does not commit them. To change one, edit the doc comments in the package source. The [site README](../site/README.md) explains how to build the site.
+To create the draft release through GitHub Actions, push the tag for the commit
+that was verified locally:
 
-Link to files inside `packages/singapore/` with relative paths. They resolve in Fregat and in the read-only [singapore](https://github.com/ShaulLavo/singapore) mirror. Links to anything above `packages/singapore/` must be absolute URLs.
+```sh
+commit=$(git rev-parse HEAD)
+git tag "singapore-$commit"
+git push origin "singapore-$commit"
+```
+
+Consumers should install the package tarballs they use from one release and
+include each tarball needed by its internal dependencies. Keep the release
+manifest beside the dependency configuration. To install the complete set from
+a downloaded manifest:
+
+```sh
+jq -r '.packages[].releaseUrl' release-manifest.json | xargs bun add
+```
+
+Verify downloaded tarballs before use with `sha256sum -c SHA256SUMS`.
+
+## Repository layout
+
+- `packages/<name>` contains one public package.
+- `examples/app` is the demo application.
+- `site` contains the documentation site and generated API reference.
+- `scripts` contains workspace checks and package release tooling.
+- `docs` contains architecture, design and performance records.

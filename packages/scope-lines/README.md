@@ -45,8 +45,8 @@ editor.setText('const value = 1\n')
 `@singapore-editor/core` owns the editor view. Add these plugins to show enclosing scopes and bracket nesting.
 Bracket pair colors need a syntax plugin. Indent guides and sticky headers can use indentation.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)

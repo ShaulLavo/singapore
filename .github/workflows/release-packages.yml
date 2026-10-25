@@ -1,0 +1,44 @@
+name: Draft package release
+
+on:
+  push:
+    tags:
+      - 'singapore-*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and draft package release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Build and verify release tarballs
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          bun run release:tarballs -- --out release --commit "$RELEASE_COMMIT" --tag "$RELEASE_TAG"
+          bun run release:tarballs:validate -- --out release --commit "$RELEASE_COMMIT" --tag "$RELEASE_TAG"
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          gh release create "$RELEASE_TAG"
+          --draft
+          --verify-tag
+          --title "$RELEASE_TAG"
+          --generate-notes
+          release/*.tgz
+          release/release-manifest.json
+          release/SHA256SUMS

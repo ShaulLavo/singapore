@@ -12,13 +12,12 @@
   ],
   "homepage": "https://singapore.shaulavo.dev/docs/reference/api/paged/overview/",
   "bugs": {
-    "url": "https://github.com/ShaulLavo/fregat/issues"
+    "url": "https://github.com/ShaulLavo/singapore/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ShaulLavo/fregat.git",
-    "directory": "packages/singapore/packages/paged"
+    "url": "git+https://github.com/ShaulLavo/singapore.git"
   },
   "files": [
     "README.md",

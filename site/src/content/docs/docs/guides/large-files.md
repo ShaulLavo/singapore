@@ -6,7 +6,7 @@ Choose a loading path based on whether the user needs editing and language analy
 
 The core stores a fully loaded editable document. A file that fits memory may still cost too much to parse, tokenize or analyze on each edit. A plain core editor has no language analysis until you attach providers or plugins. Singapore's tree-sitter and TypeScript plugins have no automatic document-size cutoff.
 
-Choose and enforce an analysis policy in your host application. You can keep large documents editable while leaving expensive analysis plugins detached. Fregat's host defaults to a 10 Mi UTF-16 code-unit cutoff for syntax and language-server analysis. That cutoff belongs to Fregat's settings and host policy.
+Choose and enforce an analysis policy in your host application. You can keep large documents editable while leaving expensive analysis plugins detached. A host may enforce a 10 Mi UTF-16 code-unit cutoff for syntax and language-server analysis. That cutoff belongs to the host's settings and policy.
 
 The `paged` package provides a read-only path for files you want to inspect without loading the whole file into the editable buffer. Editable paging remains planned work.
 
@@ -24,7 +24,7 @@ Consult the generated `@singapore-editor/paged` reference for its file source an
 
 The editable core and read-only paged viewer solve different tasks. A size ceiling says that a test file opened; it says nothing about whether language analysis or typing met an interactive budget. Existing measurements show large-file typing can miss a 60 Hz frame, and analysis can add substantial latency.
 
-There is no supported universal 1 GB editable-file claim. Public editor-level comparisons with Monaco and CodeMirror are still missing. The [research report](https://github.com/ShaulLavo/fregat/blob/main/docs/research/packages-as-products/singapore.md) records the measured ceilings and their limitations.
+There is no supported universal 1 GB editable-file claim. Public editor-level comparisons with Monaco and CodeMirror are still missing. The [research report](https://github.com/ShaulLavo/singapore/blob/main/docs/performance/browser-compare-2026-10-08.md) records the measured ceilings and their limitations.
 
 ## If it doesn't work
 

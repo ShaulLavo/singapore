@@ -28,4 +28,4 @@ There is no published editor-level benchmark proving Singapore faster than eithe
 
 ## Source and roadmap
 
-Development happens in [Fregat](https://github.com/ShaulLavo/fregat/tree/main/packages/singapore). The [Singapore repository](https://github.com/ShaulLavo/singapore) is a read-only mirror. Submit contributions to Fregat and follow the [roadmap](https://github.com/ShaulLavo/fregat/blob/main/PLAN.md).
+Development happens in the [Singapore repository](https://github.com/ShaulLavo/singapore). Open issues and pull requests there.

@@ -42,7 +42,7 @@ tooltip.show({
 
 ## Touch selection menu
 
-Status: experimental. The menu is in the source only: `@singapore-editor/plugin-ui` 0.1.0 on npm has no touch plugin, and mobile is not a supported target. The gestures it reacts to live in `@singapore-editor/core`. See [Touch selection](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/editor/README.md#touch-selection) for what tests cover.
+Status: experimental. The menu is in the source only: `@singapore-editor/plugin-ui` 0.1.0 on npm has no touch plugin, and mobile is not a supported target. The gestures it reacts to live in `@singapore-editor/core`. See [Touch selection](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/README.md#touch-selection) for what tests cover.
 
 Add `createTouchSelectionPlugin({ haptics: true })` to the editor's `plugins` option. Import the factory from `@singapore-editor/plugin-ui/touch-selection-plugin`.
 
@@ -50,14 +50,14 @@ The plugin opens a light/dark touch menu after a word, line or document selectio
 
 `items(context)` appends host actions. Its context contains `selectedText` and `editable`; each item supplies `id`, `label`, optional `disabled` and `failureMessage`, and `run(): void | Promise<void>`. The callback runs in the menu click's activation turn. Pending actions settle before dismissal, and failures keep the action available with retry guidance.
 
-`haptics` defaults to `false`. Supported Vibration API devices get light ticks on selection start, changed word/line snaps and menu appearance. Safari's supported native switch control can tick on a trusted menu tap through an associated hidden switch; keyboard and scripted activations still run the action. Current iOS blocks programmable gesture-time haptics. Physical iPhone feedback from the hidden switch remains unverified. Browser tests cover action dispatch, focus and accessibility on engines exposing that control. See [Browser quirks](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/display/browser-quirks.md#touch-haptic-availability).
+`haptics` defaults to `false`. Supported Vibration API devices get light ticks on selection start, changed word/line snaps and menu appearance. Safari's supported native switch control can tick on a trusted menu tap through an associated hidden switch; keyboard and scripted activations still run the action. Current iOS blocks programmable gesture-time haptics. Physical iPhone feedback from the hidden switch remains unverified. Browser tests cover action dispatch, focus and accessibility on engines exposing that control. See [Browser quirks](https://github.com/ShaulLavo/singapore/blob/main/docs/display/browser-quirks.md#touch-haptic-availability).
 
 ## In the Singapore family
 
 `@singapore-editor/core` owns the editor view. Plugins use this package to share hover content and position popups.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)

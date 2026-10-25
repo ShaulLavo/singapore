@@ -30,7 +30,7 @@ The package remains independently usable outside the monorepo. Benchmark code us
 not editor-local aliases, shims or a copied Singapore implementation. There are no new runtime dependencies.
 The vendored Microsoft source keeps its unchanged MIT license beside it; lint and formatting skip it so its
 bytes stay identical. Builds go to the ignored `bench/.cache` directory.
-See [upstream.json](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/textbuffer/bench/upstream.json) for the exact repository commit and all source blob identities.
+See [upstream.json](https://github.com/ShaulLavo/singapore/blob/main/packages/textbuffer/bench/upstream.json) for the exact repository commit and all source blob identities.
 The source revision is deliberately pinned; this is not a moving claim about VS Code's latest internals.
 
 ## Measurement contract
@@ -127,9 +127,9 @@ performance results are artifacts for review, not a noisy merge gate. Smoke is c
 
 ## Explain the differences
 
-The [profiling contract](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/textbuffer/bench/PROFILING.md) describes four independent diagnostic passes: CPU sampling,
+The [profiling contract](https://github.com/ShaulLavo/singapore/blob/main/packages/textbuffer/bench/PROFILING.md) describes four independent diagnostic passes: CPU sampling,
 JS-heap allocation sampling, GC events, and structural work counters. These do not enter the clean
-speed-ratio tables. The [initial attribution report](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/textbuffer/bench/ATTRIBUTION.md) records measured findings and
+speed-ratio tables. The [initial attribution report](https://github.com/ShaulLavo/singapore/blob/main/packages/textbuffer/bench/ATTRIBUTION.md) records measured findings and
 optimization candidates without changing buffer semantics.
 
 ```sh
@@ -140,7 +140,7 @@ bun run bench:profile -- --profile standard --only random-insertions --repeats 2
 
 ## Counter budgets
 
-[budgets.json](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/textbuffer/bench/budgets.json) holds a ceiling per workload for every structural counter, for the
+[budgets.json](https://github.com/ShaulLavo/singapore/blob/main/packages/textbuffer/bench/budgets.json) holds a ceiling per workload for every structural counter, for the
 smoke and standard profiles at one fixed seed. `bench:check` replays each workload in the
 instrumented build and fails when a count exceeds its ceiling, when a budget names a counter that
 no longer exists, or when a structural counter has no budget. Counts are exact events, so the gate
@@ -154,7 +154,7 @@ node bench/budgets.mjs --write --margin 0.02
 
 ## Tree shape
 
-The [tree height replay](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/textbuffer/bench/HEIGHT.md) samples height, depth and piece counts of both engines' trees across
+The [tree height replay](https://github.com/ShaulLavo/singapore/blob/main/packages/textbuffer/bench/HEIGHT.md) samples height, depth and piece counts of both engines' trees across
 edit traces and Singapore priority seeds. It is a separate structural replay with no timing.
 
 ```sh

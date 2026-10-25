@@ -6,11 +6,11 @@ A separate build measures small core and TypeScript editor imports.
 
 ## Reproduce
 
-Use a fresh Fregat checkout, Bun 1.4.2 and Node 26.7.0. Install the root workspace. The root lockfile pins the competitors.
+Use a fresh Singapore checkout, Bun 1.4.4 and Node 26 or newer. Install the root workspace. The root lockfile pins the competitors.
 
 ```sh
 bun install --frozen-lockfile
-cd packages/singapore/bench/compare
+cd bench/compare
 bunx playwright install chromium
 bun run test
 bun run build
@@ -191,7 +191,7 @@ keystrokes across usable repetitions and uses nearest-rank p50/p95. Open and
 heap columns use the median of repetitions. Failures remain separate.
 
 The committed experiment and its interpretation are in
-[the performance document](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/performance/browser-compare-2026-10-08.md).
+[the performance document](https://github.com/ShaulLavo/singapore/blob/main/docs/performance/browser-compare-2026-10-08.md).
 
 ## Whole-document diagnostic
 

@@ -72,8 +72,8 @@ that selected language ID, including line fallback.
 `@singapore-editor/core` owns the editor view. This optional package adds syntax parsing. Choose the other plugins your app needs.
 Use a bundler that serves the package worker and data assets. See the [hosting guide](https://singapore.shaulavo.dev/docs/guides/bundling/).
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)

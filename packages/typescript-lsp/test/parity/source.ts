@@ -3,46 +3,33 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const editorRoot = resolve(import.meta.dirname, '../../../..')
+const sourceRoot = resolve(import.meta.dirname, '../../../..')
 const workspaceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-  cwd: editorRoot,
+  cwd: sourceRoot,
   encoding: 'utf8',
 }).trim()
 
 const SOURCE_PATHS = [
   'bun.lock',
   'package.json',
-  'packages/singapore/package.json',
-  'packages/singapore/scripts/browser-test-responses.ts',
-  'packages/singapore/scripts/workspace-root.ts',
-  'packages/singapore/packages/lsp/src',
-  'packages/singapore/packages/lsp/package.json',
-  'packages/singapore/packages/lsp-plugin/src',
-  'packages/singapore/packages/lsp-plugin/package.json',
-  'packages/singapore/packages/typescript-lsp/src',
-  'packages/singapore/packages/typescript-lsp/package.json',
-  'packages/singapore/packages/typescript-lsp/test',
-  'packages/singapore/packages/typescript-lsp/vitest.config.ts',
-  'packages/singapore/packages/typescript-lsp/vitest.browser.config.ts',
-  'apps/server/src/lsp',
-  'apps/server/test/factories/typescript-runtime.ts',
-  'apps/server/test/factories/typescript-parity.ts',
-  'scripts/typescript-parity.mjs',
-  'scripts/typescript-parity.test.mjs',
-  'scripts/typescript-parity-capture.mjs',
+  'scripts/browser-test-responses.ts',
+  'scripts/workspace-root.ts',
+  'packages/lsp/src',
+  'packages/lsp/package.json',
+  'packages/lsp-plugin/src',
+  'packages/lsp-plugin/package.json',
+  'packages/typescript-lsp/src',
+  'packages/typescript-lsp/package.json',
+  'packages/typescript-lsp/test',
+  'packages/typescript-lsp/vitest.config.ts',
+  'packages/typescript-lsp/vitest.browser.config.ts',
 ]
 
 export function paritySourceIdentity(root = workspaceRoot) {
   const revision = git(['rev-parse', 'HEAD'], root)
   const dirty = git(['status', '--porcelain'], root).length > 0
-  const paths =
-    root === editorRoot
-      ? SOURCE_PATHS.filter((path) => path.startsWith('packages/singapore/')).map((path) =>
-          path.slice('packages/singapore/'.length),
-        )
-      : SOURCE_PATHS
   const files = git(
-    ['ls-files', '--cached', '--others', '--exclude-standard', '--'].concat(paths),
+    ['ls-files', '--cached', '--others', '--exclude-standard', '--'].concat(SOURCE_PATHS),
     root,
   )
     .split('\n')

@@ -44,3 +44,6 @@ references/
 # accident before and had to be deleted again in 915b33a.
 .vitest-attachments/
 __screenshots__/
+
+# Release artifacts
+release/

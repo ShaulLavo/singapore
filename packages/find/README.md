@@ -40,8 +40,8 @@ editor.setText('const value = 1\n')
 
 `@singapore-editor/core` owns the editor view. Add this plugin for find and replace.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)

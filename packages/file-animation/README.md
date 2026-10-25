@@ -6,7 +6,7 @@ Part of [Singapore](https://singapore.shaulavo.dev/). A code editor for the brow
 
 ## Install
 
-Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/development.md#set-up).
+Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/singapore/blob/main/docs/development.md#set-up).
 
 ## Usage
 
@@ -40,8 +40,8 @@ editor.openDocument({
 
 `@singapore-editor/core` owns the editor view. Add these plugins to animate opened files and edits.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)

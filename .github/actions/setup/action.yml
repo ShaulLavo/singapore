@@ -6,30 +6,32 @@ runs:
   steps:
     - name: Setup Bun
       id: bun
-      uses: oven-sh/setup-bun@v2
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version: '1.4.4'
 
     # `bun run test` runs each package's `vitest run`, and vitest's bin is a Node script — so the
     # tests execute on Node, not on Bun, and the runner's default Node is older than this repo
     # assumes. `packages/find` uses RegExp modifier groups (`(?s:a.b)`), which V8 only gained
     # recently, so without this the suite fails on a feature the code legitimately relies on.
     - name: Setup Node
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
-        node-version: '24'
+        node-version: '26'
 
     - name: Install dependencies
       shell: bash
-      run: bun install
+      run: bun install --frozen-lockfile
 
     # Turbo replays a task whose inputs are unchanged, so a PR re-runs only what its change can
     # reach. Each job saves its own cache, keyed by commit; a restore falls back to this job's
     # newest cache, then any job's (builds are shared), on this branch and then on main.
     # `scripts/check-turbo-inputs.mjs` fails CI when a package reads a file its task's hash does not cover.
     - name: Restore turbo cache
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .turbo/cache
-        key: turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-${{ github.job }}-${{ github.sha }}
+        key: turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-26-${{ github.job }}-${{ github.sha }}
         restore-keys: |
-          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-${{ github.job }}-
-          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-
+          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-26-${{ github.job }}-
+          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-26-

@@ -60,10 +60,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Setup
         uses: ./.github/actions/setup
+
+      # The site has its own pinned Playwright release for build-time capture.
+      - name: Install site Playwright Chromium
+        working-directory: site
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       - name: Check turbo inputs
         run: bun scripts/check-turbo-inputs.mjs
@@ -90,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -102,7 +107,7 @@ jobs:
 
       # Browsers are a download per Playwright release; the OS libraries still come from apt.
       - name: Cache Playwright browsers
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
@@ -133,7 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -145,7 +150,7 @@ jobs:
 
       # Browsers are a download per Playwright release; the OS libraries still come from apt.
       - name: Cache Playwright browsers
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
@@ -153,6 +158,11 @@ jobs:
       - name: Install Playwright browsers
         working-directory: packages/editor
         run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit
+
+      # The site build runs as a dependency of package tests and uses its own pinned Playwright.
+      - name: Install site Playwright Chromium
+        working-directory: site
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       # The worker test imports built packages; turbo replays the build from the cache.
       - name: Build packages
