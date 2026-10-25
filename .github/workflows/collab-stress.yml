@@ -1,0 +1,40 @@
+name: Collaborative text stress
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collab-stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Stress shard ${{ matrix.shard }}/8
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Build collaboration packages
+        run: bun run build -- --filter=@singapore-editor/collab...
+      - name: Check types, lint and formatting
+        run: |
+          bun run --cwd packages/collab typecheck
+          bun run --cwd packages/collab lint
+          bun run --cwd packages/collab format:check
+      - name: Verify both engines and differential replay
+        env:
+          COLLAB_STRESS: '1'
+          COLLAB_STRESS_SHARD: '${{ matrix.shard }}/8'
+        run: bun run --cwd packages/collab test --maxWorkers=2

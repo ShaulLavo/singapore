@@ -24,6 +24,7 @@ How Singapore works inside, for people who change it or embed it deeply. The [do
 - [Browser quirks](display/browser-quirks.md): engine bugs, each with symptom, cause, fix and upstream report.
 - [Editor commands](commands.md): generated from the command catalog. Run `bun run commands:reference` from the repository root to regenerate it, and `bun scripts/command-reference.ts --check` to test that it is current.
 - [Development](development.md): build, test and check the packages.
+- [Site deployment](site-deployment.md): build, dry-run, deploy and roll back the public site.
 
 Each package keeps its own guides in `packages/<name>/docs/`. The package READMEs link to them.
 

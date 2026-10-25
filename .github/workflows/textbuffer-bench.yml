@@ -1,6 +1,8 @@
 name: Textbuffer benchmarks
 
 on:
+  schedule:
+    - cron: '57 2 * * *'
   pull_request:
     paths:
       - 'packages/textbuffer/**'
