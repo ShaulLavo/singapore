@@ -7,6 +7,8 @@ runs:
     - name: Setup Bun
       id: bun
       uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: '1.4.4'
 
     # `bun run test` runs each package's `vitest run`, and vitest's bin is a Node script — so the
     # tests execute on Node, not on Bun, and the runner's default Node is older than this repo
@@ -15,11 +17,11 @@ runs:
     - name: Setup Node
       uses: actions/setup-node@v4
       with:
-        node-version: '24'
+        node-version: '26'
 
     - name: Install dependencies
       shell: bash
-      run: bun install
+      run: bun install --frozen-lockfile
 
     # Turbo replays a task whose inputs are unchanged, so a PR re-runs only what its change can
     # reach. Each job saves its own cache, keyed by commit; a restore falls back to this job's
@@ -29,7 +31,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: .turbo/cache
-        key: turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-${{ github.job }}-${{ github.sha }}
+        key: turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-26-${{ github.job }}-${{ github.sha }}
         restore-keys: |
-          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-${{ github.job }}-
-          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-24-
+          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-26-${{ github.job }}-
+          turbo-${{ runner.os }}-bun-${{ steps.bun.outputs.bun-version }}-node-26-

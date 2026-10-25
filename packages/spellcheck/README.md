@@ -35,9 +35,9 @@ service.dispose()
 You can use this package on its own. `@singapore-editor/core` owns editor views; optional packages add syntax, search, gutters, and language features.
 Use a bundler that serves the package worker and data assets. See the [hosting guide](https://singapore.shaulavo.dev/docs/guides/bundling/).
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)
-Dictionary licenses are listed in [THIRD_PARTY_NOTICES](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/spellcheck/THIRD_PARTY_NOTICES).
+MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)
+Dictionary licenses are listed in [THIRD_PARTY_NOTICES](https://github.com/ShaulLavo/singapore/blob/main/packages/spellcheck/THIRD_PARTY_NOTICES).

@@ -12,7 +12,7 @@ This keeps expensive parsing and analysis away from the immediate input path. Co
 
 A worker owner starts its worker, tracks requests and state, and disposes it. Host integrations that supply an owner or shared service must retain it while its consumers need it.
 
-Worker failure handling differs by system. Tree-sitter and Shiki owners can start a fresh generation on the next request after a crash; failed requests are not automatically replayed. Minimap and TypeScript integrations require recreating their affected contribution or transport after failure. See the [worker topology](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/architecture/worker-topology.md) for each owner.
+Worker failure handling differs by system. Tree-sitter and Shiki owners can start a fresh generation on the next request after a crash; failed requests are not automatically replayed. Minimap and TypeScript integrations require recreating their affected contribution or transport after failure. See the [worker topology](https://github.com/ShaulLavo/singapore/blob/main/docs/architecture/worker-topology.md) for each owner.
 
 ## Platform dependencies
 

@@ -6,7 +6,7 @@ Part of [Singapore](https://singapore.shaulavo.dev/). A code editor for the brow
 
 ## Install
 
-Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/docs/development.md#set-up).
+Not on npm yet. Build it from source with the [development guide](https://github.com/ShaulLavo/singapore/blob/main/docs/development.md#set-up).
 
 ## Usage
 
@@ -33,7 +33,7 @@ const edit = participant.local({ offset: 5, deleteCount: 0, text: ' world' })
 
 ## No end-to-end quick start yet
 
-There is no runnable example with a host and two participants. The example above makes one local edit and stops there. The [integration guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/collab/docs/integration.md) describes the host's job, and the `collaboration` package adds the editor binding and transports that a working setup needs.
+There is no runnable example with a host and two participants. The example above makes one local edit and stops there. The [integration guide](https://github.com/ShaulLavo/singapore/blob/main/packages/collab/docs/integration.md) describes the host's job, and the `collaboration` package adds the editor binding and transports that a working setup needs.
 
 ## API highlights
 
@@ -45,14 +45,14 @@ There is no runnable example with a host and two participants. The example above
 
 [Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/collab/overview/)
 
-[Integration guide](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/packages/collab/docs/integration.md)
+[Integration guide](https://github.com/ShaulLavo/singapore/blob/main/packages/collab/docs/integration.md)
 
 ## In the Singapore family
 
 You can use this package on its own. `@singapore-editor/core` owns editor views; optional packages add syntax, search, gutters, and language features.
 
-[Singapore README](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
+[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
 
 ## License
 
-MIT. [License](https://github.com/ShaulLavo/fregat/blob/main/packages/singapore/LICENSE)
+MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)

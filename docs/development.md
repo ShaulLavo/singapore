@@ -1,65 +1,84 @@
 # Develop Singapore
 
-How to build, test and check the `packages/singapore/` packages. This folder lives in the [Fregat](https://github.com/ShaulLavo/fregat) monorepo. Read the [contribution guide](https://github.com/ShaulLavo/fregat/blob/main/CONTRIBUTING.md) first for the policy on issues, pull requests and AI-assisted changes. [AGENTS.md](../AGENTS.md) lists the conventions that tests do not enforce.
+Singapore is a standalone Bun workspace. The repository owns the packages,
+examples, documentation site and release tooling.
 
 ## Set up
 
-You need [Bun](https://bun.sh/) 1.4.4, the version in `packageManager` that CI uses, and Node.js 26 or newer, because the Tree-sitter parser needs `WebAssembly.Memory.prototype.toResizableBuffer()` and Vitest and grammar generation run in Node. From the Fregat root:
+You need [Bun](https://bun.sh/) 1.4.4 and Node.js 26 or newer. The parser and
+browser tests also need a current browser supported by the selected Playwright
+projects.
 
 ```sh
 bun install --frozen-lockfile
-bun x turbo run build --filter='./packages/singapore/packages/*'
+bun run build
 ```
 
-The second command writes `dist/` for all 23 packages. Packages import each other through `dist/`, so rebuild after you change a package that another one consumes.
+Packages import one another through their built `dist/` directories. Rebuild
+after changing a package that another package consumes.
 
 ## Run the demo app
 
 ```sh
-bun run --cwd packages/singapore/examples/app dev
+bun run --cwd examples/app dev
 ```
 
-Vite prints the address. The app shows a file tree beside the editor and exercises most packages. It includes a history panel for the undo graph, and `?modal` turns on a modal-editing plugin.
+Vite prints the address. The app shows a file tree beside the editor and
+exercises the package integrations.
 
-## Run tests
+## Run checks
 
-Use package scripts. Do not use `bun test`, which skips the configured Vitest environments.
+Use package scripts. Do not use `bun test`, which skips the configured Vitest
+environments.
 
 ```sh
-bun run --cwd packages/singapore/packages/textbuffer test
-cd packages/singapore/packages/editor
-bun x vitest run --project dom test/autoClose.test.ts
+bun run --cwd packages/textbuffer test
+bun run --cwd packages/editor test
+bun run format:check
+bun run typecheck
+bun run lint
+bun run health
 ```
 
-Each package defines its own `test`, `typecheck`, `lint` and `format:check` scripts. In `packages/editor`, Vitest has projects named `node`, `dom` and `browser`, plus browser projects for layout and paint. The browser projects drive Playwright. Install the browsers they use with `bun --cwd packages/singapore/site x playwright install chromium`, and add `firefox` and `webkit` for the cross-engine projects. On Arch Linux, run `scripts/playwright-webkit-arch.sh` from the Fregat root after downloading WebKit.
+The editor and several packages have browser projects. Install the browsers
+needed by the package you are checking with its pinned Playwright executable,
+for example:
 
-## Check the whole workspace
+```sh
+bun --cwd packages/editor x playwright install chromium firefox webkit
+```
 
-Run these from `packages/singapore/`:
+The documentation site has its own checks:
 
-- `bun run typecheck`: typechecks every package through Turborepo.
-- `bun run lint`: runs oxlint on the scripts and every package.
-- `bun run format:check`: checks formatting with oxfmt. `bun run format` fixes it across the whole workspace.
-- `bun run health`: checks the full-text boundary, the command reference and the architecture baselines.
-- `bun run commands:reference`: regenerates [`docs/commands.md`](commands.md). `health` fails when the file is stale.
-- `bun run --cwd site docs:check`: compiles every TypeScript example in the site pages and the package READMEs.
+```sh
+bun run --cwd site docs:check
+bun run --cwd site build
+bun run --cwd site test:browser
+```
 
-From the Fregat root, `bun run package-pages:check` checks the package metadata and README structure that npm renders, and `bun run plans:check` checks the Editor plan index and the files it links.
+## Release packages
 
-## Where things live
+Package manifests use the `@singapore-editor/` scope and publish-ready
+metadata. Build and inspect the complete release set without publishing:
 
-- `packages/<name>`: one published package, with `src/`, `test/`, `README.md`, optional `docs/` and `bench/`.
-- `examples/app`: the demo app.
-- `examples/stress`: the stress and input-latency harness, with committed results.
-- `bench/compare`: the Singapore, Monaco and CodeMirror comparison.
-- `site`: the documentation site, with hand-written pages in `src/content/docs` and generated API reference.
-- `scripts`: workspace tooling, such as the architecture health check and the command reference.
-- `docs`: [design documents](README.md).
+```sh
+bun run publish:packages:dry-run
+```
 
-## Write documentation
+Publishing requires npm credentials for the scope owner:
 
-Package READMEs follow a fixed template that `package-pages:check` enforces: `Install`, `Usage`, `API highlights` and `License` headings, one TypeScript example, absolute HTTPS links, and either an `npm install` line or a line that starts `Not on npm yet.` The site compiles the example, so keep it runnable. The README for a package that `npm view` does not find says `Not on npm yet.`
+```sh
+bun run publish:packages
+```
 
-TypeDoc generates the pages under `reference/api` at build time, and the repository does not commit them. To change one, edit the doc comments in the package source. The [site README](../site/README.md) explains how to build the site.
+The script skips versions already visible in the npm registry. Packages marked
+`Not on npm yet.` in their README remain source-only until they are intentionally
+included in a release.
 
-Link to files inside `packages/singapore/` with relative paths. They resolve in Fregat and in the read-only [singapore](https://github.com/ShaulLavo/singapore) mirror. Links to anything above `packages/singapore/` must be absolute URLs.
+## Repository layout
+
+- `packages/<name>` contains one public package.
+- `examples/app` is the demo application.
+- `site` contains the documentation site and generated API reference.
+- `scripts` contains workspace checks and package release tooling.
+- `docs` contains architecture, design and performance records.

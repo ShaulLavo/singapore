@@ -60,13 +60,13 @@ export default defineConfig({
       description: 'Documentation for the Singapore browser code editor.',
       customCss: ['./src/styles/site.css'],
       editLink: {
-        baseUrl: 'https://github.com/ShaulLavo/fregat/edit/main/packages/singapore/site/',
+        baseUrl: 'https://github.com/ShaulLavo/singapore/edit/main/site/',
       },
       social: [
         {
           icon: 'github',
           label: 'Source on GitHub',
-          href: 'https://github.com/ShaulLavo/fregat/tree/main/packages/singapore',
+          href: 'https://github.com/ShaulLavo/singapore/tree/main',
         },
       ],
       sidebar: SECTIONS.map((section) => ({
