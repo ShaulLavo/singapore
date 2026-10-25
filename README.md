@@ -33,7 +33,7 @@ bun run test
 ```
 
 See [docs/development.md](docs/development.md) for browser tests, the demo,
-package checks and the release dry run.
+package checks and the release tarball verification.
 
 ## Links
 

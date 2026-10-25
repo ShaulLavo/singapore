@@ -56,24 +56,46 @@ bun run --cwd site build
 bun run --cwd site test:browser
 ```
 
-## Release packages
+## Release package tarballs
 
-Package manifests use the `@singapore-editor/` scope and publish-ready
-metadata. Build and inspect the complete release set without publishing:
+A Singapore release contains all 23 package tarballs from one verified build. It
+is distributed as a draft GitHub Release, not as npm artifacts. The manifest
+records the exact source commit, tag, package versions, release URLs and
+checksums; `SHA256SUMS` covers every tarball.
 
-```sh
-bun run publish:packages:dry-run
-```
-
-Publishing requires npm credentials for the scope owner:
+Run the complete local qualification without publishing:
 
 ```sh
-bun run publish:packages
+bun run release:tarballs -- --out release
+bun run release:tarballs:validate -- --out release
 ```
 
-The script skips versions already visible in the npm registry. Packages marked
-`Not on npm yet.` in their README remain source-only until they are intentionally
-included in a release.
+The build command compiles every package once, packs the complete package set,
+installs those tarballs with their external peer dependencies in a fresh Bun
+consumer, imports every package entry point, writes `release-manifest.json` and
+`SHA256SUMS`, then validates the result. The validator checks the exact package
+directories, names, versions, source commit, `singapore-<full-commit>` tag and
+all checksums.
+
+To create the draft release through GitHub Actions, push the tag for the commit
+that was verified locally:
+
+```sh
+commit=$(git rev-parse HEAD)
+git tag "singapore-$commit"
+git push origin "singapore-$commit"
+```
+
+Consumers should install the package tarballs they use from one release and
+include each tarball needed by its internal dependencies. Keep the release
+manifest beside the dependency configuration. To install the complete set from
+a downloaded manifest:
+
+```sh
+jq -r '.packages[].releaseUrl' release-manifest.json | xargs bun add
+```
+
+Verify downloaded tarballs before use with `sha256sum -c SHA256SUMS`.
 
 ## Repository layout
 
