@@ -15,6 +15,9 @@ dist-ssr
 # Turborepo
 .turbo
 
+# Python bytecode
+__pycache__/
+
 # Test artifacts
 .vitest/
 test-results/
