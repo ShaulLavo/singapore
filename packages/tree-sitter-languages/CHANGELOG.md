@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter-languages
 
+## 0.2.10
+
+### Patch Changes
+
+- Fixed packed grammar and query modules so browser bundlers can load every lazy language asset.
+
 ## 0.2.9
 
 ### Patch Changes

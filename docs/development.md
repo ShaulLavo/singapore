@@ -63,6 +63,14 @@ is distributed as a draft GitHub Release, not as npm artifacts. The manifest
 records the exact source commit, tag, package versions, release URLs and
 checksums; `SHA256SUMS` covers every tarball.
 
+Install the workspace's Chromium before qualification:
+
+```sh
+cd packages/tree-sitter
+./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell
+cd ../..
+```
+
 Run the complete local qualification without publishing:
 
 ```sh
@@ -72,10 +80,24 @@ bun run release:tarballs:validate -- --out release
 
 The build command compiles every package once, packs the complete package set,
 installs those tarballs with their external peer dependencies in a fresh Bun
-consumer, imports every package entry point, writes `release-manifest.json` and
-`SHA256SUMS`, then validates the result. The validator checks the exact package
-directories, names, versions, source commit, `singapore-<full-commit>` tag and
-all checksums.
+consumer, imports every package entry point, then builds a Vite browser consumer of the
+packed highlighting, language catalog and metadata entry points. Headless Chromium
+loads every lazy catalog grammar and the simple JavaScript, JSX, TypeScript and
+TSX variants in a worker, initializes their WASM, parses samples and compiles and
+executes their queries. The consumer has its own dependencies outside the producer
+workspace and is removed, along with its server and browser, after qualification.
+The command then writes and validates `release-manifest.json` and `SHA256SUMS`.
+The validator checks the exact package directories, names, versions, source commit,
+`singapore-<full-commit>` tag and all checksums.
+
+To rerun browser qualification on existing tarballs without rebuilding them, use
+`bun run release:tarballs -- --qualify-only --out release`. Validation still requires
+the current commit, tag, package versions and checksums to match. A validation-only
+run checks artifact identity and integrity; it does not run browser qualification.
+
+Published artifacts are immutable. For a packaging replacement, bump the patch
+version of each changed public package and any package whose runtime dependency
+pin changes. Keep the complete 23-package manifest and use a new commit tag.
 
 To create the draft release through GitHub Actions, push the tag for the commit
 that was verified locally:
