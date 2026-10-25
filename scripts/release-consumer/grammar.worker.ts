@@ -33,23 +33,32 @@ async function qualifyAssets(
   const parser = new Parser().setLanguage(language)
   const tree = parser.parse(source)
   if (!tree) throw new Error(`Packed grammar did not parse: ${id}`)
-  let queries = 0
   try {
     if (tree.rootNode.hasError) throw new Error(`Packed grammar parse has errors: ${id}`)
-    for (const kind of [
-      'highlightQuerySource',
-      'foldQuerySource',
-      'injectionQuerySource',
-      'mergeUnitQuerySource',
-    ] as const) {
-      const querySource = assets[kind]
-      if (!querySource) continue
-      qualifyQuery(language, tree.rootNode, querySource, kind, id)
-      queries += 1
-    }
+    return qualifyQueries(language, tree.rootNode, assets, id)
   } finally {
     tree.delete()
     parser.delete()
+  }
+}
+
+function qualifyQueries(
+  language: Language,
+  node: Parameters<Query['captures']>[0],
+  assets: TreeSitterLanguageAssets,
+  id: string,
+): number {
+  let queries = 0
+  for (const kind of [
+    'highlightQuerySource',
+    'foldQuerySource',
+    'injectionQuerySource',
+    'mergeUnitQuerySource',
+  ] as const) {
+    const querySource = assets[kind]
+    if (!querySource) continue
+    qualifyQuery(language, node, querySource, kind, id)
+    queries += 1
   }
   return queries
 }
