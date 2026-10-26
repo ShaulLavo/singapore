@@ -198,7 +198,7 @@
     },
     "packages/highlighting": {
       "name": "@singapore-editor/highlighting",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "dependencies": {
         "@singapore-editor/diff": "workspace:*",
         "@singapore-editor/tree-sitter": "workspace:*",
@@ -463,7 +463,7 @@
     },
     "packages/tree-sitter-languages": {
       "name": "@singapore-editor/tree-sitter-languages",
-      "version": "0.2.9",
+      "version": "0.2.10",
       "dependencies": {
         "@singapore-editor/tree-sitter": "workspace:*",
         "@tree-sitter-grammars/tree-sitter-lua": "0.4.1",

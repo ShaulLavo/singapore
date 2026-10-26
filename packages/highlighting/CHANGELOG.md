@@ -1,5 +1,11 @@
 # @singapore-editor/highlighting
 
+## 0.2.10
+
+### Patch Changes
+
+- Fixed the `@singapore-editor/tree-sitter-languages` dependency pin to use the corrected packed grammar assets.
+
 ## 0.2.9
 
 ### Patch Changes

@@ -104,7 +104,8 @@ async function buildJavaScript(): Promise<void> {
         output: {
           assetFileNames: 'assets/[name][extname]',
           chunkFileNames: 'chunks/[name]-[hash].js',
-          entryFileNames: '[name].js',
+          // Package managers exclude node_modules even when it is nested inside dist.
+          entryFileNames: packageModuleFileName,
           preserveModules: true,
           preserveModulesRoot: sourceRoot,
         },
@@ -125,6 +126,13 @@ async function buildJavaScript(): Promise<void> {
     },
   })
   await assertWorkersAreCanonical(workerReferences)
+}
+
+function packageModuleFileName(chunk: { readonly name: string }): string {
+  const marker = 'node_modules/'
+  const dependencyStart = chunk.name.lastIndexOf(marker)
+  if (dependencyStart === -1) return `${chunk.name}.js`
+  return `vendor/${chunk.name.slice(dependencyStart + marker.length)}.js`
 }
 
 function externalDependency(id: string, importer?: string): boolean {

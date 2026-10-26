@@ -21,6 +21,10 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
+      - name: Install release qualification Chromium
+        working-directory: packages/tree-sitter
+        run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell
+
       - name: Build and verify release tarballs
         env:
           RELEASE_COMMIT: ${{ github.sha }}

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { prepareBrowserConsumer, releaseConsumerTools } from './release-consumer'
 
 const EXPECTED_PACKAGE_DIRS = [
   'packages/collab',
@@ -40,7 +41,12 @@ const requestedCommit = argValue('--commit') ?? process.env.GITHUB_SHA ?? null
 const requestedTag = argValue('--tag') ?? process.env.GITHUB_REF_NAME ?? null
 const validateOnly = args.has('--validate-only')
 
-if (validateOnly) {
+if (args.has('--qualify-only')) {
+  await validateArtifacts(outputDir, requestedCommit, requestedTag)
+  const packages = await readPackageInfos()
+  const manifest = await readReleaseManifest(outputDir)
+  await testCleanConsumer(outputDir, manifest.packages, packages)
+} else if (validateOnly) {
   await validateArtifacts(outputDir, requestedCommit, requestedTag)
 } else {
   await createReleaseArtifacts(outputDir, requestedCommit, requestedTag)
@@ -208,6 +214,11 @@ async function testCleanConsumer(
   packages: readonly PackageInfo[],
 ): Promise<void> {
   const consumer = await mkdtemp(path.join(tmpdir(), 'singapore-release-consumer-'))
+  const abort = new AbortController()
+  const interrupt = () => abort.abort()
+  const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(300_000)])
+  process.once('SIGINT', interrupt)
+  process.once('SIGTERM', interrupt)
   const packageNames = new Set(packages.map((packageInfo) => packageInfo.manifest.name))
   const peerDependencies = externalPeerDependencies(packages, packageNames)
 
@@ -226,7 +237,7 @@ async function testCleanConsumer(
           private: true,
           type: 'module',
           dependencies,
-          devDependencies: peerDependencies,
+          devDependencies: { ...peerDependencies, ...(await releaseConsumerTools()) },
           overrides: dependencies,
         },
         null,
@@ -234,9 +245,20 @@ async function testCleanConsumer(
       )}\n`,
     )
     await writeFile(path.join(consumer, 'smoke.mjs'), smokeScript(releasePackages, packages))
-    await run(['bun', 'install', '--no-progress'], consumer)
-    await run(['bun', 'smoke.mjs'], consumer)
+    await prepareBrowserConsumer(consumer)
+    await run(['bun', 'install', '--no-progress'], consumer, signal)
+    await run(['node', 'notices.mjs'], consumer, signal)
+    await run(['bun', 'smoke.mjs'], consumer, signal)
+    await run(['bun', 'x', '--no-install', 'tsc', '-p', 'tsconfig.json'], consumer, signal)
+    await run(
+      ['bun', 'x', '--no-install', 'vite', 'build', '--configLoader', 'native'],
+      consumer,
+      signal,
+    )
+    await run(['node', 'browser.mjs'], consumer, signal)
   } finally {
+    process.off('SIGINT', interrupt)
+    process.off('SIGTERM', interrupt)
     await rm(consumer, { recursive: true, force: true })
   }
 }
@@ -522,9 +544,10 @@ async function git(command: readonly string[]): Promise<string> {
   throw new Error(`git ${command.join(' ')} failed: ${stderr.trim()}`)
 }
 
-async function run(command: string[], cwd: string): Promise<void> {
+async function run(command: string[], cwd: string, signal?: AbortSignal): Promise<void> {
   const process = Bun.spawn(command, {
     cwd,
+    signal,
     stdin: 'inherit',
     stderr: 'inherit',
     stdout: 'inherit',
