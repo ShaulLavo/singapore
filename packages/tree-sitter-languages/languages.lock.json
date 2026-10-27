@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "manifestHash": "5b71c8e8f81bd4211f70b42c959bfb37c960ffcfdfe6658ae90bd9aa87fd75f2",
+  "manifestHash": "f6ac7e8a439fea2c71b8934e200f787ad834f229bb3075de4f9dd645d253db9e",
   "languages": [
     {
       "id": "javascript",
@@ -722,14 +722,14 @@
         "package": "tree-sitter-md",
         "version": "0.1.32",
         "repository": "https://github.com/ShaulLavo/tree-sitter-md",
-        "revision": "7e84c579018564b64c023a60008f2a45157a6ef1",
+        "revision": "f02e277a34375f326572b4ade2602f44ac769005",
         "license": "MIT",
         "compiler": "wasi-sdk 34"
       },
       "sourceFiles": [
         {
           "file": "package.json",
-          "sha256": "dc82a7f8a1c76659ac48ce1df5bc5e6a8dae2b410de1e3c46963f43a9042e5b2"
+          "sha256": "531c8ea41a917736f6d67419bb9c872f9fce973de1a88ce669ae8ef9cd6b208c"
         },
         {
           "file": "src/autolink.c",
@@ -775,7 +775,7 @@
       "files": [
         {
           "file": "tree-sitter-md/tree-sitter-markdown.wasm",
-          "sha256": "60ede7a9cedb3e97e2f11e675055399c4160822e8cc211052c1ec38aaa1c8a73"
+          "sha256": "27d067c772acc4adce2c79217aaec5168914338246ad5d8ecaf4bd9d0d0548d5"
         },
         {
           "file": "./queries/markdown-merge-units.scm",
