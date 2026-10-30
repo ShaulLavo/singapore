@@ -10,7 +10,7 @@ Install the core and adapter alongside React 19 and React DOM.
 npm install @singapore-editor/core @singapore-editor/react react react-dom
 ```
 
-`useEditor` creates a controller from props. Pass `controller.ref` to the element that should host the editor.
+`useEditor` creates a controller from props. Pass the controller's `ref` to the element that should host the editor.
 
 ```tsx
 import { useEditor } from '@singapore-editor/react'
@@ -24,14 +24,12 @@ export function EditorPanel() {
       languageId: 'typescript',
     },
   })
-  return (
-    <div
-      ref={controller.ref}
-      style={{ height: '32rem', display: 'flex', flexDirection: 'column' }}
-    />
-  )
+  const { ref } = controller
+  return <div ref={ref} style={{ height: '32rem', display: 'flex', flexDirection: 'column' }} />
 }
 ```
+
+Take `ref` out of the controller before you pass it to JSX. The React Compiler treats `ref={controller.ref}` as a ref read and then rejects later render reads of the controller, such as `controller.getEditor()`.
 
 The view reopens the document when its identity or revision changes. Bump `revision` to load new text for the same id, or use `textSyncMode: 'incremental'` to synchronize each new text value. Keep plugin instances stable across component renders.
 
@@ -76,7 +74,7 @@ Options accept a value or accessor. Changing the `wordWrap` signal updates the m
 
 ### The container is empty
 
-Check the `controller.ref` binding, the container height, flex layout and the stylesheet. In an SSR application, mount this component on the client.
+Check the `ref` binding, the container height, flex layout and the stylesheet. In an SSR application, mount this component on the client.
 
 ### New text for the same document id is ignored
 
