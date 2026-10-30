@@ -725,3 +725,56 @@ Keep the feature optional. Replace the switch candidate only after a supported
 Safari haptic API or qualified native control provides physical-device feedback
 without taking over editor contacts. Remove the trusted-activation limitation only
 when the upstream behavior and supported Safari device checks both permit it.
+
+## Copying absolutely positioned rows joins their lines
+
+Verified 2026-10-30 on Linux with Playwright 1.63.0. Chromium and WebKit join the rows;
+Firefox separates them in the reduced case. The handler runs in every engine, so copies
+also read virtualized rows that are not mounted.
+
+### Symptom
+
+Selecting a document snapshot or a live editor as part of the page and copying it
+pasted every line run together, for example
+`npm install @singapore-editor/core# or: pnpm add @singapore-editor/core`. A selection
+from a heading into an editor lost its line breaks the same way.
+
+### Root cause
+
+Editor and snapshot rows are absolutely positioned. Chromium and WebKit add line
+breaks between blocks in the normal flow only, so out-of-flow rows contribute their
+text with nothing between them. A virtualized editor also has only its
+mounted rows in the DOM.
+
+### Fix
+
+[selectionCopy.ts](../../packages/editor/src/editor/selectionCopy.ts) handles the
+document's `copy` event when the page selection reaches a shown snapshot root or a
+live editor. Page text around those regions still comes from the browser's own
+serialization. A snapshot contributes its rows' text with a line break wherever the
+source line ends, and an editor contributes the document text between the selection's
+boundaries. Hidden snapshot alternatives and editors that are still preparing are
+skipped. A selection inside one editor stays with that editor's own copy handler.
+Editors install the handler; pages showing snapshots alone call
+`installPaintSnapshotCopy(document)` from `@singapore-editor/core/paint`.
+
+Shift-click inside an unfocused editor, with the page selection anchored outside it,
+extends that page selection. The editor places the new end through its own hit test
+because WebKit does not extend a page selection onto the editor's layered rows; the
+rows then paint the editor's part from `selectionchange`.
+
+### Minimal reproduction
+
+```html
+<h2>Title</h2>
+<div style="position: relative; height: 44px; font: 14px monospace; white-space: pre">
+  <div style="position: absolute; top: 0">first line</div>
+  <div style="position: absolute; top: 22px">second line</div>
+</div>
+<script>
+  getSelection().selectAllChildren(document.body)
+  console.log(JSON.stringify(getSelection().toString()))
+  // Chromium: "Title\nfirst linesecond line". WebKit: "Title\n\nfirst linesecond line".
+  // Firefox: "Title\nfirst line\nsecond line".
+</script>
+```

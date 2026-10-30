@@ -49,6 +49,7 @@ Each entry names its source and whether the limit is expected to change.
 - Admission. Emit the complete root produced by `mountPaintSnapshot`. Activation validates the ordered, contiguous source slices and full source coverage before allocating ranges. Repeated, overlapping, missing, reordered, oversized or nested malformed slices are refused; traversal and range work are bounded by the decoded document's text, rows and runs.
 - JavaScript off. Emitted text, links, headings, gutters and captured row layout remain readable. Syntax colours on continuous-text rows require activation; with JavaScript disabled those rows use their base text colour. Font files must still load for the captured font metrics to match.
 - Source. [documentPaintHighlights.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/virtualization/documentPaintHighlights.ts) and [paint.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/paint.ts). Dispose the returned handle when removing or replacing emitted roots. Independent bundles allocate names against the document's shared highlight registry.
+- Copy. Rows are absolutely positioned, so the browser's own copy joins their lines. Call `installPaintSnapshotCopy(document)` from `@singapore-editor/core/paint` on pages that show snapshots without an editor; editors install it themselves. With JavaScript disabled, a copied snapshot keeps its text but not its line breaks.
 - Outlook. Qualification of emitted first-frame and inline-example activation is still open.
 
 ## Document size and analysis

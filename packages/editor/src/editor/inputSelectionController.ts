@@ -1,4 +1,5 @@
 import { isTextareaElement } from '../dom'
+import { registerSelectionCopySource, selectionLeavesElement } from './selectionCopy'
 import { scheduleFrame, type ScheduledFrame } from './scheduleFrame'
 import {
   TouchSelectionController,
@@ -303,6 +304,7 @@ export class InputSelectionController {
   private readonly elementConstructor: typeof Element | undefined
   private readonly touchSelection: TouchSelectionController
   private pressClaimed = false
+  private releaseSelectionCopy: (() => void) | null = null
   private readonly autoClose = new AutoCloseStore()
   private readonly snippet = new SnippetSession()
   private readonly ghostText = new GhostTextSession()
@@ -369,6 +371,9 @@ export class InputSelectionController {
   install(): void {
     this.touchSelection.install()
     const { el } = this.options
+    this.releaseSelectionCopy = registerSelectionCopySource(el, (range) =>
+      this.selectionCopyText(range),
+    )
     el.addEventListener('mousedown', this.handleMouseDown)
     el.addEventListener('beforeinput', this.handleBeforeInput)
     el.addEventListener('select', this.syncHiddenInputSelection)
@@ -393,6 +398,8 @@ export class InputSelectionController {
     this.touchSelection.dispose()
     this.touchSelectionListeners.clear()
     const { el } = this.options
+    this.releaseSelectionCopy?.()
+    this.releaseSelectionCopy = null
     this.uninstallNativeInputHandlers()
     el.removeEventListener('mousedown', this.handleMouseDown)
     el.removeEventListener('beforeinput', this.handleBeforeInput)
@@ -2266,6 +2273,7 @@ export class InputSelectionController {
       return
     }
 
+    if (this.extendsPageSelection(event)) return
     this.options.view.focusInput()
     if (event.detail >= 4) {
       this.selectFullDocument(event, 'input.quadClick')
@@ -3220,6 +3228,8 @@ export class InputSelectionController {
   })
 
   private handleCopy = (event: ClipboardEvent): void => {
+    // A page selection that reaches past the editor is copied whole by the document's handler.
+    if (this.selectionLeavesEditor()) return
     const payload = this.clipboardPayload()
     if (!payload) return
     if (!event.clipboardData) return
@@ -3248,6 +3258,7 @@ export class InputSelectionController {
     if (!session) return
     if (!event.clipboardData) return
     if (!this.options.canEditDocument()) return
+    if (this.selectionLeavesEditor()) return
 
     const start = eventStartMs(event)
     const selectionChange = this.selectionChangeBeforeEdit()
@@ -3930,6 +3941,48 @@ export class InputSelectionController {
     // syncSessionSelectionHighlight, so without this the window would go stale for exactly the
     // selections a reader is most likely to want read back to them.
     this.refreshHiddenInputContent()
+  }
+
+  private selectionLeavesEditor(): boolean {
+    return !this.isInputFocused() && selectionLeavesElement(this.options.el)
+  }
+
+  /**
+   * Shift-click with the page's selection anchored outside the editor, say after a click in the
+   * heading above it, extends that page selection into the editor, as on any other page. The editor
+   * places the new end itself because engines disagree about extending onto its layered rows;
+   * selectionchange then paints the editor's part.
+   */
+  private extendsPageSelection(event: MouseEvent): boolean {
+    if (!event.shiftKey || event.altKey || event.button !== 0) return false
+    if (this.isInputFocused()) return false
+    const selection = this.options.el.ownerDocument.getSelection()
+    const anchor = selection?.anchorNode
+    if (!selection || !anchor || this.options.el.contains(anchor)) return false
+    const position = this.textPositionFromMouseEvent(event)
+    if (!position) return false
+    const range = this.options.view.createRange(position.offset, position.offset, {
+      scrollIntoView: false,
+    })
+    if (!range) return false
+    event.preventDefault()
+    selection.extend(range.startContainer, range.startOffset)
+    return true
+  }
+
+  /** This editor's text within a page selection; boundaries outside it clamp to its ends. */
+  private selectionCopyText(range: Range): string | null {
+    const session = this.session
+    if (!session) return null
+    const snapshot = session.getSnapshot()
+    const start = this.selectionCopyBoundary(range.startContainer, range.startOffset, 0)
+    const end = this.selectionCopyBoundary(range.endContainer, range.endOffset, snapshot.length)
+    return readPieceTableTextRange(snapshot, Math.min(start, end), Math.max(start, end))
+  }
+
+  private selectionCopyBoundary(node: Node, offset: number, outside: number): number {
+    if (!this.options.el.contains(node)) return outside
+    return this.domBoundaryToTextOffset(node, offset) ?? outside
   }
 
   private isInputFocused(): boolean {
