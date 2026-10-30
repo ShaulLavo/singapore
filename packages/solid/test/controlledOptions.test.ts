@@ -213,7 +213,7 @@ describe('controlled options', () => {
     const selectionSpy = vi.spyOn(Editor.prototype, 'setSelection')
     const scrollSpy = vi.spyOn(Editor.prototype, 'setScrollPosition')
 
-    mounted.controller.element(document.createElement('div'))
+    mounted.controller.ref(document.createElement('div'))
     await flushEffects()
 
     expect(mounted.controller.editor()).not.toBe(first)
@@ -258,7 +258,7 @@ describe('controlled options', () => {
       disposeRoot = dispose
       controller = createEditor({ document: () => DOCUMENT, rowGap })
       createReaction(() => undefined)(() => {
-        controller.element(document.createElement('div'))
+        controller.ref(document.createElement('div'))
       })
     })
 
@@ -284,7 +284,7 @@ function mountInRoot(create: () => SolidEditorController): MountedEditor {
   createRoot((dispose) => {
     disposeRoot = dispose
     controller = create()
-    controller.element(host)
+    controller.ref(host)
   })
 
   return {

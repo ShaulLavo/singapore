@@ -57,7 +57,7 @@ describe('createEditor', () => {
           },
         ],
       })
-      controller.element(host)
+      controller.ref(host)
       expect(controller.editor()).toBeNull()
       expect(host.childElementCount).toBe(0)
       return host
@@ -76,7 +76,7 @@ describe('createEditor', () => {
     createRoot((dispose) => {
       disposeRoot = dispose
       const controller = createEditor()
-      controller.element(host)
+      controller.ref(host)
       controller.dispose()
     })
     expect(host.childElementCount).toBe(0)
@@ -88,10 +88,10 @@ describe('createEditor', () => {
     let controller!: SolidEditorController
     createRoot((dispose) => {
       controller = createEditor()
-      controller.element(host)
+      controller.ref(host)
       dispose()
     })
-    controller.element(host)
+    controller.ref(host)
     expect(controller.editor()).toBeNull()
     expect(host.childElementCount).toBe(0)
   })
@@ -301,7 +301,7 @@ function mountInRoot(
   createRoot((dispose) => {
     disposeRoot = dispose
     controller = typeof create === 'function' ? create() : createEditor(create)
-    controller.element(host)
+    controller.ref(host)
   })
 
   return {

@@ -7,15 +7,15 @@ Part of [Singapore](https://singapore.shaulavo.dev/). A code editor for the brow
 ## Install
 
 ```sh
-npm install @singapore-editor/core @singapore-editor/react react react-dom
+npm install @singapore-editor/core @singapore-editor/react react@19 react-dom@19
 ```
 
 ## Usage
 
-Render this component in your app. Its host element gives the editor a fixed height.
+Render this component in your app. Pass `controller.ref` to the element that hosts the editor, and give that element a height.
 
 ```tsx
-import { EditorHost, useEditor } from '@singapore-editor/react'
+import { useEditor } from '@singapore-editor/react'
 import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
@@ -27,14 +27,14 @@ export function EditorPanel() {
     },
   })
 
-  return <EditorHost controller={controller} style={{ height: '32rem' }} />
+  return <div ref={controller.ref} style={{ height: '32rem' }} />
 }
 ```
 
 ## API highlights
 
 - `useEditor()` creates a controller from props.
-- `EditorHost` mounts its view.
+- `controller.ref` mounts the view into an element. It needs React 19 ref cleanups.
 - `useEditorSelector()` subscribes to a state selection.
 
 [Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/react/overview/)

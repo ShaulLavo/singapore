@@ -3,7 +3,7 @@ import { Editor } from '@singapore-editor/core/editor'
 import { act, createElement, useLayoutEffect, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EditorHost, useEditor, type ReactEditorController, type ReactEditorOptions } from '../src'
+import { useEditor, type ReactEditorController, type ReactEditorOptions } from '../src'
 
 class MockHighlight extends Set<Range> {}
 
@@ -270,7 +270,7 @@ function ReactEditorHarness({
     onController(controller)
   }, [controller, onController])
 
-  return createElement(EditorHost, { key: hostKey, controller })
+  return createElement('div', { key: hostKey, ref: controller.ref })
 }
 
 function mountReactEditor(options: ReactEditorOptions): MountedEditor {

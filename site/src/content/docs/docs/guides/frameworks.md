@@ -4,16 +4,16 @@ Use the adapter for your framework so the editor mounts and disposes with its co
 
 ## React
 
-Install the core and adapter alongside React and React DOM.
+Install the core and adapter alongside React 19 and React DOM.
 
 ```sh
 npm install @singapore-editor/core @singapore-editor/react react react-dom
 ```
 
-`useEditor` creates a controller from props. `EditorHost` mounts it.
+`useEditor` creates a controller from props. Pass `controller.ref` to the element that should host the editor.
 
 ```tsx
-import { EditorHost, useEditor } from '@singapore-editor/react'
+import { useEditor } from '@singapore-editor/react'
 import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
@@ -25,8 +25,8 @@ export function EditorPanel() {
     },
   })
   return (
-    <EditorHost
-      controller={controller}
+    <div
+      ref={controller.ref}
       style={{ height: '32rem', display: 'flex', flexDirection: 'column' }}
     />
   )
@@ -62,7 +62,7 @@ export function EditorPanel() {
     <>
       <button onClick={() => setWordWrap(!wordWrap())}>Toggle wrapping</button>
       <div
-        ref={controller.element}
+        ref={controller.ref}
         style={{ height: '32rem', display: 'flex', 'flex-direction': 'column' }}
       />
     </>
@@ -76,7 +76,7 @@ Options accept a value or accessor. Changing the `wordWrap` signal updates the m
 
 ### The container is empty
 
-Check the ref or `EditorHost` binding, the container height, flex layout and the stylesheet. In an SSR application, mount this component on the client.
+Check the `controller.ref` binding, the container height, flex layout and the stylesheet. In an SSR application, mount this component on the client.
 
 ### New text for the same document id is ignored
 

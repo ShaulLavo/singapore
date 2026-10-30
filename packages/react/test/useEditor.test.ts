@@ -18,7 +18,6 @@ import { act, createElement, StrictMode, useLayoutEffect, type ReactElement } fr
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  EditorHost,
   useEditor,
   useEditorSelector,
   type ReactEditorController,
@@ -355,6 +354,59 @@ describe('useEditor', () => {
 
     expect(dispose).toHaveBeenCalledTimes(1)
     unsubscribe()
+  })
+
+  it('keeps one ref callback and one editor across renders', () => {
+    const mounted = mountReactEditor({ document: { text: 'alpha', documentId: 'a.ts' } })
+    const ref = mounted.controller.ref
+    const editor = mounted.controller.getEditor()
+
+    mounted.render({ document: { text: 'alpha', documentId: 'a.ts' }, wordWrap: true })
+
+    expect(mounted.controller.ref).toBe(ref)
+    expect(mounted.controller.getEditor()).toBe(editor)
+    expect(mounted.host.querySelector('div')?.childElementCount).toBeGreaterThan(0)
+    mounted.dispose()
+  })
+
+  it('remounts into a new element and disposes when the element detaches', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    let controller!: ReactEditorController
+    const render = (hostKey: number, attached: boolean): void => {
+      act(() =>
+        root.render(
+          createElement(MovingHostHarness, {
+            attached,
+            hostKey,
+            onController: (next) => {
+              controller = next
+            },
+          }),
+        ),
+      )
+    }
+
+    try {
+      render(0, true)
+      const first = controller.getEditor()
+      expect(first).not.toBeNull()
+
+      render(1, true)
+      await flushInitialPaintCallbacks()
+      const second = controller.getEditor()
+      expect(second).not.toBeNull()
+      expect(second).not.toBe(first)
+      expect(host.querySelector('[data-host="1"]')?.childElementCount).toBeGreaterThan(0)
+
+      render(1, false)
+      await flushInitialPaintCallbacks()
+      expect(controller.getEditor()).toBeNull()
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+    }
   })
 
   it('syncs state and last change after editor commands', () => {
@@ -971,7 +1023,26 @@ function ReactEditorHarness({
     onController(controller)
   }, [controller, onController])
 
-  return createElement(EditorHost, { controller })
+  return createElement('div', { ref: controller.ref })
+}
+
+function MovingHostHarness({
+  attached,
+  hostKey,
+  onController,
+}: {
+  readonly attached: boolean
+  readonly hostKey: number
+  readonly onController: (controller: ReactEditorController) => void
+}): ReactElement | null {
+  const controller = useEditor({ document: { text: 'alpha', documentId: 'a.ts' } })
+
+  useLayoutEffect(() => {
+    onController(controller)
+  }, [controller, onController])
+
+  if (!attached) return null
+  return createElement('div', { key: hostKey, ref: controller.ref, 'data-host': String(hostKey) })
 }
 
 function FineGrainedHarness({
@@ -996,7 +1067,7 @@ function FineGrainedHarness({
   return createElement(
     'div',
     null,
-    createElement(EditorHost, { controller }),
+    createElement('div', { ref: controller.ref }),
     createElement(TextProbe, { controller, renders }),
     createElement(LengthProbe, { controller, renders }),
     createElement(SelectionProbe, { controller, renders }),
@@ -1021,7 +1092,7 @@ function DragCursorHarness({
   return createElement(
     'div',
     null,
-    createElement(EditorHost, { controller }),
+    createElement('div', { ref: controller.ref }),
     createElement(CursorProbe, { controller, onCursor }),
   )
 }
@@ -1055,7 +1126,7 @@ function StoreProbeHarness({
 }): ReactElement {
   const controller = useEditor({ document: { text: 'alpha', documentId: 'a.ts', revision: 1 } })
   captured.snapshot = useEditorSelector(controller, (snapshot) => snapshot)
-  return createElement(EditorHost, { controller })
+  return createElement('div', { ref: controller.ref })
 }
 
 function FullTextHarness({
@@ -1076,7 +1147,7 @@ function FullTextHarness({
   return createElement(
     'div',
     null,
-    createElement(EditorHost, { controller }),
+    createElement('div', { ref: controller.ref }),
     withProbe ? createElement(FullTextProbe, { controller, onText }) : null,
   )
 }
