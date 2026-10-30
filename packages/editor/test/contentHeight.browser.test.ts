@@ -489,6 +489,34 @@ it('refuses ordinary and reconciled edits before changing selections or history'
   expect(session.getTextSnapshot().length).toBe(text.length + 5)
 })
 
+// The edit is counted by rebuilding only the lines it touches, so the limit must still see rows
+// added by new lines and by wrapping alike.
+it('refuses an edit past the row limit and admits one within it', async () => {
+  const { editor } = mountUnwrapped()
+  editor.setText(Array.from({ length: 9_995 }, () => 'x').join('\n'))
+  const before = editor.getTextSnapshot()
+
+  expect(() => editor.edit({ from: 0, to: 0, text: '\n'.repeat(10) })).toThrow(
+    expect.objectContaining({ code: 'EDITOR_CONTENT_LAYOUT_LIMIT' }),
+  )
+  expect(editor.getTextSnapshot()).toBe(before)
+
+  editor.edit({ from: 0, to: 0, text: '\n'.repeat(4) })
+  expect(editor.getTextSnapshot().lineCount).toBe(9_999)
+})
+
+it('refuses an edit whose wrapped rows pass the row limit', async () => {
+  const { editor } = mount()
+  editor.setText(Array.from({ length: 9_990 }, () => 'x').join('\n'))
+  await frames()
+  const before = editor.getTextSnapshot()
+
+  expect(() => editor.edit({ from: 0, to: 0, text: 'word '.repeat(400) })).toThrow(
+    expect.objectContaining({ code: 'EDITOR_CONTENT_LAYOUT_LIMIT' }),
+  )
+  expect(editor.getTextSnapshot()).toBe(before)
+})
+
 it.each(['cursorPageDown', 'cursorPageUp', 'selectPageDown', 'selectPageUp'] as const)(
   'uses the clipped outside viewport for %s',
   async (command) => {

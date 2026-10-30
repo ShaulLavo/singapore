@@ -4053,8 +4053,14 @@ export class Editor {
     this.unregisterContentConstraint = null
     const buffer = this.session && editorBufferSession(this.session)?.buffer
     if (!buffer || this.view.scrollMode !== 'content') return
-    this.unregisterContentConstraint = registerDocumentSnapshotConstraint(buffer, (snapshot) =>
-      this.view.assertContentSnapshot(snapshot),
+    this.unregisterContentConstraint = registerDocumentSnapshotConstraint(
+      buffer,
+      (snapshot, edit) =>
+        this.view.assertContentSnapshot(
+          snapshot,
+          false,
+          edit && { before: edit.before, after: snapshot, edits: edit.edits },
+        ),
     )
   }
 

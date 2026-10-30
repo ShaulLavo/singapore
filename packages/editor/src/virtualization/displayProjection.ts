@@ -292,35 +292,43 @@ export class DisplayProjection {
   }
 
   update(transition: ProjectionTransition, input: Partial<DisplayProjectionConfig> = {}): void {
-    if (!('changes' in transition) && transition.edits.length > 1)
-      transition = createTextEditBatch(transition.before, transition.after, transition.edits)
+    transition = batchedTransition(transition)
     const config = validConfig(
       { ...updatedMaps(this.config, transition), ...input },
       transition.after,
     )
-    if (
-      transition.before !== this.textSnapshot ||
-      transition.edits.length === 0 ||
-      globalMetricsChanged(this.config, config)
-    ) {
+    if (!this.patches(transition, config)) {
       this.reset(transition.after, config)
       return
     }
     const context = buildContext(transition.after, config, this.counters)
-    const ranges = editRanges(transition)
-    for (const range of ranges.reverse()) {
-      this.root = splice(
-        this.root,
-        range.oldStart,
-        range.oldEnd - range.oldStart,
-        buildSpan(context, range.newStart, range.newEnd),
-        () => {
-          this.counters.indexEntriesTouched += 1
-        },
-      )
-    }
-    const sparse = changedSparseRanges(this.context, context, transition)
-    this.replaceRanges(context, sparse)
+    this.root = spliceEditRanges(this.root, context, transition, this.visitIndexEntry)
+    this.replaceRanges(context, changedSparseRanges(this.context, context, transition))
+  }
+
+  /**
+   * The row count `update(transition)` would leave, without changing this projection. A transition
+   * from this projection's text only rebuilds the edited lines, so validating an edit against a
+   * row limit costs what applying it does, not a rebuild of every line. The index is persistent,
+   * so the patched root shares every untouched node and is dropped afterwards.
+   */
+  previewRowCount(transition: ProjectionTransition): number {
+    transition = batchedTransition(this.fromCurrentText(transition))
+    const { after } = transition
+    const fresh = () =>
+      buildSpan(
+        buildContext(after, validConfig(this.config, after), emptyCounters()),
+        0,
+        after.lineCount,
+      )?.rows ?? 0
+    if (transition.before !== this.textSnapshot) return fresh()
+    const config = validConfig(updatedMaps(this.config, transition), after)
+    if (!this.patches(transition, config)) return fresh()
+    const context = buildContext(after, config, emptyCounters())
+    let root = spliceEditRanges(this.root, context, transition, ignoreIndexEntry)
+    for (const range of changedSparseRanges(this.context, context, transition))
+      root = spliceSourceRange(root, context, range, ignoreIndexEntry)
+    return root?.rows ?? 0
   }
 
   retainWindow(start: number, end: number): void {
@@ -431,21 +439,75 @@ export class DisplayProjection {
   }
 
   private replaceRanges(context: BuildContext, ranges: readonly SourceLineRange[]): void {
-    for (const range of ranges) {
-      const end = Math.min(context.snapshot.lineCount, range.end)
-      this.root = splice(
-        this.root,
-        range.start,
-        end - range.start,
-        buildSpan(context, range.start, end),
-        () => {
-          this.counters.indexEntriesTouched += 1
-        },
-      )
-    }
+    for (const range of ranges)
+      this.root = spliceSourceRange(this.root, context, range, this.visitIndexEntry)
     this.context = context
     this.clearCache()
     this.revisionValue += 1
+  }
+
+  private readonly visitIndexEntry = (): void => {
+    this.counters.indexEntriesTouched += 1
+  }
+
+  private patches(transition: ProjectionTransition, config: DisplayProjectionConfig): boolean {
+    return (
+      transition.before === this.textSnapshot &&
+      transition.edits.length > 0 &&
+      !globalMetricsChanged(this.config, config)
+    )
+  }
+
+  /** Another snapshot object over the same piece tree is still this projection's text. */
+  private fromCurrentText(transition: ProjectionTransition): ProjectionTransition {
+    if (transition.before === this.textSnapshot) return transition
+    const current = getPieceTreeSnapshot(this.textSnapshot)
+    if (!current || getPieceTreeSnapshot(transition.before) !== current) return transition
+    return { ...transition, before: this.textSnapshot }
+  }
+}
+
+function batchedTransition(transition: ProjectionTransition): ProjectionTransition {
+  if ('changes' in transition || transition.edits.length <= 1) return transition
+  return createTextEditBatch(transition.before, transition.after, transition.edits)
+}
+
+function spliceEditRanges(
+  root: ProjectionNode | null,
+  context: BuildContext,
+  transition: ProjectionTransition,
+  visit: () => void,
+): ProjectionNode | null {
+  for (const range of editRanges(transition).reverse())
+    root = splice(
+      root,
+      range.oldStart,
+      range.oldEnd - range.oldStart,
+      buildSpan(context, range.newStart, range.newEnd),
+      visit,
+    )
+  return root
+}
+
+function spliceSourceRange(
+  root: ProjectionNode | null,
+  context: BuildContext,
+  range: SourceLineRange,
+  visit: () => void,
+): ProjectionNode | null {
+  const end = Math.min(context.snapshot.lineCount, range.end)
+  return splice(root, range.start, end - range.start, buildSpan(context, range.start, end), visit)
+}
+
+function ignoreIndexEntry(): void {}
+
+function emptyCounters(): ProjectionCounters {
+  return {
+    sourceBytesRead: 0,
+    materializedRows: 0,
+    materializedTextBytes: 0,
+    indexEntriesTouched: 0,
+    summaryLinesMeasured: 0,
   }
 }
 

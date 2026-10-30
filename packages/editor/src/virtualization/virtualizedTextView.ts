@@ -1,4 +1,5 @@
 import { CaretBlink } from './caretBlink'
+import type { DisplayProjectionTransition } from './displayProjectionTypes'
 import { scheduleFrame, type ScheduledFrame } from '../editor/scheduleFrame'
 import type { RevealBlock } from './revealBlock'
 import { assertContentLayout, contentReadingBounds, revealContentRow } from './contentLayout'
@@ -861,10 +862,14 @@ export class VirtualizedTextView {
     return this.view.scrollMode
   }
 
-  public assertContentSnapshot(text: string | TextSnapshot, replacement = false): void {
+  public assertContentSnapshot(
+    text: string | TextSnapshot,
+    replacement = false,
+    transition?: DisplayProjectionTransition,
+  ): void {
     if (this.view.scrollMode !== 'content') return
     const snapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
-    assertContentSnapshot(this.view, snapshot, replacement)
+    assertContentSnapshot(this.view, snapshot, { replacement, transition })
   }
 
   public setText(
@@ -1158,7 +1163,13 @@ export class VirtualizedTextView {
     const view = this.view
     const textSnapshot =
       typeof nextText === 'string' ? createStringTextSnapshot(nextText) : nextText
-    assertContentSnapshot(view, textSnapshot)
+    assertContentSnapshot(view, textSnapshot, {
+      transition: {
+        before: view.model.projection.textSnapshot,
+        after: textSnapshot,
+        edits: [edit],
+      },
+    })
     this.applyingEdit = true
     try {
       const sameLinePatch = sameLineEditPatch(view, edit)
@@ -1182,7 +1193,7 @@ export class VirtualizedTextView {
 
   public applyEditBatch(batch: TextEditBatch): void {
     const view = this.view
-    assertContentSnapshot(view, batch.after)
+    assertContentSnapshot(view, batch.after, { transition: batch })
     const previousLineCount = view.model.lineCount
     applyTextLayoutTransition(view, batch)
     projectFoldMarkersThroughBatch(view, batch)

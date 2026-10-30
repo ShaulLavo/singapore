@@ -10,11 +10,16 @@ import {
   type InjectedTextRow,
 } from '../displayTransforms'
 import { getPieceTreeSnapshot, type TextSnapshot } from '../documentTextSnapshot'
+import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import { updateInlineMapForEdit } from '../inlineMap'
 import type { SelectionAffinity } from '../selections'
 import type { TextEdit } from '../tokens'
 import type { TextEditBatch } from '../textEditBatch'
-import type { DisplayProjectionTransition, WrapAdvance } from './displayProjectionTypes'
+import type {
+  DisplayProjectionConfig,
+  DisplayProjectionTransition,
+  WrapAdvance,
+} from './displayProjectionTypes'
 import { glyphAdvancesFor, PROPORTIONAL_WRAP_MARGIN_PX } from './glyphAdvances'
 import { observeBrowserTextMetricsInvalidation } from './browserMetrics'
 import { clamp } from '../style-utils'
@@ -329,24 +334,64 @@ export function setInjectedTextRowsLayout(
   refreshDisplayProjection(view, viewportColumns)
 }
 
+export type ContentSnapshotCheck = {
+  /** Checks the text as a replacement document, without the current folds and inline content. */
+  readonly replacement?: boolean
+  /** The edit from the projection's current text to the checked text, when the caller has it. */
+  readonly transition?: DisplayProjectionTransition | TextEditBatch
+}
+
+type ValidatedContent = {
+  readonly snapshot: PieceTableSnapshot
+  readonly config: DisplayProjectionConfig
+}
+
+/** The last document snapshot each view admitted, against the projection config it was counted with. */
+const validatedContent = new WeakMap<VirtualizedTextViewInternal, ValidatedContent>()
+
+/**
+ * Refuses text that would exceed the content layout limits. One edit is checked by the session
+ * before it commits and again by the view as it applies, so a snapshot that already passed under
+ * the same projection config is not counted twice, and an edit with its transition counts only the
+ * rows it rebuilds rather than every row of the document.
+ */
 export function assertContentSnapshot(
   view: VirtualizedTextViewInternal,
   textSnapshot: TextSnapshot,
-  replacement = false,
+  check: ContentSnapshotCheck = {},
 ): void {
   if (view.scrollMode !== 'content') return
   assertContentLayout(textSnapshot.length, 0, 0)
-  const projection = new DisplayProjection({
-    ...view.model.projection.config,
-    textSnapshot,
-    ...(replacement ? { foldMap: null, inlineMap: null, injectedTextRows: [] } : {}),
-  })
-  const count = projection.rowCount
+  const pieceTree = check.replacement ? null : getPieceTreeSnapshot(textSnapshot)
+  const config = view.model.projection.config
+  const validated = validatedContent.get(view)
+  if (pieceTree && validated?.snapshot === pieceTree && validated.config === config) return
+
+  const count = contentRowCount(view, textSnapshot, check)
   assertContentLayout(
     textSnapshot.length,
     count,
     count * getRowHeight(view) + Math.max(0, count - 1) * view.rowGap,
   )
+  if (pieceTree) validatedContent.set(view, { snapshot: pieceTree, config })
+}
+
+function contentRowCount(
+  view: VirtualizedTextViewInternal,
+  textSnapshot: TextSnapshot,
+  { replacement, transition }: ContentSnapshotCheck,
+): number {
+  const projection = view.model.projection
+  if (replacement)
+    return new DisplayProjection({
+      ...projection.config,
+      textSnapshot,
+      foldMap: null,
+      inlineMap: null,
+      injectedTextRows: [],
+    }).rowCount
+  if (transition?.after === textSnapshot) return projection.previewRowCount(transition)
+  return new DisplayProjection({ ...projection.config, textSnapshot }).rowCount
 }
 
 export function updateVirtualizerRows(view: VirtualizedTextViewInternal): void {

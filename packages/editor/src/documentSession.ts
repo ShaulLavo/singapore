@@ -670,14 +670,22 @@ export function subscribeDocumentTransactions(
   }
 }
 
-const snapshotConstraints = new WeakMap<
-  EditorTextBuffer,
-  Set<(snapshot: DocumentTextSnapshot) => void>
->()
+/** The edit that produced a proposed snapshot, when the caller applied one to the current text. */
+export type DocumentSnapshotEdit = {
+  readonly before: DocumentTextSnapshot
+  readonly edits: readonly TextEdit[]
+}
+
+type DocumentSnapshotConstraint = (
+  snapshot: DocumentTextSnapshot,
+  edit?: DocumentSnapshotEdit,
+) => void
+
+const snapshotConstraints = new WeakMap<EditorTextBuffer, Set<DocumentSnapshotConstraint>>()
 
 export function registerDocumentSnapshotConstraint(
   buffer: EditorTextBuffer,
-  validate: (snapshot: DocumentTextSnapshot) => void,
+  validate: DocumentSnapshotConstraint,
 ): () => void {
   let constraints = snapshotConstraints.get(buffer)
   if (!constraints) {
@@ -691,11 +699,16 @@ export function registerDocumentSnapshotConstraint(
   }
 }
 
-function assertDocumentSnapshot(buffer: EditorTextBuffer, snapshot: PieceTableSnapshot): void {
+function assertDocumentSnapshot(
+  buffer: EditorTextBuffer,
+  snapshot: PieceTableSnapshot,
+  edit?: { readonly before: PieceTableSnapshot; readonly edits: readonly TextEdit[] },
+): void {
   const constraints = snapshotConstraints.get(buffer)
   if (!constraints) return
   const text = createDocumentTextSnapshot(snapshot)
-  for (const validate of constraints) validate(text)
+  const change = edit && { before: createDocumentTextSnapshot(edit.before), edits: edit.edits }
+  for (const validate of constraints) validate(text, change)
 }
 
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
@@ -748,7 +761,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (!snapshotConstraints.has(this)) return this.applyLocalEdits
     return (before, edits, options) => {
       const proposed = applyBatchToPieceTable(before, edits)
-      assertDocumentSnapshot(this, proposed)
+      assertDocumentSnapshot(this, proposed, { before, edits })
       return this.applyLocalEdits === applyBatchToPieceTable
         ? proposed
         : this.applyLocalEdits(before, edits, options)
