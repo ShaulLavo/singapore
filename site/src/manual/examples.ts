@@ -39,7 +39,7 @@ export async function renderExample(text: string, language: string): Promise<str
     .map(Number)
     .map(
       (width) =>
-        `<div data-example-width="${width}"${width === 752 ? '' : ' data-pagefind-ignore'}>${(
+        `<div data-example-width="${width}"${width === 740 ? '' : ' data-pagefind-ignore'}>${(
           ['light', 'dark'] as const
         )
           .map(

@@ -38,14 +38,17 @@ a {
   top: 6px;
 }
 
-/* Header: the serif brand, then quiet links. */
+/* Header: the serif brand, then quiet links. The brand starts at the prose edge, or at the page
+   list when there is one; the last link's text ends at the prose's right edge. */
 .top {
   display: flex;
   align-items: center;
+  /* Horizontal padding of each header link, subtracted so the text (not the box) aligns. */
+  --link-pad: 8px;
   gap: 20px;
   height: var(--hh);
-  padding: 0 max(24px, calc(100vw - var(--left) - var(--gw) - var(--measure) - 8px)) 0
-    max(24px, calc(var(--left) - 220px));
+  padding: 0 max(0px, calc(100vw - var(--left) - var(--gw) - var(--measure) - var(--link-pad))) 0
+    calc(var(--left) + var(--gw));
   white-space: nowrap;
 }
 .brand {
@@ -68,7 +71,7 @@ a {
   font: inherit;
   background: none;
   border: 0;
-  padding: 6px 8px;
+  padding: 6px var(--link-pad);
   cursor: pointer;
 }
 .top .right a:hover,
@@ -81,8 +84,10 @@ a {
   display: inline-block;
   visibility: hidden;
 }
+/* A fixed width keeps Search still when the label changes; right-aligned text keeps the edge. */
 .top .theme-toggle {
   width: 3.5rem;
+  text-align: right;
 }
 .theme-toggle[aria-pressed='true'] {
   color: var(--sg-title);
@@ -101,7 +106,8 @@ a {
 .menu nav {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  /* Page names start under the Pages label's text. */
+  left: calc(var(--link-pad) - 18px);
   z-index: 20;
   width: max-content;
   max-width: calc(100vw - 24px);
@@ -185,13 +191,21 @@ kbd {
 /* Prose uses the document's ordinary scroll area. */
 .viewport {
   position: relative;
-  max-width: 1180px;
-  margin: 0 auto;
 }
 .pane {
-  width: min(100% - 64px, 752px);
-  margin: 0 auto;
+  width: var(--measure);
+  margin-left: calc(var(--left) + var(--gw));
   outline: none;
+}
+/* Examples hang their gutter in the left margin: code text, the code background and the caption
+   start at the prose edge, and the code background ends at the prose's right edge. */
+:is(.prose, .home-column) [data-example] {
+  width: calc(100% + var(--gw));
+  max-width: none;
+  margin-left: calc(-1 * var(--gw));
+}
+:is(.prose, .home-column) [data-example] figcaption {
+  padding-left: var(--gw);
 }
 .prose {
   padding: 24px 0 64px;
@@ -213,8 +227,9 @@ kbd {
 .prose p {
   margin: 0 0 20px;
 }
+/* List markers hang in the margin, like the example gutter. */
 .prose :is(ul, ol) {
-  padding-left: 24px;
+  padding-left: 0;
 }
 .prose code {
   font: 0.8em var(--mono);
@@ -231,8 +246,13 @@ kbd {
   padding: 8px;
   text-align: left;
 }
+.prose :is(th, td):first-child {
+  padding-left: 0;
+}
+/* Like code, a quotation's text starts at the prose edge; only its background extends. */
 .prose blockquote {
-  margin-left: 0;
+  margin-left: -16px;
+  margin-right: 0;
   padding: 16px;
   background: var(--sg-code-bg);
 }
@@ -244,11 +264,12 @@ kbd {
   visibility: hidden;
 }
 
-/* The page list in the left margin. */
+/* The page list in the left margin, at the brand's edge. */
 .pages {
   position: absolute;
-  top: 24px;
-  left: 0;
+  /* The first label's capitals line up with the page title's. */
+  top: 37px;
+  left: calc(var(--left) - 220px);
   width: 196px;
   max-height: none;
   overflow: auto;
@@ -352,6 +373,15 @@ kbd {
   color: var(--muted);
 }
 
+/* With the margin list, the column moves right to leave it room, and the brand moves out to it. */
+@media (min-width: 1200px) {
+  .manual {
+    --left: max(244px, calc((100vw - var(--measure)) / 2 - var(--gw)));
+  }
+  .manual .top {
+    padding-left: calc(var(--left) - 220px);
+  }
+}
 /* Without room for the margin list, the header menu lists every page. */
 @media (max-width: 1199px) {
   .pages {
@@ -359,9 +389,6 @@ kbd {
   }
   .menu {
     display: block;
-  }
-  .top {
-    padding: 0 24px;
   }
 }
 /* Phones: the page scrolls as a document. */
@@ -373,7 +400,7 @@ kbd {
     --measure: calc(100vw - var(--gw) - 8px);
   }
   .top {
-    padding: 0 8px 0 14px;
+    --link-pad: 4px;
     gap: 8px;
   }
   .top .right a,
@@ -388,9 +415,10 @@ kbd {
     right: 8px;
     width: auto;
     max-width: none;
+    /* Page names start at the prose edge. */
+    padding-left: calc(var(--gw) - 8px);
   }
   .pathrow {
-    padding-left: var(--gw);
     width: 100%;
   }
   .viewport {
@@ -398,9 +426,6 @@ kbd {
   }
   .nw.wide {
     white-space: inherit;
-  }
-  .pane {
-    width: calc(100% - 32px);
   }
   .prose {
     font-size: 17px;
@@ -412,14 +437,10 @@ kbd {
 
 /* Home: one column of prose around the editable sample. */
 .home-column {
-  max-width: calc(var(--gw) + var(--measure));
-  margin: 0 auto;
+  width: var(--measure);
+  margin-left: calc(var(--left) + var(--gw));
   padding: 24px 0 64px;
   outline: none;
-}
-.home-column > :not(figure, .install) {
-  margin-left: var(--gw);
-  margin-right: 8px;
 }
 .home-column h1 {
   font: 400 34px/1.2 var(--chrome);
