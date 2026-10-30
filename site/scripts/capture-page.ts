@@ -9,7 +9,7 @@ Object.assign(window, {
   async capture(text: string, language: string, theme: 'light' | 'dark') {
     document.documentElement.dataset.theme = theme
     const host = document.getElementById('capture')!
-    host.style.width = '752px'
+    host.style.width = '740px'
     await document.fonts.load('14px "JetBrains Mono"')
     await document.fonts.ready
     const example = mountExample(host, { text, language, label: 'Build-time example' })
@@ -21,7 +21,7 @@ Object.assign(window, {
       if (!paint || paint.format !== 6) throw new TypeError('Invalid example paint')
       example.dispose()
       const html: Record<number, string> = {}
-      for (const width of [240, 288, 358, 480, 600, 704, 752]) {
+      for (const width of [240, 288, 358, 480, 600, 704, 740]) {
         host.style.width = `${width}px`
         const mounted = mountPaintSnapshot(host, paint)
         if (!mounted) throw new TypeError(`Example paint refused at ${width}`)

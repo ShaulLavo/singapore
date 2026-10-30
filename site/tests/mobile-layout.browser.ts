@@ -119,8 +119,10 @@ for (const engine of ['chromium', 'webkit'] as const) {
               .locator('[data-editor-document-paint-row]')
               .allTextContents()
             expect(staticRows.length).toBeGreaterThan(0)
-            const stage = example.locator('.example-stage')
-            const staticWidth = await stage.evaluate((element) => element.clientWidth)
+            // The stage's background spans the figure; the paint keeps its captured width.
+            const staticWidth = await example
+              .locator('.example-static')
+              .evaluate((element) => element.clientWidth)
             await example.getByRole('button', { name: /Edit/ }).click()
             await expect.poll(() => example.getAttribute('data-example-live')).toBe('')
             const textRows = example.locator(
@@ -141,7 +143,7 @@ for (const engine of ['chromium', 'webkit'] as const) {
               .toEqual(staticRows)
             await page.screenshot({ path: join(evidence, `${label}.png`), fullPage: true })
             const geometry = await example.evaluate((element) => {
-              const frame = element.querySelector<HTMLElement>('.example-stage')!
+              const frame = element.querySelector<HTMLElement>('.example-prepared')!
               const editor = element.querySelector<HTMLElement>('.editor-virtualized')!
               const extent = element.querySelector<HTMLElement>('.editor-virtualized-extent')!
               return {

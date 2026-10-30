@@ -3,12 +3,24 @@
   margin: 1.5rem 0;
   max-width: 100%;
 }
+/* The paint keeps a captured width, while the code background fills the figure so its right
+   edge meets the prose's. The gutter stays the page colour. */
 .example-stage {
+  --example-width: 240px;
   position: relative;
-  width: 240px;
+  width: 100%;
+  background: linear-gradient(
+    to right,
+    var(--sg-bg, var(--sl-color-black)) 36px,
+    var(--sg-code-bg, var(--sl-color-gray-6)) 0
+  );
   /* Contain prepared editors while their resize observer reflows the new frame. */
-  max-width: 100%;
   overflow: clip;
+}
+.example-static,
+.example-prepared {
+  width: var(--example-width);
+  max-width: 100%;
 }
 [data-example-width],
 [data-example-theme] {
@@ -34,7 +46,7 @@
 }
 @container (min-width: 288px) {
   .example-stage {
-    width: 288px;
+    --example-width: 288px;
   }
   [data-example-width] {
     display: none;
@@ -45,7 +57,7 @@
 }
 @container (min-width: 358px) {
   .example-stage {
-    width: 358px;
+    --example-width: 358px;
   }
   [data-example-width] {
     display: none;
@@ -56,7 +68,7 @@
 }
 @container (min-width: 480px) {
   .example-stage {
-    width: 480px;
+    --example-width: 480px;
   }
   [data-example-width] {
     display: none;
@@ -67,7 +79,7 @@
 }
 @container (min-width: 600px) {
   .example-stage {
-    width: 600px;
+    --example-width: 600px;
   }
   [data-example-width] {
     display: none;
@@ -78,7 +90,7 @@
 }
 @container (min-width: 704px) {
   .example-stage {
-    width: 704px;
+    --example-width: 704px;
   }
   [data-example-width] {
     display: none;
@@ -87,14 +99,14 @@
     display: block;
   }
 }
-@container (min-width: 752px) {
+@container (min-width: 740px) {
   .example-stage {
-    width: 752px;
+    --example-width: 740px;
   }
   [data-example-width] {
     display: none;
   }
-  [data-example-width='752'] {
+  [data-example-width='740'] {
     display: block;
   }
 }

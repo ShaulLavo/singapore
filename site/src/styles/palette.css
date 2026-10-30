@@ -4,13 +4,14 @@
   --chrome: 'Source Serif 4', 'Singapore Serif Fallback', Georgia, serif;
   --row: 22px;
   --size: 14px;
-  --gw: 48px;
+  /* The example gutter. It hangs in the left margin, so code text starts at the prose edge. */
+  --gw: 36px;
   --gap: 18px;
   /* Text measure: 88 columns of the 8 px advance. */
   --measure: 704px;
   --hh: 52px;
   --ph: 30px;
-  /* Column start, chosen so the prose (not the gutter) is centred. */
+  /* Gutter start, chosen so the prose (not the gutter) is centred. Prose starts at --left + --gw. */
   --left: max(0px, calc((100vw - var(--measure)) / 2 - var(--gw)));
 
   /* Light paper and its dark counterpart: the same calm hues, lifted for a dark page. */

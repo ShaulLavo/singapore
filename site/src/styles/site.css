@@ -71,3 +71,29 @@
   color: var(--sl-color-accent-high);
   font-weight: 600;
 }
+
+/* Examples hang their gutter in the left margin, as on the editor pages: code text, the code
+   background and the caption start at the prose edge. The content padding is one gutter wide so the
+   numbers stay inside the content panel. Starlight's header gap follows this padding, which keeps
+   the search box at the prose edge. */
+:root {
+  --sl-content-pad-x: 36px;
+}
+@media (max-width: 49.99rem) {
+  /* Phones: the title and menu button line up with the prose edges. */
+  :root {
+    --sl-nav-pad-x: 36px;
+  }
+}
+/* The "On this page" button starts at the prose edge. */
+:root mobile-starlight-toc summary {
+  padding-inline: var(--sl-content-pad-x);
+}
+.sl-markdown-content [data-example] {
+  width: calc(100% + 36px);
+  max-width: none;
+  margin-left: -36px;
+}
+.sl-markdown-content [data-example] figcaption {
+  padding-left: 36px;
+}
