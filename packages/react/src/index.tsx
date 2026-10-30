@@ -112,7 +112,9 @@ export type ReactEditorSelector<T> = (snapshot: ReactEditorStoreSnapshot) => T
 export type ReactEditorSelectorEquality<T> = (current: T, next: T) => boolean
 
 /**
- * Ref callback that mounts the editor into an element: `<div ref={controller.ref} />`.
+ * Ref callback that mounts the editor into an element. Destructure it first,
+ * `const { ref } = controller` then `<div ref={ref} />`: the React Compiler reads
+ * `ref={controller.ref}` as a ref access and rejects later render reads of the controller.
  * Relies on React 19 ref cleanups; React calls the returned function on detach.
  */
 export type ReactEditorRef = (element: HTMLElement | null) => (() => void) | undefined

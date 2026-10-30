@@ -12,7 +12,7 @@ npm install @singapore-editor/core @singapore-editor/react react@19 react-dom@19
 
 ## Usage
 
-Render this component in your app. Pass `controller.ref` to the element that hosts the editor, and give that element a height.
+Render this component in your app. Pass the controller's `ref` to the element that hosts the editor, and give that element a height.
 
 ```tsx
 import { useEditor } from '@singapore-editor/react'
@@ -26,15 +26,18 @@ export function EditorPanel() {
       languageId: 'typescript',
     },
   })
+  const { ref } = controller
 
-  return <div ref={controller.ref} style={{ height: '32rem' }} />
+  return <div ref={ref} style={{ height: '32rem' }} />
 }
 ```
+
+Take `ref` out of the controller before you pass it to JSX. The React Compiler treats `ref={controller.ref}` as a ref read and then rejects later render reads of the controller, such as `controller.getEditor()`.
 
 ## API highlights
 
 - `useEditor()` creates a controller from props.
-- `controller.ref` mounts the view into an element. It needs React 19 ref cleanups.
+- The controller's `ref` mounts the view into an element. It needs React 19 ref cleanups.
 - `useEditorSelector()` subscribes to a state selection.
 
 [Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/react/overview/)
