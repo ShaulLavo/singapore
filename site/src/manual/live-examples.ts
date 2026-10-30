@@ -1,7 +1,11 @@
 import type { ExampleEditor } from './example-editor'
 import type { ExampleCapture } from './examples'
 import runtimeUrl from 'virtual:example-editor-url'
+import { installPaintSnapshotCopy } from '@singapore-editor/core/paint'
 import { onThemeChange } from './theme-toggle'
+
+// Static examples copy with their line breaks, and so do selections that run into them from the page.
+installPaintSnapshotCopy(document)
 
 type Source = ExampleCapture & { text: string; language: string }
 const states = new Map<

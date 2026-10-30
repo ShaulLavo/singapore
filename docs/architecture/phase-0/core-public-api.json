@@ -6394,6 +6394,12 @@
         },
         {
           "kind": "value",
+          "name": "installPaintSnapshotCopy",
+          "source": "packages/editor/src/paint.ts",
+          "via": "packages/editor/src/paint.ts"
+        },
+        {
+          "kind": "value",
           "name": "mountPaintSnapshot",
           "source": "packages/editor/src/paint.ts",
           "via": "packages/editor/src/paint.ts"

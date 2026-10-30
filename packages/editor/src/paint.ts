@@ -7,6 +7,7 @@ export type {
 export type { MountedPaintSnapshot } from './virtualization/documentPaintRows'
 import type { PaintSnapshot } from './editor/documentPaint'
 import { mountDocumentPaint } from './virtualization/documentPaintRows'
+import { installSelectionCopy } from './editor/selectionCopy'
 import {
   activateDocumentPaintHighlights,
   prepareDocumentPaintHighlights,
@@ -34,4 +35,14 @@ export function activatePaintSnapshotHighlights(element: HTMLElement, paint: Pai
   } finally {
     revealDocumentPaintHighlights(element)
   }
+}
+
+/**
+ * Makes copying a page selection that runs through emitted snapshot roots or editors keep their
+ * line breaks. Snapshot and editor rows are absolutely positioned, so the browser's own copy joins
+ * their lines. Editors install this themselves; call it for pages that show snapshots alone. The
+ * returned function removes this installation.
+ */
+export function installPaintSnapshotCopy(document: Document): () => void {
+  return installSelectionCopy(document)
 }
