@@ -22,14 +22,14 @@ export function EditorPanel() {
   const controller = createEditor({
     document: { documentId: 'example.ts', text: 'const value = 1\n', languageId: 'typescript' },
   })
-  return <div ref={controller.element} style={{ height: '400px' }} />
+  return <div ref={controller.ref} style={{ height: '400px' }} />
 }
 ```
 
 ## API highlights
 
 - `createEditor()` creates a controller inside a Solid owner.
-- `controller.element` mounts the view.
+- `controller.ref` mounts the view.
 - `controller.state()` reads the current editor state.
 
 [Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/solid/overview/)

@@ -121,7 +121,7 @@ export type SolidEditorCommands = {
 
 export type SolidEditorController = {
   /** Pass as a JSX ref; creates the editor after Solid mounts and disposes it with its owner. */
-  element(element: HTMLElement): void
+  ref(element: HTMLElement): void
   editor: Accessor<Editor | null>
   state: Accessor<EditorState | null>
   snapshot: Accessor<EditorViewSnapshot | null>
@@ -203,7 +203,7 @@ export function createEditor(options: SolidEditorOptions = {}): SolidEditorContr
   })
 
   return {
-    element: mount,
+    ref: mount,
     editor,
     state,
     snapshot,

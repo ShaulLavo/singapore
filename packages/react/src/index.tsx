@@ -41,16 +41,7 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type CSSProperties,
-  type ReactElement,
-} from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
 
 export type ReactEditorDocument = {
   readonly analysis?: EditorDocumentAnalysis | null
@@ -120,8 +111,15 @@ export type ReactEditorStoreSnapshot = {
 export type ReactEditorSelector<T> = (snapshot: ReactEditorStoreSnapshot) => T
 export type ReactEditorSelectorEquality<T> = (current: T, next: T) => boolean
 
+/**
+ * Ref callback that mounts the editor into an element: `<div ref={controller.ref} />`.
+ * Relies on React 19 ref cleanups; React calls the returned function on detach.
+ */
+export type ReactEditorRef = (element: HTMLElement | null) => (() => void) | undefined
+
 export type ReactEditorController = {
-  mount(element: HTMLElement): void
+  /** Stable for the controller's lifetime. Pass it to the `ref` of the element that hosts the editor. */
+  readonly ref: ReactEditorRef
   dispose(): void
   getEditor(): Editor | null
   getState(): EditorState | null
@@ -139,12 +137,6 @@ export type ReactEditorController = {
   useLastChange(): EditorContributionChange | null
   useUpdateKind(): EditorViewContributionUpdateKind | null
   readonly commands: ReactEditorCommands
-}
-
-export type EditorHostProps = {
-  readonly controller: ReactEditorController
-  readonly className?: string
-  readonly style?: CSSProperties
 }
 
 type ReactEditorStorePatch = Partial<ReactEditorStoreSnapshot>
@@ -219,20 +211,6 @@ export function useEditor(options: ReactEditorOptions = {}): ReactEditorControll
   return controller
 }
 
-export function EditorHost({ controller, className, style }: EditorHostProps): ReactElement {
-  const hostRef = useRef<HTMLDivElement | null>(null)
-
-  useEditorLayoutEffect(() => {
-    const element = hostRef.current
-    if (!element) return
-
-    controller.mount(element)
-    return () => internalController(controller).scheduleReactDispose()
-  }, [controller])
-
-  return <div ref={hostRef} className={className} style={style} />
-}
-
 export function useEditorSelector<T>(
   controller: ReactEditorController,
   selector: ReactEditorSelector<T>,
@@ -283,7 +261,19 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     this.commands = createCommands(() => this.getEditor(), this.documentState)
   }
 
-  public mount(element: HTMLElement): void {
+  // An arrow property so the identity stays fixed: a new ref callback would make React detach and
+  // reattach it, which would rebuild the editor on every render.
+  public readonly ref: ReactEditorRef = (element) => {
+    // React 19 passes `null` only to refs that return no cleanup, so this never runs today.
+    // TODO(react-18): React 18 ignores the cleanup and detaches with `null`; to support it, call
+    // scheduleReactDispose() here and widen the peer range.
+    if (!element) return undefined
+
+    this.mount(element)
+    return () => this.scheduleReactDispose()
+  }
+
+  private mount(element: HTMLElement): void {
     this.retainReactOwner()
     if (this.mountedElement === element && this.getEditor()) return
 

@@ -5,7 +5,7 @@ import typeScriptWasmUrl from 'tree-sitter-typescript/tree-sitter-typescript.was
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createShikiHighlighterPlugin } from '@singapore-editor/core/shiki'
 
-import { EditorHost, useEditor } from '../src'
+import { useEditor } from '../src'
 import { createTreeSitterLanguagePlugin } from '../../tree-sitter/src/index'
 
 const EDITOR_COUNT = 6
@@ -71,7 +71,7 @@ function ShikiEditor({ index }: { readonly index: number }) {
     plugins: STRICT_MODE_PLUGINS,
   })
 
-  return <EditorHost controller={controller} style={{ height: 80, width: 320 }} />
+  return <div ref={controller.ref} style={{ height: 80, width: 320 }} />
 }
 
 function trackLiveWorkers(): void {
