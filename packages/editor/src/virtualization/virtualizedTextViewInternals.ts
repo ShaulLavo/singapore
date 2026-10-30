@@ -1,4 +1,5 @@
 import type { EditorDisposable } from '../editor/disposables'
+import type { CaretBlink } from './caretBlink'
 import type { ScheduledFrame } from '../editor/scheduleFrame'
 import type { WrapAdvance, WrapBreak } from './displayProjectionTypes'
 import type { GlyphAdvances } from './glyphAdvances'
@@ -81,6 +82,7 @@ export interface VirtualizedTextViewInternal {
   /** Configured; the gutter applies it only while it is shown. */
   gutterLeadingInset: number
   readonly caretLayerElement: HTMLDivElement
+  readonly caretBlink: CaretBlink
   readonly caretElement: HTMLDivElement
   readonly secondaryCaretElements: HTMLDivElement[]
   /** A caret render waiting for the next frame because the editor does not hold focus. */

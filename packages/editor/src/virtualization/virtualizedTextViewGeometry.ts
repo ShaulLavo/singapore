@@ -2827,11 +2827,10 @@ function appendRangeSegmentForChunk(
 ): void {
   if (end <= chunk.startOffset || start >= chunk.endOffset) return
 
-  const range = createDomRangeForChunkRange(row.element.ownerDocument, row, chunk, start, end)
-  if (!range) return
+  const rects = chunkRangeClientRects(row, chunk, start, end)
+  if (!rects) return
 
   const measurement = { row, scale: rowClientRectScale(row) }
-  const rects = range.getClientRects()
   for (let index = 0; index < rects.length; index += 1) {
     const rect = rects.item(index)
     if (!rect) continue
@@ -3015,6 +3014,30 @@ function measuredChunkContentsRect(
 function renderedPartNode(part: VirtualizedTextChunkPart): Node {
   if (part.kind === 'text') return part.node
   return part.element
+}
+
+/**
+ * Client rects for part of a chunk, read through the scratch range. A fresh live `Range` per chunk
+ * stays registered with the document until it is collected, and the browser updates every live
+ * range on every DOM mutation: after painting a selection over 6,000 content-mode rows, each later
+ * node removal cost about 0.4 ms until garbage collection ran. `getClientRects` returns a static
+ * list, so it stays valid after the range is parked.
+ */
+function chunkRangeClientRects(
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  start: number,
+  end: number,
+): DOMRectList | null {
+  const boundaries = domBoundariesForChunkRange(row, chunk, start, end, 'geometry')
+  if (!boundaries) return null
+
+  const scratch = measurementScratchFor(row.element.ownerDocument)
+  scratch.range.setStart(boundaries.start.node, boundaries.start.offset)
+  scratch.range.setEnd(boundaries.end.node, boundaries.end.offset)
+  const rects = scratch.range.getClientRects()
+  scratch.range.selectNodeContents(scratch.parking)
+  return rects
 }
 
 function measurementScratchFor(document: Document): MeasurementScratch {

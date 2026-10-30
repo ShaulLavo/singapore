@@ -244,22 +244,6 @@
     },
     {
       "api": "requestAnimationFrame",
-      "file": "packages/file-animation/src/morph-run.ts",
-      "id": "packages/file-animation/src/morph-run.ts:requestAnimationFrame:dd4f2cadc9",
-      "justification": "Colour changes ride a CSS transition, which needs the starting colour painted first. One frame per morph, cancelled with the run.",
-      "line": 226,
-      "snippet": "this.colorFrame = requestAnimationFrame(() => {"
-    },
-    {
-      "api": "queueMicrotask",
-      "file": "packages/file-animation/src/piece-span.ts",
-      "id": "packages/file-animation/src/piece-span.ts:queueMicrotask:756795f1da",
-      "justification": "A run with nothing to animate still settles after its constructor returns, so the owner has stored the run before `onDone` tears it down. Guarded by `isCanceled`.",
-      "line": 49,
-      "snippet": "queueMicrotask(fire)"
-    },
-    {
-      "api": "requestAnimationFrame",
       "file": "packages/editor/src/editor/scheduleFrame.ts",
       "id": "packages/editor/src/editor/scheduleFrame.ts:requestAnimationFrame:21f6d4dcc7",
       "justification": "This is the frame scheduler every caller goes through; the handle is returned so the owner cancels it on disposal.",
@@ -315,6 +299,14 @@
       "snippet": "setTimeout(() => {"
     },
     {
+      "api": "setInterval",
+      "file": "packages/editor/src/virtualization/caretBlink.ts",
+      "id": "packages/editor/src/virtualization/caretBlink.ts:setInterval:df9ae59f95",
+      "justification": "The caret blink is wall-clock, not frame work: a frame-driven or CSS blink recalculates style every frame. It runs only while the editor holds focus, one handle per view, cleared on blur, caret hide, and dispose.",
+      "line": 48,
+      "snippet": "this.timer = window.setInterval(this.toggle, BLINK_PHASE_MS)"
+    },
+    {
       "api": "queueMicrotask",
       "file": "packages/editor/src/virtualization/geckoHighlightRepaint.ts",
       "id": "packages/editor/src/virtualization/geckoHighlightRepaint.ts:queueMicrotask:804ee49585",
@@ -335,7 +327,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 1937,
+      "line": 1940,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -343,7 +335,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 1946,
+      "line": 1949,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -353,6 +345,22 @@
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
       "line": 1757,
       "snippet": "const handle = win.setTimeout(() => {"
+    },
+    {
+      "api": "requestAnimationFrame",
+      "file": "packages/file-animation/src/morph-run.ts",
+      "id": "packages/file-animation/src/morph-run.ts:requestAnimationFrame:dd4f2cadc9",
+      "justification": "Colour changes ride a CSS transition, which needs the starting colour painted first. One frame per morph, cancelled with the run.",
+      "line": 227,
+      "snippet": "this.colorFrame = requestAnimationFrame(() => {"
+    },
+    {
+      "api": "queueMicrotask",
+      "file": "packages/file-animation/src/piece-span.ts",
+      "id": "packages/file-animation/src/piece-span.ts:queueMicrotask:756795f1da",
+      "justification": "A run with nothing to animate still settles after its constructor returns, so the owner has stored the run before `onDone` tears it down. Guarded by `isCanceled`.",
+      "line": 49,
+      "snippet": "queueMicrotask(fire)"
     },
     {
       "api": "setTimeout",

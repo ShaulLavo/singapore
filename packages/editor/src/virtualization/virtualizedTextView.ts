@@ -1,3 +1,4 @@
+import { CaretBlink } from './caretBlink'
 import { scheduleFrame, type ScheduledFrame } from '../editor/scheduleFrame'
 import type { RevealBlock } from './revealBlock'
 import { assertContentLayout, contentReadingBounds, revealContentRow } from './contentLayout'
@@ -416,6 +417,7 @@ export class VirtualizedTextView {
       gutterWidthProvider,
       gutterLeadingInset: normalizeGutterLeadingInset(options.gutterLeadingInset),
       caretLayerElement,
+      caretBlink: new CaretBlink(caretLayerElement, scrollElement),
       caretElement,
       deferredCaret: null,
       secondaryCaretElements: [],
@@ -547,6 +549,7 @@ export class VirtualizedTextView {
     this.cancelContentWidthMeasurement = null
     this.disposeForegroundHighlightRestore()
     cancelDeferredCaret(view)
+    view.caretBlink.dispose()
     clearSelectionHighlight(view)
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
     clearTokenHighlights(view)

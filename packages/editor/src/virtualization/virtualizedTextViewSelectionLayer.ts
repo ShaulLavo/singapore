@@ -1,5 +1,9 @@
 import { setStyleValue } from './virtualizedTextViewHelpers'
-import { rangeSegments } from './virtualizedTextViewGeometry'
+import {
+  beginRowRectMeasurements,
+  endRowRectMeasurements,
+  rangeSegments,
+} from './virtualizedTextViewGeometry'
 import type {
   VirtualizedStoredSelection,
   VirtualizedTextViewInternal,
@@ -13,9 +17,27 @@ type SelectionSegment = {
 
 const SELECTION_RECT_MERGE_EPSILON = 0.9
 
+/**
+ * Every row is measured before any layer is written. A layer write dirties layout, so measuring and
+ * writing row by row forces one full layout per mounted row, which is every row in content mode.
+ * The layers are absolutely positioned and cannot move the text measured under them.
+ */
 export function renderSelectionLayer(view: VirtualizedTextViewInternal): void {
-  for (const row of view.rowElements.values()) {
-    renderSelectionLayerForRow(view, row)
+  const measured = measureSelectionLayers(view)
+  for (const [row, segments] of measured) writeSelectionLayerForRow(row, segments)
+}
+
+function measureSelectionLayers(
+  view: VirtualizedTextViewInternal,
+): readonly (readonly [MountedVirtualizedTextRow, readonly SelectionSegment[]])[] {
+  beginRowRectMeasurements()
+  try {
+    return Array.from(
+      view.rowElements.values(),
+      (row) => [row, selectionSegmentsForRow(view, row)] as const,
+    )
+  } finally {
+    endRowRectMeasurements()
   }
 }
 
@@ -26,11 +48,10 @@ export function clearSelectionLayer(view: VirtualizedTextViewInternal): void {
   }
 }
 
-function renderSelectionLayerForRow(
-  view: VirtualizedTextViewInternal,
+function writeSelectionLayerForRow(
   row: MountedVirtualizedTextRow,
+  segments: readonly SelectionSegment[],
 ): void {
-  const segments = selectionSegmentsForRow(view, row)
   if (segments.length === 0) {
     clearSelectionLayerForRow(row)
     return

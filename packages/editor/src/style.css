@@ -462,7 +462,6 @@
 }
 
 .editor-virtualized-caret-layer {
-  animation: editor-virtualized-caret-blink 1s steps(1, end) infinite;
   left: 0;
   pointer-events: none;
   position: absolute;
@@ -478,16 +477,10 @@
   width: 2px;
 }
 
-@keyframes editor-virtualized-caret-blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
-
-  50%,
-  100% {
-    opacity: 0;
-  }
+/* Blinks from CaretBlink, not a CSS animation: a running animation recalculates style every frame,
+   which makes Chromium revisit every CSS highlight range. */
+.editor-virtualized-caret-layer[data-editor-caret-blink='off'] {
+  opacity: 0;
 }
 
 .editor-virtualized-metric-probe {

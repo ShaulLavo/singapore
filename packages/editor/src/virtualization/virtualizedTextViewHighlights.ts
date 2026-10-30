@@ -371,12 +371,15 @@ function renderCaretNow(view: VirtualizedTextViewInternal): void {
   if (selections.length === 0) {
     hideCaretElement(view.caretElement)
     hideSecondaryCaretElements(view, 0)
+    view.caretBlink.hide()
     return
   }
 
   const primary = selections[0]!
   const primaryPositions = caretPosition(view, primary.head, primary.affinity)
   renderCaretElement(view, view.caretElement, primaryPositions?.[0] ?? null, false)
+  if (primaryPositions?.[0]) view.caretBlink.show()
+  else view.caretBlink.hide()
 
   let secondaryIndex = 0
   const primaryOther = primaryPositions?.[1]

@@ -168,6 +168,72 @@ The time-boxed investigation leaves snapshot code and Markdown rendering
 unchanged. Matching link-token and theme colours is the qualified docs-site path;
 changing decoration ownership requires separate capture and replay qualification.
 
+## Chromium revisits every highlight range when style changes
+
+Verified 2026-10-30 on Linux with Playwright 1.64.1 and Chromium 156.0.8078.4.
+No upstream issue has been opened.
+
+### Symptom
+
+Scrolling a page with a large syntax-highlighted editor drops to 20-25 frames a
+second, even though no script runs while scrolling. A 6,000-line TypeScript paste
+into a content-mode editor scrolled at about 45 ms a frame, almost all of it in
+PrePaint. Clearing `CSS.highlights` restored 16.7 ms frames.
+
+### Root cause
+
+With many registered highlight ranges, any style change in the document makes
+Chromium revisit all of them, whatever element changed. On a page of 6,000 plain
+rows holding 30,000 `StaticRange`s, one attribute, style, or text change per
+frame while scrolling adds about 11 ms to every frame. Without ranges the same
+changes cost nothing. A running CSS animation recalculates style on every frame
+the page produces, so the editor's infinite caret-blink animation paid that cost
+on every scroll frame. It ran on every editor on the page, focused or not,
+because it sat on the caret layer, which is never hidden. `will-change: opacity`
+does not move it off the main thread.
+
+WebKit 27.2 is slower with the same 30,000 ranges, about 65 ms a frame, even
+with no style change at all. Only fewer registered ranges help there.
+
+### Fix
+
+`CaretBlink` (`packages/editor/src/virtualization/caretBlink.ts`) toggles
+`data-editor-caret-blink` on the caret layer every 500 ms instead, and only
+while focus is inside the editor. That is two style changes a second rather
+than one per frame. An unfocused caret stays solid, like a native text field's.
+
+### Repro
+
+Mount 6,000 absolutely positioned rows of text, register 30,000 `StaticRange`s
+across two `Highlight`s, and scroll the window by 600 px per frame. Frames stay at
+16.7 ms. Add a small element running
+`animation: blink 1s steps(1, end) infinite`, or change any attribute once per
+frame, and frames rise to about 28 ms.
+
+## Live ranges tax every DOM mutation
+
+Verified 2026-10-30 on Linux with Chromium 156.0.8078.4. This is specified
+behavior: the DOM standard updates every live `Range` when a node is inserted or
+removed.
+
+### Symptom
+
+After Select All over 6,000 content-mode rows, clearing the selection took
+4-5 seconds or about 100 ms, depending on when garbage collection had last run.
+
+### Root cause
+
+Painting a selection measured each row through a fresh `Range`. Each one stays
+registered with its document until it is collected, so every later node removal
+walked all of them, about 0.4 ms per removal. Forcing garbage collection made the
+same removals 40-300 times faster.
+
+### Fix
+
+Selection geometry reads through the one scratch `Range` that row measurement
+already used, and parks it on a detached text node after each read
+(`chunkRangeClientRects` in `virtualizedTextViewGeometry.ts`).
+
 ## Native textarea caret leaks through transparent hidden input
 
 **Verified 2026-06 against:** desktop app WebView, user-visible in the Platform
