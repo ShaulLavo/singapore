@@ -151,6 +151,11 @@
   position: relative;
   width: 100%;
 }
+/* Selecting or copying a static example takes only its code, not the line numbers. */
+[data-editor-document-paint] > [aria-hidden] {
+  -webkit-user-select: none;
+  user-select: none;
+}
 .sg-example-editor > .editor {
   border: 0;
   border-radius: 0;
