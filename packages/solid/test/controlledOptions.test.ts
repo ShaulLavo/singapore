@@ -24,7 +24,7 @@ type OptionSample = {
   readonly applied: readonly unknown[]
 }
 
-const DOCUMENT = { text: 'alpha beta', documentId: 'a.ts', revision: 1 }
+const DOCUMENT = { defaultText: 'alpha beta', documentId: 'a.ts' }
 
 /**
  * Values chosen so that nothing here can be produced by accident: each `applied` entry is the

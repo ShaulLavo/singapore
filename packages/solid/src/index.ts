@@ -46,14 +46,33 @@ import {
 
 export type SolidEditorReactiveValue<T> = T | Accessor<T>
 
-export type SolidEditorDocument = {
+type SolidEditorDocumentFields = {
   readonly documentId?: string
-  readonly revision?: string | number
-  readonly text: string
   readonly documentMode?: EditorDocumentMode
   readonly languageId?: EditorSyntaxLanguageId | null
   readonly scrollPosition?: EditorScrollPosition
 }
+
+/**
+ * The editor owns the text. `defaultText` is read when the document opens, that is on mount and
+ * whenever `documentId` changes; later changes to it are ignored.
+ */
+export type SolidEditorUncontrolledDocument = SolidEditorDocumentFields & {
+  readonly defaultText?: string
+  readonly text?: never
+}
+
+/**
+ * The source owns the text: each new `text` is applied to the editor as an edit. Pair it with
+ * `onTextChange` for an editable editor. Every change then copies the whole text, so prefer
+ * `defaultText` for anything but small documents and read-only views.
+ */
+export type SolidEditorControlledDocument = SolidEditorDocumentFields & {
+  readonly text: string
+  readonly defaultText?: never
+}
+
+export type SolidEditorDocument = SolidEditorUncontrolledDocument | SolidEditorControlledDocument
 
 export type SolidEditorSelection = EditorControlledSelection
 
@@ -99,6 +118,11 @@ export type SolidEditorOptions = Omit<
   readonly tabSize?: SolidEditorReactiveValue<number | undefined>
   readonly wordWrap?: SolidEditorReactiveValue<boolean | undefined>
   readonly onChange?: EditorChangeHandler
+  /**
+   * Receives the whole text after each change that did not come from `document.text` or
+   * `document.defaultText`. Copies the document every time: O(document length) per change.
+   */
+  readonly onTextChange?: (text: string) => void
 }
 
 export type SolidEditorCommands = {
@@ -255,7 +279,7 @@ function mountEditor(
   documentState: SolidEditorDocumentState,
   optionSync: EditorOptionSync,
 ): void {
-  const instance = new Editor(element, createConstructorOptions(options, runtime))
+  const instance = new Editor(element, createConstructorOptions(options, runtime, documentState))
 
   batch(() => {
     runtime.setEditor(instance)
@@ -274,6 +298,7 @@ function mountEditor(
 function createConstructorOptions(
   options: SolidEditorOptions,
   runtime: SolidEditorRuntime,
+  documentState: SolidEditorDocumentState,
 ): EditorOptions {
   const {
     document: _document,
@@ -286,6 +311,7 @@ function createConstructorOptions(
     keymap,
     lineHeight,
     onChange,
+    onTextChange,
     plugins,
     rangeDecorations,
     rowGap,
@@ -321,6 +347,7 @@ function createConstructorOptions(
     plugins: [createSolidSyncPlugin(runtime)].concat(plugins ?? []),
     onChange: (state, change) => {
       syncChange(runtime, state, change)
+      reportTextChange(runtime, options, onTextChange, documentState, change)
       onChange?.(state, change)
     },
   }))
@@ -403,21 +430,85 @@ function syncDocument(
   if (!editor) return
 
   const key = documentKey(document)
-  if (key === state.key()) return
+  if (key !== state.key()) {
+    state.setKey(key)
+    state.applyDocumentText(() => openDocument(editor, document, state))
+    return
+  }
 
-  state.setKey(key)
+  if (!document || document.text === undefined) return
+  if (document.text === state.knownText()) return
+
+  const text = document.text
+  state.setKnownText(text)
+  state.applyDocumentText(() =>
+    editor.syncText(text, {
+      documentMode: document.documentMode,
+      languageId: document.languageId,
+    }),
+  )
+}
+
+function openDocument(
+  editor: Editor,
+  document: SolidEditorDocument | null | undefined,
+  state: SolidEditorDocumentState,
+): void {
   if (!document) {
+    state.setKnownText(null)
     editor.clearDocument()
     return
   }
 
+  const text = document.text ?? document.defaultText ?? ''
+  state.setKnownText(text)
   editor.openDocument({
     documentId: document.documentId,
     documentMode: document.documentMode,
     languageId: document.languageId,
     scrollPosition: document.scrollPosition,
-    text: document.text,
+    text,
   })
+}
+
+function reportTextChange(
+  runtime: SolidEditorRuntime,
+  options: SolidEditorOptions,
+  onTextChange: ((text: string) => void) | undefined,
+  state: SolidEditorDocumentState,
+  change: Parameters<EditorChangeHandler>[1],
+): void {
+  if (state.applyingDocumentText()) return
+  if (change && change.edits.length === 0) return
+
+  if (!onTextChange) {
+    if (change) warnUnheardControlledEdit(options, state)
+    return
+  }
+
+  const editor = runtime.getEditor()
+  if (!editor) return
+  const text = editor.materializeFullText()
+  // A change without edits, such as an editability switch, can leave the text as it was.
+  if (text === state.knownText()) return
+
+  state.setKnownText(text)
+  onTextChange(text)
+}
+
+function warnUnheardControlledEdit(
+  options: SolidEditorOptions,
+  state: SolidEditorDocumentState,
+): void {
+  if (state.warnedUnheardTextEdit()) return
+  if (untrack(() => readReactive(options.document))?.text === undefined) return
+
+  state.markWarnedUnheardTextEdit()
+  console.warn(
+    '[singapore-editor/solid] The editor was edited while `document.text` controls it and no ' +
+      '`onTextChange` is set. The next `text` will replace those edits. Pass `onTextChange`, ' +
+      "use `defaultText`, or set `editability: 'readonly'`.",
+  )
 }
 
 function disposeEditor(runtime: SolidEditorRuntime): void {
@@ -443,6 +534,7 @@ function createCommands(
     focus: () => editor()?.focus(),
     openDocument: (document) => {
       documentState.setKey(documentKey(document))
+      documentState.setKnownText(document.text ?? null)
       editor()?.openDocument(document)
     },
     setText: (text, options) => editor()?.setText(text, options),
@@ -464,6 +556,14 @@ function createCommands(
 type SolidEditorDocumentState = {
   key(): SolidEditorDocumentKey
   setKey(key: SolidEditorDocumentKey): void
+  /** The text the editor is known to hold, or null when it was not read. */
+  knownText(): string | null
+  setKnownText(text: string | null): void
+  /** True while the adapter itself writes `document.text` or `document.defaultText`. */
+  applyingDocumentText(): boolean
+  applyDocumentText(run: () => void): void
+  warnedUnheardTextEdit(): boolean
+  markWarnedUnheardTextEdit(): void
   clear(): void
 }
 
@@ -471,14 +571,36 @@ type SolidEditorDocumentKey = string | typeof NO_DOCUMENT
 
 function createDocumentState(): SolidEditorDocumentState {
   let key: SolidEditorDocumentKey = NO_DOCUMENT
+  let knownText: string | null = null
+  let applying = false
+  let warned = false
 
   return {
     key: () => key,
     setKey: (nextKey) => {
       key = nextKey
     },
+    knownText: () => knownText,
+    setKnownText: (text) => {
+      knownText = text
+    },
+    applyingDocumentText: () => applying,
+    applyDocumentText: (run) => {
+      const previous = applying
+      applying = true
+      try {
+        run()
+      } finally {
+        applying = previous
+      }
+    },
+    warnedUnheardTextEdit: () => warned,
+    markWarnedUnheardTextEdit: () => {
+      warned = true
+    },
     clear: () => {
       key = NO_DOCUMENT
+      knownText = null
     },
   }
 }
@@ -486,9 +608,7 @@ function createDocumentState(): SolidEditorDocumentState {
 function documentKey(document: SolidEditorDocument | null | undefined): SolidEditorDocumentKey {
   if (!document) return NO_DOCUMENT
 
-  return `${document.documentId ?? ''}\u0000${document.documentMode ?? ''}\u0000${
-    document.revision ?? ''
-  }`
+  return `${document.documentId ?? ''}\u0000${document.documentMode ?? ''}`
 }
 
 function readReactive<T>(value: SolidEditorReactiveValue<T> | undefined): T | undefined {

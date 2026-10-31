@@ -20,7 +20,11 @@ import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
   const controller = createEditor({
-    document: { documentId: 'example.ts', text: 'const value = 1\n', languageId: 'typescript' },
+    document: {
+      documentId: 'example.ts',
+      defaultText: 'const value = 1\n',
+      languageId: 'typescript',
+    },
   })
   return <div ref={controller.ref} style={{ height: '400px' }} />
 }

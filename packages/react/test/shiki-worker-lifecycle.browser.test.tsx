@@ -66,7 +66,7 @@ function ShikiEditor({ index }: { readonly index: number }) {
     document: {
       documentId: `strict-mode-${index}.ts`,
       languageId: 'typescript',
-      text,
+      defaultText: text,
     },
     plugins: STRICT_MODE_PLUGINS,
   })

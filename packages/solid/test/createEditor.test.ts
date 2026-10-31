@@ -47,7 +47,7 @@ describe('createEditor', () => {
     const dispose = render(() => {
       const host = document.createElement('div')
       controller = createEditor({
-        document: { text: 'alpha' },
+        document: { defaultText: 'alpha' },
         plugins: [
           {
             name: 'attachment-check',
@@ -98,7 +98,7 @@ describe('createEditor', () => {
 
   it('mounts, initializes signals, and disposes with the Solid owner', () => {
     const mounted = mountInRoot({
-      document: () => ({ text: 'alpha', documentId: 'a.ts', revision: 1 }),
+      document: () => ({ defaultText: 'alpha', documentId: 'a.ts' }),
     })
 
     expect(mounted.controller.editor()).not.toBeNull()
@@ -116,7 +116,7 @@ describe('createEditor', () => {
 
   it('syncs state and last change after editor commands', () => {
     const mounted = mountInRoot({
-      document: () => ({ text: 'alpha', documentId: 'a.ts', revision: 1 }),
+      document: () => ({ defaultText: 'alpha', documentId: 'a.ts' }),
     })
 
     mounted.controller.commands.edit({ from: 5, to: 5, text: '!' })
@@ -132,7 +132,7 @@ describe('createEditor', () => {
   it('does not materialize full text during signal sync until text is read', () => {
     const diagnostics = collectDiagnostics()
     const mounted = mountInRoot({
-      document: () => ({ text: 'alpha', documentId: 'a.ts', revision: 1 }),
+      document: () => ({ defaultText: 'alpha', documentId: 'a.ts' }),
     })
     diagnostics.length = 0
 
@@ -152,7 +152,7 @@ describe('createEditor', () => {
 
   it('syncs full view snapshots on selection updates', () => {
     const mounted = mountInRoot({
-      document: () => ({ text: 'alpha', documentId: 'a.ts', revision: 1 }),
+      document: () => ({ defaultText: 'alpha', documentId: 'a.ts' }),
     })
 
     mounted.controller.commands.setSelection(2, 2, {
@@ -173,15 +173,14 @@ describe('createEditor', () => {
   })
 
   it.each([
-    ['replaced', { text: 'beta', documentId: 'b.ts', revision: 1 }],
+    ['replaced', { defaultText: 'beta', documentId: 'b.ts' }],
     ['closed', null],
   ] as const)('lets go of a %s document once its text was read', async (_, next) => {
     let setDocument!: (document: SolidEditorDocument | null) => void
     const mounted = mountInRoot(() => {
       const [document, nextDocument] = createSignal<SolidEditorDocument | null>({
-        text: 'alpha '.repeat(10_000),
+        defaultText: 'alpha '.repeat(10_000),
         documentId: 'a.ts',
-        revision: 1,
       })
       setDocument = nextDocument
       return createEditor({ document })
@@ -194,34 +193,73 @@ describe('createEditor', () => {
     await expectCollected(source)
     source = null
 
-    expect(mounted.controller.materializeFullText()).toBe(next?.text ?? '')
+    expect(mounted.controller.materializeFullText()).toBe(next?.defaultText ?? '')
     mounted.dispose()
   })
 
-  it('does not clobber local edits until document identity or revision changes', async () => {
+  it('keeps local edits when defaultText changes and opens a new documentId', async () => {
     let setDocument!: (document: SolidEditorDocument) => void
     const mounted = mountInRoot(() => {
       const [document, nextDocument] = createSignal<SolidEditorDocument>({
-        text: 'alpha',
+        defaultText: 'alpha',
         documentId: 'a.ts',
-        revision: 1,
       })
       setDocument = nextDocument
       return createEditor({ document })
     })
 
     mounted.controller.commands.edit({ from: 5, to: 5, text: '!' })
-    setDocument({ text: 'server alpha', documentId: 'a.ts', revision: 1 })
+    setDocument({ defaultText: 'server alpha', documentId: 'a.ts' })
     await flushEffects()
 
     expect(mounted.controller.materializeFullText()).toBe('alpha!')
 
-    setDocument({ text: 'server beta', documentId: 'a.ts', revision: 2 })
+    setDocument({ defaultText: 'beta', documentId: 'b.ts' })
     await flushEffects()
 
-    expect(mounted.controller.materializeFullText()).toBe('server beta')
-    expect(mounted.controller.snapshot()?.documentId).toBe('a.ts')
+    expect(mounted.controller.materializeFullText()).toBe('beta')
+    expect(mounted.controller.snapshot()?.documentId).toBe('b.ts')
 
+    mounted.dispose()
+  })
+
+  it('applies controlled text as an edit and reports only user edits', async () => {
+    const onTextChange = vi.fn()
+    let setText!: (text: string) => void
+    const mounted = mountInRoot(() => {
+      const [text, nextText] = createSignal('alpha')
+      setText = nextText
+      return createEditor({ document: () => ({ documentId: 'a.ts', text: text() }), onTextChange })
+    })
+    const syncSpy = vi.spyOn(mounted.controller.editor() as Editor, 'syncText')
+
+    setText('alpha beta')
+    await flushEffects()
+
+    expect(mounted.controller.materializeFullText()).toBe('alpha beta')
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+    expect(onTextChange).not.toHaveBeenCalled()
+
+    mounted.controller.commands.edit({ from: 10, to: 10, text: '!' })
+    expect(onTextChange).toHaveBeenLastCalledWith('alpha beta!')
+
+    setText('alpha beta!')
+    await flushEffects()
+    expect(syncSpy).toHaveBeenCalledTimes(1)
+
+    mounted.dispose()
+  })
+
+  it('warns once when controlled text is edited without onTextChange', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const mounted = mountInRoot(() =>
+      createEditor({ document: { documentId: 'a.ts', text: 'alpha' } }),
+    )
+
+    mounted.controller.commands.edit({ from: 5, to: 5, text: '!' })
+    mounted.controller.commands.edit({ from: 6, to: 6, text: '?' })
+
+    expect(warn).toHaveBeenCalledTimes(1)
     mounted.dispose()
   })
 
@@ -246,7 +284,7 @@ describe('createEditor', () => {
       setSelection = nextSelection
       setScrollPosition = nextScrollPosition
       return createEditor({
-        document: () => ({ text: 'alpha', documentId: 'a.ts', revision: 1 }),
+        document: () => ({ defaultText: 'alpha', documentId: 'a.ts' }),
         hiddenCharacters,
         scrollPosition,
         selection,

@@ -14,7 +14,7 @@ import {
   createEditorViewSession,
 } from '@singapore-editor/core/document'
 import type { EditorResolvedSelection } from '@singapore-editor/core/extensions'
-import { act, createElement, StrictMode, useLayoutEffect, type ReactElement } from 'react'
+import { act, createElement, StrictMode, useLayoutEffect, useState, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -73,7 +73,7 @@ afterEach(() => {
 describe('useEditor', () => {
   it('moves selector subscriptions to a replacement controller', () => {
     const first = mountReactEditor({ document: { text: 'alpha', documentId: 'a.ts' } })
-    const second = mountReactEditor({ document: { text: 'beta', documentId: 'b.ts', revision: 1 } })
+    const second = mountReactEditor({ document: { text: 'beta', documentId: 'b.ts' } })
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
@@ -89,7 +89,7 @@ describe('useEditor', () => {
       expect(text).toBe('alpha')
       render(second.controller)
       expect(text).toBe('beta')
-      second.render({ document: { text: 'updated beta', documentId: 'b.ts', revision: 2 } })
+      second.render({ document: { text: 'updated beta', documentId: 'b.ts' } })
       expect(text).toBe('updated beta')
       first.render({ document: { text: 'old owner', documentId: 'a.ts' } })
       expect(text).toBe('updated beta')
@@ -103,7 +103,7 @@ describe('useEditor', () => {
 
   it('mounts, initializes the store, and disposes with the React tree', () => {
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
     })
 
     expect(mounted.controller.getEditor()).not.toBeNull()
@@ -123,7 +123,7 @@ describe('useEditor', () => {
     const firstEvents: EditorInitialPaintEvent[] = []
     const secondEvents: EditorInitialPaintEvent[] = []
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
       onInitialPaint: (event) => firstEvents.push(event),
     })
     await flushInitialPaintCallbacks()
@@ -135,7 +135,7 @@ describe('useEditor', () => {
     )
 
     mounted.render({
-      document: { text: 'beta', documentId: 'b.ts', revision: 1 },
+      document: { defaultText: 'beta', documentId: 'b.ts' },
       onInitialPaint: (event) => secondEvents.push(event),
     })
     await flushInitialPaintCallbacks()
@@ -154,7 +154,7 @@ describe('useEditor', () => {
     const events: EditorInitialPaintEvent[] = []
     const mounted = mountReactEditor(
       {
-        document: { text: 'alpha', documentId: 'strict.ts', revision: 1 },
+        document: { defaultText: 'alpha', documentId: 'strict.ts' },
         onInitialPaint: (event) => events.push(event),
       },
       true,
@@ -171,7 +171,7 @@ describe('useEditor', () => {
     const events: EditorInitialPaintEvent[] = []
     const options = {
       documentKey: 'a.ts',
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
       onInitialPaint: (event: EditorInitialPaintEvent) => events.push(event),
     }
     const mounted = mountReactEditor(options)
@@ -180,7 +180,7 @@ describe('useEditor', () => {
     mounted.render({
       ...options,
       documentKey: 'b.ts',
-      document: { text: 'beta', documentId: 'b.ts', revision: 1 },
+      document: { defaultText: 'beta', documentId: 'b.ts' },
     })
     mounted.render(options)
     await flushInitialPaintCallbacks()
@@ -195,7 +195,7 @@ describe('useEditor', () => {
   it('clears an outgoing target while the next document is unavailable without remounting', () => {
     const mounted = mountReactEditor({
       documentKey: 'a.ts',
-      document: { text: 'alpha', documentId: 'a.ts' },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
     })
     const instance = mounted.controller.getEditor()
 
@@ -206,7 +206,7 @@ describe('useEditor', () => {
 
     mounted.render({
       documentKey: 'b.ts',
-      document: { text: 'beta', documentId: 'b.ts' },
+      document: { defaultText: 'beta', documentId: 'b.ts' },
     })
 
     expect(mounted.controller.getEditor()).toBe(instance)
@@ -216,7 +216,7 @@ describe('useEditor', () => {
   })
 
   it('treats an explicit missing target as a clear even if the document prop remains populated', () => {
-    const document = { text: 'alpha', documentId: 'a.ts' }
+    const document = { defaultText: 'alpha', documentId: 'a.ts' }
     const mounted = mountReactEditor({ documentKey: 'a.ts', document })
     const instance = mounted.controller.getEditor()
 
@@ -248,7 +248,7 @@ describe('useEditor', () => {
     expect(instance?.getPresentationState()).toBe('provisional')
     expect(mounted.host.textContent).toContain('saved text')
 
-    mounted.render({ ...options, document: { text: '', documentId: 'a.ts' } })
+    mounted.render({ ...options, document: { defaultText: '', documentId: 'a.ts' } })
 
     expect(mounted.controller.getEditor()).toBe(instance)
     expect(instance?.getPresentationState()).toBe('live')
@@ -278,7 +278,7 @@ describe('useEditor', () => {
     const presentations: ReturnType<Editor['getPresentationState']>[] = []
     const options = {
       documentKey: 'a.ts',
-      document: { text: 'authoritative text', documentId: 'a.ts' },
+      document: { defaultText: 'authoritative text', documentId: 'a.ts' },
       snapshot,
       plugins: [highlighting.plugin],
       onPresentationChange: (state: ReturnType<Editor['getPresentationState']>) =>
@@ -340,7 +340,7 @@ describe('useEditor', () => {
     }
     const mounted = mountReactEditor(
       {
-        document: { text: 'alpha', documentId: 'strict.ts', revision: 1 },
+        document: { defaultText: 'alpha', documentId: 'strict.ts' },
         plugins: [plugin],
       },
       true,
@@ -357,11 +357,11 @@ describe('useEditor', () => {
   })
 
   it('keeps one ref callback and one editor across renders', () => {
-    const mounted = mountReactEditor({ document: { text: 'alpha', documentId: 'a.ts' } })
+    const mounted = mountReactEditor({ document: { defaultText: 'alpha', documentId: 'a.ts' } })
     const ref = mounted.controller.ref
     const editor = mounted.controller.getEditor()
 
-    mounted.render({ document: { text: 'alpha', documentId: 'a.ts' }, wordWrap: true })
+    mounted.render({ document: { defaultText: 'alpha', documentId: 'a.ts' }, wordWrap: true })
 
     expect(mounted.controller.ref).toBe(ref)
     expect(mounted.controller.getEditor()).toBe(editor)
@@ -411,7 +411,7 @@ describe('useEditor', () => {
 
   it('syncs state and last change after editor commands', () => {
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
     })
 
     act(() => mounted.controller.commands.edit({ from: 5, to: 5, text: '!' }))
@@ -427,7 +427,7 @@ describe('useEditor', () => {
   it('does not materialize full text during store sync until text is read', () => {
     const diagnostics = collectDiagnostics()
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
     })
     diagnostics.length = 0
 
@@ -505,7 +505,7 @@ describe('useEditor', () => {
 
   it('syncs full view snapshots on selection updates', () => {
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
     })
 
     act(() =>
@@ -586,7 +586,7 @@ describe('useEditor', () => {
   it('can update selection without revealing it through commands', () => {
     const text = Array.from({ length: 80 }, (_value, index) => `line ${index}`).join('\n')
     const mounted = mountReactEditor({
-      document: { text, documentId: 'long.txt', revision: 1 },
+      document: { defaultText: text, documentId: 'long.txt' },
     })
     const editor = editorElement(mounted.host)
     expect(editor).not.toBeNull()
@@ -604,7 +604,7 @@ describe('useEditor', () => {
 
   it('can skip React store snapshot sync for lightweight editor hosts', () => {
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
       storeSync: 'none',
     })
 
@@ -623,37 +623,48 @@ describe('useEditor', () => {
     mounted.dispose()
   })
 
-  it('does not clobber local edits until document identity or revision changes', () => {
+  it('keeps local edits when defaultText changes and opens a new documentId', () => {
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
     })
 
     act(() => mounted.controller.commands.edit({ from: 5, to: 5, text: '!' }))
     mounted.render({
-      document: { text: 'server alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'server alpha', documentId: 'a.ts' },
     })
 
     expect(mounted.controller.materializeFullText()).toBe('alpha!')
 
     mounted.render({
-      document: { text: 'server beta', documentId: 'a.ts', revision: 2 },
+      document: { defaultText: 'beta', documentId: 'b.ts' },
     })
 
-    expect(mounted.controller.materializeFullText()).toBe('server beta')
-    expect(mounted.controller.getSnapshot()?.documentId).toBe('a.ts')
+    expect(mounted.controller.materializeFullText()).toBe('beta')
+    expect(mounted.controller.getSnapshot()?.documentId).toBe('b.ts')
 
     mounted.dispose()
   })
 
-  it('incrementally syncs controlled generated document text without reopening', () => {
+  it('replaces uncontrolled text from outside through commands.setText', () => {
+    const mounted = mountReactEditor({
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
+    })
+
+    act(() => mounted.controller.commands.edit({ from: 5, to: 5, text: '!' }))
+    act(() => mounted.controller.commands.setText('reloaded'))
+
+    expect(mounted.controller.materializeFullText()).toBe('reloaded')
+
+    mounted.dispose()
+  })
+
+  it('applies a new controlled text as an edit without reopening', () => {
     const mounted = mountReactEditor({
       document: {
         documentId: 'generated:/a.ts',
         documentMode: 'static',
         languageId: 'typescript',
-        revision: 'initial-hash',
         text: 'alpha',
-        textSyncMode: 'incremental',
       },
     })
     const instance = mounted.controller.getEditor()
@@ -666,9 +677,7 @@ describe('useEditor', () => {
         documentId: 'generated:/a.ts',
         documentMode: 'static',
         languageId: 'typescript',
-        revision: 'next-hash',
         text: 'alpha beta',
-        textSyncMode: 'incremental',
       },
     })
 
@@ -690,15 +699,117 @@ describe('useEditor', () => {
     mounted.dispose()
   })
 
+  it('reports user edits through onTextChange but not text applied from props', () => {
+    const onTextChange = vi.fn()
+    const mounted = mountReactEditor({
+      document: { documentId: 'a.ts', text: 'alpha' },
+      onTextChange,
+    })
+
+    mounted.render({ document: { documentId: 'a.ts', text: 'alpha beta' }, onTextChange })
+    mounted.render({ document: { documentId: 'b.ts', defaultText: 'gamma' }, onTextChange })
+    expect(onTextChange).not.toHaveBeenCalled()
+
+    act(() => mounted.controller.commands.edit({ from: 5, to: 5, text: '!' }))
+    expect(onTextChange).toHaveBeenCalledTimes(1)
+    expect(onTextChange).toHaveBeenLastCalledWith('gamma!')
+
+    act(() => mounted.controller.commands.setText('reloaded'))
+    expect(onTextChange).toHaveBeenLastCalledWith('reloaded')
+
+    mounted.dispose()
+  })
+
+  it('round-trips controlled text through React state without re-applying it', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    let controller!: ReactEditorController
+    let parentText = ''
+    act(() =>
+      root.render(
+        createElement(ControlledTextHarness, {
+          initialText: 'alpha',
+          onController: (next) => {
+            controller = next
+          },
+          onParentText: (text) => {
+            parentText = text
+          },
+        }),
+      ),
+    )
+
+    try {
+      const syncSpy = vi.spyOn(controller.getEditor() as Editor, 'syncText')
+      act(() => controller.commands.edit({ from: 5, to: 5, text: '!' }))
+
+      expect(parentText).toBe('alpha!')
+      expect(controller.materializeFullText()).toBe('alpha!')
+      expect(syncSpy).not.toHaveBeenCalled()
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('applies a parent transformation of controlled text', () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    let controller!: ReactEditorController
+    act(() =>
+      root.render(
+        createElement(ControlledTextHarness, {
+          initialText: 'alpha',
+          transform: (text) => text.toUpperCase(),
+          onController: (next) => {
+            controller = next
+          },
+        }),
+      ),
+    )
+
+    try {
+      act(() => controller.commands.edit({ from: 5, to: 5, text: '!' }))
+
+      expect(controller.materializeFullText()).toBe('ALPHA!')
+    } finally {
+      act(() => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('warns once when controlled text is edited without onTextChange', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const mounted = mountReactEditor({ document: { documentId: 'a.ts', text: 'alpha' } })
+
+    act(() => mounted.controller.commands.edit({ from: 5, to: 5, text: '!' }))
+    act(() => mounted.controller.commands.edit({ from: 6, to: 6, text: '?' }))
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0]?.[0]).toContain('onTextChange')
+
+    mounted.dispose()
+  })
+
+  it('does not warn when uncontrolled text is edited', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const mounted = mountReactEditor({ document: { documentId: 'a.ts', defaultText: 'alpha' } })
+
+    act(() => mounted.controller.commands.edit({ from: 5, to: 5, text: '!' }))
+
+    expect(warn).not.toHaveBeenCalled()
+    mounted.dispose()
+  })
+
   it('reattaches cached document sessions with text and undo history intact', () => {
     const alphaSession = createDocumentSession('alpha')
     const betaSession = createDocumentSession('beta')
     const mounted = mountReactEditor({
       document: {
         documentId: 'a.ts',
-        revision: 1,
         session: alphaSession,
-        text: alphaSession.materializeFullText(),
       },
     })
 
@@ -710,17 +821,13 @@ describe('useEditor', () => {
     mounted.render({
       document: {
         documentId: 'b.ts',
-        revision: 1,
         session: betaSession,
-        text: betaSession.materializeFullText(),
       },
     })
     mounted.render({
       document: {
         documentId: 'a.ts',
-        revision: 1,
         session: alphaSession,
-        text: alphaSession.materializeFullText(),
       },
     })
 
@@ -735,14 +842,12 @@ describe('useEditor', () => {
     mounted.dispose()
   })
 
-  it('keeps live document sessions attached across revision-only renders', () => {
+  it('keeps live document sessions attached across re-renders', () => {
     const session = createDocumentSession('alpha')
     const mounted = mountReactEditor({
       document: {
         documentId: 'a.ts',
-        revision: 1,
         session,
-        text: session.materializeFullText(),
       },
     })
     const instance = mounted.controller.getEditor()
@@ -752,9 +857,7 @@ describe('useEditor', () => {
     mounted.render({
       document: {
         documentId: 'a.ts',
-        revision: 2,
         session,
-        text: 'stale prop text',
       },
     })
 
@@ -771,7 +874,6 @@ describe('useEditor', () => {
       document: {
         buffer,
         documentId: 'a.ts',
-        text: buffer.materializeFullText(),
         view,
       },
     })
@@ -784,7 +886,6 @@ describe('useEditor', () => {
       document: {
         buffer,
         documentId: 'a.ts',
-        text: buffer.materializeFullText(),
         view,
       },
     })
@@ -801,7 +902,6 @@ describe('useEditor', () => {
     const document = {
       buffer,
       view,
-      text: buffer.materializeFullText(),
       documentId: 'theme.ts',
       languageId: 'typescript',
     }
@@ -827,7 +927,6 @@ describe('useEditor', () => {
       document: {
         buffer,
         documentId: 'a.ts',
-        text: buffer.materializeFullText(),
         view,
       },
     })
@@ -839,7 +938,7 @@ describe('useEditor', () => {
 
   it('applies targeted reactive options without recreating the editor', () => {
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
       hiddenCharacters: 'hidden',
       scrollPosition: { top: 0, left: 0 },
       selection: { anchor: 0, head: 0 },
@@ -851,7 +950,7 @@ describe('useEditor', () => {
 
     const setHiddenSpy = vi.spyOn(instance as Editor, 'setHiddenCharacters')
     mounted.render({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
       hiddenCharacters: 'show',
       scrollPosition: { top: 12, left: 4 },
       selection: { affinity: 'before', anchor: 1, head: 3 },
@@ -875,14 +974,14 @@ describe('useEditor', () => {
 
   it('applies selection and explicit scroll after attaching the replacement document', () => {
     const mounted = mountReactEditor({
-      document: { text: 'a', documentId: 'a.ts' },
+      document: { defaultText: 'a', documentId: 'a.ts' },
       selection: { anchor: 0 },
       scrollPosition: { top: 0, left: 0 },
     })
     const instance = mounted.controller.getEditor()
 
     mounted.render({
-      document: { text: 'alpha\nbravo\ncharlie', documentId: 'b.ts' },
+      document: { defaultText: 'alpha\nbravo\ncharlie', documentId: 'b.ts' },
       selection: { anchor: 12, head: 14, revealOffset: 14 },
       scrollPosition: { top: 12, left: 4 },
       theme: { backgroundColor: '#112233' },
@@ -899,7 +998,7 @@ describe('useEditor', () => {
 
   it('applies keymap changes without recreating the editor', () => {
     const mounted = mountReactEditor({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
       keymap: { packs: [] },
     })
     const instance = mounted.controller.getEditor()
@@ -913,7 +1012,7 @@ describe('useEditor', () => {
     }
 
     mounted.render({
-      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      document: { defaultText: 'alpha', documentId: 'a.ts' },
       keymap,
     })
 
@@ -931,21 +1030,21 @@ describe('useEditor', () => {
 
     try {
       mounted = mountReactEditor({
-        document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+        document: { defaultText: 'alpha', documentId: 'a.ts' },
         plugins: [plugin],
       })
 
       expect(setPluginsSpy).not.toHaveBeenCalled()
 
       mounted.render({
-        document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+        document: { defaultText: 'alpha', documentId: 'a.ts' },
         plugins: [plugin],
       })
 
       expect(setPluginsSpy).not.toHaveBeenCalled()
 
       mounted.render({
-        document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+        document: { defaultText: 'alpha', documentId: 'a.ts' },
         plugins: [nextPlugin],
       })
 
@@ -1026,6 +1125,32 @@ function ReactEditorHarness({
   return createElement('div', { ref: controller.ref })
 }
 
+function ControlledTextHarness({
+  initialText,
+  transform = (text) => text,
+  onController,
+  onParentText = () => undefined,
+}: {
+  readonly initialText: string
+  readonly transform?: (text: string) => string
+  readonly onController: (controller: ReactEditorController) => void
+  readonly onParentText?: (text: string) => void
+}): ReactElement {
+  const [text, setText] = useState(initialText)
+  const controller = useEditor({
+    document: { documentId: 'a.ts', text },
+    onTextChange: (next) => setText(transform(next)),
+  })
+  const { ref } = controller
+
+  useLayoutEffect(() => {
+    onController(controller)
+    onParentText(text)
+  }, [controller, onController, onParentText, text])
+
+  return createElement('div', { ref })
+}
+
 function MovingHostHarness({
   attached,
   hostKey,
@@ -1035,7 +1160,7 @@ function MovingHostHarness({
   readonly hostKey: number
   readonly onController: (controller: ReactEditorController) => void
 }): ReactElement | null {
-  const controller = useEditor({ document: { text: 'alpha', documentId: 'a.ts' } })
+  const controller = useEditor({ document: { defaultText: 'alpha', documentId: 'a.ts' } })
 
   useLayoutEffect(() => {
     onController(controller)
@@ -1057,7 +1182,7 @@ function FineGrainedHarness({
   }
 }): ReactElement {
   const controller = useEditor({
-    document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+    document: { defaultText: 'alpha', documentId: 'a.ts' },
   })
 
   useLayoutEffect(() => {
@@ -1082,7 +1207,7 @@ function DragCursorHarness({
   readonly onCursor: (cursor: EditorCursor | null) => void
 }): ReactElement {
   const controller = useEditor({
-    document: { text: 'abcdef', documentId: 'a.ts', revision: 1 },
+    document: { defaultText: 'abcdef', documentId: 'a.ts' },
   })
 
   useLayoutEffect(() => {
@@ -1124,7 +1249,7 @@ function StoreProbeHarness({
     snapshot: ReactEditorStoreSnapshot | null
   }
 }): ReactElement {
-  const controller = useEditor({ document: { text: 'alpha', documentId: 'a.ts', revision: 1 } })
+  const controller = useEditor({ document: { defaultText: 'alpha', documentId: 'a.ts' } })
   captured.snapshot = useEditorSelector(controller, (snapshot) => snapshot)
   return createElement('div', { ref: controller.ref })
 }
@@ -1138,7 +1263,7 @@ function FullTextHarness({
   readonly onController: (controller: ReactEditorController) => void
   readonly onText: (text: string) => void
 }): ReactElement {
-  const controller = useEditor({ document: { text: 'alpha', documentId: 'a.ts', revision: 1 } })
+  const controller = useEditor({ document: { defaultText: 'alpha', documentId: 'a.ts' } })
 
   useLayoutEffect(() => {
     onController(controller)
@@ -1282,7 +1407,7 @@ function captureSavedPaint(text: string, options: ReactEditorOptions = {}): stri
   const mounted = mountSnapshotEditor({
     ...options,
     documentKey: 'a.ts',
-    document: { text, documentId: 'a.ts' },
+    document: { defaultText: text, documentId: 'a.ts' },
   })
   const capture = mounted.controller.getEditor()?.captureSnapshot()
   mounted.dispose()
