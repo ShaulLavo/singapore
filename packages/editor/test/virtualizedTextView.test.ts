@@ -484,6 +484,14 @@ describe('VirtualizedTextView', () => {
   )
 
   it('adds bottom scroll padding so the final row can align with the viewport top', () => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      scrollPastEnd: true,
+    })
     view.setText(createLines(10))
     view.setScrollMetrics(0, 100)
 
@@ -501,6 +509,14 @@ describe('VirtualizedTextView', () => {
   })
 
   it('updates bottom scroll padding when the rendered row window is unchanged', () => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      scrollPastEnd: true,
+    })
     view.setText(createLines(3))
     view.setScrollMetrics(0, 20)
 

@@ -1,6 +1,6 @@
 import { createEditorWidgetKeymap } from '@singapore-editor/core/extensions'
 import type { EditorViewContributionContext } from '@singapore-editor/core/extensions'
-import type { EditorTheme } from '@singapore-editor/core/rendering'
+import { EDITOR_SYNTAX_COLOR_VARIABLES, type EditorTheme } from '@singapore-editor/core/rendering'
 
 import { createAnchoredSurface, type AnchoredSurfacePlacement } from './anchoredSurface'
 import type { TooltipCodeTokenizer } from './codeTokens'
@@ -24,6 +24,7 @@ const TOOLTIP_POINTER_INTENT_TOLERANCE_PX = 4
 const TOOLTIP_RESIZE_HANDLE_PX = 5
 const TOOLTIP_SCROLL_STEP_PX = 30
 const SVG_NS = 'http://www.w3.org/2000/svg'
+// Hover code paints with the document's token colours, so every syntax variable comes along.
 const TOOLTIP_THEME_VARIABLES: readonly string[] = [
   '--editor-background',
   '--editor-popup-background',
@@ -32,14 +33,7 @@ const TOOLTIP_THEME_VARIABLES: readonly string[] = [
   '--editor-font-family',
   '--editor-font-size',
   '--editor-row-height',
-].concat(HOVER_THEME_VARIABLES, [
-  '--editor-syntax-bracket',
-  '--editor-syntax-comment',
-  '--editor-syntax-keyword',
-  '--editor-syntax-number',
-  '--editor-syntax-string',
-  '--editor-syntax-type',
-])
+].concat(HOVER_THEME_VARIABLES, EDITOR_SYNTAX_COLOR_VARIABLES)
 
 type TooltipDimensions = {
   readonly width: number

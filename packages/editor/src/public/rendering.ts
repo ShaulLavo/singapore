@@ -44,6 +44,7 @@ export type {
 } from '../displayTransforms'
 export type { RangeText, TextContent } from '../textContent'
 export type { EditorSyntaxTheme, EditorSyntaxThemeColor, EditorTheme } from '../theme'
+export { EDITOR_SYNTAX_COLOR_VARIABLES } from '../theme'
 export type {
   EditorCursorLineHighlightOptions,
   HiddenCharactersMode,

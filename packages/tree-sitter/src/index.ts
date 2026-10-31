@@ -143,7 +143,9 @@ export const createTreeSitterSyntaxProvider = (
       if (!sessionOptions.languageId) return null
       return new TreeSitterSyntaxSession({
         ...sessionOptions,
-        languageId: sessionOptions.languageId,
+        // The worker knows grammars by id. A fence name such as `ts` reaches here from a hover.
+        languageId:
+          registry.resolveLanguageAlias(sessionOptions.languageId) ?? sessionOptions.languageId,
         languageResolver: registry,
         backend,
         onFirstParse: warm,

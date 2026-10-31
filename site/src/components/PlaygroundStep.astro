@@ -64,10 +64,11 @@ const { step, source, label } = Astro.props
   .playground-host {
     display: flex;
     flex-direction: column;
-    height: 22rem;
+    /* Tall enough for the whole sample file, so the page scrolls and the editor does not. */
+    height: 34rem;
     overflow: hidden;
     border-radius: 0.5rem;
-    background: #18202b;
+    background: #23211d;
   }
   .playground-status {
     margin-top: 0.5rem;

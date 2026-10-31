@@ -64,7 +64,12 @@ describe('fixed row virtualizer', () => {
   )
 
   it('keeps the final row coordinate in trailing viewport padding and clears it while hidden', () => {
-    const virtualizer = new FixedRowVirtualizer({ count: 3, rowHeight: 20, rowGap: 4 })
+    const virtualizer = new FixedRowVirtualizer({
+      count: 3,
+      rowHeight: 20,
+      rowGap: 4,
+      scrollPastEnd: true,
+    })
     virtualizer.setScrollMetrics({ scrollTop: 500, viewportHeight: 100 })
     expect(virtualizer.getViewportSnapshot()).toMatchObject({
       scrollTop: 48,
@@ -861,7 +866,7 @@ describe('fixed row virtualizer', () => {
   it.each([0, 600])(
     'restores the end-of-file offset with an initial viewport height of %s',
     (initialViewportHeight) => {
-      const virtualizer = new FixedRowVirtualizer({ count: 0, rowHeight: 20 })
+      const virtualizer = new FixedRowVirtualizer({ count: 0, rowHeight: 20, scrollPastEnd: true })
       const element = document.createElement('div')
       let nativeScrollTop = 0
       let nativeMaximum = 0

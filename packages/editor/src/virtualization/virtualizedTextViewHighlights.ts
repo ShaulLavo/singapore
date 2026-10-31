@@ -376,7 +376,10 @@ function renderCaretNow(view: VirtualizedTextViewInternal): void {
 
   const primary = selections[0]!
   const primaryPositions = caretPosition(view, primary.head, primary.affinity)
-  renderCaretElement(view, view.caretElement, primaryPositions?.[0] ?? null, false)
+  const primaryPosition = primaryPositions?.[0] ?? null
+  if (caretMoved(caretPaintPositions.get(view.caretElement), primaryPosition))
+    restartCaretBlink(view)
+  renderCaretElement(view, view.caretElement, primaryPosition, false)
 
   let secondaryIndex = 0
   const primaryOther = primaryPositions?.[1]
@@ -407,6 +410,33 @@ function renderPooledCaret(
 
 // Retain logical geometry so an origin shift can repaint every caret before deferred layout reads.
 const caretPaintPositions = new WeakMap<HTMLElement, VirtualizedCaretPosition>()
+
+// Positions are document coordinates, so a scroll repaint is not a move.
+function caretMoved(
+  previous: VirtualizedCaretPosition | undefined,
+  next: VirtualizedCaretPosition | null,
+): boolean {
+  if (!next) return false
+  if (!previous) return true
+  return previous.left !== next.left || previous.top !== next.top
+}
+
+const caretBlinks = new WeakMap<HTMLElement, Animation>()
+
+/**
+ * Shows the caret solid from the moment it lands: rewinding the blink to its visible half keeps it
+ * from vanishing mid-keystroke. Rewinding the running animation needs no style or layout change.
+ */
+function restartCaretBlink(view: VirtualizedTextViewInternal): void {
+  const layer = view.caretLayerElement
+  let blink = caretBlinks.get(layer)
+  if (!blink || blink.playState === 'idle') {
+    blink = layer.getAnimations?.()[0]
+    if (!blink) return
+    caretBlinks.set(layer, blink)
+  }
+  blink.currentTime = 0
+}
 
 export function rebaseCaretPaint(view: VirtualizedTextViewInternal): void {
   positionCaretPaint(view, view.caretElement)

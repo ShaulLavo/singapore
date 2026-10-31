@@ -304,8 +304,8 @@ describe('providers of both triggers on one editor', () => {
 })
 
 describe('host shape options', () => {
-  it('leaves no room below the last row when scrolling past the end is off', () => {
-    editor = createVisibleEditor(container, { scrollPastEnd: false })
+  it('leaves no room below the last row by default', () => {
+    editor = createVisibleEditor(container)
     editor.setText(Array.from({ length: 5 }, (_, index) => `line ${index}`).join('\n'))
     textView().setScrollMetrics(0, 60)
 
@@ -314,8 +314,8 @@ describe('host shape options', () => {
     expect(state.scrollHeight).toBe(state.totalHeight)
   })
 
-  it('scrolls the last row to the top by default', () => {
-    editor = createVisibleEditor(container)
+  it('scrolls the last row to the top when scrollPastEnd is on', () => {
+    editor = createVisibleEditor(container, { scrollPastEnd: true })
     editor.setText(Array.from({ length: 5 }, (_, index) => `line ${index}`).join('\n'))
     textView().setScrollMetrics(0, 60)
 
