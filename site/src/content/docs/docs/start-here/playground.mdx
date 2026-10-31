@@ -37,7 +37,7 @@ The text is plain. You can select, type and undo, but nothing knows it is TypeSc
 
 ## 2. Set a theme
 
-`editorThemeFromVscodeTheme` turns VS Code theme colours into an editor theme. Two colours are enough for the background and the text, and `type: 'dark'` picks dark defaults for everything the theme leaves out, such as the hover popup you will see in step 5.
+A theme is a plain object. Set the background and text colours, and `type: 'dark'` so everything the theme leaves out gets dark defaults: the syntax colours in step 3 and the hover popup in step 5. To reuse a VS Code theme instead, convert it with `editorThemeFromVscodeTheme` from `@singapore-editor/core/shiki`.
 
 <PlaygroundStep step='2-theme' source={step2} label='Step 2: themed editor' />
 

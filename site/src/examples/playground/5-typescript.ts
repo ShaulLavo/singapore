@@ -1,5 +1,4 @@
 import { Editor } from '@singapore-editor/core/editor'
-import { editorThemeFromVscodeTheme } from '@singapore-editor/core/shiki'
 import { createTreeSitterLanguagePlugin } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
 import { createLineGutterPlugin } from '@singapore-editor/gutters'
@@ -14,10 +13,7 @@ export function mountPlayground(element: HTMLElement): Editor {
   const typescript = createTypeScriptLspPlugin()
   typescript.setWorkspaceFiles([{ path: '/src/math.ts', text: MATH_TS }])
   const editor = new Editor(element, {
-    theme: editorThemeFromVscodeTheme({
-      type: 'dark',
-      colors: { 'editor.background': '#18202b', 'editor.foreground': '#dce5ef' },
-    }),
+    theme: { type: 'dark', backgroundColor: '#23211d', foregroundColor: '#d6d1c6' },
     plugins: [
       createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS),
       createLineGutterPlugin(),
