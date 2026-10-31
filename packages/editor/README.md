@@ -14,7 +14,6 @@ npm install @singapore-editor/core
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
-import '@singapore-editor/core/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'
@@ -23,6 +22,8 @@ const editor = new Editor(host)
 editor.setText('const value = 1\n')
 // Call editor.dispose() when removing the view.
 ```
+
+The editor's stylesheet loads with the module, through any bundler that handles CSS imports, such as Vite. Plugin packages load their own stylesheets the same way. Each package also exports `style.css` for pages that link the stylesheet themselves.
 
 ## Content-height embedding
 

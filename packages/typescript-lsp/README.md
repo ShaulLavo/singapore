@@ -15,7 +15,6 @@ npm install @singapore-editor/core @singapore-editor/typescript-lsp
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
 import { createTypeScriptLspPlugin } from '@singapore-editor/typescript-lsp'
-import '@singapore-editor/core/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'

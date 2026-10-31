@@ -1,3 +1,4 @@
+import './style.css'
 import { createEditorWidgetKeymap } from '@singapore-editor/core/extensions'
 import type {
   EditorViewContributionContext,

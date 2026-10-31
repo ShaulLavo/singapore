@@ -1,3 +1,4 @@
+import './style.css'
 import { registerDiffColors } from './theme'
 import type {
   EditorContributionChange,

@@ -16,7 +16,6 @@ Render this component in your app. Pass the controller's `ref` to the element th
 
 ```tsx
 import { useEditor } from '@singapore-editor/react'
-import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
   const controller = useEditor({

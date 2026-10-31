@@ -5,7 +5,6 @@ import type {
 import { markdownInlineReplacements } from './replacements'
 import type { MarkdownLinkOptions } from './linkRender'
 import { headingContribution, markdownHeadings, type MarkdownHeadings } from './headings'
-import './style.css'
 
 export { markdownInlineReplacements } from './replacements'
 export { createMarkdownAuthoringPlugin } from './authoringPlugin'

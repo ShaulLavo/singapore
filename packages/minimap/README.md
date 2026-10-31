@@ -15,8 +15,6 @@ npm install @singapore-editor/core @singapore-editor/minimap
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
 import { createMinimapPlugin } from '@singapore-editor/minimap'
-import '@singapore-editor/core/style.css'
-import '@singapore-editor/minimap/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'

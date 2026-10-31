@@ -19,8 +19,6 @@ import {
   createScopeLinesPlugin,
   createStickyScrollPlugin,
 } from '@singapore-editor/scope-lines'
-import '@singapore-editor/core/style.css'
-import '@singapore-editor/scope-lines/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'

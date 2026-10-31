@@ -1,3 +1,4 @@
+import './style.css'
 import type { TextReadSnapshot } from '@singapore-editor/core/document'
 import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
 import { Kind } from 'tree-sitter-md'

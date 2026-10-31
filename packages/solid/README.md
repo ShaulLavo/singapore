@@ -16,7 +16,6 @@ Render this component in your app. Its host element gives the editor a fixed hei
 
 ```tsx
 import { createEditor } from '@singapore-editor/solid'
-import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
   const controller = createEditor({
