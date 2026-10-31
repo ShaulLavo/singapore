@@ -212,6 +212,11 @@ const EDITOR_SYNTAX_THEME_COLORS = [
   readonly id: EditorColorId
 }>
 
+/** Every syntax colour variable, for a surface outside the editor that paints its tokens. */
+export const EDITOR_SYNTAX_COLOR_VARIABLES: readonly string[] = EDITOR_SYNTAX_THEME_COLORS.map(
+  ({ id }) => editorColorVariableName(id),
+)
+
 // The named theme properties are ordinary registrations, so the merge, equality and clearing paths
 // below have one table to walk instead of one per property group. Their defaults stay in the
 // package stylesheet: those values also have to be readable by hand-written CSS rules, and a

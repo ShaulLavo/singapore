@@ -188,6 +188,22 @@ describe('tooltip content', () => {
     expect(kinds).toEqual(['editor-test-hover-notes', 'editor-test-hover-part'])
     controller.dispose()
   })
+
+  it('carries every syntax colour from the editor, so hover code matches the document', () => {
+    const controller = tooltipController()
+    const editor = document.body.firstElementChild as HTMLElement
+    editor.style.setProperty('--editor-syntax-keyword-declaration', '#a78bfa')
+    editor.style.setProperty('--editor-syntax-function', '#fecdd3')
+    editor.style.setProperty('--editor-syntax-type-parameter', '#7dd3fc')
+
+    controller.show(showOptions())
+
+    const tooltip = document.querySelector<HTMLElement>('.editor-test-hover')!
+    expect(tooltip.style.getPropertyValue('--editor-syntax-keyword-declaration')).toBe('#a78bfa')
+    expect(tooltip.style.getPropertyValue('--editor-syntax-function')).toBe('#fecdd3')
+    expect(tooltip.style.getPropertyValue('--editor-syntax-type-parameter')).toBe('#7dd3fc')
+    controller.dispose()
+  })
 })
 
 function tooltipController() {

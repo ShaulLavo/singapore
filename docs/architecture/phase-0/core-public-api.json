@@ -6604,6 +6604,12 @@
         },
         {
           "kind": "unknown",
+          "name": "EDITOR_SYNTAX_COLOR_VARIABLES",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorColorReference",
           "source": "packages/editor/src/theme.ts",
           "via": "packages/editor/src/public/rendering.ts"

@@ -244,22 +244,6 @@
     },
     {
       "api": "requestAnimationFrame",
-      "file": "packages/file-animation/src/morph-run.ts",
-      "id": "packages/file-animation/src/morph-run.ts:requestAnimationFrame:dd4f2cadc9",
-      "justification": "Colour changes ride a CSS transition, which needs the starting colour painted first. One frame per morph, cancelled with the run.",
-      "line": 226,
-      "snippet": "this.colorFrame = requestAnimationFrame(() => {"
-    },
-    {
-      "api": "queueMicrotask",
-      "file": "packages/file-animation/src/piece-span.ts",
-      "id": "packages/file-animation/src/piece-span.ts:queueMicrotask:756795f1da",
-      "justification": "A run with nothing to animate still settles after its constructor returns, so the owner has stored the run before `onDone` tears it down. Guarded by `isCanceled`.",
-      "line": 49,
-      "snippet": "queueMicrotask(fire)"
-    },
-    {
-      "api": "requestAnimationFrame",
       "file": "packages/editor/src/editor/scheduleFrame.ts",
       "id": "packages/editor/src/editor/scheduleFrame.ts:requestAnimationFrame:21f6d4dcc7",
       "justification": "This is the frame scheduler every caller goes through; the handle is returned so the owner cancels it on disposal.",
@@ -353,6 +337,22 @@
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
       "line": 1757,
       "snippet": "const handle = win.setTimeout(() => {"
+    },
+    {
+      "api": "requestAnimationFrame",
+      "file": "packages/file-animation/src/morph-run.ts",
+      "id": "packages/file-animation/src/morph-run.ts:requestAnimationFrame:dd4f2cadc9",
+      "justification": "Colour changes ride a CSS transition, which needs the starting colour painted first. One frame per morph, cancelled with the run.",
+      "line": 227,
+      "snippet": "this.colorFrame = requestAnimationFrame(() => {"
+    },
+    {
+      "api": "queueMicrotask",
+      "file": "packages/file-animation/src/piece-span.ts",
+      "id": "packages/file-animation/src/piece-span.ts:queueMicrotask:756795f1da",
+      "justification": "A run with nothing to animate still settles after its constructor returns, so the owner has stored the run before `onDone` tears it down. Guarded by `isCanceled`.",
+      "line": 49,
+      "snippet": "queueMicrotask(fire)"
     },
     {
       "api": "setTimeout",
@@ -487,7 +487,7 @@
       "file": "packages/plugin-ui/src/tooltip.ts",
       "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:89686cb98f",
       "justification": "A pointer grace period before the hover goes away, cancelled by re-entry; it schedules no editor work.",
-      "line": 198,
+      "line": 192,
       "snippet": "hideTimer = setTimeout(() => {"
     },
     {
@@ -495,7 +495,7 @@
       "file": "packages/plugin-ui/src/tooltip.ts",
       "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:8ff275af18",
       "justification": "Resets the copy button's label after the user has had time to read it; DOM only.",
-      "line": 661,
+      "line": 655,
       "snippet": "setTimeout(() => {"
     },
     {
@@ -503,7 +503,7 @@
       "file": "packages/react/src/index.tsx",
       "id": "packages/react/src/index.tsx:queueMicrotask:021fec5f8c",
       "justification": "Defers the callback past StrictMode's synchronous replay; the incarnation, document and state guards drop it when the editor moved on, and no editor work is scheduled.",
-      "line": 550,
+      "line": 618,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -511,7 +511,7 @@
       "file": "packages/react/src/index.tsx",
       "id": "packages/react/src/index.tsx:queueMicrotask:0b4181030c",
       "justification": "Waits out React's synchronous StrictMode unmount and remount; the generation guard drops the disposal when the component came straight back.",
-      "line": 316,
+      "line": 350,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -519,7 +519,7 @@
       "file": "packages/react/src/index.tsx",
       "id": "packages/react/src/index.tsx:queueMicrotask:95e4ae90ae",
       "justification": "Defers delivery until the mount survives React's synchronous StrictMode replay; the incarnation guard cancels disposed mounts, and no editor work is scheduled.",
-      "line": 507,
+      "line": 575,
       "snippet": "queueMicrotask(() => {"
     },
     {
