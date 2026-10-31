@@ -11,7 +11,7 @@
   width: 100%;
   background: linear-gradient(
     to right,
-    var(--sg-bg, var(--sl-color-black)) 36px,
+    var(--sg-bg, var(--sl-color-black)) var(--gw),
     var(--sg-code-bg, var(--sl-color-gray-6)) 0
   );
   /* Contain prepared editors while their resize observer reflows the new frame. */

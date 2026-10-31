@@ -39,7 +39,7 @@ export function mountExample(
     gutterScroll: 'content',
     cursorLineHighlight: { gutterNumber: true },
     plugins: [
-      createLineGutterPlugin({ minWidth: 36 }),
+      createLineGutterPlugin({ minWidth: 40 }),
       createTouchSelectionPlugin({ haptics: true }),
     ].concat(
       language === 'text' ? [] : [createTreeSitterLanguagePlugin([languageContribution(language)])],

@@ -21,7 +21,8 @@ const DEFAULT_COUNTER_STYLE = 'decimal'
 const DEFAULT_LINE_GUTTER_MIN_COLUMNS = 3
 const DEFAULT_LINE_GUTTER_MIN_WIDTH = 26
 const DEFAULT_START_LINE = 1
-const LINE_GUTTER_PADDING_PX = 8
+// The label's 2px left and 8px right padding, plus 2px so the widest number never touches either.
+const LINE_GUTTER_PADDING_PX = 12
 
 export function createLineGutterPlugin(options: LineGutterPluginOptions = {}): EditorPlugin {
   const contribution = createLineGutterContribution(options)

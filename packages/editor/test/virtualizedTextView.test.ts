@@ -1010,9 +1010,9 @@ describe('VirtualizedTextView', () => {
     view.setScrollMetrics(1_499 * 20, 20)
 
     const spacer = container.querySelector('.editor-virtualized-spacer') as HTMLElement
-    expect(view.scrollElement.style.getPropertyValue('--editor-gutter-width')).toBe('50px')
-    // 50px gutter, 72px text, and one 8px cell for the end-of-line caret.
-    expect(spacer.style.width).toBe('130px')
+    expect(view.scrollElement.style.getPropertyValue('--editor-gutter-width')).toBe('54px')
+    // 54px gutter, 72px text, and one 8px cell for the end-of-line caret.
+    expect(spacer.style.width).toBe('134px')
   })
 
   it('keeps the spacer at least as wide as the viewport', () => {
@@ -1503,10 +1503,10 @@ describe('VirtualizedTextView', () => {
       wrap: true,
       gutterContributions: [createLineGutterContribution()],
     })
-    mockViewport(view.scrollElement, 72, 80)
+    mockViewport(view.scrollElement, 76, 80)
 
     view.setText('abcdefghij')
-    view.setScrollMetrics(0, 80, 72)
+    view.setScrollMetrics(0, 80, 76)
 
     // Leave a caret column inside the viewport rather than admitting a fifth text column.
     expect(view.getState().wrapActive).toBe(true)
@@ -1516,7 +1516,7 @@ describe('VirtualizedTextView', () => {
     expect(labels[0]?.style.counterSet).toBe('editor-line 1')
     expect(labels[1]?.hidden).toBe(true)
     expect(labels[2]?.hidden).toBe(true)
-    expect(view.textOffsetFromViewportPoint(64, 25)).toBe(8)
+    expect(view.textOffsetFromViewportPoint(68, 25)).toBe(8)
   })
 
   it('renders injected text rows without changing document offsets', () => {

@@ -394,7 +394,7 @@ kbd {
 /* Phones: the page scrolls as a document. */
 @media (max-width: 760px) {
   :root {
-    --gw: 36px;
+    --gw: 40px;
     --gap: 12px;
     --left: 0px;
     --measure: calc(100vw - var(--gw) - 8px);
