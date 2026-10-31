@@ -488,11 +488,11 @@ describe('editor view snapshot serialization', () => {
       gutterContributions: [createLineGutterContribution()],
     })
     wrappedView.setText('abcdefghij')
-    wrappedView.setScrollMetrics(0, 80, 72)
+    wrappedView.setScrollMetrics(0, 80, 76)
     wrappedView.setSelection(8, 8)
     const wrappedSnapshot = snapshotHarnessFromView(wrappedView, 'abcdefghij').snapshot
     const wrappedRows = wrappedSnapshot.visibleRows
-    // Four text columns plus the caret fit beside the gutter in the 72 px viewport.
+    // Four text columns plus the caret fit beside the gutter in the 76 px viewport.
     expect(wrappedRows.map((row) => row.primaryText)).toEqual([true, true, true])
     expect(wrappedRows.map((row) => row.firstWrapSegment)).toEqual([true, false, false])
     expect(wrappedSnapshot.toVisibleSnapshot()!.rows.map((row) => row.firstWrapSegment)).toEqual([

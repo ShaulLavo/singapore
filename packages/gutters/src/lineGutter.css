@@ -5,7 +5,8 @@
   justify-content: flex-end;
   line-height: inherit;
   padding-left: 2px;
-  padding-right: 4px;
+  /* The gap to the text: 8px, near Monaco's 10px and CodeMirror's 9px. */
+  padding-right: 8px;
   tab-size: var(--editor-tab-size, 4);
 }
 

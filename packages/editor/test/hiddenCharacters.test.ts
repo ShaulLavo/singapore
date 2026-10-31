@@ -288,8 +288,8 @@ describe('hidden character markers', () => {
       },
       'ab   cd  ',
     )
-    mockViewport(view.scrollElement, 72, 200)
-    view.setScrollMetrics(0, 200, 72)
+    mockViewport(view.scrollElement, 76, 200)
+    view.setScrollMetrics(0, 200, 76)
 
     // Character wrap counts spaces; the caret reserve reduces this viewport to four columns.
     expect(view.getState().mountedRows.map((row) => row.text)).toEqual(['ab  ', ' cd ', ' '])
