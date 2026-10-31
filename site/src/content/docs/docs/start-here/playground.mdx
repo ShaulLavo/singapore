@@ -1,61 +1,84 @@
 ---
 title: Build a TypeScript playground
-description: Add syntax, search and a browser-based TypeScript language service.
+description: Build a TypeScript editor one plugin at a time, with a running editor after every step.
 ---
 
+import PlaygroundStep from '../../../../components/PlaygroundStep.astro'
+import step1 from '../../../../examples/playground/1-editor.ts?raw'
+import step2 from '../../../../examples/playground/2-theme.ts?raw'
+import step3 from '../../../../examples/playground/3-syntax.ts?raw'
+import step4 from '../../../../examples/playground/4-gutter-find.ts?raw'
+import step5 from '../../../../examples/playground/5-typescript.ts?raw'
+import step6 from '../../../../examples/playground/6-minimap.ts?raw'
+import sample from '../../../../examples/playground/sample.ts?raw'
 import Code from '../../../../components/Code.astro'
-import source from '../../../../examples/playground.ts?raw'
 
-Build a TypeScript editor with syntax colours, line numbers, find, a minimap and language diagnostics. Start with the Quick start container in a Vite browser application.
+This page builds a TypeScript editor in six steps. It starts as plain text and ends with syntax colours, line numbers, search, type errors from a TypeScript language service in a worker, and a minimap. Every step shows the whole file so far, and below it an editor running exactly that file.
 
-## 1. Install the packages
+## Before you start
+
+You need a Vite project and a container with a height, as in the [Quick start](/docs/start-here/quick-start/). Install the packages this page uses:
 
 ```sh
-npm install @singapore-editor/core @singapore-editor/tree-sitter @singapore-editor/tree-sitter-languages @singapore-editor/typescript-lsp @singapore-editor/gutters @singapore-editor/find @singapore-editor/minimap
+npm install @singapore-editor/core @singapore-editor/tree-sitter @singapore-editor/tree-sitter-languages @singapore-editor/gutters @singapore-editor/find @singapore-editor/typescript-lsp @singapore-editor/minimap
 ```
+
+The editor opens a small TypeScript file. Save it as `sample.ts` next to your code. It holds two files: `main.ts`, which you edit, and `math.ts`, which `main.ts` imports.
+
+<Code code={sample.replace(/\n$/, '')} lang='ts' />
+
+## 1. Mount an editor
+
+Create an `Editor` in the container and open `main.ts`. The document id is a path because the TypeScript step later resolves imports from it.
+
+<PlaygroundStep step='1-editor' source={step1} label='Step 1: plain editor' />
+
+The text is plain. You can select, type and undo, but nothing knows it is TypeScript yet.
 
 ## 2. Set a theme
 
-The example converts VS Code editor colours with `editorThemeFromVscodeTheme`. The background and foreground appear as soon as the editor mounts.
+`editorThemeFromVscodeTheme` turns VS Code theme colours into an editor theme. Two colours are enough for the background and the text, and `type: 'dark'` picks dark defaults for everything the theme leaves out, such as the hover popup you will see in step 5.
 
-## 3. Add tree-sitter
+<PlaygroundStep step='2-theme' source={step2} label='Step 2: themed editor' />
 
-Register the bundled language contributions with `createTreeSitterLanguagePlugin`. Open a document with `languageId: 'typescript'`. The grammar loads when needed, and the worker returns syntax tokens.
+## 3. Add syntax colours
 
-## 4. Add line numbers and find
+The tree-sitter plugin parses the document in a worker and colours it. `TREE_SITTER_LANGUAGE_CONTRIBUTIONS` registers the bundled grammars, and the TypeScript grammar downloads the first time a TypeScript document opens.
 
-Add `createLineGutterPlugin()` and `createEditorFindPlugin()` to `plugins`, and import their stylesheets. Line numbers appear on the left. Use Ctrl+F or Cmd+F to search the file.
+<PlaygroundStep step='3-syntax' source={step3} label='Step 3: syntax colours' />
 
-## 5. Give TypeScript another file
+The text appears at once and the colours arrive a moment later, after the worker parses the file.
 
-Create the TypeScript plugin and call `setWorkspaceFiles` with `/src/math.ts`. The worker resolves the import in `/src/main.ts`. Passing a string to `twice` produces a diagnostic because `twice` takes a number.
+## 4. Add line numbers and search
 
-## 6. Add the minimap
+Line numbers and search are two more plugins, each with its own stylesheet.
 
-Add `createMinimapPlugin()` and its stylesheet. The minimap appears beside the text and can scroll the editor.
+<PlaygroundStep step='4-gutter-find' source={step4} label='Step 4: line numbers and search' />
 
-## Run the complete file
+Click into the editor and press Ctrl+F, or Cmd+F on a Mac, to search the file.
 
-<Code code={source} lang='ts' title='playground.ts' />
+## 5. Add the TypeScript language service
 
-Call `mountPlayground` with your container and dispose the returned editor when the view closes. The demo runs an interactive editor.
+`createTypeScriptLspPlugin` runs TypeScript in a worker inside the page, with no server. `setWorkspaceFiles` gives it the files the document imports, so `./math` resolves.
 
-[Open the interactive demo](https://singapore.shaulavo.dev/demo/) to edit files.
+<PlaygroundStep step='5-typescript' source={step5} label='Step 5: TypeScript language service' />
 
-Change `'two'` to `2`. The TypeScript diagnostic should clear after the worker processes the edit. Hover over `twice` to inspect its type.
+The worker downloads TypeScript and its standard library on first use, so diagnostics appear a few seconds after the text. Then try it:
 
-You have built an editor with a second virtual file and a local language service. It needs no external language-server process. The guides cover worker hosting and sharing a project across editors.
+- Line 4 is underlined, because `twice` takes a number. Change `'two'` to `2` and the error goes away.
+- Hover over `twice` to see its type.
+- Type `orders[0].` on a new line to get completions.
 
-[Open the full demo](https://singapore.shaulavo.dev/demo/) to browse the repository through the GitHub API and edit its files.
+## 6. Add a minimap
 
-## If it doesn't work
+The minimap draws the whole document beside the text. Drag it to scroll.
 
-### Colours or diagnostics never arrive
+<PlaygroundStep step='6-minimap' source={step6} label='Step 6: minimap' />
 
-Check the browser network panel for failed worker, grammar or standard-library requests. Serve the production build and confirm those assets resolve under its base path.
+That is the finished playground. Keep the returned editor and call `editor.dispose()` when the view closes, which also stops its workers.
 
-### The import is unresolved
+## Next
 
-Use matching absolute virtual paths in `setWorkspaceFiles` and `documentId`. Include the imported files in the worker's workspace file set.
-
-Continue with Language servers and Bundling and workers in the sidebar.
+- [Bundling and workers](/docs/guides/bundling/) covers serving the worker and WebAssembly files in production.
+- [Language servers](/docs/guides/lsp/) connects the editor to a server process instead of an in-page worker.
+- The [full demo](https://singapore.shaulavo.dev/demo/) is a larger application on the same packages. It loads this repository through the GitHub API into a file tree, so you can open and edit any of its files.

@@ -1,39 +1,30 @@
-import { createTouchSelectionPlugin } from '@singapore-editor/plugin-ui/touch-selection-plugin'
 import { Editor } from '@singapore-editor/core/editor'
+import { editorThemeFromVscodeTheme } from '@singapore-editor/core/shiki'
 import { createTreeSitterLanguagePlugin } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
-import { createTypeScriptLspPlugin } from '@singapore-editor/typescript-lsp'
 import { createLineGutterPlugin } from '@singapore-editor/gutters'
 import { createEditorFindPlugin } from '@singapore-editor/find'
-import { createMinimapPlugin } from '@singapore-editor/minimap'
-import { editorThemeFromVscodeTheme } from '@singapore-editor/core/shiki'
+import { createTypeScriptLspPlugin } from '@singapore-editor/typescript-lsp'
 import '@singapore-editor/core/style.css'
 import '@singapore-editor/gutters/style.css'
 import '@singapore-editor/find/style.css'
-import '@singapore-editor/minimap/style.css'
+import { MAIN_TS, MATH_TS } from './sample'
 
 export function mountPlayground(element: HTMLElement): Editor {
   const typescript = createTypeScriptLspPlugin()
-  typescript.setWorkspaceFiles([
-    { path: '/src/math.ts', text: 'export const twice = (n: number) => n * 2\n' },
-  ])
+  typescript.setWorkspaceFiles([{ path: '/src/math.ts', text: MATH_TS }])
   const editor = new Editor(element, {
     theme: editorThemeFromVscodeTheme({
+      type: 'dark',
       colors: { 'editor.background': '#18202b', 'editor.foreground': '#dce5ef' },
     }),
     plugins: [
-      createTouchSelectionPlugin({ haptics: true }),
       createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS),
       createLineGutterPlugin(),
       createEditorFindPlugin(),
       typescript,
-      createMinimapPlugin(),
     ],
   })
-  editor.openDocument({
-    documentId: '/src/main.ts',
-    text: "import { twice } from './math'\n\ntwice('two')\n",
-    languageId: 'typescript',
-  })
+  editor.openDocument({ documentId: '/src/main.ts', text: MAIN_TS, languageId: 'typescript' })
   return editor
 }
