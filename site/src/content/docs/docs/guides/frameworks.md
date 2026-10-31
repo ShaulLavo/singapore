@@ -1,6 +1,6 @@
 # React and Solid
 
-Use the adapter for your framework so the editor mounts and disposes with its component. You need a client-side component and the core stylesheet.
+Use the adapter for your framework so the editor mounts and disposes with its component. You need a client-side component.
 
 ## React
 
@@ -16,7 +16,6 @@ npm install @singapore-editor/core @singapore-editor/react react react-dom
 
 ```tsx
 import { useEditor } from '@singapore-editor/react'
-import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
   const controller = useEditor({
@@ -145,7 +144,6 @@ export function EditorWithStatus() {
 ```tsx
 import { useEditor } from '@singapore-editor/react'
 import { createEditorFindPlugin } from '@singapore-editor/find'
-import '@singapore-editor/find/style.css'
 
 // Created once. A new plugin instance on each render would reinstall it every time.
 const plugins = [createEditorFindPlugin()]
@@ -175,7 +173,6 @@ npm install @singapore-editor/core @singapore-editor/solid solid-js
 ```tsx
 import { createSignal } from 'solid-js'
 import { createEditor } from '@singapore-editor/solid'
-import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
   const [wordWrap, setWordWrap] = createSignal(false)

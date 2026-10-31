@@ -17,7 +17,7 @@ This table comes from the current workspace manifests. Every public declaration 
 
 ## Stylesheets
 
-Import `@singapore-editor/core/style.css` for the editor. Packages with visual UI, including gutters, find, minimap, diff, Markdown, scope lines and panes, expose their own stylesheets. Check the package manifest and guide for the entry point to import.
+Stylesheets load with the modules that use them, through any bundler that handles CSS imports. The editor, gutters, find, minimap, diff, Markdown, scope lines and panes each also export `style.css` for pages that link stylesheets themselves.
 
 ## Status
 

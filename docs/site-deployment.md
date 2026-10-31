@@ -21,7 +21,22 @@ declared by `site/package.json` and provides Chromium for the build-time capture
 runs the selected workspace package builds, then builds the docs with `/` and the demo with
 `/demo/`.
 
-## Dry-run and deploy
+## Automatic deployment
+
+Every push to `main` that changes the site, the example app or a package rebuilds the site
+and deploys it. The `Singapore site` workflow builds once, keeps the output as an artifact,
+and its `deploy` job runs pinned Wrangler against `wrangler.singapore.jsonc`.
+
+The job needs two repository settings:
+
+- Secret `CLOUDFLARE_API_TOKEN`: a token made from Cloudflare's "Edit Cloudflare Workers"
+  template, limited to the account and the `shaulavo.dev` zone.
+- Variable `CLOUDFLARE_ACCOUNT_ID`: the account that owns the Worker.
+
+Without the secret the job fails and says so. Run the workflow by hand from the Actions tab
+to redeploy without a new commit.
+
+## Dry-run and deploy by hand
 
 Wrangler is invoked at the pinned version used by the existing production configuration:
 

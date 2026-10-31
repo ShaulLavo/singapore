@@ -21,7 +21,6 @@ Save this as `main.ts`. Retain the editor so you can release it when the view cl
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
-import '@singapore-editor/core/style.css'
 
 const element = document.querySelector<HTMLElement>('#editor')!
 const editor = new Editor(element)

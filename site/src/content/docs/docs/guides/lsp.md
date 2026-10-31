@@ -13,7 +13,6 @@ npm install @singapore-editor/core @singapore-editor/lsp @singapore-editor/lsp-p
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
 import { createLanguageServerPlugin } from '@singapore-editor/lsp-plugin'
-import '@singapore-editor/core/style.css'
 
 const editor = new Editor(document.querySelector<HTMLElement>('#editor')!, {
   plugins: [

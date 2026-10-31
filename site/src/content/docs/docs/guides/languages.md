@@ -16,7 +16,6 @@ npm install @singapore-editor/core @singapore-editor/tree-sitter @singapore-edit
 import { Editor } from '@singapore-editor/core/editor'
 import { createTreeSitterLanguagePlugin } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
-import '@singapore-editor/core/style.css'
 
 const editor = new Editor(document.querySelector<HTMLElement>('#editor')!, {
   plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],

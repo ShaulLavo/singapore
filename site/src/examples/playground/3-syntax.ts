@@ -1,7 +1,6 @@
 import { Editor } from '@singapore-editor/core/editor'
 import { createTreeSitterLanguagePlugin } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
-import '@singapore-editor/core/style.css'
 import { MAIN_TS } from './sample'
 
 export function mountPlayground(element: HTMLElement): Editor {
