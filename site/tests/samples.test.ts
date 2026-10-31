@@ -35,7 +35,7 @@ test('checks fenced samples as separate modules and permits non-code fences', as
     ].join('\n\n'),
   )
   expect(result.status, result.stdout + result.stderr).toBe(0)
-  expect(result.stdout).toContain('Checked 3 inline samples and 2 example files')
+  expect(result.stdout).toMatch(/Checked 3 inline samples and \d+ example files/)
 })
 
 test('rejects a wrong type and identifies its page and fence line', async () => {

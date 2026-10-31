@@ -136,16 +136,22 @@ try {
   }
   if (!packageMode) {
     const environment = join(root, 'src/env.d.ts')
+    const examples = join(root, 'src/examples')
+    const exampleFiles = (await readdir(examples, { recursive: true }))
+      .filter((file) => file.endsWith('.ts'))
+      .map((file) => join(examples, file))
     await check(
       'docs',
       [environment].concat(
         files.filter((file) => !solidSamples.has(file)),
-        ['hero.ts', 'playground.ts'].map((file) => join(root, 'src/examples', file)),
+        exampleFiles,
       ),
     )
     if (solidSamples.size)
       await check('solid', [environment].concat(Array.from(solidSamples)), true)
-    console.log(`Checked ${sampleCount} inline samples and 2 example files with TypeScript 7.`)
+    console.log(
+      `Checked ${sampleCount} inline samples and ${exampleFiles.length} example files with TypeScript 7.`,
+    )
   }
 } finally {
   await rm(temporary, { recursive: true, force: true })

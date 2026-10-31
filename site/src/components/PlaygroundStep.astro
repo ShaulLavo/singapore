@@ -1,0 +1,77 @@
+---
+import Code from './Code.astro'
+
+type Props = { step: string; source: string; label: string }
+const { step, source, label } = Astro.props
+---
+
+<Code code={source.replace(/\n$/, '')} lang='ts' />
+<figure class='playground-result not-content' data-playground-step={step}>
+  <div class='playground-host' aria-label={label}></div>
+  <figcaption class='playground-status' role='status'>Scroll here to run this step.</figcaption>
+</figure>
+
+<script>
+  // Each step is its own chunk, so a reader downloads a plugin (the TypeScript worker included)
+  // only when its step comes near the viewport.
+  const steps = import.meta.glob<{ mountPlayground(element: HTMLElement): { dispose(): void } }>(
+    '../examples/playground/[0-9]-*.ts',
+  )
+
+  const mounted: { dispose(): void }[] = []
+  const run = async (figure: HTMLElement) => {
+    const status = figure.querySelector<HTMLElement>('.playground-status')!
+    const host = figure.querySelector<HTMLElement>('.playground-host')!
+    const load = steps[`../examples/playground/${figure.dataset.playgroundStep}.ts`]
+    if (!load) {
+      status.textContent = `No step named ${figure.dataset.playgroundStep}.`
+      return
+    }
+    status.textContent = 'Loading this step…'
+    try {
+      const { mountPlayground } = await load()
+      mounted.push(mountPlayground(host))
+      figure.dataset.playgroundReady = ''
+      status.textContent = 'This editor runs the code above. Edit it.'
+    } catch (error) {
+      status.textContent = `This step failed to load: ${String(error)}`
+    }
+  }
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue
+        observer.unobserve(entry.target)
+        void run(entry.target as HTMLElement)
+      }
+    },
+    { rootMargin: '200px 0px' },
+  )
+  for (const figure of document.querySelectorAll<HTMLElement>('[data-playground-step]')) {
+    observer.observe(figure)
+  }
+  window.addEventListener('pagehide', (event) => {
+    if (event.persisted) return
+    for (const editor of mounted.splice(0)) editor.dispose()
+  })
+</script>
+
+<style>
+  .playground-result {
+    margin: 0.75rem 0 2rem;
+  }
+  .playground-host {
+    display: flex;
+    flex-direction: column;
+    height: 22rem;
+    overflow: hidden;
+    border-radius: 0.5rem;
+    background: #18202b;
+  }
+  .playground-status {
+    margin-top: 0.5rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+</style>
