@@ -9,7 +9,7 @@ Start with the text view, then add each extension's equivalent. Singapore packag
 - `dispatch({ changes })` becomes the editor's `edit` method.
 - `extensions` become `plugins` in editor options, plus core options.
 - Language support comes from `tree-sitter` with language contributions.
-- A theme extension becomes an `EditorTheme` and the core stylesheet.
+- A theme extension becomes an `EditorTheme`.
 - Decorations become text range decorations or view contributions.
 - View cleanup becomes `dispose()`.
 
@@ -17,7 +17,6 @@ Start with the text view, then add each extension's equivalent. Singapore packag
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
-import '@singapore-editor/core/style.css'
 
 const editor = new Editor(document.querySelector<HTMLElement>('#editor')!)
 editor.setText('Hello from the new editor\n')

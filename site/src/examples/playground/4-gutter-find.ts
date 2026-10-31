@@ -3,9 +3,6 @@ import { createTreeSitterLanguagePlugin } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
 import { createLineGutterPlugin } from '@singapore-editor/gutters'
 import { createEditorFindPlugin } from '@singapore-editor/find'
-import '@singapore-editor/core/style.css'
-import '@singapore-editor/gutters/style.css'
-import '@singapore-editor/find/style.css'
 import { MAIN_TS } from './sample'
 
 export function mountPlayground(element: HTMLElement): Editor {

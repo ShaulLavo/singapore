@@ -1,6 +1,6 @@
 # Themes
 
-Apply editor and syntax colours with an `EditorTheme`. You need the core stylesheet and a mounted editor.
+Apply editor and syntax colours with an `EditorTheme`. You need a mounted editor.
 
 With no theme the editor is black text on white with the current line shaded, and its syntax colours follow VS Code's Light+. A theme sets only the colours you list. Its `type` picks the defaults for the rest: leave it out or say `'light'` for light defaults, or say `'dark'` for the dark palette.
 
@@ -9,7 +9,6 @@ With no theme the editor is black text on white with the current line shaded, an
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
 import type { EditorTheme } from '@singapore-editor/core/rendering'
-import '@singapore-editor/core/style.css'
 
 const theme: EditorTheme = {
   type: 'dark',
@@ -47,7 +46,7 @@ Editor background, foreground, selection and caret use the supplied colours. Add
 
 ### The gutter has a different background
 
-Set gutter colour options and check your plugin stylesheet imports. `gutterLeadingInset` controls the gutter's leading space.
+Set gutter colour options. `gutterLeadingInset` controls the gutter's leading space.
 
 ### Syntax colours never change
 

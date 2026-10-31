@@ -1,5 +1,4 @@
 import { Editor } from '@singapore-editor/core/editor'
-import '@singapore-editor/core/style.css'
 import { MAIN_TS } from './sample'
 
 export function mountPlayground(element: HTMLElement): Editor {

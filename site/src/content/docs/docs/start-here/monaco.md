@@ -17,7 +17,6 @@ Move one editor view first. Check its text, selection, commands and disposal bef
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
-import '@singapore-editor/core/style.css'
 
 const editor = new Editor(document.querySelector<HTMLElement>('#editor')!, {
   wordWrap: true,
