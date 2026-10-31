@@ -117,6 +117,8 @@ function mount() {
   host.style.setProperty('--editor-foreground', '#ffffff')
   document.body.append(host)
   const view = new VirtualizedTextView(host, { rowHeight: 32, overscan: 0 })
+  // The fades below are measured against black, which the view would otherwise paint white.
+  view.setTheme({ type: 'dark', backgroundColor: '#000000', foregroundColor: '#ffffff' })
   view.setText('MMMMMMMMMMMM')
   view.setScrollMetrics(0, 80, 480)
   view.setTokens([{ start: 0, end: 12, style: { color: '#ff0000' } }])

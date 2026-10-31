@@ -4,11 +4,11 @@ const colors = {
   added: { dark: '#5ecc71', light: '#166534' },
   deleted: { dark: '#ff6762', light: '#991b1b' },
   modified: { dark: '#69b1ff', light: '#0369a1' },
-  'added.bg': 'color-mix(in srgb, var(--editor-background, #1e1e1e) 78%, var(--editor-diff-added))',
+  'added.bg': 'color-mix(in srgb, var(--editor-background, #ffffff) 78%, var(--editor-diff-added))',
   'deleted.bg':
-    'color-mix(in srgb, var(--editor-background, #1e1e1e) 78%, var(--editor-diff-deleted))',
+    'color-mix(in srgb, var(--editor-background, #ffffff) 78%, var(--editor-diff-deleted))',
   'hunk.bg':
-    'color-mix(in srgb, var(--editor-background, #1e1e1e) 84%, var(--editor-diff-modified))',
+    'color-mix(in srgb, var(--editor-background, #ffffff) 84%, var(--editor-diff-modified))',
   'placeholder.bg': {
     dark: 'color-mix(in srgb, var(--editor-background, #1e1e1e) 92%, #ffffff)',
     light: 'color-mix(in srgb, var(--editor-background, #ffffff) 92%, #000000)',
