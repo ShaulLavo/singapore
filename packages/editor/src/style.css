@@ -17,36 +17,38 @@
   --editor-z-overlay-popup: 300;
 }
 
+/* With no theme the editor is black on white with a light current-line band, as Monaco's and
+   CodeMirror's defaults are. Syntax colours follow VS Code's Light+. */
 .editor {
-  --editor-background: #1e1e1e;
-  --editor-foreground: #d4d4d4;
+  --editor-background: #ffffff;
+  --editor-foreground: #000000;
   --editor-gutter-background: var(--editor-background);
-  --editor-gutter-foreground: #71717a;
+  --editor-gutter-foreground: #237893;
   --editor-gutter-active-foreground: var(--editor-foreground);
-  --editor-cursor-line-gutter-background: rgba(255, 255, 255, 0.06);
-  --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
+  --editor-cursor-line-gutter-background: rgba(0, 0, 0, 0.04);
+  --editor-cursor-line-row-background: rgba(0, 0, 0, 0.04);
   --editor-caret-color: var(--editor-foreground);
-  --editor-hidden-character-foreground: #71717a;
-  --editor-suspicious-character-color: #f87171;
+  --editor-hidden-character-foreground: #a1a1aa;
+  --editor-suspicious-character-color: #dc2626;
   --editor-minimap-background: var(--editor-background);
   --editor-minimap-background-opacity: 0.5;
-  --editor-syntax-attribute: #99f6e4;
-  --editor-syntax-bracket: #d4d4d8;
-  --editor-syntax-comment: #71717a;
-  --editor-syntax-constant: #f0abfc;
-  --editor-syntax-function: #fecdd3;
-  --editor-syntax-keyword: #6ee7b7;
-  --editor-syntax-keyword-declaration: #a78bfa;
-  --editor-syntax-keyword-import: #f9a8d4;
-  --editor-syntax-namespace: #a5f3fc;
-  --editor-syntax-number: #c4b5fd;
-  --editor-syntax-property: #e9d5ff;
-  --editor-syntax-string: #fde68a;
-  --editor-syntax-type: #7dd3fc;
-  --editor-syntax-type-definition: #38bdf8;
-  --editor-syntax-type-parameter: #5eead4;
-  --editor-syntax-variable: #e4e4e7;
-  --editor-syntax-variable-builtin: #fdba74;
+  --editor-syntax-attribute: #e50000;
+  --editor-syntax-bracket: #000000;
+  --editor-syntax-comment: #008000;
+  --editor-syntax-constant: #0070c1;
+  --editor-syntax-function: #795e26;
+  --editor-syntax-keyword: #0000ff;
+  --editor-syntax-keyword-declaration: #0000ff;
+  --editor-syntax-keyword-import: #af00db;
+  --editor-syntax-namespace: #267f99;
+  --editor-syntax-number: #098658;
+  --editor-syntax-property: #001080;
+  --editor-syntax-string: #a31515;
+  --editor-syntax-type: #267f99;
+  --editor-syntax-type-definition: #267f99;
+  --editor-syntax-type-parameter: #267f99;
+  --editor-syntax-variable: #001080;
+  --editor-syntax-variable-builtin: #0000ff;
 
   flex: 1;
   overflow: auto;
@@ -60,26 +62,18 @@
   margin: 0;
 }
 
-.editor::selection {
-  color: inherit;
-  background: transparent;
-}
-
-.editor-virtualized {
-  /* See browser-quirks.md#ios-native-long-press-selection. */
-  -webkit-touch-callout: none;
+/* A theme that declares itself dark, or high contrast, starts from the dark palette instead. */
+.editor[data-editor-theme-type='dark'],
+.editor[data-editor-theme-type='high-contrast'],
+.editor-virtualized[data-editor-theme-type='dark'],
+.editor-virtualized[data-editor-theme-type='high-contrast'] {
   --editor-background: #1e1e1e;
   --editor-foreground: #d4d4d4;
-  --editor-gutter-background: var(--editor-background);
   --editor-gutter-foreground: #71717a;
-  --editor-gutter-active-foreground: var(--editor-foreground);
   --editor-cursor-line-gutter-background: rgba(255, 255, 255, 0.06);
   --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
-  --editor-caret-color: var(--editor-foreground);
   --editor-hidden-character-foreground: #71717a;
   --editor-suspicious-character-color: #f87171;
-  --editor-minimap-background: var(--editor-background);
-  --editor-minimap-background-opacity: 0.5;
   --editor-syntax-attribute: #99f6e4;
   --editor-syntax-bracket: #d4d4d8;
   --editor-syntax-comment: #71717a;
@@ -97,6 +91,45 @@
   --editor-syntax-type-parameter: #5eead4;
   --editor-syntax-variable: #e4e4e7;
   --editor-syntax-variable-builtin: #fdba74;
+}
+
+.editor::selection {
+  color: inherit;
+  background: transparent;
+}
+
+.editor-virtualized {
+  /* See browser-quirks.md#ios-native-long-press-selection. */
+  -webkit-touch-callout: none;
+  --editor-background: #ffffff;
+  --editor-foreground: #000000;
+  --editor-gutter-background: var(--editor-background);
+  --editor-gutter-foreground: #237893;
+  --editor-gutter-active-foreground: var(--editor-foreground);
+  --editor-cursor-line-gutter-background: rgba(0, 0, 0, 0.04);
+  --editor-cursor-line-row-background: rgba(0, 0, 0, 0.04);
+  --editor-caret-color: var(--editor-foreground);
+  --editor-hidden-character-foreground: #a1a1aa;
+  --editor-suspicious-character-color: #dc2626;
+  --editor-minimap-background: var(--editor-background);
+  --editor-minimap-background-opacity: 0.5;
+  --editor-syntax-attribute: #e50000;
+  --editor-syntax-bracket: #000000;
+  --editor-syntax-comment: #008000;
+  --editor-syntax-constant: #0070c1;
+  --editor-syntax-function: #795e26;
+  --editor-syntax-keyword: #0000ff;
+  --editor-syntax-keyword-declaration: #0000ff;
+  --editor-syntax-keyword-import: #af00db;
+  --editor-syntax-namespace: #267f99;
+  --editor-syntax-number: #098658;
+  --editor-syntax-property: #001080;
+  --editor-syntax-string: #a31515;
+  --editor-syntax-type: #267f99;
+  --editor-syntax-type-definition: #267f99;
+  --editor-syntax-type-parameter: #267f99;
+  --editor-syntax-variable: #001080;
+  --editor-syntax-variable-builtin: #0000ff;
   --editor-gutter-width: 0px;
   /* Written by the editor from `gutterLeadingInset`; part of `--editor-gutter-width`. */
   --editor-gutter-inset: 0px;

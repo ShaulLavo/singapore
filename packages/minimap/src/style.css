@@ -1,5 +1,5 @@
 .editor-minimap {
-  --editor-minimap-background: #1e1e1e;
+  --editor-minimap-background: var(--editor-background);
   --editor-minimap-background-opacity: 0.5;
   --editor-minimap-selection-highlight: rgba(56, 189, 248, 0.5);
   --editor-minimap-slider-background: rgba(121, 121, 121, 0.12);

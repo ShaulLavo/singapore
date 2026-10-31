@@ -164,39 +164,43 @@ describe('registered color defaults', () => {
     applyEditorTheme(themeElement(), null)
 
     const rules = generatedColorRules()
-    // The shipped palette is dark, so dark is the value an unconfigured editor
-    // takes and light is the one a preference has to ask for.
-    expect(rules).toContain('[data-editor-colors] { --editor-test-defaults-per-type: #bbbbbb; }')
-    expect(rules).toContain(
-      '@media (prefers-color-scheme: light) { [data-editor-colors] { --editor-test-defaults-per-type: #aaaaaa; } }',
-    )
+    // An unthemed editor is light; dark comes only from a theme that declares it.
+    expect(rules).toContain('[data-editor-colors] { --editor-test-defaults-per-type: #aaaaaa; }')
+    expect(rules).not.toContain('prefers-color-scheme')
     expect(rules).toContain(
       '@media (forced-colors: active) { [data-editor-colors] { --editor-test-defaults-per-type: #cccccc; } }',
     )
+    expect(rules).toContain(
+      "[data-editor-theme-type='dark'] { --editor-test-defaults-per-type: #bbbbbb; }",
+    )
 
-    const preference = rules.indexOf('@media (prefers-color-scheme: light)')
-    const declared = rules.indexOf("[data-editor-theme-type='light']")
-    expect(declared).toBeGreaterThan(preference)
+    const forced = rules.indexOf('@media (forced-colors: active)')
+    const declared = rules.indexOf("[data-editor-theme-type='dark']")
+    expect(declared).toBeGreaterThan(forced)
     expect(rules).toContain(
       "[data-editor-theme-type='high-contrast'] { --editor-test-defaults-per-type: #cccccc; }",
     )
   })
 
-  it('writes the unconditional dark default before the light preference overrides it', () => {
-    registerEditorColor('test.defaults.order', { light: '#a1a1a1', dark: '#b1b1b1' })
+  it('writes the unconditional light default before the forced-colours override', () => {
+    registerEditorColor('test.defaults.order', {
+      light: '#a1a1a1',
+      dark: '#b1b1b1',
+      highContrast: '#c1c1c1',
+    })
 
     applyEditorTheme(themeElement(), null)
 
     const rules = generatedColorRules()
-    const base = rules.indexOf('[data-editor-colors] { --editor-test-defaults-order: #b1b1b1; }')
-    const preference = rules.indexOf(
-      '@media (prefers-color-scheme: light) { [data-editor-colors] { --editor-test-defaults-order: #a1a1a1; } }',
+    const base = rules.indexOf('[data-editor-colors] { --editor-test-defaults-order: #a1a1a1; }')
+    const forced = rules.indexOf(
+      '@media (forced-colors: active) { [data-editor-colors] { --editor-test-defaults-order: #c1c1c1; } }',
     )
     expect(base).toBeGreaterThanOrEqual(0)
-    expect(preference).toBeGreaterThanOrEqual(0)
+    expect(forced).toBeGreaterThanOrEqual(0)
     // Both selectors weigh the same and a media query buys no specificity, so the fallback has to be
-    // written before the preference it is only the fallback for.
-    expect(base).toBeLessThan(preference)
+    // written before the override it is only the fallback for.
+    expect(base).toBeLessThan(forced)
   })
 
   it('borrows the dark default for high contrast rather than the light one', () => {

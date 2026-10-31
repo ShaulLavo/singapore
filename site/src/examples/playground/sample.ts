@@ -17,7 +17,7 @@ function total(order: Order): number {
 }
 
 export function summary(): string {
-  const sum = orders.reduce((acc, order) => acc + total(order), 0)
+  const sum = orders.reduce((acc, o) => acc + total(o), 0)
   return \`\${orders.length} orders, \${sum.toFixed(2)} total\`
 }
 `

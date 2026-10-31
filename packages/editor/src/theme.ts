@@ -330,7 +330,7 @@ function editorVariableValue(variable: string, theme: EditorTheme): string | nul
   }
   for (const registered of registeredEditorColors.values()) {
     if (registered.variable !== variable) continue
-    const fallback = editorColorDefault(registered.defaults, theme.type ?? 'dark')
+    const fallback = editorColorDefault(registered.defaults, theme.type ?? 'light')
     return fallback === undefined ? null : compileEditorColorValue(fallback)
   }
   return null
@@ -487,10 +487,10 @@ function acquireEditorColorRule(rules: SharedStyleRules, registered: RegisteredE
  * transform re-derives itself when the colour it reads is overridden — the engine recomputes
  * `color-mix` and `var` fallbacks on its own, with no recompute path of ours to keep correct.
  *
- * Every theme type is emitted at once: first the unconditional fallback, then the rules that follow
- * the viewer's own preference, then the same values keyed by declared type, so a theme that names
- * its type overrides that preference for its own editor. That order is the whole mechanism — the
- * selectors weigh the same, so the ones written last are the ones that win.
+ * Every theme type is emitted at once: first the unconditional light fallback, then high contrast
+ * under forced colours, then the same values keyed by declared type, so a theme that names its type
+ * wins for its own editor. That order is the whole mechanism: the selectors weigh the same, so the
+ * ones written last are the ones that win.
  */
 function editorColorDefaultRules(registered: RegisteredEditorColor): string {
   const fallbackRules: string[] = []
@@ -503,9 +503,9 @@ function editorColorDefaultRules(registered: RegisteredEditorColor): string {
 
     const declaration = `${registered.variable}: ${compileEditorColorValue(value)};`
     const rule = `[${EDITOR_COLORS_ATTRIBUTE}] { ${declaration} }`
-    const condition = editorColorPreferenceCondition(type)
-    if (condition === null) fallbackRules.push(rule)
-    else preferenceRules.push(`@media (${condition}) { ${rule} }`)
+    if (type === 'light') fallbackRules.push(rule)
+    else if (type === 'highContrast')
+      preferenceRules.push(`@media (forced-colors: active) { ${rule} }`)
     attributeRules.push(
       `[${EDITOR_THEME_TYPE_ATTRIBUTE}='${EDITOR_THEME_TYPE_ATTRIBUTE_VALUES[type]}'] { ${declaration} }`,
     )
@@ -514,16 +514,9 @@ function editorColorDefaultRules(registered: RegisteredEditorColor): string {
   return fallbackRules.concat(preferenceRules, attributeRules).join('\n')
 }
 
-// The shipped palette is dark, so dark is what an editor nobody has configured has to resolve to:
-// an unconditional light default would leave every registered colour disagreeing with the surface
-// it is painted on until a theme arrives. Every other type asks for its canvas by media query, and
-// a media query buys no specificity — which is why the caller writes the unconditional rule before
-// them rather than after, where it would win back the preference it is only the fallback for.
-function editorColorPreferenceCondition(type: EditorThemeType): string | null {
-  if (type === 'light') return 'prefers-color-scheme: light'
-  if (type === 'highContrast') return 'forced-colors: active'
-  return null
-}
+// An editor nobody has themed is light, matching the package stylesheet's defaults. Dark comes only
+// from a theme that declares it; forced colours still ask for high contrast by media query, which
+// buys no specificity, so the unconditional light rule is written before it.
 
 // A high contrast surface is a sharpened version of one of the other two rather than a third
 // palette, so it borrows the dark value before the light one when it declares nothing itself.

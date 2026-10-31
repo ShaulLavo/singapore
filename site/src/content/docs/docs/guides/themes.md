@@ -2,6 +2,8 @@
 
 Apply editor and syntax colours with an `EditorTheme`. You need the core stylesheet and a mounted editor.
 
+With no theme the editor is black text on white with the current line shaded, and its syntax colours follow VS Code's Light+. A theme sets only the colours you list. Its `type` picks the defaults for the rest: leave it out or say `'light'` for light defaults, or say `'dark'` for the dark palette.
+
 ## 1. Set the editor colours
 
 ```ts
