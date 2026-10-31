@@ -1037,9 +1037,10 @@ class ColorResolver {
     this.canvasContext = root.ownerDocument.createElement('canvas').getContext('2d', {
       willReadFrequently: true,
     })
-    this.probe.style.position = 'absolute'
-    this.probe.style.visibility = 'hidden'
-    this.probe.textContent = '.'
+    // Only its computed colour is read. Pinned to the corner at no size, so it never adds a row of
+    // scroll extent below the text: an absolute box with no offsets sits where flow would put it.
+    this.probe.style.cssText =
+      'position:absolute;top:0;left:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none'
     root.appendChild(this.probe)
   }
 

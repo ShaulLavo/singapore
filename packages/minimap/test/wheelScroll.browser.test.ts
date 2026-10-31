@@ -14,6 +14,33 @@ afterEach(() => {
 // Use the published core facade, not a second source import of the native scroll owner.
 // This exercises the actual Editor, minimap contribution, worker, and package-boundary wiring.
 describe.skipIf(!canUseMinimapWorker())('minimap wheel delegation', () => {
+  it('keeps its colour probe inside an editor whose text exactly fills it', async () => {
+    const host = document.createElement('div')
+    host.style.cssText = 'display:flex;position:relative;width:640px;height:100px'
+    document.body.append(host)
+    const editor = new Editor(host, {
+      defaultText: ['one', 'two', 'three', 'four', 'five'].join('\n'),
+      lineHeight: 20,
+      plugins: [createMinimapPlugin()],
+    })
+    disposables.push(() => {
+      editor.dispose()
+      host.remove()
+    })
+    const element = host.querySelector<HTMLDivElement>('.editor')!
+    // The minimap resolves colours through a probe inside the scroller once it paints.
+    await waitFor(() => host.querySelector('.editor-minimap-canvas') !== null)
+    await waitFor(() => element.querySelector(':scope > span[style*="visibility"]') !== null)
+
+    const probe = element.querySelector<HTMLElement>(':scope > span[style*="visibility"]')!
+    // Chromium draws a scrollbar for an absolute box past the scroller's edge even though
+    // scrollHeight leaves it out, so the probe has to stay inside the box.
+    expect(probe.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      element.getBoundingClientRect().bottom,
+    )
+    expect(element.scrollHeight).toBe(element.clientHeight)
+  })
+
   it('scrolls through the core from both canvas and slider while keeping the minimap outside', async () => {
     const { editor, host, element } = await mount()
     const root = host.querySelector<HTMLElement>('.editor-minimap')!
