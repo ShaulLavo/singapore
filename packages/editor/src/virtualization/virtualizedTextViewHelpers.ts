@@ -136,7 +136,7 @@ export function createVirtualizerOptions(
   overscan: number,
   rowGap?: number,
   scrollMode?: VirtualizedTextViewScrollMode,
-  scrollPastEnd = true,
+  scrollPastEnd = false,
 ): FixedRowVirtualizerOptions {
   return {
     count: 1,

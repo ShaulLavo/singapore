@@ -426,7 +426,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
     })
 
     it('renders the final line in a positive-height viewport after reveal', async () => {
-      const { view, host } = mount({ overscan: 0 })
+      const { view, host } = mount({ overscan: 0, scrollPastEnd: true })
       const text = Array.from({ length: 100 }, (_, index) => `line ${index}`).join('\n')
       setHighlightedText(view, text)
       await browserFrames(3)

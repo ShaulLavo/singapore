@@ -993,7 +993,7 @@ function normalizeOptions(
     enabled: options.enabled ?? true,
     maxScrollHeight: normalizeMaxScrollHeight(options.maxScrollHeight),
     scrollMode: normalizeScrollMode(options.scrollMode),
-    scrollPastEnd: options.scrollPastEnd ?? true,
+    scrollPastEnd: options.scrollPastEnd ?? false,
   }
 }
 

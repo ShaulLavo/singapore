@@ -199,8 +199,8 @@ export type EditorOptions = {
   readonly inputLabel?: string
   readonly inputKind?: EditorInputKind
   /**
-   * Leaves room below the last row to scroll it to the top. On by default; a host that sizes itself
-   * to its text turns it off.
+   * Leaves room below the last row so it can scroll to the top of the viewport, as desktop code
+   * editors do. Off by default: the scroll range ends at the last row.
    */
   readonly scrollPastEnd?: boolean
   /** Soft-wraps long lines to the viewport width instead of scrolling horizontally. */
