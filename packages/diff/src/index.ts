@@ -1,5 +1,3 @@
-import './style.css'
-
 export { createDiffPlugin, diffRowAtEvent } from './editorDiffPlugin'
 export { createDiffEditorOptions } from './editorOptions'
 export { createDiffRegionStore } from './regions'

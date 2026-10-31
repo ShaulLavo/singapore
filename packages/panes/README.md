@@ -14,7 +14,6 @@ npm install @singapore-editor/panes
 
 ```ts
 import { ResizablePaneGroup } from '@singapore-editor/panes'
-import '@singapore-editor/panes/style.css'
 
 const host = document.createElement('div')
 host.style.cssText = 'height: 400px; width: 100%'

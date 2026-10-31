@@ -13,14 +13,12 @@ npm install @singapore-editor/core @singapore-editor/markdown @singapore-editor/
 ## Usage
 
 ```ts
-import '@singapore-editor/core/style.css'
 import { Editor } from '@singapore-editor/core/editor'
 import { markdown } from '@singapore-editor/tree-sitter-languages'
 import {
   createMarkdownAuthoringPlugin,
   createMarkdownPreviewPlugin,
 } from '@singapore-editor/markdown'
-import '@singapore-editor/markdown/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'

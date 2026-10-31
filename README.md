@@ -12,7 +12,6 @@ npm install @singapore-editor/core vite
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
-import '@singapore-editor/core/style.css'
 
 const editor = new Editor(document.querySelector<HTMLElement>('#editor')!)
 editor.setText('const greeting = "Hello, Singapore"\n')

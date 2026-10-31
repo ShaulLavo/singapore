@@ -1,3 +1,4 @@
+import './style.css'
 import type { EditorViewContributionContext } from '@singapore-editor/core/extensions'
 import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
 import type { TextReadSnapshot } from '@singapore-editor/core/document'

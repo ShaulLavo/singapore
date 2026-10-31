@@ -1,3 +1,4 @@
+import '../style.css'
 import { projectReconciliationEdits } from '../reconciliation'
 import { acquireEditorDocumentAnalysis, type EditorDocumentAnalysis } from './documentAnalysis'
 import { normalizeGutterLeadingInset } from '../virtualization/virtualizedTextViewHelpers'

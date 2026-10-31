@@ -16,8 +16,6 @@ import {
   createFileEditAnimationPlugin,
   createFileTransitionPlugin,
 } from '@singapore-editor/file-animation'
-import '@singapore-editor/core/style.css'
-import '@singapore-editor/file-animation/style.css'
 
 const editor = new Editor(document.querySelector<HTMLElement>('#editor')!, {
   plugins: [createFileTransitionPlugin(), createFileEditAnimationPlugin()],

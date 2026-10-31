@@ -15,8 +15,6 @@ npm install @singapore-editor/core @singapore-editor/gutters
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
 import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapore-editor/gutters'
-import '@singapore-editor/core/style.css'
-import '@singapore-editor/gutters/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'

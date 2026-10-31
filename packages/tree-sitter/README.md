@@ -13,7 +13,6 @@ npm install @singapore-editor/core @singapore-editor/tree-sitter @singapore-edit
 ## Usage
 
 ```ts
-import '@singapore-editor/core/style.css'
 import { Editor } from '@singapore-editor/core/editor'
 import { createTreeSitterLanguagePlugin } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'

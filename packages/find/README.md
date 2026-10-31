@@ -15,8 +15,6 @@ npm install @singapore-editor/core @singapore-editor/find
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
 import { createEditorFindPlugin } from '@singapore-editor/find'
-import '@singapore-editor/core/style.css'
-import '@singapore-editor/find/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'

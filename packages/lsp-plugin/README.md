@@ -17,7 +17,6 @@ Run a language server that accepts LSP JSON-RPC over WebSocket at the example UR
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
 import { createLanguageServerPlugin } from '@singapore-editor/lsp-plugin'
-import '@singapore-editor/core/style.css'
 
 const host = document.createElement('div')
 host.style.height = '400px'
