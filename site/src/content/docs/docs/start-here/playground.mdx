@@ -13,7 +13,7 @@ import step6 from '../../../../examples/playground/6-minimap.ts?raw'
 import sample from '../../../../examples/playground/sample.ts?raw'
 import Code from '../../../../components/Code.astro'
 
-This page builds a TypeScript editor in six steps. It starts as plain text and ends with syntax colours, line numbers, search, type errors from a TypeScript language service in a worker, and a minimap. Every step shows the whole file so far, and below it an editor running exactly that file.
+This page builds a TypeScript editor in six steps. It starts as plain text and ends with syntax highlighting, line numbers, search, type errors from a TypeScript language service in a worker, and a minimap. Every step shows the whole file so far, and below it an editor running exactly that file.
 
 ## Before you start
 
@@ -33,19 +33,21 @@ Create an `Editor` in the container and open `main.ts`. The document id is a pat
 
 <PlaygroundStep step='1-editor' source={step1} label='Step 1: plain editor' />
 
-The text is plain. You can select, type and undo, but nothing knows it is TypeScript yet.
+With no theme the editor is black text on white with the current line shaded, as Monaco and CodeMirror start. The text is plain: you can select, type and undo, but nothing knows it is TypeScript yet.
 
 ## 2. Set a theme
 
-A theme is a plain object. Set the background and text colours, and `type: 'dark'` so everything the theme leaves out gets dark defaults: the syntax colours in step 3 and the hover popup in step 5. To reuse a VS Code theme instead, convert it with `editorThemeFromVscodeTheme` from `@singapore-editor/core/shiki`.
+A theme is every colour the editor paints: the background and text, the gutter, selections, popups, and the colour of each kind of syntax. Syntax highlighting, which arrives in step 3, only decides what each word is, a keyword or a string or a type. The theme decides what colour that is.
+
+A theme is a plain object, and you only set the colours you want to change. Here the editor takes the warm dark of this site's code blocks. `type: 'dark'` picks dark defaults for everything else, including the syntax colours and the hover popup in step 5. To reuse a VS Code theme instead, convert it with `editorThemeFromVscodeTheme` from `@singapore-editor/core/shiki`.
 
 <PlaygroundStep step='2-theme' source={step2} label='Step 2: themed editor' />
 
-## 3. Add syntax colours
+## 3. Add syntax highlighting
 
-The tree-sitter plugin parses the document in a worker and colours it. `TREE_SITTER_LANGUAGE_CONTRIBUTIONS` registers the bundled grammars, and the TypeScript grammar downloads the first time a TypeScript document opens.
+The tree-sitter plugin parses the document in a worker and marks each word as a keyword, a string, a type and so on. The theme from step 2 colours them. `TREE_SITTER_LANGUAGE_CONTRIBUTIONS` registers the bundled grammars, and the TypeScript grammar downloads the first time a TypeScript document opens.
 
-<PlaygroundStep step='3-syntax' source={step3} label='Step 3: syntax colours' />
+<PlaygroundStep step='3-syntax' source={step3} label='Step 3: syntax highlighting' />
 
 The text appears at once and the colours arrive a moment later, after the worker parses the file.
 

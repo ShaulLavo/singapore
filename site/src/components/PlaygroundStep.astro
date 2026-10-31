@@ -68,7 +68,8 @@ const { step, source, label } = Astro.props
     height: 34rem;
     overflow: hidden;
     border-radius: 0.5rem;
-    background: #23211d;
+    /* The unthemed editor is white, so its edge needs drawing on a light page. */
+    border: 1px solid var(--sl-color-gray-5);
   }
   .playground-status {
     margin-top: 0.5rem;
