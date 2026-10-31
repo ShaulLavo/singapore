@@ -43,25 +43,56 @@ import type {
 } from '@singapore-editor/core/extensions'
 import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
 
-export type ReactEditorDocument = {
+type ReactEditorDocumentFields = {
   readonly analysis?: EditorDocumentAnalysis | null
   readonly documentId?: string
-  readonly revision?: string | number
-  readonly buffer?: EditorTextBuffer | null
-  readonly view?: EditorViewSession | null
-  readonly session?: DocumentSession | null
-  readonly text: string
   readonly documentMode?: EditorDocumentMode
   readonly documentConfigurationTag?: readonly EditorPreparedTagValue[]
   readonly highlighterConfigurationTag?: readonly EditorPreparedTagValue[]
   readonly languageId?: EditorSyntaxLanguageId | null
   readonly preparedDocument?: EditorPreparedDocument | null
   readonly scrollPosition?: EditorScrollPosition
-  readonly textSyncMode?: ReactEditorDocumentTextSyncMode
   readonly structuralConfigurationTag?: readonly EditorPreparedTagValue[]
 }
 
-export type ReactEditorDocumentTextSyncMode = 'open' | 'incremental'
+/**
+ * The editor owns the text. `defaultText` is read when the document opens, that is on mount and
+ * whenever `documentId` changes; later changes to it are ignored.
+ */
+export type ReactEditorUncontrolledDocument = ReactEditorDocumentFields & {
+  readonly defaultText?: string
+  readonly text?: never
+  readonly buffer?: never
+  readonly view?: never
+  readonly session?: never
+}
+
+/**
+ * The prop owns the text: each new `text` is applied to the editor as an edit. Pair it with
+ * `onTextChange` for an editable editor. Every change then copies the whole text, so prefer
+ * `defaultText` for anything but small documents and read-only views.
+ */
+export type ReactEditorControlledDocument = ReactEditorDocumentFields & {
+  readonly text: string
+  readonly defaultText?: never
+  readonly buffer?: never
+  readonly view?: never
+  readonly session?: never
+}
+
+/** A buffer or session shared with other views; the text lives there. */
+export type ReactEditorLiveDocument = ReactEditorDocumentFields & {
+  readonly buffer?: EditorTextBuffer | null
+  readonly view?: EditorViewSession | null
+  readonly session?: DocumentSession | null
+  readonly text?: never
+  readonly defaultText?: never
+}
+
+export type ReactEditorDocument =
+  | ReactEditorUncontrolledDocument
+  | ReactEditorControlledDocument
+  | ReactEditorLiveDocument
 
 export type ReactEditorSelection = EditorControlledSelection
 
@@ -76,6 +107,11 @@ export type ReactEditorOptions = Omit<
   readonly scrollPosition?: EditorScrollPosition | null | undefined
   readonly storeSync?: ReactEditorStoreSyncMode
   readonly onChange?: EditorChangeHandler
+  /**
+   * Receives the whole text after each change that did not come from `document.text` or
+   * `document.defaultText`. Copies the document every time: O(document length) per change.
+   */
+  readonly onTextChange?: (text: string) => void
   readonly onInitialPaint?: (event: EditorInitialPaintEvent) => void
 }
 
@@ -153,8 +189,13 @@ type ReactEditorSelectorSubscription<T> = {
 type ReactEditorDocumentState = {
   generation(): number
   key(): ReactEditorDocumentKey
-  identityKey(): ReactEditorDocumentKey
-  setKey(key: ReactEditorDocumentKey, identityKey?: ReactEditorDocumentKey): void
+  setKey(key: ReactEditorDocumentKey): void
+  /** The text the editor is known to hold, or null when it was not read. */
+  knownText(): string | null
+  setKnownText(text: string | null): void
+  /** True while the adapter itself writes `document.text` or `document.defaultText`. */
+  applyingDocumentText(): boolean
+  applyDocumentText(run: () => void): void
   clear(): void
 }
 
@@ -255,6 +296,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   private scheduledDisposeGeneration: number | null = null
   private nextDisposeGeneration = 0
   private suspendedStoreFields: ReactEditorStoreSnapshot | null = null
+  private warnedUnheardTextEdit = false
   private options: ReactEditorOptions
 
   public constructor(options: ReactEditorOptions) {
@@ -468,6 +510,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
       onChange: _onChange,
       onInitialPaint: _onInitialPaint,
       onPresentationChange: _onPresentationChange,
+      onTextChange: _onTextChange,
       plugins: _plugins,
       scrollPosition: _scrollPosition,
       selection: _selection,
@@ -484,11 +527,44 @@ class ReactEditorControllerImplementation implements ReactEditorController {
       plugins: editorPluginsForOptions(this.reactSyncPlugin, this.options),
       onChange: (state, change) => {
         this.syncChange(state, change)
+        this.reportTextChange(change)
         this.options.onChange?.(state, change)
       },
       onInitialPaint: (event) => this.forwardInitialPaint(event, editorIncarnation),
       onPresentationChange: (state) => this.forwardPresentationChange(state, editorIncarnation),
     }
+  }
+
+  private reportTextChange(change: Parameters<EditorChangeHandler>[1]): void {
+    if (this.documentState.applyingDocumentText()) return
+    if (change && change.edits.length === 0) return
+
+    const onTextChange = this.options.onTextChange
+    if (!onTextChange) {
+      if (change) this.warnUncontrolledEditOfControlledText()
+      return
+    }
+
+    const editor = this.getEditor()
+    if (!editor) return
+    const text = editor.materializeFullText()
+    // A change without edits, such as an editability switch, can leave the text as it was.
+    if (text === this.documentState.knownText()) return
+
+    this.documentState.setKnownText(text)
+    onTextChange(text)
+  }
+
+  private warnUncontrolledEditOfControlledText(): void {
+    if (this.warnedUnheardTextEdit) return
+    if (this.options.document?.text === undefined) return
+
+    this.warnedUnheardTextEdit = true
+    console.warn(
+      '[singapore-editor/react] The editor was edited while `document.text` controls it and no ' +
+        '`onTextChange` is set. The next `text` will replace those edits. Pass `onTextChange`, ' +
+        "use `defaultText`, or set `editability: 'readonly'`.",
+    )
   }
 
   private forwardInitialPaint(event: EditorInitialPaintEvent, editorIncarnation: number): void {
@@ -700,7 +776,7 @@ function useControlledOptionSync(
   useEditorLayoutEffect(() => controller.syncConfigurationOptions())
   useEditorLayoutEffect(
     () => controller.syncDocumentOption(),
-    [controller, documentIdentity, options.documentKey, options.snapshot],
+    [controller, documentIdentity, options.document?.text, options.documentKey, options.snapshot],
   )
   // Runs on every render because the descriptors, not a dependency list, decide what moved.
   useEditorLayoutEffect(() => controller.syncDocumentControls())
@@ -735,18 +811,39 @@ function syncDocument(
   if (!editor) return
 
   const key = documentKey(document)
-  if (key === state.key()) return
-  const identityKey = documentIdentityKey(document)
-  const previousIdentityKey = state.identityKey()
+  if (key !== state.key()) {
+    state.setKey(key)
+    state.applyDocumentText(() => openDocument(editor, document, state))
+    return
+  }
 
-  state.setKey(key, identityKey)
+  if (!document || document.text === undefined) return
+  if (document.text === state.knownText()) return
+
+  const text = document.text
+  state.setKnownText(text)
+  state.applyDocumentText(() =>
+    editor.syncText(text, {
+      documentMode: document.documentMode,
+      languageId: document.languageId,
+    }),
+  )
+}
+
+function openDocument(
+  editor: Editor,
+  document: ReactEditorDocument | null | undefined,
+  state: ReactEditorDocumentState,
+): void {
   if (!document) {
+    state.setKnownText(null)
     editor.clearDocument()
     return
   }
 
   const session = reactEditorDocumentSession(document)
   if (session) {
+    state.setKnownText(null)
     editor.attachSession(session, {
       analysis: document.analysis,
       documentId: document.documentId,
@@ -760,33 +857,15 @@ function syncDocument(
     return
   }
 
-  if (canSyncDocumentTextIncrementally(document, previousIdentityKey, identityKey)) {
-    editor.syncText(document.text, {
-      documentMode: document.documentMode,
-      languageId: document.languageId,
-      scrollPosition: reactEditorDocumentScrollPosition(document),
-    })
-    return
-  }
-
+  const text = document.text ?? document.defaultText ?? ''
+  state.setKnownText(text)
   editor.openDocument({
     documentId: document.documentId,
     documentMode: document.documentMode,
     languageId: document.languageId,
     scrollPosition: reactEditorDocumentScrollPosition(document),
-    text: document.text,
+    text,
   })
-}
-
-function canSyncDocumentTextIncrementally(
-  document: ReactEditorDocument,
-  previousIdentityKey: ReactEditorDocumentKey,
-  identityKey: ReactEditorDocumentKey,
-): boolean {
-  if (document.textSyncMode !== 'incremental') return false
-  if (previousIdentityKey === NO_DOCUMENT) return false
-
-  return previousIdentityKey === identityKey
 }
 
 function syncPlugins(
@@ -835,7 +914,8 @@ function createCommands(
   return {
     focus: () => editor()?.focus(),
     openDocument: (document) => {
-      documentState.setKey(documentKey(document), documentIdentityKey(document))
+      documentState.setKey(documentKey(document))
+      documentState.setKnownText(document.text ?? null)
       editor()?.openDocument(document)
     },
     setText: (text, options) => editor()?.setText(text, options),
@@ -857,21 +937,34 @@ function createCommands(
 function createDocumentState(): ReactEditorDocumentState {
   let generation = 0
   let key: ReactEditorDocumentKey = NO_DOCUMENT
-  let identityKey: ReactEditorDocumentKey = NO_DOCUMENT
+  let knownText: string | null = null
+  let applying = false
 
   return {
     generation: () => generation,
     key: () => key,
-    identityKey: () => identityKey,
-    setKey: (nextKey, nextIdentityKey = nextKey) => {
+    setKey: (nextKey) => {
       generation += 1
       key = nextKey
-      identityKey = nextIdentityKey
+    },
+    knownText: () => knownText,
+    setKnownText: (text) => {
+      knownText = text
+    },
+    applyingDocumentText: () => applying,
+    applyDocumentText: (run) => {
+      const previous = applying
+      applying = true
+      try {
+        run()
+      } finally {
+        applying = previous
+      }
     },
     clear: () => {
       generation += 1
       key = NO_DOCUMENT
-      identityKey = NO_DOCUMENT
+      knownText = null
     },
   }
 }
@@ -887,10 +980,7 @@ function documentKey(
         readonly highlighterConfigurationTag?: readonly EditorPreparedTagValue[]
         readonly languageId?: EditorSyntaxLanguageId | null
         readonly preparedDocument?: EditorPreparedDocument | null
-        readonly revision?: string | number
         readonly session?: DocumentSession | null
-        readonly text?: string
-        readonly textSyncMode?: ReactEditorDocumentTextSyncMode
         readonly structuralConfigurationTag?: readonly EditorPreparedTagValue[]
         readonly view?: EditorViewSession | null
       }> &
@@ -900,33 +990,12 @@ function documentKey(
 ): ReactEditorDocumentKey {
   if (!document) return NO_DOCUMENT
 
-  const incremental = document.textSyncMode === 'incremental'
-  const liveSession = documentHasLiveBuffer(document) || documentHasLiveSession(document)
-  const revision = documentRevisionKey(document, incremental)
-  const textVersion = incremental && !liveSession ? (document.text ?? '') : ''
   const identityKey = documentIdentityKey(document)
   if (identityKey === NO_DOCUMENT) return NO_DOCUMENT
 
-  return `${identityKey}\u0000${revision}\u0000${textVersion}\u0000${preparedDocumentIdentity(
+  return `${identityKey}\u0000${preparedDocumentIdentity(
     document.preparedDocument,
   )}\u0000${analysisIdentity(document.analysis ?? document.preparedDocument?.analysis)}\u0000${preparedTagsKey(document)}`
-}
-
-function documentRevisionKey(
-  document: Readonly<{
-    readonly buffer?: EditorTextBuffer | null
-    readonly revision?: string | number
-    readonly session?: DocumentSession | null
-    readonly view?: EditorViewSession | null
-  }> &
-    object,
-  incremental: boolean,
-) {
-  if (documentHasLiveBuffer(document)) return ''
-  if (incremental) return ''
-  if (documentHasLiveSession(document)) return ''
-
-  return document.revision ?? ''
 }
 
 function documentIdentityKey(
@@ -1041,29 +1110,6 @@ function viewIdentity(view: EditorViewSession): string {
   nextViewKey += 1
   viewKeys.set(view, key)
   return `${key}`
-}
-
-function documentHasLiveSession(
-  document: Readonly<{ readonly session?: DocumentSession | null }> & object,
-): boolean {
-  return 'session' in document && document.session !== null && document.session !== undefined
-}
-
-function documentHasLiveBuffer(
-  document: Readonly<{
-    readonly buffer?: EditorTextBuffer | null
-    readonly view?: EditorViewSession | null
-  }> &
-    object,
-): boolean {
-  return (
-    'buffer' in document &&
-    'view' in document &&
-    document.buffer !== null &&
-    document.buffer !== undefined &&
-    document.view !== null &&
-    document.view !== undefined
-  )
 }
 
 function reactEditorDocumentSession(

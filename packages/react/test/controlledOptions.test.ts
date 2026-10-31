@@ -26,7 +26,7 @@ type OptionSample = {
   readonly applied: readonly unknown[]
 }
 
-const DOCUMENT = { text: 'alpha beta', documentId: 'a.ts', revision: 1 }
+const DOCUMENT = { defaultText: 'alpha beta', documentId: 'a.ts' }
 
 /**
  * Host input paired with the editor call it has to produce, both spelled out here. An expectation

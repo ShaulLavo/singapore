@@ -30,6 +30,11 @@
     "reason": "Backs the explicitly requested useFullText subscription, which owns and releases the string."
   },
   {
+    "file": "packages/react/src/index.tsx",
+    "function": "ReactEditorControllerImplementation.reportTextChange",
+    "reason": "Runs only when the caller passes onTextChange, whose contract is the whole text after each change."
+  },
+  {
     "file": "packages/textbuffer/src/documentText.ts",
     "function": "pieceTableDocumentText",
     "reason": "Save serialization: restores the document's line endings and byte order mark for writing."
@@ -38,6 +43,11 @@
     "file": "packages/solid/src/index.ts",
     "function": "readWholeRevision",
     "reason": "Backs Solid's explicitly called materializeFullText accessor, which caches one pair and clears it on disposal."
+  },
+  {
+    "file": "packages/solid/src/index.ts",
+    "function": "reportTextChange",
+    "reason": "Runs only when the caller passes onTextChange, whose contract is the whole text after each change."
   },
   {
     "file": "packages/collab/src/textbuffer.ts",

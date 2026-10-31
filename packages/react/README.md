@@ -22,7 +22,7 @@ export function EditorPanel() {
   const controller = useEditor({
     document: {
       documentId: 'example.ts',
-      text: 'const value = 1;\n',
+      defaultText: 'const value = 1;\n',
       languageId: 'typescript',
     },
   })
@@ -38,6 +38,7 @@ Take `ref` out of the controller before you pass it to JSX. The React Compiler t
 
 - `useEditor()` creates a controller from props.
 - The controller's `ref` mounts the view into an element. It needs React 19 ref cleanups.
+- `document.defaultText` sets the text when the document opens; `document.text` with `onTextChange` keeps it in React state.
 - `useEditorSelector()` subscribes to a state selection.
 
 [Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/react/overview/)
