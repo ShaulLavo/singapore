@@ -33,6 +33,8 @@ export function EditorPanel() {
 
 Take `ref` out of the controller before you pass it to JSX. The React Compiler treats `ref={controller.ref}` as a ref read and then rejects later render reads of the controller, such as `controller.getEditor()`.
 
+The host element needs a height, or the editor renders nothing. In an SSR application, mount the component on the client.
+
 The editor owns the text. It reads `defaultText` when the document opens and ignores later changes to it, the same way an `<input>` treats `defaultValue`.
 
 ### Open a different file
@@ -209,15 +211,5 @@ export function ConfigField() {
   return <div ref={controller.ref} style={{ height: '8rem' }} />
 }
 ```
-
-## If it doesn't work
-
-### The container is empty
-
-Check the `ref` binding, the container height, flex layout and the stylesheet. In an SSR application, mount this component on the client.
-
-### New text does not show up
-
-`defaultText` is read only when the document opens. Change `documentId` to open another document, call `commands.setText` to replace the text of the open one, or pass `text` if the prop should always win.
 
 Continue with [documents and sessions](documents.md), or the generated [React](/docs/reference/api/react/overview/) and [Solid](/docs/reference/api/solid/overview/) references.
