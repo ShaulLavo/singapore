@@ -15,6 +15,11 @@ afterEach(() => {
 })
 
 describe('editor plugin host teardown', () => {
+  test.each(['remove', 'install', 'activate'] as const)(
+    'releases a throwing provider subscription after %s and supports reinstall',
+    verifyProviderReinstall,
+  )
+
   test.each(['activation', 'activation array', 'installation'] as const)(
     'finishes %s cleanup, its registrations and later plugins after returned cleanup fails',
     (phase) => {
@@ -423,4 +428,88 @@ function captureCleanupErrors(cleanup: () => unknown): unknown[] {
     errors.push(error)
   }
   return errors
+}
+
+type ProviderFailurePhase = 'remove' | 'install' | 'activate'
+
+function verifyProviderReinstall(phase: ProviderFailurePhase): void {
+  const host = ownedHost()
+  const unsubscribeFailure = new Error('unsubscribe')
+  const phaseFailure = new Error(phase)
+  const provider = createThrowingInjectedTextRowEmitter(unsubscribeFailure)
+  const failures: unknown[] = []
+  let changes = 0
+  const recordFailure = (_name: string, error: unknown) => failures.push(error)
+  host.setEvents({
+    onInjectedTextRowProvidersChanged: () => {
+      changes += 1
+    },
+    onPluginInstallFailed: recordFailure,
+    onPluginActivationFailed: recordFailure,
+    onPluginDeactivateFailed: recordFailure,
+  })
+  const plugin = providerFailurePlugin(provider, phase, phaseFailure)
+
+  host.setPlugins([plugin])
+  if (phase === 'remove') host.removePlugin(plugin)
+
+  expect(host.getInjectedTextRowProviders()).toEqual([])
+  expect(provider.listenerCount()).toBe(0)
+  expect.soft(changes).toBe(2)
+  expect(failures).toHaveLength(1)
+  expect(failures[0]).toBe(phase === 'remove' ? unsubscribeFailure : phaseFailure)
+
+  host.setPlugins([
+    {
+      activate: (context) => {
+        context.registerInjectedTextRowProvider(provider)
+      },
+    },
+  ])
+  expect(host.getInjectedTextRowProviders()).toEqual([provider])
+  expect(provider.listenerCount()).toBe(1)
+  const beforeChange = changes
+  provider.fireChange()
+  expect(changes).toBe(beforeChange + 1)
+  host.setPlugins([])
+  expect(provider.listenerCount()).toBe(0)
+  expect(host.getInjectedTextRowProviders()).toEqual([])
+  expect(failures).toHaveLength(1)
+}
+
+function providerFailurePlugin(
+  provider: EditorInjectedTextRowProvider,
+  phase: ProviderFailurePhase,
+  failure: Error,
+): EditorPlugin {
+  const register = (context: EditorPluginContext) => {
+    context.registerInjectedTextRowProvider(provider)
+    if (phase !== 'remove') throw failure
+  }
+  return {
+    install: phase === 'install' ? register : undefined,
+    activate: phase === 'install' ? () => undefined : register,
+  }
+}
+
+function createThrowingInjectedTextRowEmitter(failure: Error) {
+  const listeners = new Set<() => void>()
+  let shouldThrow = true
+  const unsubscribe = (listener: () => void) => {
+    listeners.delete(listener)
+    if (!shouldThrow) return
+    shouldThrow = false
+    throw failure
+  }
+  return {
+    getInjectedTextRows: () => [],
+    onDidChangeInjectedTextRows: (listener: () => void) => {
+      listeners.add(listener)
+      return { dispose: () => unsubscribe(listener) }
+    },
+    listenerCount: () => listeners.size,
+    fireChange: () => {
+      for (const listener of listeners) listener()
+    },
+  }
 }

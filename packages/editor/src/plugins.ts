@@ -2150,11 +2150,16 @@ export class EditorPluginHost implements EditorDisposable {
     // Every lease on the same provider shares one invalidation subscription, so only the last one
     // out may close it — releasing it earlier would leave the surviving registrations deaf to the
     // provider's own change events.
+    let invalidation: MutableEditorDisposable | undefined
     if (!this.injectedTextRowProviders.includes(provider)) {
-      this.injectedTextRowProviderInvalidationDisposables.get(provider)?.dispose()
+      invalidation = this.injectedTextRowProviderInvalidationDisposables.get(provider)
       this.injectedTextRowProviderInvalidationDisposables.delete(provider)
     }
-    this.events.onInjectedTextRowProvidersChanged?.()
+    try {
+      invalidation?.dispose()
+    } finally {
+      this.events.onInjectedTextRowProvidersChanged?.()
+    }
   }
 
   /**

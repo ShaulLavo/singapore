@@ -739,16 +739,17 @@ describe('editor disposable ownership', () => {
         calls.push('oldest')
       },
     })
+    const addition = {
+      dispose: () => {
+        calls.push('addition')
+        throw null
+      },
+    }
     store.add({
       dispose: () => {
         calls.push('reentrant')
         store.dispose()
-        store.add({
-          dispose: () => {
-            calls.push('addition')
-            throw null
-          },
-        })
+        store.add(addition)
       },
     })
     store.add({

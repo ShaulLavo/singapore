@@ -70,26 +70,28 @@ function createEditor(view: (scope: EditorViewScope) => void, text = 'alpha beta
   return editor
 }
 
+function registerFailingScopeCleanup(scope: EditorViewScope, calls: string[]): void {
+  scope.onDispose(() => {
+    calls.push('oldest')
+  })
+  scope.own({
+    dispose: () => {
+      calls.push('owned')
+    },
+  })
+  scope.onDispose(() => {
+    calls.push('throwing')
+    throw new Error('scope cleanup')
+  })
+  scope.onDispose(() => {
+    calls.push('newest')
+  })
+}
+
 describe('createPlugin view scope', () => {
   test('finishes public scope cleanup after onDispose throws and keeps the editor usable', () => {
     const calls: string[] = []
-    const editor = createEditor((scope) => {
-      scope.onDispose(() => {
-        calls.push('oldest')
-      })
-      scope.own({
-        dispose: () => {
-          calls.push('owned')
-        },
-      })
-      scope.onDispose(() => {
-        calls.push('throwing')
-        throw new Error('scope cleanup')
-      })
-      scope.onDispose(() => {
-        calls.push('newest')
-      })
-    })
+    const editor = createEditor((scope) => registerFailingScopeCleanup(scope, calls))
 
     expect(() => editor.setPlugins([])).not.toThrow()
     expect(calls).toEqual(['newest', 'throwing', 'owned', 'oldest'])
