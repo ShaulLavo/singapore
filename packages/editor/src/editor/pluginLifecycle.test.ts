@@ -685,6 +685,91 @@ describe('editor plugin lifecycle', () => {
 })
 
 describe('editor disposable ownership', () => {
+  test.each([new Error('first cleanup'), undefined, null, false, 0, ''])(
+    'drains a failing store and preserves first error identity %s',
+    (failure) => {
+      const store = new EditorDisposableStore()
+      const calls: string[] = []
+      const errors: unknown[] = []
+      store.add({
+        dispose: () => {
+          calls.push('oldest')
+          throw new Error('later cleanup')
+        },
+      })
+      store.add({
+        dispose: () => {
+          calls.push('middle')
+          throw failure
+        },
+      })
+      store.add({
+        dispose: () => {
+          calls.push('newest')
+        },
+      })
+
+      try {
+        store.dispose()
+      } catch (error) {
+        errors.push(error)
+      }
+
+      expect(calls).toEqual(['newest', 'middle', 'oldest'])
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toBe(failure)
+      expect(store.size).toBe(0)
+      expect(() => store.dispose()).not.toThrow()
+      store.add({
+        dispose: () => {
+          calls.push('late')
+        },
+      })
+      expect(calls).toEqual(['newest', 'middle', 'oldest', 'late'])
+      expect(store.size).toBe(0)
+    },
+  )
+
+  test('drains original entries exactly once after reentrant disposal and a failing addition', () => {
+    const store = new EditorDisposableStore()
+    const calls: string[] = []
+    const errors: unknown[] = []
+    store.add({
+      dispose: () => {
+        calls.push('oldest')
+      },
+    })
+    const addition = {
+      dispose: () => {
+        calls.push('addition')
+        throw null
+      },
+    }
+    store.add({
+      dispose: () => {
+        calls.push('reentrant')
+        store.dispose()
+        store.add(addition)
+      },
+    })
+    store.add({
+      dispose: () => {
+        calls.push('newest')
+      },
+    })
+
+    try {
+      store.dispose()
+    } catch (error) {
+      errors.push(error)
+    }
+    store.dispose()
+
+    expect(calls).toEqual(['newest', 'reentrant', 'addition', 'oldest'])
+    expect(errors).toEqual([null])
+    expect(store.size).toBe(0)
+  })
+
   test('unwinds a store newest first', () => {
     const store = new EditorDisposableStore()
     const unwound: string[] = []

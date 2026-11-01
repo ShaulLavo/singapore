@@ -70,7 +70,37 @@ function createEditor(view: (scope: EditorViewScope) => void, text = 'alpha beta
   return editor
 }
 
+function registerFailingScopeCleanup(scope: EditorViewScope, calls: string[]): void {
+  scope.onDispose(() => {
+    calls.push('oldest')
+  })
+  scope.own({
+    dispose: () => {
+      calls.push('owned')
+    },
+  })
+  scope.onDispose(() => {
+    calls.push('throwing')
+    throw new Error('scope cleanup')
+  })
+  scope.onDispose(() => {
+    calls.push('newest')
+  })
+}
+
 describe('createPlugin view scope', () => {
+  test('finishes public scope cleanup after onDispose throws and keeps the editor usable', () => {
+    const calls: string[] = []
+    const editor = createEditor((scope) => registerFailingScopeCleanup(scope, calls))
+
+    expect(() => editor.setPlugins([])).not.toThrow()
+    expect(calls).toEqual(['newest', 'throwing', 'owned', 'oldest'])
+    editor.setText('still usable')
+    expect(editor.getTextSnapshot().readRange(0, 12)).toBe('still usable')
+    editor.dispose()
+    expect(calls).toEqual(['newest', 'throwing', 'owned', 'oldest'])
+  })
+
   test('watches an input once now and again only when its value changes', () => {
     const heads: (number | null)[] = []
     const head = derive([selectionInput], (selections) => selections[0]?.headOffset ?? null)
