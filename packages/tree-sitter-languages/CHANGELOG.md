@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter-languages
 
+## 0.2.11
+
+### Patch Changes
+
+- Update internal package pins for the core audit fixes.
+
 ## 0.2.10
 
 ### Patch Changes
