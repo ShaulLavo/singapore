@@ -51,6 +51,7 @@ export class DefinitionLinkController {
   private readonly context: EditorViewContributionContext
   private readonly router: LanguageServerFeatureRouter
   private readonly linkHighlightName: string
+  private readonly lifetime = new AbortController()
   private definitionRequestId = 0
   private definitionHoverRequestId = 0
   private lastPointerOffset: number | null = null
@@ -84,6 +85,8 @@ export class DefinitionLinkController {
     if (this.disposed) return
 
     this.disposed = true
+    this.definitionRequestId += 1
+    this.lifetime.abort()
     this.uninstallHandlers()
     this.clearDefinitionLink()
   }
@@ -155,7 +158,7 @@ export class DefinitionLinkController {
     command: LanguageServerNavigationCommand,
   ): boolean {
     const active = this.options.getActiveDocument()
-    if (!active) return false
+    if (this.disposed || !active) return false
     if (!this.router.hasReady('navigation', navigationMethod(command.kind))) return false
 
     this.clearDefinitionLink()
@@ -167,6 +170,7 @@ export class DefinitionLinkController {
       offset,
       kind: command.kind,
       includeDeclaration: command.includeDeclaration,
+      signal: this.lifetime.signal,
     })
       .then((result) => this.handleNavigationResult(requestId, active, offset, command, result))
       .catch((error: unknown) => this.options.onRequestError(error))
@@ -175,7 +179,7 @@ export class DefinitionLinkController {
 
   private requestDefinitionLink(offset: number): void {
     const active = this.options.getActiveDocument()
-    if (!active) return this.clearDefinitionLink()
+    if (this.disposed || !active) return this.clearDefinitionLink()
     if (!this.router.hasReady('navigation', 'textDocument/definition')) {
       return this.clearDefinitionLink()
     }
@@ -190,6 +194,7 @@ export class DefinitionLinkController {
       uri: active.uri,
       document: active,
       offset,
+      signal: this.lifetime.signal,
     })
       .then((result) => this.renderDefinitionLink(requestId, active, range, result))
       .catch((error: unknown) => this.options.onRequestError(error))
@@ -201,7 +206,7 @@ export class DefinitionLinkController {
     range: OffsetRange,
     result: DefinitionResult,
   ): void {
-    if (requestId !== this.definitionHoverRequestId) return
+    if (this.disposed || requestId !== this.definitionHoverRequestId) return
     if (active !== this.options.getActiveDocument()) return
     const sourceRange = result.sourceRange ?? range
     const target = preferredJumpableDefinitionTarget(active.uri, active, sourceRange, result)
@@ -230,20 +235,20 @@ export class DefinitionLinkController {
     command: LanguageServerNavigationCommand,
     result: DefinitionResult,
   ): void {
-    if (requestId !== this.definitionRequestId) return
-    if (active !== this.options.getActiveDocument()) return
+    if (!this.navigationIsCurrent(requestId, active)) return
 
     if (command.kind === 'references') {
-      this.handleReferencesResult(active, offset, result)
+      this.handleReferencesResult(requestId, active, offset, result)
       return
     }
 
     const target = preferredDefinitionTarget(active.uri, result)
     if (!target) return
-    this.openNavigationTarget(active, target, command)
+    this.openNavigationTarget(requestId, active, target, command)
   }
 
   private handleReferencesResult(
+    requestId: number,
     active: ActiveDocument,
     offset: number,
     result: DefinitionResult,
@@ -252,24 +257,25 @@ export class DefinitionLinkController {
       uri: active.uri,
       targets: result.targets,
     })
-    if (handled) return
+    if (handled || !this.navigationIsCurrent(requestId, active)) return
 
     const target = preferredReferenceTarget(active.uri, active, offset, result)
     if (!target) return
-    this.openNavigationTarget(active, target, {
+    this.openNavigationTarget(requestId, active, target, {
       kind: 'references',
       openMode: 'peek',
     })
   }
 
   private openNavigationTarget(
+    requestId: number,
     active: ActiveDocument,
     target: LanguageServerDefinitionTarget,
     command: LanguageServerNavigationCommand,
   ): void {
     const shouldOfferExternalOpen = target.uri !== active.uri || command.openMode !== 'default'
     const handled = shouldOfferExternalOpen ? this.openDefinitionTarget(target, command) : false
-    if (handled) return
+    if (handled || !this.navigationIsCurrent(requestId, active)) return
     if (target.uri !== active.uri) return
 
     navigateToTarget(
@@ -277,9 +283,19 @@ export class DefinitionLinkController {
       {
         document: active,
         setSelection: this.context.setSelection.bind(this.context),
-        focusEditor: this.context.focusEditor.bind(this.context),
+        focusEditor: () => {
+          if (this.navigationIsCurrent(requestId, active)) this.context.focusEditor()
+        },
       },
       this.navigationTimingName(command.kind),
+    )
+  }
+
+  private navigationIsCurrent(requestId: number, active: ActiveDocument): boolean {
+    return (
+      !this.disposed &&
+      requestId === this.definitionRequestId &&
+      active === this.options.getActiveDocument()
     )
   }
 

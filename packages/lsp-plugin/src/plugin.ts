@@ -451,6 +451,7 @@ class LanguageServerContribution implements EditorViewContribution {
   private renameActiveDocument: ActiveDocument | null = null
   /** The symbol an open prompt is renaming, which is what the prompt has to stay beside. */
   private renamePromptRange: OffsetRange | null = null
+  private readonly lifetime = new AbortController()
   private viewDocument: ActiveDocument | null = null
   private disposed = false
 
@@ -596,6 +597,8 @@ class LanguageServerContribution implements EditorViewContribution {
     if (this.disposed) return
 
     this.disposed = true
+    this.viewDocument = null
+    this.lifetime.abort()
     this.views.unregister(this)
     this.definitionLink.dispose()
     this.hoverParticipantRegistration?.dispose()
@@ -712,6 +715,7 @@ class LanguageServerContribution implements EditorViewContribution {
         else this.options.onRequestError?.(options.id, method, error)
       },
       onInteractiveReady: () => {
+        if (this.disposed) return
         if (options.onInteractiveReady) options.onInteractiveReady()
         else this.options.onInteractiveReady?.()
       },
@@ -1023,14 +1027,16 @@ class LanguageServerContribution implements EditorViewContribution {
 
   private async requestFormatting(active: ActiveDocument): Promise<void> {
     try {
-      const edits = await this.servers.request<lsp.TextEdit[] | null>('textDocument/formatting', {
-        // The view snapshot carries the editor's own tab size, so the formatter is told the same
-        // width the document is displayed with.
-        options: formattingOptions(this.context.getSnapshot().tabSize),
-        textDocument: { uri: active.uri },
-      })
+      const edits = await this.servers.request<lsp.TextEdit[] | null>(
+        'textDocument/formatting',
+        {
+          options: formattingOptions(this.context.getSnapshot().tabSize),
+          textDocument: { uri: active.uri },
+        },
+        { signal: this.lifetime.signal },
+      )
       // The document can change while the formatter runs; its edits describe the text it was given.
-      if (active !== this.activeDocument()) return
+      if (this.disposed || active !== this.activeDocument()) return
 
       const converted = prepareFormattingEdits(active, edits)
       if (converted.length === 0) return

@@ -1295,7 +1295,7 @@ async function sharedLifetimeFixture() {
   const request = async (
     view: typeof first,
     action: LifetimeAction,
-    commandId = action.commandId,
+    commandId: EditorAnyCommandId = action.commandId,
   ) => {
     const previous = socket.sent.length
     expect(command(view.commands, commandId)({})).toBe(true)
@@ -1328,11 +1328,12 @@ function expectNoLifetimeEffects(view: LifetimeView): void {
 async function expectSurvivingView(
   fixture: Awaited<ReturnType<typeof sharedLifetimeFixture>>,
   action: LifetimeAction,
+  pendingId?: unknown,
 ) {
   const { second, socket } = fixture
   expect(socket.sent.filter(hasMethod('textDocument/didClose'))).toHaveLength(0)
   expect(fixture.document.lanes[0]!.connection.isReady()).toBe(true)
-  const id = await fixture.request(second, action)
+  const id = pendingId ?? (await fixture.request(second, action))
   socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
   await vi.waitUntil(() => second.onInteractiveReady.mock.calls.length === 1)
   if (action.name === 'formatting')
@@ -1353,10 +1354,18 @@ describe('view-owned LSP request lifetime', () => {
       const fixture = await sharedLifetimeFixture()
       try {
         const id = await fixture.request(fixture.first, action)
+        const survivingId = await fixture.request(fixture.second, action)
         fixture.first.view.dispose()
         resetLifetimeEffects(fixture.first)
         fixture.socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
-        await expectSurvivingView(fixture, action)
+        await expectSurvivingView(fixture, action, survivingId)
+        const cancellations = fixture.socket.sent
+          .filter(hasMethod('$/cancelRequest'))
+          .map(jsonMessage)
+        expect(cancellations).toContainEqual(expect.objectContaining({ params: { id } }))
+        expect(cancellations).not.toContainEqual(
+          expect.objectContaining({ params: { id: survivingId } }),
+        )
         expectNoLifetimeEffects(fixture.first)
         expect(fixture.first.onRequestError).not.toHaveBeenCalled()
         expect(fixture.first.onError).not.toHaveBeenCalled()
@@ -1438,6 +1447,68 @@ describe('view-owned LSP request lifetime', () => {
         if (source !== 'selection') expect(first.context.setSelection).not.toHaveBeenCalled()
         else expect(first.context.setSelection).toHaveBeenCalledOnce()
         expect(first.context.focusEditor).not.toHaveBeenCalled()
+      } finally {
+        fixture.dispose()
+      }
+    },
+  )
+
+  it.each(['references callback', 'definition callback', 'selection'] as const)(
+    'rechecks navigation generation and document identity after the %s',
+    async (source) => {
+      const fixture = await sharedLifetimeFixture()
+      const { first, socket } = fixture
+      try {
+        const action = lifetimeActions.find(
+          (item) =>
+            item.name ===
+            (source === 'references callback' ? 'references' : 'same-document navigation'),
+        )!
+        const invalidate = () => {
+          expect(command(first.commands, 'editor.action.goToDefinition')({})).toBe(true)
+          first.view.update(
+            { ...editorSnapshot('# Changed', 'OTHER.md'), textVersion: 2 },
+            'document',
+          )
+          return false
+        }
+        if (source === 'references callback')
+          first.onOpenReferences.mockImplementationOnce(invalidate)
+        if (source === 'definition callback')
+          first.onOpenDefinition.mockImplementationOnce(invalidate)
+        if (source === 'selection')
+          vi.mocked(first.context.setSelection).mockImplementationOnce(invalidate)
+        const id = await fixture.request(
+          first,
+          action,
+          source === 'definition callback' ? 'editor.action.peekDefinition' : action.commandId,
+        )
+        socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
+        await expectSurvivingView(fixture, action)
+        if (source === 'selection') expect(first.context.setSelection).toHaveBeenCalledOnce()
+        else expect(first.context.setSelection).not.toHaveBeenCalled()
+        expect(first.context.focusEditor).not.toHaveBeenCalled()
+      } finally {
+        fixture.dispose()
+      }
+    },
+  )
+
+  it.each(lifetimeActions)(
+    'stops $name when the success callback detaches the view',
+    async (action) => {
+      const fixture = await sharedLifetimeFixture()
+      try {
+        fixture.first.onInteractiveReady.mockImplementationOnce(() => fixture.first.view.dispose())
+        const id = await fixture.request(fixture.first, action)
+        fixture.socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
+        await expectSurvivingView(fixture, action)
+        expect(fixture.first.onInteractiveReady).toHaveBeenCalledOnce()
+        expect(fixture.first.applyEdits).not.toHaveBeenCalled()
+        expect(fixture.first.context.setSelection).not.toHaveBeenCalled()
+        expect(fixture.first.context.focusEditor).not.toHaveBeenCalled()
+        expect(fixture.first.onOpenDefinition).not.toHaveBeenCalled()
+        expect(fixture.first.onOpenReferences).not.toHaveBeenCalled()
       } finally {
         fixture.dispose()
       }
