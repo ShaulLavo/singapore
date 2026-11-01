@@ -1,5 +1,12 @@
 # @singapore-editor/lsp-plugin
 
+## 0.2.10
+
+### Patch Changes
+
+- Retire pending language-server actions when their editor view closes.
+- Update internal package pins for the core audit fixes.
+
 ## 0.2.9
 
 ### Patch Changes

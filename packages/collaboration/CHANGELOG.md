@@ -1,5 +1,11 @@
 # @singapore-editor/collaboration
 
+## 0.0.5
+
+### Patch Changes
+
+- Update internal package pins for the core audit fixes.
+
 ## 0.0.4
 
 ### Patch Changes

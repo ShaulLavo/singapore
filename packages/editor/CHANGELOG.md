@@ -1,5 +1,11 @@
 # @singapore-editor/core
 
+## 0.2.10
+
+### Patch Changes
+
+- Keep hidden-input selection reads bounded and finish plugin cleanup after a disposer fails.
+
 ## 0.2.9
 
 ### Patch Changes

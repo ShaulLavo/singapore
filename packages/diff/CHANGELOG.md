@@ -1,5 +1,11 @@
 # @singapore-editor/diff
 
+## 0.2.10
+
+### Patch Changes
+
+- Update internal package pins for the core audit fixes.
+
 ## 0.2.9
 
 ### Patch Changes
