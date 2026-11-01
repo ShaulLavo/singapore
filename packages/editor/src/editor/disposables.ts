@@ -40,9 +40,18 @@ export class EditorDisposableStore implements EditorDisposable {
 
     this.disposed = true
     // Newest first: a later entry can depend on an earlier one, never the other way round.
-    const pending = [...this.disposables].reverse()
+    const pending = Array.from(this.disposables)
+    pending.reverse()
     this.disposables.clear()
-    for (const disposable of pending) disposable.dispose()
+    const failures: unknown[] = []
+    for (const disposable of pending) {
+      try {
+        disposable.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length > 0) throw failures[0]
   }
 }
 

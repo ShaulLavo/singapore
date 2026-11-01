@@ -20,7 +20,7 @@ describe('editor plugin host teardown', () => {
     (phase) => {
       const host = ownedHost()
       const calls: string[] = []
-      const failures: unknown[] = []
+      const failures: [string, unknown][] = []
       const disposed: string[] = []
       let commandsChanged = 0
       const firstFailure = { phase }
@@ -104,6 +104,7 @@ describe('editor plugin host teardown', () => {
       expect(failures).toEqual([
         [phase === 'installation' ? 'dispose' : 'deactivate', firstFailure],
       ])
+      expect(failures[0]?.[1]).toBe(firstFailure)
       expect(disposed).toEqual(['failing-returned', 'later-plugin'])
       expect(commandsChanged).toBe(1)
       expect(host.getInjectedTextRowProviders()).toEqual([])
@@ -197,7 +198,7 @@ describe('editor plugin host teardown', () => {
     (phase) => {
       const host = ownedHost()
       const calls: string[] = []
-      const failures: unknown[] = []
+      const failures: [string, unknown][] = []
       const original = { phase }
       host.setEvents({
         onPluginInstallFailed: (_name, error) => {
@@ -224,12 +225,77 @@ describe('editor plugin host teardown', () => {
       expect(calls).toEqual(['newer', 'throwing', 'older'])
       expect(errors).toEqual([])
       expect(failures).toEqual([[phase, original]])
+      expect(failures[0]?.[1]).toBe(original)
       expect(host.getInjectedTextRowProviders()).toEqual([])
       expect(host.getActivePluginNames()).toEqual([])
       host.dispose()
       expect(calls).toEqual(['newer', 'throwing', 'older'])
     },
   )
+
+  test('does not repeat plugin cleanup when a returned disposer reenters host teardown', () => {
+    const host = ownedHost()
+    const calls: string[] = []
+    const plugin: EditorPlugin = {
+      install: () => ({
+        dispose: () => {
+          calls.push('installation')
+        },
+      }),
+      activate: () => ({
+        dispose: () => {
+          calls.push('activation')
+          host.dispose()
+        },
+      }),
+      dispose: () => {
+        calls.push('dispose hook')
+      },
+    }
+    host.setPlugins([plugin])
+
+    expect(() => host.removePlugin(plugin)).not.toThrow()
+    expect(calls.filter((call) => call === 'installation')).toHaveLength(1)
+    expect(calls.filter((call) => call === 'activation')).toHaveLength(1)
+    expect(calls.filter((call) => call === 'dispose hook')).toHaveLength(1)
+    expect(host.getActivePluginNames()).toEqual([])
+  })
+
+  test('drains registrations made during deactivation before disposing the installation', () => {
+    const host = ownedHost()
+    const calls: string[] = []
+    const failures: unknown[] = []
+    host.setEvents({
+      onPluginDeactivateFailed: (_name, error) => {
+        failures.push(error)
+      },
+    })
+    host.setPlugins([
+      {
+        activate: (context) => {
+          registerCleanup(context, 'phase', calls)
+          return {
+            dispose: () => {
+              calls.push('returned')
+              registerCleanup(context, 'late active', calls)
+              throw false
+            },
+          }
+        },
+        deactivate: (context) => {
+          registerCleanup(context, 'hook active', calls)
+        },
+        dispose: () => {
+          calls.push('installation')
+        },
+      },
+    ])
+
+    expect(() => host.setPlugins([])).not.toThrow()
+    expect(calls).toEqual(['returned', 'phase', 'late active', 'hook active', 'installation'])
+    expect(failures).toEqual([false])
+    expect(host.getInjectedTextRowProviders()).toEqual([])
+  })
 
   test('contains a failing plugin dispose and finishes tearing the host down', () => {
     const disposeFailures: string[] = []

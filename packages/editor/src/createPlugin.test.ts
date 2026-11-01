@@ -94,7 +94,7 @@ describe('createPlugin view scope', () => {
     expect(() => editor.setPlugins([])).not.toThrow()
     expect(calls).toEqual(['newest', 'throwing', 'owned', 'oldest'])
     editor.setText('still usable')
-    expect(editor.getText()).toBe('still usable')
+    expect(editor.getTextSnapshot().readRange(0, 12)).toBe('still usable')
     editor.dispose()
     expect(calls).toEqual(['newest', 'throwing', 'owned', 'oldest'])
   })

@@ -1,3 +1,4 @@
+import { completeDocumentCleanup } from './editor/documentCleanup'
 import type { EditorKeymapNodeOptions } from './editor/hotkeys'
 import type { EditorDocumentContributions } from './editor/documentAnalysis'
 import type { EditorRowPresentation } from './rowPresentation'
@@ -1700,7 +1701,7 @@ export class EditorPluginHost implements EditorDisposable {
       this.events.onPluginInstalled?.(pluginName(plugin), nowMs() - start)
       return { installed: true, disposable }
     } catch (error) {
-      registrations.dispose()
+      rollbackRegistrations(registrations)
       this.events.onPluginInstallFailed?.(pluginName(plugin), error, nowMs() - start)
       return { installed: false, disposable: null }
     } finally {
@@ -1725,7 +1726,7 @@ export class EditorPluginHost implements EditorDisposable {
       this.events.onPluginActivated?.(pluginName(plugin), nowMs() - start)
       return { activated: true, disposable }
     } catch (error) {
-      registrations.dispose()
+      rollbackRegistrations(registrations)
       this.events.onPluginActivationFailed?.(pluginName(plugin), error, nowMs() - start)
       return { activated: false, disposable: null }
     } finally {
@@ -1752,17 +1753,24 @@ export class EditorPluginHost implements EditorDisposable {
     if (!installedPlugin?.active) return
 
     const start = nowMs()
+    const activationDisposable = installedPlugin.activationDisposable
+    const activeRegistrations = installedPlugin.registrations.active
+    installedPlugin.active = false
+    installedPlugin.activationDisposable = null
+
     try {
-      plugin.deactivate?.(installedPlugin.context)
-      this.events.onPluginDeactivated?.(pluginName(plugin), nowMs() - start)
+      completeDocumentCleanup([
+        () => {
+          plugin.deactivate?.(installedPlugin.context)
+          this.events.onPluginDeactivated?.(pluginName(plugin), nowMs() - start)
+        },
+        () => activationDisposable?.dispose(),
+        () => activeRegistrations?.dispose(),
+      ])
     } catch (error) {
       this.events.onPluginDeactivateFailed?.(pluginName(plugin), error, nowMs() - start)
     }
 
-    installedPlugin.active = false
-    installedPlugin.activationDisposable?.dispose()
-    installedPlugin.activationDisposable = null
-    installedPlugin.registrations.active?.dispose()
     installedPlugin.registrations.active = null
     if (plugin.commands?.length) this.events.onContributedCommandsChanged?.()
     this.events.onPluginDisposed?.(pluginName(plugin))
@@ -1773,18 +1781,17 @@ export class EditorPluginHost implements EditorDisposable {
     if (!installedPlugin) return
 
     this.deactivatePlugin(plugin)
-    this.installedPlugins.delete(plugin)
+    if (!this.installedPlugins.delete(plugin)) return
+
     const start = nowMs()
     try {
-      plugin.dispose?.(installedPlugin.context)
+      completeDocumentCleanup([
+        () => plugin.dispose?.(installedPlugin.context),
+        () => installedPlugin.installationDisposable?.dispose(),
+        () => installedPlugin.registrations.installed.dispose(),
+      ])
     } catch (error) {
-      // Teardown has to survive a plugin that throws on its way out: an escaping error would abort
-      // the loop in dispose(), stranding every plugin behind it and everything the host's owner
-      // unwinds after it.
       this.events.onPluginDisposeFailed?.(pluginName(plugin), error, nowMs() - start)
-    } finally {
-      installedPlugin.installationDisposable?.dispose()
-      installedPlugin.registrations.installed.dispose()
     }
   }
 
@@ -2180,8 +2187,7 @@ function lifecycleDisposableFromResult(
   if (!disposable && registrations.size === 0) return null
 
   return disposableOnce(() => {
-    disposable?.dispose()
-    registrations.dispose()
+    completeDocumentCleanup([() => disposable?.dispose(), () => registrations.dispose()])
   })
 }
 
@@ -2197,7 +2203,23 @@ function disposableFromActivationResult(
 }
 
 function disposeAll(disposables: readonly EditorDisposable[]): void {
-  for (const disposable of disposables.toReversed()) disposable.dispose()
+  const failures: unknown[] = []
+  for (const disposable of disposables.toReversed()) {
+    try {
+      disposable.dispose()
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  if (failures.length > 0) throw failures[0]
+}
+
+function rollbackRegistrations(registrations: EditorDisposableStore): void {
+  try {
+    registrations.dispose()
+  } catch {
+    // The caller reports the original install or activation failure, not a rollback failure.
+  }
 }
 
 function disposableOnce(dispose: () => void): EditorDisposable {
