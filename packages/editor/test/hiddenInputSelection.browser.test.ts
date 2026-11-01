@@ -145,6 +145,33 @@ describe('platform selections in the bounded textarea', () => {
     expect(editor.materializeFullText()).toBe(prefix + 'alpha DELTA charlie')
   })
 
+  it.each([
+    { shape: 'long single line', direction: 'forward' },
+    { shape: 'long single line', direction: 'backward' },
+    { shape: 'long endpoint pages', direction: 'forward' },
+    { shape: 'long endpoint pages', direction: 'backward' },
+  ] as const)(
+    'preserves omitted source in a $direction visible tail on $shape',
+    async ({ shape, direction }) => {
+      const gap = shape === 'long endpoint pages' ? '\n'.repeat(30) : ''
+      const prefix = 'a'.repeat(50_000) + gap + 'b'.repeat(50_000)
+      const text = prefix + 'bravo charlie'
+      editor.setText(text)
+      const input = await inputAt()
+      editor.setSelection(
+        direction === 'backward' ? text.length : 0,
+        direction === 'backward' ? 0 : text.length,
+      )
+      expect(input.value.length).toBeLessThanOrEqual(2001)
+      expect(input.value).toContain('…')
+      const start = input.value.indexOf('bravo')
+      expect(start).toBeGreaterThanOrEqual(0)
+      input.setSelectionRange(start, start + 5, direction)
+      await commands.proofNativeInsertText('DELTA')
+      expect(editor.materializeFullText()).toBe(prefix + 'DELTA charlie')
+    },
+  )
+
   it.each(['typing', 'composition'] as const)(
     'keeps editor-driven multiple selections when the native selection is unchanged (%s)',
     async (route) => {

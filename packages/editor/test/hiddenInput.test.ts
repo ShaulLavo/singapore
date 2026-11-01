@@ -235,6 +235,25 @@ function expectBoundedReads(counts: ReturnType<typeof requestedUnits>) {
 describe('hidden-input requested source units', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  it.each([999, 1000, 1001])('bounds retained source at the %s unit trim threshold', (units) => {
+    const text = 'p'.repeat(700) + 's'.repeat(units) + 't'.repeat(700)
+    const selection = { startOffset: 700, endOffset: 700 + units, reversed: false }
+    const snapshot = createDocumentSession(text).getSnapshot()
+    const spy = observeRangeReads()
+    const written = pagedHiddenInputContent(snapshot, selection)
+    expect(written.value).toBe(
+      'p'.repeat(500) +
+        (units <= 1000 ? 's'.repeat(units) : 's'.repeat(500) + '…' + 's'.repeat(500)) +
+        't'.repeat(500),
+    )
+    expectBoundedReads(requestedUnits(spy))
+    spy.mockClear()
+    expect(
+      hiddenInputOffsetToDocument(snapshot, selection, written, written.selectionEnd - 1),
+    ).toBe(selection.endOffset - 1)
+    expectBoundedReads(requestedUnits(spy))
+  })
+
   it.each([
     { units: 100_000, pages: false },
     { units: 1_000_000, pages: false },
@@ -293,3 +312,209 @@ describe('hidden-input requested source units', () => {
     },
   )
 })
+
+type WindowSelection = Parameters<typeof pagedHiddenInputContent>[1]
+type WindowOptions = Parameters<typeof pagedHiddenInputContent>[2]
+
+// This string-based oracle preserves the pre-optimization omission and tie rules.
+function legacyWindow(text: string, selection: WindowSelection, options: WindowOptions = {}) {
+  const rows = Math.max(1, options.rowsPerPage ?? SCREEN_READER_PAGE_ROWS)
+  const trim = Math.max(0, options.trimChars ?? SCREEN_READER_TRIM_CHARS)
+  const start = Math.max(0, Math.min(text.length, selection.startOffset))
+  const end = Math.max(start, Math.min(text.length, selection.endOffset))
+  const rowAt = (offset: number) => text.slice(0, offset).split('\n').length - 1
+  const starts = [0]
+  for (let offset = 0; offset < text.length; offset += 1) {
+    if (text[offset] === '\n') starts.push(offset + 1)
+  }
+  const pageStart = (page: number) => starts[Math.max(0, page * rows)] ?? text.length
+  const startPage = Math.floor(rowAt(start) / rows)
+  const endPage = Math.floor(rowAt(end) / rows)
+  const spliced = endPage - startPage > 1
+  const headEnd = spliced ? Math.max(start, Math.min(end, pageStart(startPage + 1))) : end
+  const tailStart = spliced ? Math.max(headEnd, Math.min(end, pageStart(endPage))) : end
+  const virtual = spliced
+    ? text.slice(start, headEnd) + '…' + text.slice(tailStart, end)
+    : text.slice(start, end)
+  const head = trim > 0 && virtual.length > 2 * trim ? legacySlice(virtual, 0, trim) : virtual
+  const tail =
+    trim > 0 && virtual.length > 2 * trim
+      ? legacySlice(virtual, virtual.length - trim, virtual.length)
+      : ''
+  const selected = head.length === virtual.length ? head : head + '…' + tail
+  let prefixStart = pageStart(startPage - 1)
+  let suffixEnd = pageStart(endPage + 2)
+  if (trim > 0 && start - prefixStart > trim) {
+    prefixStart = start - trim
+    if (legacySplitsPair(text, prefixStart)) prefixStart += 1
+  }
+  if (trim > 0 && suffixEnd - end > trim) {
+    suffixEnd = end + trim
+    if (legacySplitsPair(text, suffixEnd)) suffixEnd -= 1
+  }
+  const prefix = text.slice(prefixStart, start)
+  const content = {
+    value: prefix + selected + text.slice(end, suffixEnd),
+    selectionStart: prefix.length,
+    selectionEnd: prefix.length + selected.length,
+    direction: selection.reversed ? 'backward' : 'forward',
+  }
+  return { content, virtual, head, tail, headEnd, tailStart, spliced, start, end }
+}
+
+function legacyLowAt(text: string, index: number) {
+  const code = text.charCodeAt(index)
+  return code >= 0xdc00 && code <= 0xdfff
+}
+
+function legacySplitsPair(text: string, index: number) {
+  const before = text.charCodeAt(index - 1)
+  return before >= 0xd800 && before <= 0xdbff && legacyLowAt(text, index)
+}
+
+function legacySlice(text: string, start: number, end: number) {
+  const from = start > 0 && legacyLowAt(text, start) ? start + 1 : start
+  const to = end < text.length && legacyLowAt(text, end) ? end - 1 : end
+  return text.slice(from, Math.max(from, to))
+}
+
+function legacyMap(reference: ReturnType<typeof legacyWindow>, offset: number) {
+  const { content, start, end, head, tail, virtual, headEnd, tailStart, spliced } = reference
+  if (offset <= content.selectionStart) return start + offset - content.selectionStart
+  if (offset >= content.selectionEnd) return end + offset - content.selectionEnd
+  let selectedOffset = offset - content.selectionStart
+  if (virtual.length > 2 * SCREEN_READER_TRIM_CHARS && selectedOffset > head.length) {
+    selectedOffset += virtual.length - tail.length - head.length - 1
+  }
+  if (!spliced || selectedOffset <= headEnd - start) return start + selectedOffset
+  return tailStart + selectedOffset - (headEnd - start) - 1
+}
+
+function checkLegacyBoundaries(text: string, selection: WindowSelection) {
+  const session = createDocumentSession(text.slice(0, 1))
+  for (let offset = 1; offset < text.length; offset += 37) {
+    session.applyEdits([{ from: offset, to: offset, text: text.slice(offset, offset + 37) }])
+  }
+  const snapshot = session.getSnapshot()
+  const reference = legacyWindow(text, selection)
+  const written = pagedHiddenInputContent(snapshot, selection)
+  expect(written).toEqual(reference.content)
+  for (let offset = 0; offset <= written.value.length; offset += 1) {
+    expect(
+      hiddenInputOffsetToDocument(snapshot, selection, written, offset),
+      `native boundary ${offset}`,
+    ).toBe(legacyMap(reference, offset))
+  }
+}
+
+const boundaryFixtures = [
+  {
+    name: 'cut on page marker then low surrogate',
+    text: 'a'.repeat(490) + '\n'.repeat(30) + '\udc00' + 'z'.repeat(499),
+    start: 0,
+    end: 1020,
+  },
+  { name: 'empty document', text: '', start: 0, end: 0 },
+  { name: 'collapsed nonzero caret', text: 'alpha\nbeta', start: 8, end: 8 },
+  { name: 'trim threshold 999', text: 'pre' + 'x'.repeat(999) + 'post', start: 3, end: 1002 },
+  { name: 'trim threshold 1000', text: 'pre' + 'x'.repeat(1000) + 'post', start: 3, end: 1003 },
+  { name: 'trim threshold 1001', text: 'pre' + 'x'.repeat(1001) + 'post', start: 3, end: 1004 },
+  { name: 'adjacent pages', text: numberedRows(25), start: 5, end: 100 },
+  { name: 'page gap and literal ellipses', text: '…\n'.repeat(40), start: 1, end: 79 },
+  { name: 'empty endpoint tail', text: numberedRows(40), start: 0, end: 180 },
+  {
+    name: 'both omissions with page marker in tail',
+    text: 'x'.repeat(1600) + '\n'.repeat(30) + '…tail',
+    start: 0,
+    end: 1635,
+  },
+  {
+    name: 'both omissions with page marker in head',
+    text: 'head…' + '\n'.repeat(30) + 'y'.repeat(1600),
+    start: 0,
+    end: 1635,
+  },
+  { name: 'astral head cut', text: 'a'.repeat(499) + '😀' + 'b'.repeat(600), start: 0, end: 1101 },
+  { name: 'astral tail cut', text: 'a'.repeat(600) + '😀' + 'b'.repeat(499), start: 0, end: 1101 },
+  {
+    name: 'lone low at head cut',
+    text: 'a'.repeat(500) + '\udc00' + 'b'.repeat(600),
+    start: 0,
+    end: 1101,
+  },
+  {
+    name: 'lone low at tail cut',
+    text: 'a'.repeat(601) + '\udc00' + 'b'.repeat(499),
+    start: 0,
+    end: 1101,
+  },
+  {
+    name: 'astral surrounding window cuts',
+    text: 'a'.repeat(100) + '😀' + 'b'.repeat(998) + '😀' + 'c'.repeat(100),
+    start: 601,
+    end: 601,
+  },
+  {
+    name: 'surrogate after synthetic page marker',
+    text: 'x'.repeat(499) + '\n'.repeat(30) + '\udc00' + 'z'.repeat(999),
+    start: 0,
+    end: 1529,
+  },
+]
+
+describe('hidden-input legacy boundaries', () => {
+  it.each(boundaryFixtures)(
+    'preserves every forward boundary for $name',
+    ({ text, start, end }) => {
+      checkLegacyBoundaries(text, { startOffset: start, endOffset: end, reversed: false })
+    },
+  )
+
+  it.each(boundaryFixtures)(
+    'preserves every backward boundary for $name',
+    ({ text, start, end }) => {
+      checkLegacyBoundaries(text, { startOffset: start, endOffset: end, reversed: true })
+    },
+  )
+
+  it.each([0, 1, 2, 4, 0.5])(
+    'preserves custom writer output at trim %s without changing the inverse contract',
+    (trimChars) => {
+      const text = 'a😀…\nb\nc\nd\n\udc00tail'
+      const selection = { startOffset: 1, endOffset: text.length - 1, reversed: true }
+      const snapshot = createDocumentSession(text).getSnapshot()
+      const options = { rowsPerPage: 1, trimChars }
+      expect(pagedHiddenInputContent(snapshot, selection, options)).toEqual(
+        legacyWindow(text, selection, options).content,
+      )
+    },
+  )
+})
+
+function checkSmallWriterCuts(trimChars: number) {
+  const text = 'a😀…\nb\n\udc00c\nd\n😀e'
+  const snapshot = createDocumentSession(text).getSnapshot()
+  const options = { rowsPerPage: 1, trimChars }
+  for (let startOffset = 0; startOffset <= text.length; startOffset += 1) {
+    checkSmallWriterEnds(snapshot, text, startOffset, options)
+  }
+}
+
+function checkSmallWriterEnds(
+  snapshot: textbuffer.PieceTableSnapshot,
+  text: string,
+  startOffset: number,
+  options: WindowOptions,
+) {
+  for (let endOffset = startOffset; endOffset <= text.length; endOffset += 1) {
+    const selection = { startOffset, endOffset, reversed: false }
+    expect(pagedHiddenInputContent(snapshot, selection, options)).toEqual(
+      legacyWindow(text, selection, options).content,
+    )
+  }
+}
+
+it.each([0, 1, 2, 3])(
+  'matches every small writer interval at trim %s around page and surrogate cuts',
+  checkSmallWriterCuts,
+)

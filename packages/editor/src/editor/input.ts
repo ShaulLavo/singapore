@@ -4,7 +4,12 @@ import {
   pointToOffset,
   readPieceTableTextRange,
 } from '@singapore-editor/textbuffer'
-import { isHighSurrogate, splitsSurrogatePair } from '@singapore-editor/textbuffer/internal/reads'
+import {
+  codeUnitAt,
+  isHighSurrogate,
+  isLowSurrogate,
+  splitsSurrogatePair,
+} from '@singapore-editor/textbuffer/internal/reads'
 
 import { clamp } from '../style-utils'
 
@@ -44,15 +49,7 @@ export const EMPTY_HIDDEN_INPUT_STATE: HiddenInputState = {
  */
 export const SCREEN_READER_PAGE_ROWS = 10
 
-/**
- * The ceiling on the text either side of the selection, in characters.
- *
- * This is the load-bearing half of the pairing: a browser recomputes the accessible value of the
- * element on every write, and that computation is superlinear enough that a few thousand characters
- * stall the whole frame. A page is a bound on rows, not on their length — one minified line would
- * blow straight past it — so the character clamp is what actually keeps a huge file's arrow keys
- * responding in constant time.
- */
+/** Rows do not bound a minified line, so clamp retained source text before reading it. */
 export const SCREEN_READER_TRIM_CHARS = 500
 
 /** Stands in for the text a clamp cut away, so what is read still says something was skipped. */
@@ -257,27 +254,19 @@ export function hiddenInputOffsetToDocument(
 
   const startPage = Math.floor(offsetToPoint(snapshot, start).row / SCREEN_READER_PAGE_ROWS)
   const endPage = Math.floor(offsetToPoint(snapshot, end).row / SCREEN_READER_PAGE_ROWS)
-  const spliced = endPage - startPage > 1
-  const headEnd = spliced
-    ? clamp(pageStartOffset(snapshot, startPage + 1, SCREEN_READER_PAGE_ROWS), start, end)
-    : end
-  const tailStart = spliced
-    ? clamp(pageStartOffset(snapshot, endPage, SCREEN_READER_PAGE_ROWS), headEnd, end)
-    : end
-  const text = spliced
-    ? spliceAcrossPages(snapshot, { start, end, startPage, endPage }, SCREEN_READER_PAGE_ROWS)
-    : readPieceTableTextRange(snapshot, start, end)
+  const layout = selectionTextLayout(
+    snapshot,
+    { start, end, startPage, endPage },
+    SCREEN_READER_PAGE_ROWS,
+  )
+  const { headLength, tailOffset } = selectionTrim(snapshot, layout, SCREEN_READER_TRIM_CHARS)
   let selectedOffset = offset - written.selectionStart
-  if (text.length > 2 * SCREEN_READER_TRIM_CHARS) {
-    const head = sliceWholeCharacters(text, 0, SCREEN_READER_TRIM_CHARS)
-    const tail = sliceWholeCharacters(text, text.length - SCREEN_READER_TRIM_CHARS, text.length)
-    if (selectedOffset > head.length) {
-      selectedOffset += text.length - tail.length - head.length - ELLIPSIS.length
-    }
+  if (layout.length > 2 * SCREEN_READER_TRIM_CHARS && selectedOffset > headLength) {
+    selectedOffset += tailOffset - headLength - ELLIPSIS.length
   }
-  if (!spliced || selectedOffset <= headEnd - start) return start + selectedOffset
+  if (!layout.spliced || selectedOffset <= layout.headEnd - start) return start + selectedOffset
 
-  return tailStart + selectedOffset - (headEnd - start) - ELLIPSIS.length
+  return layout.tailStart + selectedOffset - (layout.headEnd - start) - ELLIPSIS.length
 }
 
 function pageStartOffset(snapshot: PieceTableSnapshot, page: number, rowsPerPage: number): number {
@@ -321,17 +310,24 @@ function trimmedSelectionText(
   rowsPerPage: number,
   trimChars: number,
 ): string {
-  const { start, end, startPage, endPage } = selection
-  const spliced =
-    endPage - startPage > 1
-      ? spliceAcrossPages(snapshot, selection, rowsPerPage)
-      : readPieceTableTextRange(snapshot, start, end)
-  if (trimChars === 0 || spliced.length <= 2 * trimChars) return spliced
+  const layout = selectionTextLayout(snapshot, selection, rowsPerPage)
+  const { headLength, tailOffset } = selectionTrim(snapshot, layout, trimChars)
+  const head = readSelectionRange(snapshot, layout, 0, headLength)
+  if (headLength === layout.length) return head
 
-  return `${sliceWholeCharacters(spliced, 0, trimChars)}${ELLIPSIS}${sliceWholeCharacters(spliced, spliced.length - trimChars, spliced.length)}`
+  return `${head}${ELLIPSIS}${readSelectionRange(snapshot, layout, tailOffset, layout.length)}`
 }
 
-function spliceAcrossPages(
+type SelectionTextLayout = {
+  readonly start: number
+  readonly end: number
+  readonly headEnd: number
+  readonly tailStart: number
+  readonly spliced: boolean
+  readonly length: number
+}
+
+function selectionTextLayout(
   snapshot: PieceTableSnapshot,
   selection: {
     readonly start: number
@@ -340,24 +336,81 @@ function spliceAcrossPages(
     readonly endPage: number
   },
   rowsPerPage: number,
-): string {
+): SelectionTextLayout {
   const { start, end, startPage, endPage } = selection
-  const head = clamp(pageStartOffset(snapshot, startPage + 1, rowsPerPage), start, end)
-  const tail = clamp(pageStartOffset(snapshot, endPage, rowsPerPage), head, end)
-
-  return `${readPieceTableTextRange(snapshot, start, head)}${ELLIPSIS}${readPieceTableTextRange(snapshot, tail, end)}`
+  const spliced = endPage - startPage > 1
+  const headEnd = spliced
+    ? clamp(pageStartOffset(snapshot, startPage + 1, rowsPerPage), start, end)
+    : end
+  const tailStart = spliced
+    ? clamp(pageStartOffset(snapshot, endPage, rowsPerPage), headEnd, end)
+    : end
+  return {
+    start,
+    end,
+    headEnd,
+    tailStart,
+    spliced,
+    length: headEnd - start + (spliced ? ELLIPSIS.length : 0) + end - tailStart,
+  }
 }
 
-/** A slice that never keeps half a pair, so a clamp cannot invent an unpaired surrogate. */
-function sliceWholeCharacters(text: string, start: number, end: number): string {
-  const from = start > 0 && isLowSurrogateAt(text, start) ? start + 1 : start
-  const to = end < text.length && isLowSurrogateAt(text, end) ? end - 1 : end
-  return text.slice(from, Math.max(from, to))
+function selectionTrim(
+  snapshot: PieceTableSnapshot,
+  layout: SelectionTextLayout,
+  trimChars: number,
+): { readonly headLength: number; readonly tailOffset: number } {
+  if (trimChars === 0 || layout.length <= 2 * trimChars) {
+    return { headLength: layout.length, tailOffset: layout.length }
+  }
+  const headCut = Math.trunc(trimChars)
+  const tailCut = Math.trunc(layout.length - trimChars)
+  return {
+    headLength: Math.max(0, headCut - Number(selectionLowSurrogateAt(snapshot, layout, headCut))),
+    tailOffset: tailCut + Number(selectionLowSurrogateAt(snapshot, layout, tailCut)),
+  }
 }
 
-function isLowSurrogateAt(text: string, index: number): boolean {
-  const code = text.charCodeAt(index)
-  return code >= 0xdc00 && code <= 0xdfff
+function selectionLowSurrogateAt(
+  snapshot: PieceTableSnapshot,
+  layout: SelectionTextLayout,
+  offset: number,
+): boolean {
+  const headLength = layout.headEnd - layout.start
+  if (layout.spliced && offset === headLength) return false
+  const sourceOffset =
+    !layout.spliced || offset < headLength
+      ? layout.start + offset
+      : layout.tailStart + offset - headLength - ELLIPSIS.length
+  return isLowSurrogate(codeUnitAt(snapshot.root, snapshot.buffers, sourceOffset))
+}
+
+function readSelectionRange(
+  snapshot: PieceTableSnapshot,
+  layout: SelectionTextLayout,
+  from: number,
+  to: number,
+): string {
+  if (!layout.spliced) {
+    return readPieceTableTextRange(snapshot, layout.start + from, layout.start + to)
+  }
+  const headLength = layout.headEnd - layout.start
+  const tailOffset = headLength + ELLIPSIS.length
+  const head = readPieceTableTextRange(
+    snapshot,
+    layout.start + Math.min(from, headLength),
+    layout.start + Math.min(to, headLength),
+  )
+  const marker = ELLIPSIS.slice(
+    clamp(from - headLength, 0, ELLIPSIS.length),
+    clamp(to - headLength, 0, ELLIPSIS.length),
+  )
+  const tail = readPieceTableTextRange(
+    snapshot,
+    layout.tailStart + Math.max(0, from - tailOffset),
+    layout.tailStart + Math.max(0, to - tailOffset),
+  )
+  return `${head}${marker}${tail}`
 }
 
 function commonPrefixLength(left: string, right: string): number {
