@@ -1184,6 +1184,285 @@ describe('shared language-server documents', () => {
   })
 })
 
+const lifetimeActions = [
+  {
+    name: 'formatting',
+    commandId: 'editor.action.formatDocument',
+    method: 'textDocument/formatting',
+  },
+  {
+    name: 'same-document navigation',
+    commandId: 'editor.action.goToDefinition',
+    method: 'textDocument/definition',
+  },
+  {
+    name: 'cross-document navigation',
+    commandId: 'editor.action.goToDefinition',
+    method: 'textDocument/definition',
+  },
+  {
+    name: 'references',
+    commandId: 'editor.action.goToReferences',
+    method: 'textDocument/references',
+  },
+] satisfies readonly { name: string; commandId: EditorAnyCommandId; method: string }[]
+type LifetimeAction = (typeof lifetimeActions)[number]
+
+function lifetimeReply(action: LifetimeAction): unknown {
+  const range = { start: { line: 0, character: 2 }, end: { line: 0, character: 5 } }
+  if (action.name === 'formatting') return [{ range, newText: 'New' }]
+  const uri = action.name === 'cross-document navigation' ? 'file:///other.md' : 'file:///README.md'
+  return [{ uri, range }]
+}
+
+async function sharedLifetimeFixture() {
+  const buffer = createEditorTextBuffer('# Notes')
+  const document = createLanguageServerDocument({
+    buffer,
+    uri: 'file:///README.md',
+    languageId: 'markdown',
+    lanes: [
+      {
+        id: 'lifetime',
+        features: { navigation: 0, formatting: 0 },
+        webSocketRoute: 'ws://localhost/lifetime',
+        webSocketTransportOptions: { WebSocketCtor: FakeWebSocket },
+      },
+    ],
+  })
+  const socket = FakeWebSocket.instances.at(-1)!
+  const mount = () => {
+    const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
+    const onOpenDefinition =
+      vi.fn<NonNullable<Parameters<typeof createLanguageServerPlugin>[0]['onOpenDefinition']>>()
+    const onOpenReferences =
+      vi.fn<NonNullable<Parameters<typeof createLanguageServerPlugin>[0]['onOpenReferences']>>()
+    const onInteractiveReady = vi.fn()
+    const onRequestError = vi.fn()
+    const onError = vi.fn()
+    const { commands, features, provider } = activatePlugin(
+      createLanguageServerPlugin({
+        document,
+        onOpenDefinition,
+        onOpenReferences,
+        onInteractiveReady,
+        onRequestError,
+        onError,
+      }),
+      { applyEdits },
+    )
+    const context = viewContributionContext(editorSnapshot(), { features })
+    const view = provider.createContribution(context)!
+    return {
+      view,
+      context,
+      commands,
+      applyEdits,
+      onOpenDefinition,
+      onOpenReferences,
+      onInteractiveReady,
+      onRequestError,
+      onError,
+    }
+  }
+  const first = mount()
+  const second = mount()
+  let closed = false
+  const dispose = () => {
+    if (closed) return
+    closed = true
+    first.view.dispose()
+    second.view.dispose()
+    document.dispose()
+    socket.close()
+    ownedViewCleanups.delete(dispose)
+  }
+  ownedViewCleanups.add(dispose)
+  socket.open()
+  await flushPromises()
+  socket.receive(
+    initializeResponse(jsonMessage(socket.sent[0]), {
+      definitionProvider: true,
+      referencesProvider: true,
+      documentFormattingProvider: true,
+    }),
+  )
+  await vi.waitUntil(
+    () =>
+      document.lanes[0]!.connection.isReady() &&
+      socket.sent.some(hasMethod('textDocument/didOpen')),
+  )
+  const request = async (
+    view: typeof first,
+    action: LifetimeAction,
+    commandId = action.commandId,
+  ) => {
+    const previous = socket.sent.length
+    expect(command(view.commands, commandId)({})).toBe(true)
+    await vi.waitUntil(() => socket.sent.slice(previous).some(hasMethod(action.method)))
+    const wire = socket.sent.slice(previous).find(hasMethod(action.method))!
+    return jsonMessage(wire).id
+  }
+  return { document, socket, first, second, request, dispose }
+}
+
+type LifetimeView = Awaited<ReturnType<typeof sharedLifetimeFixture>>['first']
+function resetLifetimeEffects(view: LifetimeView): void {
+  view.applyEdits.mockClear()
+  vi.mocked(view.context.setSelection).mockClear()
+  vi.mocked(view.context.focusEditor).mockClear()
+  view.onOpenDefinition.mockClear()
+  view.onOpenReferences.mockClear()
+  view.onInteractiveReady.mockClear()
+}
+
+function expectNoLifetimeEffects(view: LifetimeView): void {
+  expect.soft(view.applyEdits).not.toHaveBeenCalled()
+  expect.soft(view.context.setSelection).not.toHaveBeenCalled()
+  expect.soft(view.context.focusEditor).not.toHaveBeenCalled()
+  expect.soft(view.onOpenDefinition).not.toHaveBeenCalled()
+  expect.soft(view.onOpenReferences).not.toHaveBeenCalled()
+  expect.soft(view.onInteractiveReady).not.toHaveBeenCalled()
+}
+
+async function expectSurvivingView(
+  fixture: Awaited<ReturnType<typeof sharedLifetimeFixture>>,
+  action: LifetimeAction,
+) {
+  const { second, socket } = fixture
+  expect(socket.sent.filter(hasMethod('textDocument/didClose'))).toHaveLength(0)
+  expect(fixture.document.lanes[0]!.connection.isReady()).toBe(true)
+  const id = await fixture.request(second, action)
+  socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
+  await vi.waitUntil(() => second.onInteractiveReady.mock.calls.length === 1)
+  if (action.name === 'formatting')
+    await vi.waitUntil(() => second.applyEdits.mock.calls.length === 1)
+  else if (action.name === 'cross-document navigation')
+    await vi.waitUntil(() => second.onOpenDefinition.mock.calls.length === 1)
+  else await vi.waitUntil(() => vi.mocked(second.context.focusEditor).mock.calls.length === 1)
+}
+
+describe('view-owned LSP request lifetime', () => {
+  afterEach(() => {
+    FakeWebSocket.instances.length = 0
+  })
+
+  it.each(lifetimeActions)(
+    'ignores delayed $name after detach while the shared view survives',
+    async (action) => {
+      const fixture = await sharedLifetimeFixture()
+      try {
+        const id = await fixture.request(fixture.first, action)
+        fixture.first.view.dispose()
+        resetLifetimeEffects(fixture.first)
+        fixture.socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
+        await expectSurvivingView(fixture, action)
+        expectNoLifetimeEffects(fixture.first)
+        expect(fixture.first.onRequestError).not.toHaveBeenCalled()
+        expect(fixture.first.onError).not.toHaveBeenCalled()
+      } finally {
+        fixture.dispose()
+      }
+    },
+  )
+
+  it.each(lifetimeActions)(
+    'ignores already-resolved $name when detach precedes its continuations',
+    async (action) => {
+      const fixture = await sharedLifetimeFixture()
+      try {
+        const id = await fixture.request(fixture.first, action)
+        fixture.socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
+        fixture.first.view.dispose()
+        resetLifetimeEffects(fixture.first)
+        await expectSurvivingView(fixture, action)
+        expectNoLifetimeEffects(fixture.first)
+      } finally {
+        fixture.dispose()
+      }
+    },
+  )
+
+  it.each(lifetimeActions)(
+    'preserves a real queued $name failure when the view detaches',
+    async (action) => {
+      const fixture = await sharedLifetimeFixture()
+      try {
+        const id = await fixture.request(fixture.first, action)
+        fixture.socket.receive({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32603, message: 'original lifetime failure' },
+        })
+        fixture.first.view.dispose()
+        await vi.waitUntil(() => fixture.first.onRequestError.mock.calls.length === 1)
+        expect(fixture.first.onRequestError).toHaveBeenCalledWith(
+          'lifetime',
+          action.method,
+          expect.objectContaining({ message: 'original lifetime failure' }),
+        )
+        expect(fixture.first.onError).not.toHaveBeenCalled()
+        expect(fixture.first.onInteractiveReady).not.toHaveBeenCalled()
+        await expectSurvivingView(fixture, action)
+      } finally {
+        fixture.dispose()
+      }
+    },
+  )
+
+  it.each(['references callback', 'definition callback', 'selection'] as const)(
+    'stops fallback navigation after reentrant detach in the %s',
+    async (source) => {
+      const fixture = await sharedLifetimeFixture()
+      const { first, socket } = fixture
+      try {
+        const action = lifetimeActions.find(
+          (item) =>
+            item.name ===
+            (source === 'references callback' ? 'references' : 'same-document navigation'),
+        )!
+        const detach = () => {
+          first.view.dispose()
+          return false
+        }
+        if (source === 'references callback') first.onOpenReferences.mockImplementation(detach)
+        if (source === 'definition callback') first.onOpenDefinition.mockImplementation(detach)
+        if (source === 'selection') vi.mocked(first.context.setSelection).mockImplementation(detach)
+        const id = await fixture.request(
+          first,
+          action,
+          source === 'definition callback' ? 'editor.action.peekDefinition' : action.commandId,
+        )
+        socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
+        await expectSurvivingView(fixture, action)
+        if (source !== 'selection') expect(first.context.setSelection).not.toHaveBeenCalled()
+        else expect(first.context.setSelection).toHaveBeenCalledOnce()
+        expect(first.context.focusEditor).not.toHaveBeenCalled()
+      } finally {
+        fixture.dispose()
+      }
+    },
+  )
+
+  it.each(['content', 'document'] as const)(
+    'rejects a resolved format result after a %s update',
+    async (kind) => {
+      const fixture = await sharedLifetimeFixture()
+      try {
+        const action = lifetimeActions[0]!
+        const id = await fixture.request(fixture.first, action)
+        const snapshot = editorSnapshot('# Changed', kind === 'document' ? 'OTHER.md' : 'README.md')
+        fixture.first.view.update({ ...snapshot, textVersion: 2 }, kind)
+        fixture.socket.receive({ jsonrpc: '2.0', id, result: lifetimeReply(action) })
+        await expectSurvivingView(fixture, action)
+        expect(fixture.first.applyEdits).not.toHaveBeenCalled()
+      } finally {
+        fixture.dispose()
+      }
+    },
+  )
+})
+
 function freshnessDocument(
   pool: LspConnectionPool,
   onDiagnostics: (summary: LanguageServerDiagnosticSummary) => void,
@@ -1350,6 +1629,7 @@ function viewContributionContext(
     getDocumentContributions: () => owner.analysis.contributions,
     getFeature,
     setSelection: vi.fn(),
+    focusEditor: vi.fn(),
     textOffsetFromPoint: vi.fn(() => 0),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
     setRangeHighlight: vi.fn(),
