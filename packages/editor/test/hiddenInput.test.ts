@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as textbuffer from '@singapore-editor/textbuffer'
 import {
   EMPTY_HIDDEN_INPUT_STATE,
   SCREEN_READER_PAGE_ROWS,
   SCREEN_READER_TRIM_CHARS,
   deduceHiddenInputEdit,
+  hiddenInputOffsetToDocument,
   isEmptyDeducedInput,
   isIncompleteDeducedInput,
   pagedHiddenInputContent,
@@ -200,4 +202,94 @@ describe('the document window the hidden input carries', () => {
     expect(SCREEN_READER_PAGE_ROWS).toBe(10)
     expect(SCREEN_READER_TRIM_CHARS).toBe(500)
   })
+})
+
+function observeRangeReads() {
+  const read = textbuffer.readPieceTableTextRange
+  const spy = vi.spyOn(textbuffer, 'readPieceTableTextRange').mockImplementation(read)
+  const calibration = createDocumentSession('calibrate').getSnapshot()
+  expect(textbuffer.readPieceTableTextRange(calibration, 1, 5)).toBe('alib')
+  expect(spy.mock.calls.map(([, start, end]) => end - start)).toEqual([4])
+  spy.mockClear()
+  expect(
+    pagedHiddenInputContent(calibration, { startOffset: 0, endOffset: 9, reversed: false }).value,
+  ).toBe('calibrate')
+  expect(spy.mock.calls.reduce((sum, [, start, end]) => sum + end - start, 0)).toBe(9)
+  spy.mockClear()
+  return spy
+}
+
+function requestedUnits(spy: ReturnType<typeof observeRangeReads>) {
+  const lengths = spy.mock.calls.map(([, start, end]) => end - start)
+  return {
+    total: lengths.reduce((sum, length) => sum + length, 0),
+    largest: Math.max(0, ...lengths),
+  }
+}
+
+function expectBoundedReads(counts: ReturnType<typeof requestedUnits>) {
+  expect.soft(counts.largest).toBeLessThanOrEqual(2 * SCREEN_READER_TRIM_CHARS + 2)
+  expect.soft(counts.total).toBeLessThanOrEqual(4 * SCREEN_READER_TRIM_CHARS + 256)
+}
+
+describe('hidden-input requested source units', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it.each([
+    { units: 100_000, pages: false },
+    { units: 1_000_000, pages: false },
+    { units: 100_000, pages: true },
+    { units: 1_000_000, pages: true },
+  ])(
+    'bounds writer and interior inverse reads for $units endpoint units, pages=$pages',
+    ({ units, pages }) => {
+      const head = 'H'.repeat(500)
+      const tail = 'T'.repeat(500)
+      const middle = pages ? '\n'.repeat(30) : ''
+      const endpoint = units / 2
+      const text =
+        'pre' +
+        head +
+        'a'.repeat(endpoint - 500) +
+        middle +
+        'b'.repeat(endpoint - 500) +
+        tail +
+        'post'
+      const snapshot = createDocumentSession(text).getSnapshot()
+      const selection = { startOffset: 3, endOffset: text.length - 4, reversed: true }
+      const spy = observeRangeReads()
+
+      const written = pagedHiddenInputContent(snapshot, selection)
+      const writer = requestedUnits(spy)
+      expect(written).toEqual({
+        value: 'pre' + head + '…' + tail + 'post',
+        selectionStart: 3,
+        selectionEnd: 1004,
+        direction: 'backward',
+      })
+      expect(written.value.length).toBeLessThanOrEqual(4 * SCREEN_READER_TRIM_CHARS + 1)
+      spy.mockClear()
+      const mapped = hiddenInputOffsetToDocument(
+        snapshot,
+        selection,
+        written,
+        written.selectionEnd - 17,
+      )
+      const inverse = requestedUnits(spy)
+      expect(mapped).toBe(selection.endOffset - 17)
+      console.info(
+        'hidden-input source units',
+        JSON.stringify({
+          units,
+          pages,
+          writer,
+          inverse,
+          windowLength: written.value.length,
+          mapped,
+        }),
+      )
+      expectBoundedReads(writer)
+      expectBoundedReads(inverse)
+    },
+  )
 })
