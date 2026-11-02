@@ -10,11 +10,15 @@ import { createEngine } from '../engine-fixture'
 import { expect, test } from 'vitest'
 import { liveIds, network } from './adapter'
 import { plainActions, scalarBoundaries } from './loro-plain-workload'
+import { stressSeeds } from '../stress-seeds'
 
 const stress = process.env.COLLAB_STRESS === '1'
-const seeds = Array.from({ length: stress ? 200 : 20 }, (_, index) => index + 1)
+const seeds = (stress ? stressSeeds(200) : Array.from({ length: 20 }, (_, index) => index)).map(
+  (seed) => seed + 1,
+)
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
 
-test.each(seeds)(
+partitionedTest.each(seeds)(
   'Loro host-adapted plain-text differential seed %i',
   (seed) => {
     const net = network(3)

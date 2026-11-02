@@ -17,6 +17,8 @@ import type {
 import { characters, liveIds } from './engine-fixture'
 import { stressSeeds } from './stress-seeds'
 
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
+
 function envelope(change: Envelope['change']): Envelope {
   const insert = change.kind === 'insert' ? change : null
   const id = insert
@@ -34,7 +36,7 @@ function compare(reference: ReferenceEngine, buffer: TextbufferEngine): void {
   for (const { id } of expected) expect(buffer.visibleOffset(id)).toBe(reference.visibleOffset(id))
 }
 
-test.each([false, true])(
+partitionedTest.each([false, true])(
   'retained snapshots restore by reference with transient=%s',
   (transient) => {
     const original = createPieceTableSnapshot('abc', {

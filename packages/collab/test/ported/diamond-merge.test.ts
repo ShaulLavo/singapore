@@ -7,34 +7,36 @@
 import { expect, test } from 'vitest'
 import { network, randomSource } from './adapter'
 import { randomChange } from './diamond-workload'
+import { stressSeeds } from '../stress-seeds'
 
 const stress = process.env.COLLAB_STRESS === '1'
-const seeds = [1000139, 123].concat(Array.from({ length: stress ? 100 : 8 }, (_, index) => index))
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
+const seeds = stress ? stressSeeds(100) : Array.from({ length: 8 }, (_, index) => index)
 
-test.each(seeds)(
-  'Diamond Types host-adapted merge fuzz, seed %i',
-  (seed) => {
-    const net = network(3)
-    const random = randomSource(seed)
-    const choose = (bound: number) => Math.floor(random() * bound)
-    const rounds = seed === 1000139 || stress ? 100 : 10
-    const changes = seed === 123 ? 5 : 2
-    for (let round = 0; round < rounds; round++) {
-      for (let step = 0; step < changes; step++) {
-        const user = choose(3)
-        const change = randomChange(net.users[user]!.participant.text(), random)
-        for (const edit of change.edits) net.edit(user, edit)
-        expect(net.users[user]!.participant.text(), `round ${round}, change ${step}`).toBe(
-          change.text,
-        )
-      }
-      const a = choose(3)
-      let b = choose(2)
-      if (b >= a) b++
-      net.sync([a, b])
-      if (round % 50 === 0) net.sync([0, 1, 2])
+function runMerge(seed: number) {
+  const net = network(3)
+  const random = randomSource(seed)
+  const choose = (bound: number) => Math.floor(random() * bound)
+  const rounds = seed === 1000139 || stress ? 100 : 10
+  const changes = seed === 123 ? 5 : 2
+  for (let round = 0; round < rounds; round++) {
+    for (let step = 0; step < changes; step++) {
+      const user = choose(3)
+      const change = randomChange(net.users[user]!.participant.text(), random)
+      for (const edit of change.edits) net.edit(user, edit)
+      expect(net.users[user]!.participant.text(), `round ${round}, change ${step}`).toBe(
+        change.text,
+      )
     }
-    net.settle()
-  },
-  30_000,
-)
+    const a = choose(3)
+    let b = choose(2)
+    if (b >= a) b++
+    net.sync([a, b])
+    if (round % 50 === 0) net.sync([0, 1, 2])
+  }
+  net.settle()
+}
+
+test.each([1000139, 123])('Diamond Types fixed host-adapted merge fuzz, seed %i', runMerge)
+
+partitionedTest.each(seeds)('Diamond Types host-adapted merge fuzz, seed %i', runMerge, 30_000)

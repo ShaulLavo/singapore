@@ -13,6 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  shared:
+    name: Shared stress checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Build collaboration packages
+        run: bun run build -- --filter=@singapore-editor/collab...
+      - name: Check types, lint and formatting
+        run: |
+          bun run --cwd packages/collab typecheck
+          bun run --cwd packages/collab lint
+          bun run --cwd packages/collab format:check
+      - name: Verify shared checks and mutation controls
+        env:
+          COLLAB_STRESS: '1'
+          COLLAB_STRESS_SHARED: '1'
+        run: bun run --cwd packages/collab test --maxWorkers=2
   verify:
     name: Stress shard ${{ matrix.shard }}/8
     strategy:
@@ -36,5 +57,8 @@ jobs:
       - name: Verify both engines and differential replay
         env:
           COLLAB_STRESS: '1'
+          COLLAB_STRESS_SHARED: '0'
           COLLAB_STRESS_SHARD: '${{ matrix.shard }}/8'
-        run: bun run --cwd packages/collab test --maxWorkers=2
+        run: |
+          bun run --cwd packages/collab test --maxWorkers=2 \
+            --testNamePattern '(seeded rounds|single-author rounds|single-author undo|seeded arrivals and pending replay|independent per-character oracle checks|Diamond Types local rope-oracle workload|Diamond Types host-adapted merge fuzz|Loro host-adapted plain-text differential|Yjs five-user scheduler converges across 10,000 seeded short rounds|Zed test_random_concurrent_edits|fixed edit sets are order-independent)'
