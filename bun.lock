@@ -75,7 +75,7 @@
     },
     "packages/collab": {
       "name": "@singapore-editor/collab",
-      "version": "0.0.4",
+      "version": "0.0.5",
       "dependencies": {
         "@singapore-editor/textbuffer": "workspace:*",
       },
@@ -88,7 +88,7 @@
     },
     "packages/collaboration": {
       "name": "@singapore-editor/collaboration",
-      "version": "0.0.5",
+      "version": "0.0.6",
       "dependencies": {
         "@noble/hashes": "2.4.0",
         "@singapore-editor/collab": "workspace:*",

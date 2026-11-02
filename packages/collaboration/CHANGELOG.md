@@ -1,5 +1,11 @@
 # @singapore-editor/collaboration
 
+## 0.0.6
+
+### Patch Changes
+
+- Avoid full-text materialization when merge review checks for pending edits.
+
 ## 0.0.5
 
 ### Patch Changes
