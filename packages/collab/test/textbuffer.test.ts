@@ -36,7 +36,7 @@ function compare(reference: ReferenceEngine, buffer: TextbufferEngine): void {
   for (const { id } of expected) expect(buffer.visibleOffset(id)).toBe(reference.visibleOffset(id))
 }
 
-partitionedTest.each([false, true])(
+test.each([false, true])(
   'retained snapshots restore by reference with transient=%s',
   (transient) => {
     const original = createPieceTableSnapshot('abc', {
@@ -135,7 +135,7 @@ test('large bootstrap and interior edits use compact runs without document trave
   })
 })
 
-test.each([false, true])(
+partitionedTest.each([false, true])(
   'seeded arrivals and pending replay match after every operation with undo=%s',
   (undoRedo) => {
     for (const seed of stressSeeds(process.env.COLLAB_STRESS === '1' ? 100 : 25)) {
