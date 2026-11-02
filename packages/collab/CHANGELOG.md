@@ -1,5 +1,11 @@
 # @singapore-editor/collab
 
+## 0.0.5
+
+### Patch Changes
+
+- Expose pending metadata without materializing the complete participant text.
+
 ## 0.0.4
 
 ### Patch Changes
