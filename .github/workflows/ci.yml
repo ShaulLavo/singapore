@@ -168,6 +168,12 @@ jobs:
       - name: Build packages
         run: bun run build -- --filter='./packages/*'
 
+      # Health must inspect the fresh package exports produced by this job. Keeping it after the
+      # build makes the existing CI verdict block changes without rebuilding the workspace in a
+      # separate workflow.
+      - name: Check architecture health baselines
+        run: bun run health
+
       - name: Test tree-sitter browser worker
         run: bun run --cwd packages/tree-sitter test:browser
 
