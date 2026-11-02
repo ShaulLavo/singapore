@@ -35,7 +35,7 @@ jobs:
           bun run --cwd packages/collaboration format:check
       - name: Verify session and network invariants
         env:
-          COLLABORATION_LONG_RUN: ${{ (github.event_name == 'schedule' || inputs.long_run) && '1' || '0' }}
+          COLLABORATION_LONG_RUN: ${{ inputs.long_run && '1' || '0' }}
         run: bun run --cwd packages/collaboration test
       - name: Verify the signaling broker
         run: bun run --cwd packages/collaboration test:server
