@@ -13,6 +13,7 @@ const singleAuthorEdits = stress ? 48 : 24
 const seeds = stressSeeds(rounds)
 const singleAuthorSeeds = stressSeeds(singleAuthorRounds)
 const timeout = stress ? 300_000 : undefined
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
 
 test.each([0, 1, 2])('custom factory mixes engine implementations for seed %s', (seed) => {
   let instance = 0
@@ -107,7 +108,7 @@ function run(
   return { result, identity: characters(host!) }
 }
 
-test(
+partitionedTest(
   `${seeds.length} seeded rounds converge with three to five participants and match the reference IDs`,
   () => {
     for (const seed of seeds) {
@@ -122,7 +123,7 @@ test(
   timeout,
 )
 
-test(
+partitionedTest(
   'single-author rounds match the plain string model and reference IDs',
   () => {
     for (const seed of singleAuthorSeeds) {
@@ -135,7 +136,7 @@ test(
   },
   timeout,
 )
-test(
+partitionedTest(
   `${seeds.length} seeded rounds converge with random undo, redo and duplicate delivery`,
   () => {
     let undos = 0
@@ -154,7 +155,7 @@ test(
   timeout,
 )
 
-test('single-author undo and redo match an independent snapshot history model', () => {
+partitionedTest('single-author undo and redo match an independent snapshot history model', () => {
   for (const seed of singleAuthorSeeds)
     expect(run(seed, 1, singleAuthorEdits, createEngine, true)).toEqual(
       run(seed, 1, singleAuthorEdits, () => new ReferenceEngine(), true),

@@ -17,6 +17,8 @@ import type {
 import { characters, liveIds } from './engine-fixture'
 import { stressSeeds } from './stress-seeds'
 
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
+
 function envelope(change: Envelope['change']): Envelope {
   const insert = change.kind === 'insert' ? change : null
   const id = insert
@@ -133,7 +135,7 @@ test('large bootstrap and interior edits use compact runs without document trave
   })
 })
 
-test.each([false, true])(
+partitionedTest.each([false, true])(
   'seeded arrivals and pending replay match after every operation with undo=%s',
   (undoRedo) => {
     for (const seed of stressSeeds(process.env.COLLAB_STRESS === '1' ? 100 : 25)) {

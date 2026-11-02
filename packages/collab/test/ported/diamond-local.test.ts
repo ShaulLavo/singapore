@@ -10,13 +10,15 @@ import { replica } from '../fixtures'
 import { characters } from '../engine-fixture'
 import { network, randomSource } from './adapter'
 import { randomChange } from './diamond-workload'
+import { stressSeeds } from '../stress-seeds'
 
 const stress = process.env.COLLAB_STRESS === '1'
-const seeds = [10].concat(
-  Array.from({ length: stress ? 100 : 16 }, (_, index) => index).filter((seed) => seed !== 10),
-)
+const seeds = stress
+  ? stressSeeds(100)
+  : [10].concat(Array.from({ length: 16 }, (_, index) => index).filter((seed) => seed !== 10))
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
 
-test.each(seeds)(
+partitionedTest.each(seeds)(
   'Diamond Types local rope-oracle workload, seed %i',
   (seed) => {
     const author = replica('seph')

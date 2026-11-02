@@ -9,6 +9,7 @@ import { stressSeeds } from './stress-seeds'
 const stress = process.env.COLLAB_STRESS === '1'
 const randomRounds = stress ? 100 : 8
 const randomSteps = stress ? 64 : 24
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
 
 test('review: undo middle deletion through deleted surroundings retains original IDs', () => {
   const room = undoRoom({ groupDelay: 0 }, 3)
@@ -260,9 +261,12 @@ function independentlyCheck(seed: number, factory = createEngine) {
   }
 }
 
-test('review: independent per-character oracle checks concurrent random edits and undo', () => {
-  for (const seed of stressSeeds(randomRounds)) independentlyCheck(seed)
-})
+partitionedTest(
+  'review: independent per-character oracle checks concurrent random edits and undo',
+  () => {
+    for (const seed of stressSeeds(randomRounds)) independentlyCheck(seed)
+  },
+)
 
 test('review: independent per-character oracle kills last-delete-wins mutant', () => {
   const original = Effects.prototype.visible

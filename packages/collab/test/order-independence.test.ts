@@ -7,13 +7,17 @@ import {
   historyAuthor,
   identityState,
 } from './order-fixtures'
+import { stressSeeds } from './stress-seeds'
 
 const stress = process.env.COLLAB_STRESS === '1'
-const seeds = Array.from({ length: stress ? 16 : 3 }, (_, index) => index + 1)
+const seeds = (stress ? stressSeeds(16) : Array.from({ length: 3 }, (_, index) => index)).map(
+  (seed) => seed + 1,
+)
 const orders = 1_024
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
 
 for (const effects of [false, true]) {
-  test.each(seeds)(
+  partitionedTest.each(seeds)(
     `fixed edit sets are order-independent, effects=${effects}, seed=%i`,
     (seed) => {
       const edits = concurrentHistory(seed, effects, stress ? 120 : 8)

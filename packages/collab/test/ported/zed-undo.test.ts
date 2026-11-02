@@ -5,6 +5,7 @@ import { createEngine } from '../engine-fixture'
 import { expect, test } from 'vitest'
 import { simulate } from '../../src/index'
 import { undoRoom } from '../undo-fixtures'
+import { stressSeeds } from '../stress-seeds'
 
 test('Zed test_undo_redo: selective transaction effects and time grouping', () => {
   let time = 0
@@ -81,10 +82,13 @@ test('Zed test_edit_partially_intersecting_a_deleted_fragment: retain partial hi
 })
 
 const stress = process.env.COLLAB_STRESS === '1'
-const concurrentUndoSeeds = Array.from({ length: stress ? 100 : 6 }, (_, index) => 400 + index)
+const concurrentUndoSeeds = (
+  stress ? stressSeeds(100) : Array.from({ length: 6 }, (_, index) => index)
+).map((seed) => 400 + seed)
 const concurrentUndoEdits = stress ? 64 : 24
+const partitionedTest = process.env.COLLAB_STRESS_SHARED === '1' ? test.skip : test
 
-test.each(concurrentUndoSeeds)(
+partitionedTest.each(concurrentUndoSeeds)(
   'Zed test_random_concurrent_edits: edits, undo, redo and asynchronous delivery converge, seed %s',
   (seed) => {
     expect(
