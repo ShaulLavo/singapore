@@ -18,16 +18,26 @@ const syntax: MergeReviewSyntax = async (snapshot, ranges) =>
   ])
 
 type Probe = { readonly calls: number; readonly units: number }
+type TimedProbe = Probe & { readonly elapsedMs: number }
+
+const percentile = (values: readonly number[], quantile: number) =>
+  values.toSorted((a, b) => a - b)[Math.floor(values.length * quantile)]!
 
 function documentPair(text: string) {
   const options = { document: 'doc', epoch: 'epoch', text }
   const a = new CollaborationDocument({ ...options, peer: 'alice' })
   const b = new CollaborationDocument({ ...options, peer: 'bob' })
   const tasks: (() => void)[] = []
-  const review = new MergeReview(a, 'alice', { syntax }, () => {}, (run) => {
-    tasks.push(run)
-    return () => {}
-  })
+  const review = new MergeReview(
+    a,
+    'alice',
+    { syntax },
+    () => {},
+    (run) => {
+      tasks.push(run)
+      return () => {}
+    },
+  )
   return {
     a,
     b,
@@ -43,7 +53,7 @@ function documentPair(text: string) {
 async function measure(
   size: number,
   path: 'confirmed' | 'queued' | 'current',
-): Promise<Probe> {
+): Promise<TimedProbe> {
   const f = documentPair('x'.repeat(size))
   const left = f.a.participant.local({ offset: size - 1, deleteCount: 1, text: 'a' })
   const right = f.b.participant.local({ offset: size - 1, deleteCount: 1, text: 'b' })
@@ -54,13 +64,16 @@ async function measure(
   const original = TextbufferEngine.prototype.text
   let calls = 0
   let units = 0
-  const spy = vi.spyOn(TextbufferEngine.prototype, 'text').mockImplementation(function () {
+  const spy = vi.spyOn(TextbufferEngine.prototype, 'text').mockImplementation(function (
+    this: TextbufferEngine,
+  ) {
     const text = original.call(this)
     calls++
     units += text.length
     return text
   })
   try {
+    const before = performance.now()
     if (path === 'confirmed') {
       f.a.sequence(right)
     } else {
@@ -74,8 +87,7 @@ async function measure(
         expect(f.review.versions(mark)).toBeNull()
       }
     }
-    const result = { calls, units }
-    console.log(JSON.stringify({ size, path, ...result }))
+    const result = { calls, units, elapsedMs: performance.now() - before }
     return result
   } finally {
     spy.mockRestore()
@@ -85,10 +97,37 @@ async function measure(
 
 for (const size of [100_000, 1_000_000]) {
   for (const path of ['confirmed', 'queued', 'current'] as const) {
-    test(`baseline ${path} pending guard reads ${size} units`, async () => {
+    test(`pending ${path} guard stays text-free at ${size} units`, async () => {
       const result = await measure(size, path)
-      expect(result.calls).toBeGreaterThan(0)
-      expect(result.units).toBeGreaterThanOrEqual(size)
+      expect(result.calls).toBe(0)
+      expect(result.units).toBe(0)
     })
   }
 }
+
+test('pending-only guards stay text-free across calibrated samples', async () => {
+  for (const size of [100_000, 1_000_000]) {
+    for (const path of ['confirmed', 'queued', 'current'] as const) {
+      for (let warmup = 0; warmup < 2; warmup++) await measure(size, path)
+      const samples: TimedProbe[] = []
+      for (let sample = 0; sample < 10; sample++) {
+        const result = await measure(size, path)
+        expect(result.calls).toBe(0)
+        expect(result.units).toBe(0)
+        samples.push(result)
+      }
+      const elapsed = samples.map(({ elapsedMs }) => elapsedMs)
+      console.log(
+        JSON.stringify({
+          size,
+          path,
+          fullTextCalls: samples.map(({ calls }) => calls),
+          sourceUnits: samples.map(({ units }) => units),
+          p50Ms: percentile(elapsed, 0.5),
+          p95Ms: percentile(elapsed, 0.95),
+          samplesMs: elapsed,
+        }),
+      )
+    }
+  }
+})

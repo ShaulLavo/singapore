@@ -67,6 +67,17 @@ test('straight typing extends its reserved bunch and replay retains the IDs', ()
   expect(backwards.change).toMatchObject({ start: { bunch: 'a:1', counter: 0 } })
 })
 
+test('pending metadata reports status without changing the complete state contract', () => {
+  const a = replica('a')
+  expect(a.participant.hasPending()).toBe(false)
+  const edit = a.insert(0, 'a')
+  expect(a.participant.hasPending()).toBe(true)
+  expect(a.participant.state()).toMatchObject({ text: 'a', pending: [edit] })
+  accept(a.participant, [edit])
+  expect(a.participant.hasPending()).toBe(false)
+  expect(a.participant.state()).toMatchObject({ text: 'a', pending: [] })
+})
+
 test('deleting a counter span preserves concurrent inserts between its fragments', () => {
   const a = replica('a'),
     b = replica('b')

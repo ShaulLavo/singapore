@@ -71,6 +71,11 @@ export class Participant<Snapshot = unknown> {
     return this.options.engine.text()
   }
 
+  /** Reports pending work without materializing the participant text. */
+  hasPending(): boolean {
+    return this.pending.size > 0
+  }
+
   state(): ParticipantState {
     return { ...this.metadata(), text: this.text() }
   }
