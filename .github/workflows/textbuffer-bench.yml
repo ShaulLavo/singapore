@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '57 2 * * *'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'packages/textbuffer/**'
       - 'bun.lock'
@@ -20,11 +21,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: textbuffer-bench-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   compare:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

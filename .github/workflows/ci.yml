@@ -10,6 +10,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: ['main']
   workflow_dispatch:
@@ -21,8 +22,8 @@ permissions:
 # so main always has a verdict; pushes during a run collapse into one pending run of the newest
 # commit, because GitHub keeps one pending run per group.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # A PR that changes only Markdown under plans or docs, or root Markdown, runs no job below; none
@@ -30,6 +31,7 @@ jobs:
   # docs/performance), and package READMEs are code too: tests read them. Main runs
   # everything: collapsed pending runs mean one run's diff is not everything since the last verdict.
   changes:
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     name: Changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -56,7 +58,7 @@ jobs:
   check:
     name: Typecheck, lint, catalog
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.code == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -94,7 +96,7 @@ jobs:
   core:
     name: Test (core)
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.code == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -141,7 +143,7 @@ jobs:
   packages:
     name: Test (packages)
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.code == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -232,10 +234,15 @@ jobs:
   verdict:
     name: CI
     needs: [changes, check, core, packages]
-    if: ${{ always() }}
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Require a ready PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft
+        run: |
+          echo '::error::Mark this PR ready for review to run the required checks.'
+          exit 1
       - name: Verdict
         env:
           FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}

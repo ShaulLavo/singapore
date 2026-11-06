@@ -85,7 +85,7 @@ class WorkflowAdmissionTests(unittest.TestCase):
         self.assertEqual(self.workflow['on']['push']['branches'], ['main'])
         self.assertIn('workflow_dispatch', self.workflow['on'])
         build = self.workflow['jobs']['build']
-        self.assertNotIn('if', build)
+        self.assertEqual(build['if'], "${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}")
         source = json.dumps(build)
         self.assertNotIn('CLOUDFLARE_', source)
         self.assertNotIn('secrets.', source)
@@ -113,7 +113,10 @@ class WorkflowAdmissionTests(unittest.TestCase):
         self.assertNotIn('secrets.', json.dumps(other_steps))
 
     def test_publication_uses_one_noncanceling_destination_lock(self):
-        self.assertNotIn('concurrency', self.workflow)
+        self.assertEqual(self.workflow['concurrency'], {
+            'group': '${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}',
+            'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+        })
         _, job, _ = self.publications[0]
         self.assertEqual(job['concurrency'], {
             'group': 'product-sites-singapore',
