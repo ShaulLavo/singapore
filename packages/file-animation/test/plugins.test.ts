@@ -470,6 +470,10 @@ describe('createFileEditAnimationPlugin', () => {
           movedCount: 2,
         }),
       )
+      contribution.update(changed, 'content', edit(6))
+      contribution.update(changed, 'viewport')
+      expect(log).toHaveBeenCalledTimes(2)
+      expectNoFrameReference(contribution, opened.textSnapshot, next.textSnapshot)
       expect(pieceSpans(context).map((piece) => piece.textContent)).not.toContain('retired')
       contribution.dispose()
     },
