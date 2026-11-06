@@ -397,6 +397,239 @@ describe('LspClient', () => {
     })
   })
 
+  it.each([
+    { reject: false, reuse: false },
+    { reject: true, reuse: false },
+    { reject: false, reuse: true },
+    { reject: true, reuse: true },
+  ])('drops deferred server replies after reconnect: %o', async ({ reject, reuse }) => {
+    const deferred = deferredResult()
+    const { client, transport } = await initializedClientWithConfig({
+      serverRequestHandlers: { 'test/deferred': () => deferred.promise },
+    })
+    try {
+      transport.receive({ jsonrpc: '2.0', id: 7, method: 'test/deferred' })
+      const replacement = reuse ? transport : new TestTransport()
+      await connectTestTransport(client, replacement)
+      const sent = replacement.sent.length
+      if (reject) deferred.reject(new Error('old failure'))
+      else deferred.resolve('old result')
+      await Promise.resolve()
+      expect(replacement.sent).toHaveLength(sent)
+      expect(client.initialized).toBe(true)
+    } finally {
+      client.disconnect()
+    }
+  })
+
+  it.each([false, true])(
+    'drops deferred server replies after disconnect, reject %s',
+    async (reject) => {
+      const deferred = deferredResult()
+      const { client, transport } = await initializedClientWithConfig({
+        serverRequestHandlers: { 'test/deferred': () => deferred.promise },
+      })
+      transport.receive({ jsonrpc: '2.0', id: 7, method: 'test/deferred' })
+      client.disconnect()
+      const sent = transport.sent.length
+      if (reject) deferred.reject(new Error('old failure'))
+      else deferred.resolve('old result')
+      await Promise.resolve()
+      expect(transport.sent).toHaveLength(sent)
+    },
+  )
+
+  it.each([false, true])(
+    'keeps overlapping server request ids separate, reject %s',
+    async (reject) => {
+      const old = deferredResult()
+      const current = deferredResult()
+      const handler = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
+      const { client, transport } = await initializedClientWithConfig({
+        serverRequestHandlers: { 'test/deferred': handler },
+      })
+      const replacement = new TestTransport()
+      try {
+        transport.receive({ jsonrpc: '2.0', id: 'shared', method: 'test/deferred' })
+        await connectTestTransport(client, replacement)
+        replacement.receive({ jsonrpc: '2.0', id: 'shared', method: 'test/deferred' })
+        current.resolve('current result')
+        await Promise.resolve()
+        if (reject) old.reject(new Error('old failure'))
+        else old.resolve('old result')
+        await Promise.resolve()
+        expect(replacement.sent.filter((message) => message.id === 'shared')).toEqual([
+          { jsonrpc: '2.0', id: 'shared', result: 'current result' },
+        ])
+        expect(transport.sent.filter((message) => message.id === 'shared')).toEqual([])
+      } finally {
+        client.disconnect()
+      }
+    },
+  )
+
+  it.each([false, true])(
+    'drops a synchronously reconnected handler reply, throw %s',
+    async (throws) => {
+      const replacement = new TestTransport()
+      let reconnect: Promise<void> | undefined
+      const { client, transport } = await initializedClientWithConfig({
+        serverRequestHandlers: {
+          'test/reconnect': (client) => {
+            reconnect = client.connect(replacement)
+            if (throws) throw new Error('old failure')
+            return 'old result'
+          },
+        },
+      })
+      try {
+        transport.receive({ jsonrpc: '2.0', id: 7, method: 'test/reconnect' })
+        replacement.receive(initializeResponse(replacement.message(0), {}))
+        await reconnect
+        expect(replacement.sent.map((message) => message.method)).toEqual([
+          'initialize',
+          'initialized',
+        ])
+      } finally {
+        client.disconnect()
+      }
+    },
+  )
+
+  it.each([false, true])(
+    'cancels an obsolete initialization notification with transport reuse %s',
+    async (reuse) => {
+      const client = new LspClient()
+      const transport = new TestTransport()
+      const replacement = reuse ? transport : new TestTransport()
+      const initialization = client.connect(transport)
+      const reconnect = initialization.then(() => connectTestTransport(client, replacement))
+      const notification = client.notify('test/queued', { value: 1 })
+      const rejected = expect(notification).rejects.toBeInstanceOf(LspRequestCancelledError)
+      try {
+        transport.receive(initializeResponse(transport.message(0), {}))
+        await reconnect
+        await rejected
+        expect(replacement.sent.some((message) => message.method === 'test/queued')).toBe(false)
+        expect(client.initialized).toBe(true)
+      } finally {
+        client.disconnect()
+      }
+    },
+  )
+
+  it('sends queued and ready notifications once in initialization order', async () => {
+    const client = new LspClient()
+    const transport = new TestTransport()
+    const initialization = client.connect(transport)
+    const first = client.notify('test/first')
+    const second = client.notification('test/second')
+    try {
+      transport.receive(initializeResponse(transport.message(0), {}))
+      await Promise.all([initialization, first, second])
+      await client.notify('test/ready')
+      expect(transport.sent.map((message) => message.method)).toEqual([
+        'initialize',
+        'initialized',
+        'test/first',
+        'test/second',
+        'test/ready',
+      ])
+    } finally {
+      client.disconnect()
+    }
+  })
+
+  it('preserves the initialization error for queued notifications', async () => {
+    const client = new LspClient()
+    const transport = new TestTransport()
+    const initialization = client.connect(transport).catch((error: unknown) => error)
+    const notification = client.notify('test/queued').catch((error: unknown) => error)
+    try {
+      transport.receive({
+        jsonrpc: '2.0',
+        id: transport.message(0).id,
+        error: { code: -32000, message: 'initialization failed' },
+      })
+      const error = await initialization
+      expect(error).toBeInstanceOf(LspResponseError)
+      expect(await notification).toBe(error)
+      expect(transport.sent).toHaveLength(1)
+    } finally {
+      client.disconnect()
+    }
+  })
+
+  it('settles a queued notification once when disconnected without replacement', async () => {
+    vi.useFakeTimers()
+    const client = new LspClient()
+    const transport = new TestTransport()
+    const initialization = client.connect(transport).catch((error: unknown) => error)
+    const settled = vi.fn()
+    const notification = client.notify('test/queued').catch(settled)
+    client.disconnect()
+    const error = await initialization
+    await notification
+    expect(settled).toHaveBeenCalledExactlyOnceWith(error)
+    expect(error).toEqual(new Error('LSP client disconnected'))
+    expect(vi.getTimerCount()).toBe(0)
+    expect(transport.sent).toHaveLength(1)
+  })
+
+  it.each(['test/success', 'test/failure', 'test/unknown'])(
+    'does not disconnect a replacement after a reentrant reply send throws: %s',
+    async (method) => {
+      const { client, transport } = await initializedClientWithConfig({
+        serverRequestHandlers: {
+          'test/success': () => 'result',
+          'test/failure': () => {
+            throw new Error('handler failed')
+          },
+        },
+      })
+      const replacement = new TestTransport()
+      let reconnect: Promise<void> | undefined
+      const error = new Error('old send failed')
+      vi.spyOn(transport, 'send').mockImplementationOnce(() => {
+        reconnect = client.connect(replacement)
+        throw error
+      })
+      try {
+        transport.receive({ jsonrpc: '2.0', id: 7, method })
+        await Promise.resolve()
+        replacement.receive(initializeResponse(replacement.message(0), {}))
+        await reconnect
+        expect(client.initialized).toBe(true)
+        expect(replacement.sent.map((message) => message.method)).toEqual([
+          'initialize',
+          'initialized',
+        ])
+      } finally {
+        client.disconnect()
+      }
+    },
+  )
+
+  it('preserves a reentrant notification send error without disconnecting the replacement', async () => {
+    const { client, transport } = await initializedClient()
+    const replacement = new TestTransport()
+    let reconnect: Promise<void> | undefined
+    const error = new Error('old send failed')
+    vi.spyOn(transport, 'send').mockImplementationOnce(() => {
+      reconnect = client.connect(replacement)
+      throw error
+    })
+    try {
+      const rejected = expect(client.notify('test/event')).rejects.toBe(error)
+      replacement.receive(initializeResponse(replacement.message(0), {}))
+      await rejected
+      await reconnect
+      expect(client.initialized).toBe(true)
+    } finally {
+      client.disconnect()
+    }
+  })
+
   it('queues document opens until initialization completes', async () => {
     const workspace = new LspWorkspace()
     const document = openTestDocument(workspace, {
@@ -679,6 +912,22 @@ async function initializedClientWithConfig(
   transport.receive(initializeResponse(transport.message(0), capabilities))
   await initializing
   return { client, transport }
+}
+
+function deferredResult() {
+  let resolve: (value: unknown) => void = vi.fn()
+  let reject: (error: unknown) => void = vi.fn()
+  const promise = new Promise<unknown>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
+}
+
+async function connectTestTransport(client: LspClient, transport: TestTransport): Promise<void> {
+  const initializing = client.connect(transport)
+  transport.receive(initializeResponse(transport.lastMessage(), {}))
+  await initializing
 }
 
 function initializeResponse(request: JsonMessage, capabilities: JsonMessage): JsonMessage {
