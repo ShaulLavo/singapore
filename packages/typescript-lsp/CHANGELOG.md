@@ -1,5 +1,11 @@
 # @singapore-editor/typescript-lsp
 
+## 0.2.11
+
+### Patch Changes
+
+- Report browser-worker test results verbosely and refresh the internal LSP package pins.
+
 ## 0.2.10
 
 ### Patch Changes
