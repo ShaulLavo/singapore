@@ -21,6 +21,23 @@ declared by `site/package.json` and provides Chromium for the build-time capture
 runs the selected workspace package builds, then builds the docs with `/` and the demo with
 `/demo/`.
 
+## Publish from main
+
+The site workflow validates pull requests without production credentials. It checks the
+configuration and builds the same docs and demo artifact used for publication.
+
+Publication runs only after a successful build on a push to `main` or a manual
+`workflow_dispatch` on `main`. Pull requests, including fork pull requests, branch dispatches,
+and non-main pushes cannot publish. The deploy job downloads that run's validated artifact.
+Only its Wrangler step receives `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
+
+All production publications share the `product-sites-singapore` concurrency group. A new
+run does not cancel a running publication. The Worker, Custom Domain, public access, and
+`/` and `/demo/` routes are unchanged.
+
+After merging a reviewed change, observe the normal main workflow deployment before
+calling the public update verified. Do not deploy an unreviewed branch to validate this rule.
+
 ## Dry-run and deploy
 
 Wrangler is invoked at the pinned version used by the existing production configuration:
