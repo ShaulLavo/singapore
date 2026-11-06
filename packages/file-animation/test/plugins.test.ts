@@ -636,6 +636,84 @@ describe('createFileEditAnimationPlugin', () => {
     },
   )
 
+  it('does not retain or read lazy fold accessors and injected metadata', async () => {
+    const opened = snapshot()
+    const source = opened.textSnapshot
+    const getter = vi.fn(() => ({ source }))
+    const row = opened.visibleRows[0]!
+    Object.defineProperty(row, 'foldMarker', { enumerable: true, get: getter })
+    Object.defineProperty(row, 'metadata', { enumerable: true, value: { source } })
+    const { contribution } = mountMorph({}, opened)
+    contribution.update(snapshot({ text: EDITED, textVersion: 2 }), 'content', edit(12))
+    await finishRecordedAnimations()
+    const retained = Reflect.get(contribution, 'before').visibleRows[0]
+    expect(retained === row).toBe(false)
+    expect(Object.getOwnPropertyDescriptor(retained, 'foldMarker')?.get).toBeUndefined()
+    expect(retained.metadata).toBeUndefined()
+    expect(getter).not.toHaveBeenCalled()
+    expectNoFrameReference(contribution, source)
+  })
+
+  it.each([0, 1, 2])('settles a lazy whole row after %s preceding viewport updates', (count) => {
+    const { context, contribution } = mountMorph({}, snapshot({ text: 'old' }))
+    const changed = snapshot({ text: 'old new', textVersion: 2 })
+    contribution.update(changed, 'content', edit(4))
+    expect(context.contentElement.querySelector('.editor-morph-layer')).not.toBeNull()
+    const text = 'windowed text'
+    const lazy = new RangeText(text.length, (from, to) => text.slice(from, to), measureString(text))
+    const next = snapshot({
+      text,
+      textVersion: 3,
+      visibleRows: snapshot({ text }).visibleRows.map((row) => ({ ...row, text: lazy })),
+    })
+    for (let index = 0; index < count; index++) contribution.update(next, 'viewport')
+    contribution.update(next, 'content', edit(1))
+    expect(Reflect.get(contribution, 'runSnapshot')).toBeNull()
+    expect(context.contentElement.querySelector('.editor-morph-layer')).toBeNull()
+    expect(context.scrollElement.classList.contains('editor-morph-active')).toBe(false)
+    expectNoFrameReference(contribution, changed.textSnapshot, next.textSnapshot, lazy)
+  })
+
+  it('copies only mounted token backing and styles, including overlapping boundary tokens', () => {
+    const text = 'word\n'.repeat(1000)
+    const allTokens = EditorTokenStore.fromTokens(
+      [{ start: 0, end: text.length, style: { color: 'red' } }].concat(
+        Array.from({ length: 1000 }, (_, index) => ({
+          start: index * 5,
+          end: index * 5 + 4,
+          style: { color: index === 1 ? 'blue' : 'green' },
+        })),
+      ),
+    )
+    const full = snapshot({ text, tokens: allTokens })
+    const rows = [full.visibleRows[1]!, full.visibleRows[900]!]
+    const { contribution } = mountMorph({}, { ...full, visibleRows: rows })
+    const captured = Reflect.get(contribution, 'latest')
+    expect(captured.tokens === allTokens).toBe(false)
+    expect(captured.tokens.toTokens()).toEqual([
+      { start: 0, end: text.length, style: { color: 'red' } },
+      { start: 5, end: 9, style: { color: 'blue' } },
+      { start: 4500, end: 4504, style: { color: 'green' } },
+    ])
+    const documentBacking = EditorTokenStore.inspectRetention([allTokens]).backingBytes
+    const capturedBacking = EditorTokenStore.inspectRetention([captured.tokens]).backingBytes
+    expect(capturedBacking).toBeLessThan(100)
+    expect(EditorTokenStore.inspectRetention([allTokens, captured.tokens]).backingBytes).toBe(
+      documentBacking + capturedBacking,
+    )
+  })
+
+  it('retains only replacement ranges intersecting mounted rows', () => {
+    const opened = snapshot({ text: 'first\nsecond' })
+    const { context, contribution } = mountMorph({}, opened)
+    const onScreen = { start: 0, end: 5 }
+    const offScreen = { start: 10000, end: 20000 }
+    vi.spyOn(context, 'getInlineReplacementRanges').mockReturnValue([onScreen, offScreen])
+    contribution.update(opened, 'tokens')
+    expect(Reflect.get(contribution, 'latestReplaced')).toEqual([onScreen])
+    expect(Reflect.get(contribution, 'latestReplaced')[0]).not.toBe(onScreen)
+  })
+
   it('recolors a running morph through unchanged layout and viewport updates', () => {
     const opened = snapshot()
     const { context, contribution } = mountMorph({}, opened)
