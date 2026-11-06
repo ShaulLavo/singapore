@@ -6,8 +6,9 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
+import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import { TextMeasurer, canvasFont, renderedTabColumns } from './measure'
-import { buildFrame, frameMoved, recolorFrame, type MorphFrame } from './morph-frame'
+import { buildFrame, frameMoved, recolorFrame, type MorphFrame, type PaintRow } from './morph-frame'
 import { matchPieces } from './morph-match'
 import { MorphRun, restingPieces, springEasing, type MorphTiming } from './morph-run'
 import { RowCover } from './row-cover'
@@ -58,30 +59,77 @@ type ResolvedEditAnimationOptions = {
   readonly maxPieces: number
 }
 
-type EditFrame = Pick<EditorViewSnapshot, 'documentId' | 'textVersion' | 'visibleRows' | 'tokens'>
+type EditFrame = Pick<EditorViewSnapshot, 'documentId' | 'textVersion' | 'tokens'> & {
+  readonly visibleRows: readonly PaintRow[]
+}
 
 function editFrame(snapshot: EditorViewSnapshot): EditFrame | null {
-  const { documentId, textVersion, visibleRows, tokens } = snapshot
-  let capturedRows: EditorViewSnapshot['visibleRows'][number][] | null = null
-  for (const [index, row] of visibleRows.entries()) {
+  const visibleRows: PaintRow[] = []
+  for (const row of snapshot.visibleRows) {
     const text = row.text
     // A horizontally windowed row cannot be replayed as a whole line.
     if (typeof text !== 'string') return null
-    if (row.chunks.every((chunk) => typeof chunk.text === 'string')) continue
-    capturedRows ??= visibleRows.slice()
-    capturedRows[index] = {
-      ...row,
+    visibleRows.push({
+      index: row.index,
+      kind: row.kind,
+      startOffset: row.startOffset,
+      endOffset: row.endOffset,
+      text,
+      top: row.top,
+      height: row.height,
+      leftSpacerWidth: row.leftSpacerWidth,
+      mountedPaintSupport: row.mountedPaintSupport,
       chunks: row.chunks.map((chunk) => ({
-        ...chunk,
-        // Only mounted text is needed, never the source-backed RangeText reader.
         text:
           typeof chunk.text === 'string'
             ? chunk.text
             : text.slice(chunk.rowLocalStart, chunk.rowLocalEnd),
+        mountedPaint: chunk.mountedPaint,
       })),
-    }
+    })
   }
-  return { documentId, textVersion, visibleRows: capturedRows ?? visibleRows, tokens }
+  return {
+    documentId: snapshot.documentId,
+    textVersion: snapshot.textVersion,
+    visibleRows,
+    tokens: mountedTokens(snapshot.tokens, visibleRows),
+  }
+}
+
+function addRowTokens(indices: Set<number>, tokens: EditorTokenStore, row: PaintRow): void {
+  if (row.endOffset <= row.startOffset) return
+  const end = tokens.firstStartingAtOrAfter(row.endOffset)
+  for (let index = tokens.firstEndingAfter(row.startOffset, end); index < end; index++) {
+    if (tokens.endAt(index) > row.startOffset) indices.add(index)
+  }
+}
+
+function mountedTokens(tokens: EditorTokenStore, rows: readonly PaintRow[]): EditorTokenStore {
+  const indices = new Set<number>()
+  for (const row of rows) addRowTokens(indices, tokens, row)
+  const selected = Array.from(indices)
+  selected.sort((first, second) => first - second)
+  return EditorTokenStore.fromTokens(
+    selected.map((index) => {
+      const { color, fontStyle, fontWeight } = tokens.styleAt(index)
+      return {
+        start: tokens.startAt(index),
+        end: tokens.endAt(index),
+        style: { color, fontStyle, fontWeight },
+      }
+    }),
+  )
+}
+
+function mountedReplacements(
+  ranges: readonly TextOffsetRange[],
+  rows: readonly PaintRow[],
+): readonly TextOffsetRange[] {
+  return ranges
+    .filter((range) =>
+      rows.some((row) => range.start < row.endOffset && range.end > row.startOffset),
+    )
+    .map(({ start, end }) => ({ start, end }))
 }
 
 class FileEditAnimationViewContribution implements EditorViewContribution {
@@ -108,7 +156,10 @@ class FileEditAnimationViewContribution implements EditorViewContribution {
     // Added to an editor that already shows a document, the first change still needs its before.
     this.cover = new RowCover(context)
     if (context.hasDocument()) this.latest = editFrame(context.getSnapshot())
-    this.latestReplaced = context.getInlineReplacementRanges()
+    this.latestReplaced = mountedReplacements(
+      context.getInlineReplacementRanges(),
+      this.latest?.visibleRows ?? [],
+    )
   }
 
   public update(
@@ -121,7 +172,22 @@ class FileEditAnimationViewContribution implements EditorViewContribution {
       this.before = null
       this.beforeReplaced = []
       this.latest = kind === 'clear' ? null : editFrame(snapshot)
-      this.latestReplaced = kind === 'clear' ? [] : this.context.getInlineReplacementRanges()
+      this.latestReplaced =
+        kind === 'clear'
+          ? []
+          : mountedReplacements(
+              this.context.getInlineReplacementRanges(),
+              this.latest?.visibleRows ?? [],
+            )
+      return
+    }
+    const captured = editFrame(snapshot)
+    if (!captured) {
+      this.finish()
+      this.latest = null
+      this.before = null
+      this.latestReplaced = []
+      this.beforeReplaced = []
       return
     }
     // One pass can deliver the new text under several kinds, `viewport` before `content`.
@@ -129,9 +195,13 @@ class FileEditAnimationViewContribution implements EditorViewContribution {
       this.before = this.latest
       this.beforeReplaced = this.latestReplaced
     }
-    this.latest = editFrame(snapshot)
+    this.latest = captured
     // Read while each snapshot is current: once the text changes, the old replacements are gone.
-    if (kind !== 'viewport') this.latestReplaced = this.context.getInlineReplacementRanges()
+    if (kind !== 'viewport')
+      this.latestReplaced = mountedReplacements(
+        this.context.getInlineReplacementRanges(),
+        captured.visibleRows,
+      )
     const previous = this.before
     if (kind === 'layout') this.measurer = null
     if (kind !== 'content' || (change && !TEXT_CHANGES.has(change.kind))) {
