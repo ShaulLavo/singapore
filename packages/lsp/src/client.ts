@@ -53,6 +53,11 @@ export type LspClientConfig = {
   readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
 }
 
+type Connection = {
+  readonly transport: LspTransport
+  readonly epoch: number
+}
+
 type PendingRequest = {
   readonly id: LspRequestId
   readonly method: string
@@ -189,9 +194,11 @@ export class LspClient {
 
   public notify<TParams = unknown>(method: string, params?: TParams): Promise<void> {
     if (!this.transport) return Promise.reject(new Error('LSP client is not connected'))
-    if (this.state === 'ready') return this.notifyReady(method, params)
+    const connection = { transport: this.transport, epoch: this.connectionEpoch }
+    const send = () => this.notifyReady(method, params, connection)
+    if (this.state === 'ready') return send()
 
-    return this.awaitInitialization().then(() => this.notifyReady(method, params))
+    return this.awaitInitialization().then(send)
   }
 
   public notification<TParams = unknown>(method: string, params?: TParams): Promise<void> {
@@ -469,28 +476,35 @@ export class LspClient {
   }
 
   private sendMessage(transport: LspTransport, message: string, pending: PendingRequest): void {
+    const connection = { transport, epoch: this.connectionEpoch }
     try {
       transport.send(message)
     } catch (error) {
       this.deletePendingRequest(pending.id)
-      this.handleTransportSendError(error)
+      this.handleTransportSendError(connection)
       pending.reject(error)
     }
   }
 
-  private sendNotification(method: string, params?: unknown): void {
-    const transport = this.requireTransport()
+  private sendNotification(
+    method: string,
+    params?: unknown,
+    connection: Connection = { transport: this.requireTransport(), epoch: this.connectionEpoch },
+  ): void {
     try {
-      transport.send(JSON.stringify(createNotificationMessage(method, params)))
+      if (!this.isCurrentConnection(connection)) throw new LspRequestCancelledError()
+      const message = JSON.stringify(createNotificationMessage(method, params))
+      if (!this.isCurrentConnection(connection)) throw new LspRequestCancelledError()
+      connection.transport.send(message)
     } catch (error) {
-      this.handleTransportSendError(error)
+      this.handleTransportSendError(connection)
       throw error
     }
   }
 
-  private notifyReady(method: string, params?: unknown): Promise<void> {
+  private notifyReady(method: string, params: unknown, connection: Connection): Promise<void> {
     try {
-      this.sendNotification(method, params)
+      this.sendNotification(method, params, connection)
       return Promise.resolve()
     } catch (error) {
       return Promise.reject(error)
@@ -559,9 +573,11 @@ export class LspClient {
   }
 
   private handleRequest(message: lsp.RequestMessage): void {
+    if (!this.transport) return
+    const connection = { transport: this.transport, epoch: this.connectionEpoch }
     const handler = this.config.serverRequestHandlers?.[message.method]
     if (!handler) {
-      this.sendServerResponse(createMethodNotFoundResponse(message.id, message.method))
+      this.sendServerResponse(createMethodNotFoundResponse(message.id, message.method), connection)
       return
     }
 
@@ -569,24 +585,26 @@ export class LspClient {
     try {
       result = handler(this, message.params, message)
     } catch (error) {
-      this.sendServerResponse(createInternalErrorResponse(message.id, error))
+      this.sendServerResponse(createInternalErrorResponse(message.id, error), connection)
       return
     }
 
     void Promise.resolve(result).then(
-      (result) => this.sendServerResponse(createResponseMessage(message.id, result)),
-      (error) => this.sendServerResponse(createInternalErrorResponse(message.id, error)),
+      (result) => this.sendServerResponse(createResponseMessage(message.id, result), connection),
+      (error) =>
+        this.sendServerResponse(createInternalErrorResponse(message.id, error), connection),
     )
   }
 
-  private sendServerResponse(message: lsp.ResponseMessage): void {
-    const transport = this.transport
-    if (!transport) return
+  private sendServerResponse(message: lsp.ResponseMessage, connection: Connection): void {
+    if (!this.isCurrentConnection(connection)) return
 
     try {
-      transport.send(JSON.stringify(message))
-    } catch (error) {
-      this.handleTransportSendError(error)
+      const encoded = JSON.stringify(message)
+      if (!this.isCurrentConnection(connection)) return
+      connection.transport.send(encoded)
+    } catch {
+      this.handleTransportSendError(connection)
     }
   }
 
@@ -626,10 +644,12 @@ export class LspClient {
     this.pendingRequests.clear()
   }
 
-  private handleTransportSendError(_error: unknown): void {
-    if (!this.transport) return
+  private isCurrentConnection(connection: Connection): boolean {
+    return this.connectionEpoch === connection.epoch && this.transport === connection.transport
+  }
 
-    this.disconnect()
+  private handleTransportSendError(connection: Connection): void {
+    if (this.isCurrentConnection(connection)) this.disconnect()
   }
 
   private awaitInitialization(): Promise<void> {

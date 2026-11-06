@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  LspClient,
   LspTransportClosedError,
   createWebSocketLspTransport,
   createWorkerLspTransport,
+  type LspManagedTransport,
   type LspTransportHandler,
   type LspWebSocketLike,
   type LspWorkerLike,
@@ -48,7 +50,7 @@ class FakeWebSocket implements LspWebSocketLike {
     this.emit('open')
   }
 
-  public receive(message: string): void {
+  public receive(message: unknown): void {
     this.emit('message', message)
   }
 
@@ -330,5 +332,169 @@ describe('Worker LSP transport', () => {
 
     expect(errors).toHaveLength(1)
     expect(errors[0]).toEqual(new Error('worker crashed'))
+  })
+})
+
+type TransportFixture = {
+  transport: LspManagedTransport
+  sent: readonly unknown[]
+  receive(message: unknown): void
+}
+
+async function transportFixture(kind: 'worker' | 'socket'): Promise<TransportFixture> {
+  if (kind === 'worker') {
+    const worker = new FakeWorker()
+    return {
+      transport: createWorkerLspTransport(worker),
+      sent: worker.sent,
+      receive: (message) => worker.receive(message),
+    }
+  }
+  const pending = createWebSocketLspTransport('ws://fixture', { WebSocketCtor: FakeWebSocket })
+  const socket = FakeWebSocket.instances.at(-1)!
+  socket.open()
+  return {
+    transport: await pending,
+    sent: socket.sent,
+    receive: (message) => socket.receive(message),
+  }
+}
+
+function parseSentFrame(encoded: unknown): object {
+  if (typeof encoded !== 'string') throw new Error('Expected an encoded outgoing frame')
+  const frame: unknown = JSON.parse(encoded)
+  if (!frame || typeof frame !== 'object' || Array.isArray(frame)) {
+    throw new Error('Expected an outgoing object frame')
+  }
+  return frame
+}
+
+function lastSentFrame(fixture: TransportFixture): object {
+  return parseSentFrame(fixture.sent.at(-1))
+}
+
+function answerInitialization(fixture: TransportFixture): void {
+  const frame = fixture.sent
+    .map(parseSentFrame)
+    .findLast((frame) => 'method' in frame && frame.method === 'initialize')
+  if (!frame || !('id' in frame)) throw new Error('Expected an initialize request')
+  fixture.receive(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: { capabilities: {} } }))
+}
+
+describe.each(['worker', 'socket'] as const)('%s dispatch registration lifetimes', (kind) => {
+  it.each([false, true])(
+    'does not redeliver a frame after same-transport reconnect, throw %s',
+    async (throws) => {
+      const fixture = await transportFixture(kind)
+      let calls = 0
+      let reconnect: Promise<void> | undefined
+      const client = new LspClient({
+        serverRequestHandlers: {
+          'test/reconnect': (client) => {
+            calls++
+            if (calls === 1) reconnect = client.connect(fixture.transport)
+            if (throws) throw new Error('retired request failure')
+            return 'retired result'
+          },
+          'test/current': () => 'current result',
+        },
+      })
+      try {
+        const connected = client.connect(fixture.transport)
+        answerInitialization(fixture)
+        await connected
+        fixture.receive(JSON.stringify({ jsonrpc: '2.0', id: 'retired', method: 'test/reconnect' }))
+        answerInitialization(fixture)
+        await reconnect
+        await Promise.resolve()
+        expect(calls).toBe(1)
+        expect(
+          fixture.sent.some((frame) => typeof frame === 'string' && frame.includes('"retired"')),
+        ).toBe(false)
+        fixture.receive(JSON.stringify({ jsonrpc: '2.0', id: 'current', method: 'test/current' }))
+        await Promise.resolve()
+        expect(lastSentFrame(fixture)).toEqual({
+          jsonrpc: '2.0',
+          id: 'current',
+          result: 'current result',
+        })
+        expect(client.initialized).toBe(true)
+      } finally {
+        client.disconnect()
+        fixture.transport.close()
+      }
+    },
+  )
+
+  it('does not deliver an old frame to added or renewed registrations', async () => {
+    const fixture = await transportFixture(kind)
+    const received: string[] = []
+    const renewed = (message: string): void => {
+      received.push(`renewed:${message}`)
+    }
+    const added = (message: string): void => {
+      received.push(`added:${message}`)
+    }
+    let first = true
+    fixture.transport.subscribe((message) => {
+      received.push(`first:${message}`)
+      if (!first) return
+      first = false
+      fixture.transport.unsubscribe(renewed)
+      fixture.transport.subscribe(renewed)
+      fixture.transport.subscribe(added)
+    })
+    fixture.transport.subscribe(renewed)
+    try {
+      fixture.receive('old')
+      expect(received).toEqual(['first:old'])
+      fixture.receive('new')
+      expect(received).toEqual(['first:old', 'first:new', 'renewed:new', 'added:new'])
+    } finally {
+      fixture.transport.close()
+    }
+  })
+
+  it('admits new registrations for a genuinely nested new frame only', async () => {
+    const fixture = await transportFixture(kind)
+    const received: string[] = []
+    const added = (message: string): void => {
+      received.push(`added:${message}`)
+    }
+    fixture.transport.subscribe((message) => {
+      received.push(`first:${message}`)
+      if (message !== 'outer') return
+      fixture.transport.subscribe(added)
+      fixture.receive('inner')
+    })
+    try {
+      fixture.receive('outer')
+      expect(received).toEqual(['first:outer', 'first:inner', 'added:inner'])
+    } finally {
+      fixture.transport.close()
+    }
+  })
+
+  it('captures registrations before object-message normalization reentry', async () => {
+    const fixture = await transportFixture(kind)
+    const received: string[] = []
+    const handler = (message: string): void => {
+      received.push(message)
+    }
+    fixture.transport.subscribe(handler)
+    try {
+      fixture.receive({
+        toJSON: () => {
+          fixture.transport.unsubscribe(handler)
+          fixture.transport.subscribe(handler)
+          return { method: 'old' }
+        },
+      })
+      expect(received).toEqual([])
+      fixture.receive('new')
+      expect(received).toEqual(['new'])
+    } finally {
+      fixture.transport.close()
+    }
   })
 })
