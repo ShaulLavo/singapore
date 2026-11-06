@@ -70,6 +70,9 @@ jobs:
         working-directory: site
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
+      - name: Check browser cache platform isolation
+        run: bun scripts/ci/browser-cache-platform.ts
+
       - name: Check turbo inputs
         run: bun scripts/check-turbo-inputs.mjs
 
@@ -100,17 +103,21 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Playwright version
+      - name: Playwright version and platform
         id: playwright
         working-directory: packages/editor
-        run: echo "version=$(./node_modules/.bin/playwright --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+        run: |
+          . /etc/os-release
+          : "${ID:?}" "${VERSION_ID:?}"
+          echo "version=$(./node_modules/.bin/playwright --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+          echo "platform=${ID}-${VERSION_ID}-${{ runner.arch }}" >> "$GITHUB_OUTPUT"
 
       # Browsers are a download per Playwright release; the OS libraries still come from apt.
       - name: Cache Playwright browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
+          key: playwright-v2-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
 
       # Browser projects check geometry and CSS behavior that happy-dom cannot reproduce.
       # Run the workspace's own Playwright, not `bunx playwright` — bare `bunx` fetches the latest
@@ -143,17 +150,21 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Playwright version
+      - name: Playwright version and platform
         id: playwright
         working-directory: packages/editor
-        run: echo "version=$(./node_modules/.bin/playwright --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+        run: |
+          . /etc/os-release
+          : "${ID:?}" "${VERSION_ID:?}"
+          echo "version=$(./node_modules/.bin/playwright --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
+          echo "platform=${ID}-${VERSION_ID}-${{ runner.arch }}" >> "$GITHUB_OUTPUT"
 
       # Browsers are a download per Playwright release; the OS libraries still come from apt.
       - name: Cache Playwright browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
+          key: playwright-v2-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
 
       - name: Install Playwright browsers
         working-directory: packages/editor
@@ -174,8 +185,11 @@ jobs:
       - name: Check architecture health baselines
         run: bun run health
 
-      - name: Test tree-sitter browser worker
-        run: bun run --cwd packages/tree-sitter test:browser
+      - name: Check CI test ownership and mutation controls
+        run: bun run test:ci
+
+      - name: Test TypeScript source worker and browser parity
+        run: bun run test:browser -- --concurrency=1 --filter=@singapore-editor/typescript-lsp
 
       # Each Vitest process sizes its worker pool for the whole runner. Serialize packages
       # so cache misses cannot multiply those pools and starve CPU-heavy tests.
