@@ -4,7 +4,7 @@ import type {
 } from '@singapore-editor/core/extensions'
 import type { MorphTiming } from './morph-run'
 
-type VisibleRow = EditorViewSnapshot['visibleRows'][number]
+type VisibleRow = Pick<EditorViewSnapshot['visibleRows'][number], 'index' | 'kind' | 'text' | 'top'>
 
 /**
  * Rows the overlay cannot redraw, such as rendered Markdown, animated as whole real rows: a row
@@ -78,7 +78,7 @@ function animateRow(element: HTMLElement, move: RowMove, timing: MorphTiming): A
  * rows they took, which the overlay must leave out.
  */
 export function rowMoves(
-  before: Pick<EditorViewSnapshot, 'visibleRows'> | null,
+  before: { readonly visibleRows: readonly VisibleRow[] } | null,
   after: EditorViewSnapshot,
   rows: ReadonlySet<number>,
   shift: ScreenShift = { dx: 0, dy: 0 },

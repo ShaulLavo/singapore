@@ -25,6 +25,18 @@ export type MorphFrame = {
 
 type Tokens = EditorViewSnapshot['tokens']
 type VisibleRow = EditorViewSnapshot['visibleRows'][number]
+export type PaintRow = Pick<
+  VisibleRow,
+  | 'index'
+  | 'kind'
+  | 'text'
+  | 'startOffset'
+  | 'endOffset'
+  | 'leftSpacerWidth'
+  | 'top'
+  | 'height'
+  | 'mountedPaintSupport'
+> & { readonly chunks: readonly Pick<VisibleRow['chunks'][number], 'text' | 'mountedPaint'>[] }
 type TokenStyle = ReturnType<Tokens['styleAt']>
 
 // Words, runs of punctuation, and whitespace. Whitespace only advances x.
@@ -39,11 +51,11 @@ const WHITESPACE = /^\s+$/
  * are left out instead, for a caller that leaves those rows uncovered.
  */
 export function buildFrame(
-  snapshot: Pick<EditorViewSnapshot, 'visibleRows' | 'tokens'>,
+  snapshot: { readonly visibleRows: readonly PaintRow[]; readonly tokens: Tokens },
   measurer: TextMeasurer,
   maxPieces: number,
   maxRows = Number.POSITIVE_INFINITY,
-  drawable?: (row: VisibleRow) => boolean,
+  drawable?: (row: PaintRow) => boolean,
 ): MorphFrame | null {
   const pieces: MorphPiece[] = []
   const styleAt = tokenStyleLookup(snapshot.tokens)
@@ -157,7 +169,7 @@ function tokenStyleLookup(
   }
 }
 
-export function drawsAsPlainText(row: VisibleRow): boolean {
+export function drawsAsPlainText(row: PaintRow): boolean {
   if (row.mountedPaintSupport !== 'replayable') return false
   return row.chunks.every(
     (chunk) =>

@@ -1,8 +1,5 @@
-import type {
-  EditorViewContributionContext,
-  EditorViewSnapshot,
-} from '@singapore-editor/core/extensions'
-import { drawsAsPlainText } from './morph-frame'
+import type { EditorViewContributionContext } from '@singapore-editor/core/extensions'
+import { drawsAsPlainText, type PaintRow } from './morph-frame'
 
 export type TextOffsetRange = ReturnType<
   EditorViewContributionContext['getInlineReplacementRanges']
@@ -20,7 +17,7 @@ export function supportsLinearEasing(context: EditorViewContributionContext): bo
 
 /** Rows painted as their own source text, which the overlay can redraw. */
 export function drawableRows(
-  snapshot: Pick<EditorViewSnapshot, 'visibleRows'>,
+  snapshot: { readonly visibleRows: readonly PaintRow[] },
   replaced: readonly TextOffsetRange[],
 ): Set<number> {
   const rows = new Set<number>()
