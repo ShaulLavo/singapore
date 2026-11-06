@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import re
@@ -5,6 +6,118 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+
+def evaluate_condition(condition, event_name, ref):
+    if condition is None:
+        return True
+    expression = condition.removeprefix('${{').removesuffix('}}').strip()
+    expression = expression.replace('github.event_name', repr(event_name))
+    expression = expression.replace('github.ref', repr(ref))
+    expression = expression.replace('&&', ' and ').replace('||', ' or ')
+    tree = ast.parse(expression, mode='eval')
+    allowed = (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare,
+               ast.Eq, ast.NotEq, ast.Constant)
+    if any(not isinstance(node, allowed) for node in ast.walk(tree)):
+        raise ValueError(f'Unsupported workflow condition: {condition}')
+    return bool(eval(compile(tree, '<workflow condition>', 'eval'), {'__builtins__': {}}))
+
+
+class WorkflowAdmissionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            ['bun', '-e', 'console.log(JSON.stringify(Bun.YAML.parse(await Bun.file(process.argv[1]).text())))',
+             str(root / '.github/workflows/site.yml')],
+            check=True, capture_output=True, text=True,
+        )
+        cls.workflow = json.loads(result.stdout)
+        cls.publications = [
+            (job_id, job, step)
+            for job_id, job in cls.workflow['jobs'].items()
+            for step in job['steps']
+            if re.search(r'\bwrangler(?:@\S+)?\s+deploy\b', step.get('run', ''))
+        ]
+
+    def test_actual_publication_conditions_admit_only_main_push_and_dispatch(self):
+        self.assertEqual(len(self.publications), 1)
+        cases = (
+            ('pull_request', 'refs/pull/123/merge', False),
+            ('pull_request', 'refs/heads/main', False),
+            ('pull_request_target', 'refs/heads/main', False),
+            ('workflow_dispatch', 'refs/heads/feature', False),
+            ('push', 'refs/heads/feature', False),
+            ('push', 'refs/tags/main', False),
+            ('push', 'refs/heads/main', True),
+            ('workflow_dispatch', 'refs/heads/main', True),
+        )
+        for event_name, ref, expected in cases:
+            with self.subTest(event_name=event_name, ref=ref):
+                self.assertEqual(self.publication_admitted(event_name, ref), expected)
+
+    def publication_admitted(self, event_name, ref):
+        _, job, step = self.publications[0]
+        return evaluate_condition(job.get('if'), event_name, ref) and evaluate_condition(
+            step.get('if'), event_name, ref,
+        )
+
+    def test_publication_waits_for_validation_artifact(self):
+        self.assertEqual(len(self.publications), 1)
+        job_id, job, _ = self.publications[0]
+        self.assertNotEqual(job_id, 'build')
+        self.assertEqual(job['needs'], 'build')
+        uploads = self.artifacts(self.workflow['jobs']['build'], 'upload-artifact')
+        downloads = self.artifacts(job, 'download-artifact')
+        self.assertEqual(len(uploads), 1)
+        self.assertEqual(len(downloads), 1)
+        self.assertEqual(uploads[0]['with']['path'], 'dist')
+        self.assertTrue(uploads[0]['with']['include-hidden-files'])
+        self.assertEqual(downloads[0]['with']['path'], 'dist')
+        self.assertEqual(uploads[0]['with']['name'], downloads[0]['with']['name'])
+
+    def artifacts(self, job, action):
+        return [step for step in job['steps'] if step.get('uses', '').startswith(f'actions/{action}@')]
+
+    def test_validation_stays_credential_free_and_active_on_prs(self):
+        self.assertIn('pull_request', self.workflow['on'])
+        self.assertEqual(self.workflow['on']['push']['branches'], ['main'])
+        self.assertIn('workflow_dispatch', self.workflow['on'])
+        build = self.workflow['jobs']['build']
+        self.assertNotIn('if', build)
+        source = json.dumps(build)
+        self.assertNotIn('CLOUDFLARE_', source)
+        self.assertNotIn('secrets.', source)
+        self.assertNotIn('wrangler', source)
+        self.assertIn("python3 -m unittest discover -s scripts/product-sites -p 'test_*.py'", source)
+        self.assertIn('bash scripts/product-sites/build.sh dist', source)
+        self.assertIn('test -f dist/index.html', source)
+        self.assertIn('test -f dist/demo/index.html', source)
+        self.assertIn('test -f dist/_headers', source)
+
+    def test_publication_variables_exist_only_on_deploy_step(self):
+        self.assertNotIn('env', self.workflow)
+        for job in self.workflow['jobs'].values():
+            self.assertNotIn('env', job)
+        _, _, deploy = self.publications[0]
+        self.assertEqual(deploy['env'], {
+            'CLOUDFLARE_ACCOUNT_ID': '${{ vars.CLOUDFLARE_ACCOUNT_ID }}',
+            'CLOUDFLARE_API_TOKEN': '${{ secrets.CLOUDFLARE_API_TOKEN }}',
+        })
+        other_steps = [
+            step for job in self.workflow['jobs'].values() for step in job['steps']
+            if step is not deploy
+        ]
+        self.assertNotIn('CLOUDFLARE_', json.dumps(other_steps))
+        self.assertNotIn('secrets.', json.dumps(other_steps))
+
+    def test_publication_uses_one_noncanceling_destination_lock(self):
+        self.assertNotIn('concurrency', self.workflow)
+        _, job, _ = self.publications[0]
+        self.assertEqual(job['concurrency'], {
+            'group': 'product-sites-singapore',
+            'cancel-in-progress': False,
+        })
 
 
 class DeploymentTests(unittest.TestCase):
