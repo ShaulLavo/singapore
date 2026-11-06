@@ -103,7 +103,8 @@ export const createWorkerLspTransport = (
 ): LspManagedTransport => new WorkerLspTransport(worker, options)
 
 class WebSocketLspTransport implements LspManagedTransport {
-  private readonly handlers = new Set<LspTransportHandler>()
+  private readonly handlers = new Map<LspTransportHandler, number>()
+  private nextRegistration = 0
   private readonly closeHandlers = new Set<(error?: unknown) => void>()
   private closed = false
   private sentCount = 0
@@ -131,7 +132,8 @@ class WebSocketLspTransport implements LspManagedTransport {
   }
 
   public subscribe(handler: LspTransportHandler): void {
-    this.handlers.add(handler)
+    if (this.handlers.has(handler)) return
+    this.handlers.set(handler, ++this.nextRegistration)
   }
 
   public unsubscribe(handler: LspTransportHandler): void {
@@ -152,10 +154,14 @@ class WebSocketLspTransport implements LspManagedTransport {
   }
 
   private readonly handleMessage = (event: Event): void => {
+    const cutoff = this.nextRegistration
     const message = messageEventData(event)
     if (message === null) return
     this.receivedCount += 1
-    for (const handler of this.handlers) handler(message)
+    for (const [handler, registration] of this.handlers) {
+      if (registration > cutoff) continue
+      handler(message)
+    }
   }
 
   private readonly handleClose = (event: Event): void => {
@@ -180,7 +186,8 @@ class WebSocketLspTransport implements LspManagedTransport {
 }
 
 class WorkerLspTransport implements LspManagedTransport {
-  private readonly handlers = new Set<LspTransportHandler>()
+  private readonly handlers = new Map<LspTransportHandler, number>()
+  private nextRegistration = 0
   private readonly closeHandlers = new Set<(error?: unknown) => void>()
   private readonly messageFormat: LspWorkerMessageFormat
   private readonly terminateOnClose: boolean
@@ -217,7 +224,8 @@ class WorkerLspTransport implements LspManagedTransport {
   }
 
   public subscribe(handler: LspTransportHandler): void {
-    this.handlers.add(handler)
+    if (this.handlers.has(handler)) return
+    this.handlers.set(handler, ++this.nextRegistration)
   }
 
   public unsubscribe(handler: LspTransportHandler): void {
@@ -246,10 +254,14 @@ class WorkerLspTransport implements LspManagedTransport {
   }
 
   private readonly handleMessage = (event: Event): void => {
+    const cutoff = this.nextRegistration
     const message = messageEventData(event)
     if (message === null) return
     this.receivedCount += 1
-    for (const handler of this.handlers) handler(message)
+    for (const [handler, registration] of this.handlers) {
+      if (registration > cutoff) continue
+      handler(message)
+    }
   }
 
   private readonly handleError = (event: Event): void => {
