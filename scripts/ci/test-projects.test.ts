@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { beforeAll, expect, test } from '../../packages/editor/node_modules/vitest/dist/index.js'
 import { checkCoverage, describeCoverage, readCoverage, type Coverage } from './test-projects.ts'
 
@@ -211,3 +214,65 @@ test('source-derived Firefox selection rejects the Chromium-only document-source
     'unknown file/engine selection packages/typescript-lsp/vitest.browser.config.ts:firefox:firefox/test/documentSource.browser.test.ts',
   )
 })
+
+test('nested Bun forwarding cannot silently exclude a required browser file', async () => {
+  const script = treeScripts.test.replace(
+    'bun run test:browser',
+    'bun run test:browser --exclude test/documentWork.browser.test.ts',
+  )
+  expect(script === treeScripts.test).toBe(false)
+  await expect(
+    readCoverage({ scripts: { 'packages/tree-sitter': { test: script } } }),
+  ).rejects.toThrow('Unsupported nested test arguments')
+}, 120_000)
+
+test('Tree-sitter node discovery matches the real CLI and preserves dependency exclusions', async () => {
+  expect(treeScripts.test.split(' && ')[0]).toBe("vitest run --exclude '**/*.browser.test.ts'")
+  const directory = fileURLToPath(new URL('../../packages/tree-sitter/', import.meta.url))
+  const scratch = mkdtempSync(resolve(tmpdir(), 'singapore-ci-cli-'))
+  const output = resolve(scratch, 'files.json')
+  try {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        '--bun',
+        resolve(directory, 'node_modules/vitest/vitest.mjs'),
+        'list',
+        '--exclude',
+        '**/*.browser.test.ts',
+        '--filesOnly',
+        `--json=${output}`,
+      ],
+      { cwd: directory, stdout: 'pipe', stderr: 'pipe' },
+    )
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    expect(code, `${stdout}\n${stderr}`).toBe(0)
+    const listed: unknown = JSON.parse(readFileSync(output, 'utf8'))
+    if (!Array.isArray(listed)) throw new Error('Expected a CLI file list')
+    const files = listed
+      .map((entry: unknown) => {
+        if (
+          !entry ||
+          typeof entry !== 'object' ||
+          !('file' in entry) ||
+          typeof entry.file !== 'string'
+        ) {
+          throw new Error('Expected a CLI file entry')
+        }
+        return relative(directory, entry.file)
+      })
+      .sort()
+    expect(files.length).toBeGreaterThan(0)
+    expect(files.some((file) => file.includes('node_modules'))).toBe(false)
+    const project = actual.projects.find(
+      (project) => project.directory === 'packages/tree-sitter' && project.engine === 'node',
+    )
+    expect(project?.files).toEqual(files)
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}, 120_000)
