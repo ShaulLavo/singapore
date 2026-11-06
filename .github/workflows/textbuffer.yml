@@ -34,8 +34,11 @@ jobs:
           bun-version: '1.4.4'
       - name: Install locked workspace dependencies
         run: bun install --frozen-lockfile
-      - name: Verify package entry points and tests
-        run: bun run --cwd packages/textbuffer verify
+      - name: Verify locked package entry points
+        run: |
+          bun run --cwd packages/textbuffer typecheck
+          bun run --cwd packages/textbuffer build
+          bun run --cwd packages/textbuffer test:package
       - name: Verify without the editor or monorepo tooling
         run: |
           destination="$(mktemp -d)"
