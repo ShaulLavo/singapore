@@ -1,5 +1,11 @@
 # @singapore-editor/spellcheck
 
+## 0.2.11
+
+### Patch Changes
+
+- Refresh the packed development pin for the Tree-sitter language catalog.
+
 ## 0.2.10
 
 ### Patch Changes

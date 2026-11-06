@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter
 
+## 0.2.11
+
+### Patch Changes
+
+- Include document-source sharing and restart cases in the packed browser-test command.
+
 ## 0.2.10
 
 ### Patch Changes

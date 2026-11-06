@@ -1,5 +1,11 @@
 # @singapore-editor/lsp
 
+## 0.2.10
+
+### Patch Changes
+
+- Keep deferred replies, queued notifications and send-error cleanup within their originating connection. Prevent old frames from reaching renewed transport subscriptions.
+
 ## 0.2.9
 
 No changes in this release.

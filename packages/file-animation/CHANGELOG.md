@@ -1,5 +1,11 @@
 # @singapore-editor/file-animation
 
+## 0.2.11
+
+### Patch Changes
+
+- Release source-backed animation state on clear, replacement and disposal. Keep only mounted paint data, and settle unsupported frames immediately.
+
 ## 0.2.10
 
 ### Patch Changes

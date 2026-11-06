@@ -1,5 +1,11 @@
 # @singapore-editor/collaboration
 
+## 0.0.7
+
+### Patch Changes
+
+- Refresh packed development pins for Tree-sitter and its language catalog.
+
 ## 0.0.6
 
 ### Patch Changes

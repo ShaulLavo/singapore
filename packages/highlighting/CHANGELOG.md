@@ -1,5 +1,11 @@
 # @singapore-editor/highlighting
 
+## 0.2.12
+
+### Patch Changes
+
+- Refresh internal Tree-sitter dependency pins for the updated package metadata.
+
 ## 0.2.11
 
 ### Patch Changes

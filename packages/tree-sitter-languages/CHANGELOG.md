@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter-languages
 
+## 0.2.12
+
+### Patch Changes
+
+- Refresh the internal Tree-sitter pin for the updated package metadata.
+
 ## 0.2.11
 
 ### Patch Changes
