@@ -39,13 +39,17 @@ type RecordedAnimation = {
   readonly keyframes: Keyframe[]
   readonly options: KeyframeAnimationOptions
   readonly cancel: ReturnType<typeof vi.fn>
+  readonly finish: () => void
+  readonly progress: { value: number }
 }
 
 let recorded: RecordedAnimation[] = []
+let mountedMorphs: EditorViewContribution[] = []
 let originalAnimate: typeof HTMLElement.prototype.animate
 
 beforeEach(() => {
   recorded = []
+  mountedMorphs = []
   originalAnimate = HTMLElement.prototype.animate
   HTMLElement.prototype.animate = function (
     this: HTMLElement,
@@ -53,14 +57,20 @@ beforeEach(() => {
     options?: number | KeyframeAnimationOptions,
   ) {
     const cancel = vi.fn()
+    const finish = vi.fn<() => void>()
+    const finished = new Promise<void>((resolve) => finish.mockImplementation(resolve))
+    const progress = { value: 0 }
     recorded.push({
       element: this,
       keyframes: (Array.isArray(keyframes) ? keyframes : []) as Keyframe[],
       options: (options ?? {}) as KeyframeAnimationOptions,
       cancel,
+      finish,
+      progress,
     })
     return {
-      finished: new Promise<Animation>(() => {}),
+      finished,
+      effect: { getComputedTiming: () => ({ progress: progress.value }) },
       cancel,
       playState: 'running',
     } as unknown as Animation
@@ -68,6 +78,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  for (const contribution of mountedMorphs) contribution.dispose()
   HTMLElement.prototype.animate = originalAnimate
   vi.restoreAllMocks()
 })
@@ -404,6 +415,259 @@ describe('magic move', () => {
 const EDITED = 'function f(a: number) {\n  if (x) {\n    y(a)\n  }\n}\n'
 
 describe('createFileEditAnimationPlugin', () => {
+  it.each([
+    ['clear', null, 2],
+    ['document', 'replacement', 2],
+    ['document', 'replacement', 7],
+  ] as const)('retires old sources on %s to %s at version %s', (kind, documentId, textVersion) => {
+    const opened = snapshot()
+    const changed = snapshot({ text: EDITED, textVersion: 2 })
+    const { context, contribution, presentations } = mountMorph({}, opened)
+    contribution.update(changed, 'content', edit(12))
+    const next = snapshot({ documentId, textVersion, text: kind === 'clear' ? '' : 'fresh text' })
+
+    contribution.update(next, kind)
+
+    expectNoFrameReference(contribution, opened.textSnapshot, changed.textSnapshot)
+    expect(Reflect.get(contribution, 'before')).toBeNull()
+    expect(context.contentElement.querySelector('.editor-morph-layer')).toBeNull()
+    expect(context.scrollElement.classList.contains('editor-morph-active')).toBe(false)
+    expect(rowAnimations().every((entry) => entry.cancel.mock.calls.length > 0)).toBe(true)
+    expect(presentations.every((handle) => vi.mocked(handle.dispose).mock.calls.length > 0)).toBe(
+      true,
+    )
+    contribution.dispose()
+    contribution.dispose()
+    expectNoFrameReference(contribution, next.textSnapshot)
+    expectEmptyFrames(contribution)
+  })
+
+  it.each([1, 2, 7])(
+    'pairs the first replacement edit at version %s with its own text',
+    (version) => {
+      const opened = snapshot({ text: 'retired source' })
+      const { context, contribution } = mountMorph({}, opened)
+      const log = vi.spyOn(context, 'log')
+      const next = snapshot({ documentId: 'replacement', text: 'fresh text', textVersion: version })
+      contribution.update(next, 'document')
+      const changed = snapshot({
+        documentId: 'replacement',
+        text: 'fresh text added',
+        textVersion: version + 1,
+      })
+
+      contribution.update(changed, 'viewport')
+      contribution.update(changed, 'viewport')
+      contribution.update(changed, 'tokens')
+      contribution.update(changed, 'content', edit(6))
+
+      expectNoFrameReference(contribution, opened.textSnapshot, next.textSnapshot)
+      expect(log).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          action: 'morph.start',
+          pieceCount: 3,
+          fromCount: 2,
+          movedCount: 2,
+        }),
+      )
+      expect(pieceSpans(context).map((piece) => piece.textContent)).not.toContain('retired')
+      contribution.dispose()
+    },
+  )
+
+  it('pairs edits on the simple setText path without a document identity', () => {
+    const opened = snapshot({ documentId: null, text: 'plain text' })
+    const { context, contribution } = mountMorph({}, opened)
+    const log = vi.spyOn(context, 'log')
+    const changed = snapshot({ documentId: null, text: 'plain text added', textVersion: 2 })
+
+    contribution.update(changed, 'viewport')
+    contribution.update(changed, 'content')
+
+    expectNoFrameReference(contribution, opened.textSnapshot)
+    expect(log).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: 'morph.start',
+        pieceCount: 3,
+        fromCount: 2,
+        movedCount: 2,
+      }),
+    )
+    contribution.dispose()
+    expectEmptyFrames(contribution)
+  })
+
+  it.each([false, true])('disposes twice with a running morph = %s', (running) => {
+    const opened = snapshot()
+    const { context, contribution } = mountMorph({}, opened)
+    const changed = snapshot({ text: EDITED, textVersion: 2 })
+    if (running) contribution.update(changed, 'content', edit(12))
+
+    contribution.dispose()
+    contribution.dispose()
+
+    expectNoFrameReference(contribution, opened.textSnapshot, changed.textSnapshot)
+    expectEmptyFrames(contribution)
+    expect(context.contentElement.querySelector('.editor-morph-layer')).toBeNull()
+    expect(recorded.every((entry) => entry.cancel.mock.calls.length > 0)).toBe(true)
+  })
+
+  it('keeps only source-free mounted frames between edits and after completion', async () => {
+    const opened = snapshot()
+    const { context, contribution } = mountMorph({}, opened)
+    expectNoFrameReference(contribution, opened.textSnapshot)
+    const changed = snapshot({ text: EDITED, textVersion: 2 })
+    contribution.update(changed, 'content', edit(12))
+    expectNoFrameReference(contribution, opened.textSnapshot)
+    expect(pieceSpans(context).length).toBeGreaterThan(0)
+
+    await finishRecordedAnimations()
+
+    expectNoFrameReference(contribution, opened.textSnapshot, changed.textSnapshot)
+    expect(context.contentElement.querySelector('.editor-morph-layer')).toBeNull()
+    expect(coverAnimations().every((entry) => entry.cancel.mock.calls.length > 0)).toBe(true)
+    const log = vi.spyOn(context, 'log')
+    contribution.update(snapshot({ text: SAMPLE, textVersion: 3 }), 'content', edit(12, 'undo'))
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({ action: 'morph.start' }))
+    contribution.dispose()
+  })
+
+  it('retargets from the moving pieces without restoring a retired source', async () => {
+    const opened = snapshot({ text: 'old' })
+    const { context, contribution } = mountMorph({}, opened)
+    const changed = snapshot({ text: 'old new', textVersion: 2 })
+    contribution.update(changed, 'content', edit(4))
+    const entering = recorded.find((entry) => entry.element.textContent === 'new')
+    expect(entering).toBeDefined()
+    entering!.progress.value = 0.5
+    const firstRun = recorded.slice()
+    const next = snapshot({ text: 'new old', textVersion: 3 })
+    contribution.update(next, 'viewport')
+    contribution.update(next, 'content', edit(4))
+
+    expectNoFrameReference(contribution, opened.textSnapshot, changed.textSnapshot)
+    const retargeted = recorded
+      .slice(firstRun.length)
+      .find((entry) => entry.element.textContent === 'new')
+    expect(retargeted?.keyframes[0]?.opacity).toBe(0.5)
+    const oldPieces = firstRun.filter((entry) =>
+      entry.element.classList.contains('editor-morph-piece'),
+    )
+    expect(oldPieces.every((entry) => entry.cancel.mock.calls.length > 0)).toBe(true)
+    await finishRecordedAnimations(firstRun)
+    expect(context.contentElement.querySelector('.editor-morph-layer')).not.toBeNull()
+    await finishRecordedAnimations()
+    expectNoFrameReference(contribution, next.textSnapshot)
+    expect(context.contentElement.querySelector('.editor-morph-layer')).toBeNull()
+    contribution.dispose()
+  })
+
+  it.each(['row', 'chunk'] as const)('does not retain a source-backed lazy %s', (kind) => {
+    const opened = snapshot()
+    const source = opened.textSnapshot
+    const lazy = new RangeText(
+      source.length,
+      () => source.readRange(0, source.length),
+      measureString('x'),
+    )
+    const [first, ...rest] = opened.visibleRows
+    if (!first) throw new Error('missing mounted row')
+    const chunk: EditorViewSnapshot['visibleRows'][number]['chunks'][number] = {
+      sourceStartOffset: first.startOffset,
+      sourceEndOffset: first.endOffset,
+      rowLocalStart: 0,
+      rowLocalEnd: first.text.length,
+      text: lazy,
+      mountedPaint: { kind: 'replayable', parts: [{ kind: 'text', text: 'function f() {' }] },
+    }
+    const row: EditorViewSnapshot['visibleRows'][number] =
+      kind === 'row' ? { ...first, text: lazy } : { ...first, chunks: [chunk] }
+    const windowed = { ...opened, visibleRows: [row].concat(rest) }
+    const { context, contribution } = mountMorph({}, windowed)
+
+    expectNoFrameReference(contribution, source, lazy)
+    contribution.update(snapshot({ text: EDITED, textVersion: 2 }), 'content', edit(12))
+    expectNoFrameReference(contribution, source, lazy)
+    const layer = context.contentElement.querySelector('.editor-morph-layer')
+    if (kind === 'chunk') expect(layer).not.toBeNull()
+    if (kind === 'row') expect(layer).toBeNull()
+    contribution.dispose()
+    expectEmptyFrames(contribution)
+  })
+
+  it.each(['typing', 'layout', 'reduced motion', 'large frame'] as const)(
+    'retires the previous source when %s interrupts a morph',
+    (reason) => {
+      const opened = snapshot()
+      const { context, contribution } = mountMorph({ maxPieces: 30 }, opened)
+      const changed = snapshot({ text: EDITED, textVersion: 2 })
+      contribution.update(changed, 'content', edit(12))
+      expect(context.contentElement.querySelector('.editor-morph-layer')).not.toBeNull()
+      if (reason === 'reduced motion') {
+        vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList)
+      }
+      const next =
+        reason === 'layout'
+          ? snapshot({
+              text: EDITED,
+              textVersion: 2,
+              metrics: { rowHeight: 24, characterWidth: 8 },
+            })
+          : snapshot({
+              text: reason === 'large frame' ? 'word '.repeat(40) : SAMPLE,
+              textVersion: 3,
+            })
+
+      contribution.update(
+        next,
+        reason === 'layout' ? 'layout' : 'content',
+        reason === 'typing' ? typed(1) : edit(1),
+      )
+
+      expectNoFrameReference(contribution, opened.textSnapshot, changed.textSnapshot)
+      expect(context.contentElement.querySelector('.editor-morph-layer')).toBeNull()
+      contribution.dispose()
+      expectNoFrameReference(contribution, next.textSnapshot)
+      expectEmptyFrames(contribution)
+    },
+  )
+
+  it('recolors a running morph through unchanged layout and viewport updates', () => {
+    const opened = snapshot()
+    const { context, contribution } = mountMorph({}, opened)
+    const changed = snapshot({ text: EDITED, textVersion: 2 })
+    contribution.update(changed, 'content', edit(12))
+    contribution.update(changed, 'layout')
+    contribution.update(changed, 'viewport')
+    contribution.update({ ...changed, tokens: someTokens() }, 'tokens')
+
+    expectNoFrameReference(contribution, opened.textSnapshot)
+    const keyword = pieceSpans(context).find((piece) => piece.textContent === 'function')
+    expect(keyword?.style.color).toBe('var(--editor-syntax-keyword)')
+    expect(context.contentElement.querySelector('.editor-morph-layer')).not.toBeNull()
+    contribution.dispose()
+  })
+
+  it('clears moving rendered rows and all retained frames before repeated disposal', () => {
+    const opened = snapshot({ text: 'first\nsecond' })
+    const { context, contribution } = mountMorph({}, opened)
+    vi.spyOn(context, 'getInlineReplacementRanges').mockReturnValue([{ start: 0, end: 12 }])
+    contribution.update(opened, 'layout')
+    const changed = snapshot({ text: 'second\nfirst', textVersion: 2 })
+    contribution.update(changed, 'content', edit(1))
+    const moved = rowAnimations().filter((entry) => entry.keyframes[0]?.translate !== undefined)
+    expect(moved).toHaveLength(2)
+
+    contribution.update(snapshot({ documentId: null, text: '', textVersion: 3 }), 'clear')
+    contribution.dispose()
+    contribution.dispose()
+
+    expectNoFrameReference(contribution, opened.textSnapshot, changed.textSnapshot)
+    expectEmptyFrames(contribution)
+    expect(moved.every((entry) => entry.cancel.mock.calls.length > 0)).toBe(true)
+    expect(context.contentElement.querySelector('.editor-morph-layer')).toBeNull()
+  })
+
   it('morphs an edit: the real rows hide under an overlay of pieces', () => {
     const { context, contribution } = mountMorph()
     contribution.update(snapshot({ text: EDITED, textVersion: 2 }), 'content', edit(12))
@@ -614,7 +878,52 @@ function typed(size: number): EditorContributionChange {
   return { ...edit(size), typing: true }
 }
 
-function mountMorph(options: FileEditAnimationPluginOptions = {}): {
+function expectNoFrameReference(
+  contribution: EditorViewContribution,
+  ...references: object[]
+): void {
+  for (const field of ['latest', 'before', 'runSnapshot']) {
+    const retained: unknown = Reflect.get(contribution, field)
+    for (const reference of references) {
+      expect(referencePath(retained, reference, field)).toBeNull()
+    }
+  }
+}
+
+function referencePath(
+  value: unknown,
+  reference: object,
+  path: string,
+  visited = new Set<object>(),
+): string | null {
+  if (value === reference) return path
+  if (typeof value !== 'object' || value === null || visited.has(value)) return null
+  visited.add(value)
+  for (const [key, child] of Object.entries(value)) {
+    const found = referencePath(child, reference, `${path}.${key}`, visited)
+    if (found) return found
+  }
+  return null
+}
+
+function expectEmptyFrames(contribution: EditorViewContribution): void {
+  for (const field of ['latest', 'before', 'runSnapshot']) {
+    expect(Reflect.get(contribution, field)).toBeNull()
+  }
+  expect(Reflect.get(contribution, 'latestReplaced')).toEqual([])
+  expect(Reflect.get(contribution, 'beforeReplaced')).toEqual([])
+}
+
+async function finishRecordedAnimations(animations = recorded): Promise<void> {
+  for (const entry of animations) entry.finish()
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+function mountMorph(
+  options: FileEditAnimationPluginOptions = {},
+  initial = snapshot({ tokens: someTokens() }),
+): {
   context: EditorViewContributionContext
   contribution: EditorViewContribution
   presentations: EditorRowPresentation[]
@@ -628,9 +937,11 @@ function mountMorph(options: FileEditAnimationPluginOptions = {}): {
   )
   const presentations: EditorRowPresentation[] = []
   const context = viewContext(presentations)
-  populateRows(context.contentElement, snapshot())
+  vi.spyOn(context, 'getSnapshot').mockReturnValue(initial)
+  populateRows(context.contentElement, initial)
   const contribution = provider?.createContribution(context)
   if (!contribution) throw new Error('morph contribution was not created')
+  mountedMorphs.push(contribution)
   return { context, contribution, presentations }
 }
 
