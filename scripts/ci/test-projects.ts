@@ -91,8 +91,10 @@ function expand(
   if (!source) throw new Error(`Missing script: ${workspace.directory}/${script}`)
   return source.split(' && ').flatMap((part) => {
     const args = tokens(part)
-    if (args[0] === 'bun' && args[1] === 'run')
+    if (args[0] === 'bun' && args[1] === 'run') {
+      if (args.length !== 3) throw new Error(`Unsupported nested test arguments: ${part}`)
       return expand(workspace, args[2], `${owner} -> ${script}`, seen.concat([script]))
+    }
     const offset = args[0] === 'bun' && args[1] === '--bun' ? 2 : 0
     if (args[offset] === 'vitest' && args[offset + 1] === 'run')
       return [
@@ -189,7 +191,8 @@ async function discoverFresh(
   directory: string,
   args: string[],
 ): Promise<Omit<Project, 'policy'>[]> {
-  const { options, filter } = parseCLI(['vitest', 'run'].concat(args))
+  const { options: rawOptions, filter } = parseCLI(['vitest', 'run'].concat(args))
+  const { exclude, ...options } = rawOptions
   const config =
     typeof options.config === 'string'
       ? options.config
@@ -203,6 +206,11 @@ async function discoverFresh(
     watch: false,
   })
   try {
+    // CLI exclusions are additive. Copy each project's shared defaults before appending.
+    const cliExclude = exclude ? (Array.isArray(exclude) ? exclude : [exclude]) : []
+    for (const project of vitest.projects) {
+      project.config.exclude = project.config.exclude.concat(cliExclude)
+    }
     const specifications = await vitest.globTestSpecifications(filter)
     return vitest.projects.map((project) =>
       describeProject(project, directory, config, specifications),
