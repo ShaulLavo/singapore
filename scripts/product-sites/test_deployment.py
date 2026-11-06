@@ -43,17 +43,18 @@ class WorkflowAdmissionTests(unittest.TestCase):
     def test_actual_publication_conditions_admit_only_main_push_and_dispatch(self):
         self.assertEqual(len(self.publications), 1)
         cases = (
-            ('pull_request', 'refs/pull/123/merge', False),
-            ('pull_request', 'refs/heads/main', False),
-            ('pull_request_target', 'refs/heads/main', False),
-            ('workflow_dispatch', 'refs/heads/feature', False),
-            ('push', 'refs/heads/feature', False),
-            ('push', 'refs/tags/main', False),
-            ('push', 'refs/heads/main', True),
-            ('workflow_dispatch', 'refs/heads/main', True),
+            ('pull request', 'pull_request', 'refs/pull/123/merge', False),
+            ('fork pull request', 'pull_request', 'refs/pull/124/merge', False),
+            ('PR with main ref', 'pull_request', 'refs/heads/main', False),
+            ('PR target', 'pull_request_target', 'refs/heads/main', False),
+            ('branch dispatch', 'workflow_dispatch', 'refs/heads/feature', False),
+            ('branch push', 'push', 'refs/heads/feature', False),
+            ('tag push', 'push', 'refs/tags/main', False),
+            ('main push', 'push', 'refs/heads/main', True),
+            ('main dispatch', 'workflow_dispatch', 'refs/heads/main', True),
         )
-        for event_name, ref, expected in cases:
-            with self.subTest(event_name=event_name, ref=ref):
+        for name, event_name, ref, expected in cases:
+            with self.subTest(case=name):
                 self.assertEqual(self.publication_admitted(event_name, ref), expected)
 
     def publication_admitted(self, event_name, ref):
@@ -125,6 +126,7 @@ class DeploymentTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         source = (root / 'wrangler.singapore.jsonc').read_text()
         config = json.loads(re.sub(r',\s*([}\]])', r'\1', source))
+        self.assertEqual(config['name'], 'product-sites-singapore')
         self.assertEqual(
             config['routes'],
             [{'pattern': 'singapore.shaulavo.dev', 'custom_domain': True}],
