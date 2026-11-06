@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { beforeAll, expect, test } from '../../packages/editor/node_modules/vitest/dist/index.js'
-import { checkCoverage, readCoverage, type Coverage } from './test-projects.ts'
+import { checkCoverage, describeCoverage, readCoverage, type Coverage } from './test-projects.ts'
 
 let actual: Coverage
 beforeAll(async () => {
   actual = await readCoverage()
+  console.info(describeCoverage(actual))
 }, 120_000)
 
 test('ordinary CI owns every required project and file exactly once', () => {
@@ -145,7 +146,7 @@ const treeScripts: Record<string, string> = JSON.parse(
 
 test('removing an actual Tree-sitter browser filename fails admission', async () => {
   const script = treeScripts['test:browser'].replace(' test/documentWork.browser.test.ts', '')
-  expect(script).not.toBe(treeScripts['test:browser'])
+  expect(script === treeScripts['test:browser']).toBe(false)
   const graph = await readCoverage({
     scripts: { 'packages/tree-sitter': { 'test:browser': script } },
   })
@@ -171,3 +172,42 @@ test('unknown workspace selection fails closed', async () => {
     }),
   ).rejects.toThrow('Unknown workspace filter')
 }, 120_000)
+
+test('a group cannot become unfiltered or lose its serial package limit', async () => {
+  const workflow = actual.workflow.replace(
+    'bun run test:browser -- --concurrency=1 --filter=@singapore-editor/typescript-lsp',
+    'bun run test:browser',
+  )
+  await expect(readCoverage({ workflow })).rejects.toThrow('explicitly select workspaces')
+  await expect(
+    readCoverage({ workflow: actual.workflow.replaceAll('--concurrency=1', '') }),
+  ).rejects.toThrow('--concurrency=1')
+}, 120_000)
+
+test('unsupported test flags and recursive package scripts fail closed', async () => {
+  await expect(
+    readCoverage({
+      workflow: actual.workflow.replace(
+        '--filter=@singapore-editor/core',
+        '--filter=@singapore-editor/core --only',
+      ),
+    }),
+  ).rejects.toThrow('Unsupported Turbo test arguments')
+  await expect(
+    readCoverage({ scripts: { 'packages/tree-sitter': { 'test:browser': 'bun run test' } } }),
+  ).rejects.toThrow('Recursive test script')
+}, 120_000)
+
+test('source-derived Firefox selection rejects the Chromium-only document-source file', () => {
+  const firefox = actual.invocations.find(
+    (item) => item.directory === 'packages/typescript-lsp' && item.engine === 'firefox',
+  )
+  expect(Boolean(firefox)).toBe(true)
+  if (!firefox) return
+  const invocations = actual.invocations.concat([
+    { ...firefox, files: ['test/documentSource.browser.test.ts'] },
+  ])
+  expect(checkCoverage({ ...actual, invocations }).join('\n')).toContain(
+    'unknown file/engine selection packages/typescript-lsp/vitest.browser.config.ts:firefox:firefox/test/documentSource.browser.test.ts',
+  )
+})

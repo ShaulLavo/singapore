@@ -1,7 +1,12 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createVitest, parseCLI } from '../../packages/editor/node_modules/vitest/dist/node.js'
+import {
+  createVitest,
+  parseCLI,
+  type TestProject,
+  type TestSpecification,
+} from '../../packages/editor/node_modules/vitest/dist/node.js'
 import {
   configurations,
   deferredConfigurations,
@@ -97,12 +102,13 @@ function expand(
           owner: `${owner} -> ${script}`,
         },
       ]
-    if (script === 'test' && part === 'bun run bidi:check') return []
     if (script === 'bidi:check' && part === 'bun scripts/generateBidiClass.mjs --check') return []
     throw new Error(`Unsupported test script: ${workspace.directory}/${script}: ${part}`)
   })
 }
 function selectedWorkspaces(args: string[], all: Workspace[]): Workspace[] {
+  if (args.some((arg) => arg !== '--' && arg !== '--concurrency=1' && !arg.startsWith('--filter=')))
+    throw new Error(`Unsupported Turbo test arguments: ${args.join(' ')}`)
   const filters = args.filter((arg) => arg.startsWith('--filter=')).map((arg) => arg.slice(9))
   if (!filters.length) throw new Error('CI test group must explicitly select workspaces')
   for (const filter of filters) {
@@ -139,7 +145,7 @@ function stepCommands(step: Record<string, unknown>, owner: string, all: Workspa
           line,
         )
       )
-        return []
+        return ignoreSetupCommand(line)
       if (step.if && step.if !== '${{ !cancelled() }}')
         throw new Error(`Conditional test selection: ${owner}`)
       if (step['working-directory']) throw new Error(`Unsupported test working-directory: ${owner}`)
@@ -153,6 +159,12 @@ function stepCommands(step: Record<string, unknown>, owner: string, all: Workspa
         expand(workspace, script, owner),
       )
     })
+}
+function ignoreSetupCommand(line: string): Command[] {
+  const testCommand = /\bvitest\b|\bbun test\b|\bbun run (?:--cwd \S+ )?test[^ ]*/.test(line)
+  if (testCommand && line.trim() !== 'bun run test:ci')
+    throw new Error(`Unsupported CI test command: ${line}`)
+  return []
 }
 function directCommand(args: string[], owner: string, all: Workspace[]): Command[] {
   const workspace = all.find((workspace) => workspace.directory === args[3])
@@ -192,18 +204,28 @@ async function discoverFresh(
   })
   try {
     const specifications = await vitest.globTestSpecifications(filter)
-    return vitest.projects.map((project) => ({
-      directory,
-      config,
-      name: project.name,
-      engine: engine(project.config.browser?.enabled ? project.config.browser.name : undefined),
-      files: specifications
-        .filter((spec) => spec.project === project)
-        .map((spec) => relative(resolve(root, directory), spec.moduleId))
-        .sort(),
-    }))
+    return vitest.projects.map((project) =>
+      describeProject(project, directory, config, specifications),
+    )
   } finally {
     await vitest.close()
+  }
+}
+function describeProject(
+  project: TestProject,
+  directory: string,
+  config: string,
+  specifications: TestSpecification[],
+): Omit<Project, 'policy'> {
+  return {
+    directory,
+    config,
+    name: project.name,
+    engine: engine(project.config.browser?.enabled ? project.config.browser.name : undefined),
+    files: specifications
+      .filter((spec) => spec.project === project)
+      .map((spec) => relative(resolve(root, directory), spec.moduleId))
+      .sort(),
   }
 }
 function projectKey(project: Omit<Project, 'policy' | 'files'>): string {
@@ -233,20 +255,30 @@ async function inventory(): Promise<{ projects: Project[]; errors: string[] }> {
     const expected = config.projects.map(([name, engine]) =>
       projectKey({ ...config, name, engine }),
     )
-    for (const project of discovered) {
-      if (!expected.includes(projectKey(project)))
-        errors.push(`Undeclared project ${projectKey(project)}`)
-      const policy = specialProjects[`${project.directory}/${project.name}`] ??
-        config.policy ?? { kind: 'required' }
-      projects.push({ ...project, policy })
-    }
-    for (const key of expected)
-      if (!discovered.some((project) => projectKey(project) === key))
-        errors.push(`Missing configured project ${key}`)
+    admitConfiguration(config, discovered, expected, projects, errors)
   }
   return {
     projects: classifyNativeProfile(projects),
     errors: errors.concat(checkFileRestrictions(projects)),
+  }
+}
+function admitConfiguration(
+  config: (typeof configurations)[number],
+  discovered: Omit<Project, 'policy'>[],
+  expected: string[],
+  projects: Project[],
+  errors: string[],
+): void {
+  for (const project of discovered) {
+    if (!expected.includes(projectKey(project)))
+      errors.push(`Undeclared project ${projectKey(project)}`)
+    const policy = specialProjects[`${project.directory}/${project.name}`] ??
+      config.policy ?? { kind: 'required' }
+    projects.push({ ...project, policy })
+  }
+  for (const key of expected) {
+    if (!discovered.some((project) => projectKey(project) === key))
+      errors.push(`Missing configured project ${key}`)
   }
 }
 function classifyNativeProfile(projects: Project[]): Project[] {
@@ -268,6 +300,17 @@ function classifyNativeProfile(projects: Project[]): Project[] {
     ]
   })
 }
+function unclassifiedConfigurations(
+  directory: string,
+  configs: string[],
+  declared: readonly { directory: string; config: string }[],
+): string[] {
+  return configs
+    .filter(
+      (config) => !declared.some((item) => item.directory === directory && item.config === config),
+    )
+    .map((config) => `Unclassified configuration ${directory}/${config}`)
+}
 function checkDispositions(all: Workspace[]): string[] {
   const declared = configurations.concat(
     deferredConfigurations.map((config) => ({ ...config, projects: [] })),
@@ -277,11 +320,7 @@ function checkDispositions(all: Workspace[]): string[] {
     const configs = readdirSync(resolve(root, workspace.directory)).filter((name) =>
       /^vitest.*\.config\.ts$/.test(name),
     )
-    for (const config of configs)
-      if (
-        !declared.some((item) => item.directory === workspace.directory && item.config === config)
-      )
-        errors.push(`Unclassified configuration ${workspace.directory}/${config}`)
+    errors.push(...unclassifiedConfigurations(workspace.directory, configs, declared))
   }
   for (const config of deferredConfigurations) {
     const workspace = all.find((workspace) => workspace.directory === config.directory)
@@ -309,8 +348,11 @@ function checkDispositions(all: Workspace[]): string[] {
       'push' in events
     )
       errors.push(`Changed schedule-only admission ${schedule.file}`)
-    for (const flag of schedule.flags)
-      if (!source.includes(flag)) errors.push(`Missing long-run control ${schedule.file}/${flag}`)
+    errors.push(
+      ...schedule.flags
+        .filter((flag) => !source.includes(flag))
+        .map((flag) => `Missing long-run control ${schedule.file}/${flag}`),
+    )
   }
   return errors
 }
@@ -332,22 +374,39 @@ export async function readCoverage(
 }
 export function checkCoverage(coverage: Coverage): string[] {
   const errors = coverage.errors.slice()
-  for (const invocation of coverage.invocations) {
-    if (!invocation.files.length)
-      errors.push(`empty invocation ${invocation.owner}/${projectKey(invocation)}`)
-    const projects = coverage.projects.filter(
-      (project) => projectKey(project) === projectKey(invocation),
-    )
-    if (!projects.length) errors.push(`unknown project ${projectKey(invocation)}`)
-    for (const file of invocation.files)
-      if (!projects.some((project) => project.files.includes(file)))
-        errors.push(`unknown file/engine selection ${projectKey(invocation)}/${file}`)
-  }
+  for (const invocation of coverage.invocations)
+    checkInvocation(invocation, coverage.projects, errors)
   for (const project of coverage.projects) {
     if (!project.files.length) errors.push(`empty project ${projectKey(project)}`)
     for (const file of project.files) checkFile(project, file, coverage.invocations, errors)
   }
   return errors
+}
+function checkInvocation(invocation: Invocation, inventory: Project[], errors: string[]): void {
+  if (!invocation.files.length)
+    errors.push(`empty invocation ${invocation.owner}/${projectKey(invocation)}`)
+  const projects = inventory.filter((project) => projectKey(project) === projectKey(invocation))
+  if (!projects.length) errors.push(`unknown project ${projectKey(invocation)}`)
+  for (const file of invocation.files) {
+    if (!projects.some((project) => project.files.includes(file)))
+      errors.push(`unknown file/engine selection ${projectKey(invocation)}/${file}`)
+  }
+}
+export function describeCoverage(coverage: Coverage): string {
+  return coverage.projects
+    .map((project) => {
+      const policy =
+        project.policy.kind === 'required'
+          ? 'ordinary CI'
+          : `${project.policy.owner}: ${project.policy.reason}`
+      const details =
+        project.directory === 'packages/typescript-lsp' ||
+        project.directory === 'packages/tree-sitter'
+          ? `\n  ${project.files.join('\n  ')}`
+          : ''
+      return `${project.policy.kind.padEnd(10)} ${projectKey(project)}: ${project.files.length} files, ${policy}${details}`
+    })
+    .join('\n')
 }
 function checkFile(
   project: Project,
@@ -373,10 +432,7 @@ function checkFile(
 
 if (import.meta.main) {
   const coverage = await readCoverage()
-  for (const project of coverage.projects)
-    console.log(
-      `${project.policy.kind.padEnd(10)} ${projectKey(project)}: ${project.files.length} files`,
-    )
+  console.log(describeCoverage(coverage))
   const errors = checkCoverage(coverage)
   if (errors.length) {
     console.error(errors.join('\n'))
