@@ -29,10 +29,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: site-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -53,6 +49,33 @@ jobs:
           test -f dist/index.html
           test -f dist/demo/index.html
           test -f dist/_headers
+      - name: Upload the validated docs and demo
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: singapore-site
+          path: dist
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: product-sites-singapore
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.4'
+      - name: Download the validated docs and demo
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: singapore-site
+          path: dist
       - name: Deploy Singapore Worker
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
