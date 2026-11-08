@@ -95,6 +95,7 @@ jobs:
 
   core:
     name: Test (core)
+    timeout-minutes: 20
     needs: changes
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.code == 'true') }}
     runs-on: ubuntu-latest
@@ -134,7 +135,7 @@ jobs:
         run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit
 
       - name: Test
-        run: bun run test -- --filter=@singapore-editor/core
+        run: bun run test -- --filter=@singapore-editor/core --log-order=stream -- --reporter=verbose
 
       - name: Prune turbo cache
         if: ${{ always() }}
