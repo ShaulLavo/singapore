@@ -30,9 +30,11 @@ cat > "$scratch/bin/gh" <<'MOCK'
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_ROOT/gh-calls"
 case "$1 $2" in
+  'api --method') [[ $* == *'-f context=CI -f state=pending'* ]] ;;
+  'pr merge') [[ $* == *'--auto --squash --match-head-commit'* ]] ;;
   'api repos/'*) git --git-dir="$TEST_ROOT/remote.git" rev-parse refs/heads/automation/test ;;
   'pr list') if [[ -f "$TEST_ROOT/pr" ]]; then echo 123; fi ;;
-  'pr create') touch "$TEST_ROOT/pr" ;;
+  'pr create') touch "$TEST_ROOT/pr"; echo 123 ;;
   'pr edit') test -f "$TEST_ROOT/pr" ;;
   'run list')
     current=$(git --git-dir="$TEST_ROOT/remote.git" rev-parse refs/heads/automation/test)
@@ -61,6 +63,8 @@ test "$third" != "$first"
 test "$(grep -c '^pr create ' "$scratch/gh-calls")" = 1
 test "$(grep -c '^pr edit ' "$scratch/gh-calls")" = 2
 test "$(grep -c '^workflow run ' "$scratch/gh-calls")" = 2
+test "$(grep -c '^pr merge 123 ' "$scratch/gh-calls")" = 3
+test "$(grep -c '^api --method POST ' "$scratch/gh-calls")" = 2
 
 rejection_failures=0
 expect_record_rejection() {

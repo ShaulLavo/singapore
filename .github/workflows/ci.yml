@@ -247,3 +247,27 @@ jobs:
         env:
           FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: test "$FAILED" = false
+
+  update-status:
+    name: Report automated update status
+    needs: verdict
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/automation/tree-sitter-updates' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      # Dispatch job checks do not satisfy PR requirements. Commit statuses do.
+      - name: Report the real CI verdict on the tested commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD: ${{ github.sha }}
+          RESULT: ${{ needs.verdict.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          state=failure
+          if [[ "$RESULT" == success ]]; then state=success; fi
+          gh api --method POST "repos/$GH_REPO/statuses/$HEAD" \
+            -f context=CI -f state="$state" -f target_url="$RUN_URL" \
+            -f description="Dispatched CI: $RESULT"
