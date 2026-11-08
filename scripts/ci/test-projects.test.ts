@@ -187,6 +187,17 @@ test('a group cannot become unfiltered or lose its serial package limit', async 
   ).rejects.toThrow('--concurrency=1')
 }, 120_000)
 
+test('streamed verbose test output preserves every required owner', async () => {
+  const workflow = actual.workflow.replace(
+    '--filter=@singapore-editor/core --log-order=stream -- --reporter=verbose',
+    '--filter=@singapore-editor/core',
+  )
+  expect(workflow === actual.workflow).toBe(false)
+  const quiet = await readCoverage({ workflow })
+  expect(quiet.invocations).toEqual(actual.invocations)
+  expect(checkCoverage(quiet)).toEqual([])
+}, 120_000)
+
 test('unsupported test flags and recursive package scripts fail closed', async () => {
   await expect(
     readCoverage({

@@ -109,7 +109,8 @@ function expand(
   })
 }
 function selectedWorkspaces(args: string[], all: Workspace[]): Workspace[] {
-  if (args.some((arg) => arg !== '--' && arg !== '--concurrency=1' && !arg.startsWith('--filter=')))
+  const allowedFlags = ['--', '--concurrency=1', '--log-order=stream', '--reporter=verbose']
+  if (args.some((arg) => !allowedFlags.includes(arg) && !arg.startsWith('--filter=')))
     throw new Error(`Unsupported Turbo test arguments: ${args.join(' ')}`)
   const filters = args.filter((arg) => arg.startsWith('--filter=')).map((arg) => arg.slice(9))
   if (!filters.length) throw new Error('CI test group must explicitly select workspaces')
