@@ -1,5 +1,11 @@
 # @singapore-editor/lsp-plugin
 
+## 0.2.12
+
+### Patch Changes
+
+- Update packed Singapore dependency versions for the core forward Delete fix.
+
 ## 0.2.11
 
 ### Patch Changes

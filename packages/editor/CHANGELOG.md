@@ -1,5 +1,11 @@
 # @singapore-editor/core
 
+## 0.2.11
+
+### Patch Changes
+
+- Make forward Delete remove the next grapheme at carets while preserving caret identity and undo history.
+
 ## 0.2.10
 
 ### Patch Changes
