@@ -21,6 +21,7 @@ import {
   applyTextToSelections,
   backspaceSelections,
   deleteSelections,
+  forwardDeleteSelections,
   indentSelections,
   outdentSelections,
 } from './documentSelectionEdits'
@@ -120,6 +121,7 @@ export type DocumentSession = {
   ): DocumentSessionChange
   backspace(tabSize?: number): DocumentSessionChange
   deleteSelection(): DocumentSessionChange
+  deleteForward(): DocumentSessionChange
   undo(): DocumentSessionChange
   redo(): DocumentSessionChange
   setSelection(
@@ -281,6 +283,10 @@ export type EditorTextBuffer = {
     tabSize?: number,
   ): DocumentSessionChange
   deleteSelection(
+    selections: SelectionSet<PieceTableAnchor>,
+    sourceView?: EditorViewSession | null,
+  ): DocumentSessionChange
+  deleteForward(
     selections: SelectionSet<PieceTableAnchor>,
     sourceView?: EditorViewSession | null,
   ): DocumentSessionChange
@@ -1001,6 +1007,31 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return appendTiming(this.createChange('none', []), 'session.delete', start)
     }
     const result = deleteSelections(this.history.current, selections, this.admittedEditAuthor)
+    return appendTiming(
+      this.commitEdit(result.snapshot, result.selections, result.edits, {
+        history: 'record',
+        metadata: ordinaryTransactionMetadata('keyboard', 'delete'),
+        selectionBefore: selections,
+        sourceView,
+      }),
+      'session.delete',
+      start,
+    )
+  }
+
+  public deleteForward(
+    selections: SelectionSet<PieceTableAnchor>,
+    sourceView: EditorViewSession | null = null,
+  ): DocumentSessionChange {
+    const start = nowMs()
+    if (this.mutationLease) {
+      return appendTiming(this.createChange('none', []), 'session.delete', start)
+    }
+    const result = forwardDeleteSelections(
+      this.history.current,
+      selections,
+      this.admittedEditAuthor,
+    )
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
@@ -2463,6 +2494,10 @@ class EditorBufferDocumentSession implements EditorBufferSession {
     return this.buffer.deleteSelection(this.view.getSelections(), this.view)
   }
 
+  public deleteForward(): DocumentSessionChange {
+    return this.buffer.deleteForward(this.view.getSelections(), this.view)
+  }
+
   public undo(): DocumentSessionChange {
     return this.buffer.undo(this.view)
   }
@@ -2577,6 +2612,9 @@ class StaticDocumentSession extends EditorBufferDocumentSession {
     return this.unchanged()
   }
   public override deleteSelection(): DocumentSessionChange {
+    return this.unchanged()
+  }
+  public override deleteForward(): DocumentSessionChange {
     return this.unchanged()
   }
   public override undo(): DocumentSessionChange {

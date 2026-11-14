@@ -19,6 +19,7 @@ import type {
   DocumentSessionSelectionRange,
 } from '../documentSession'
 import { previousDeleteBoundary } from '../graphemes'
+import { forwardDeleteRange } from '../documentSelectionEdits'
 import {
   normalizeLineEndings,
   offsetToPoint,
@@ -72,7 +73,6 @@ import { childContainingNode, childNodeIndex, elementBoundaryToTextOffset } from
 import {
   atomicDeleteAction,
   editActionForCommand,
-  forwardDeleteEdits,
   listItemLineBreak,
   trimTrailingWhitespaceAction,
   type EditorDocumentLine,
@@ -1193,7 +1193,7 @@ export class InputSelectionController {
         ? (this.deleteAutoClosedPair(session) ??
           this.mirrorBackspaceDelete(session) ??
           session.backspace(this.options.tabSize))
-        : this.forwardDelete(session))
+        : (this.mirrorForwardDelete(session) ?? session.deleteForward()))
     this.pendingKeyboardEdit = atCarets
     this.applyChange(
       mergeChangeTimings(change, selectionChange),
@@ -1203,11 +1203,13 @@ export class InputSelectionController {
     return true
   }
 
-  private forwardDelete(session: DocumentSession): DocumentSessionChange {
-    const edits = forwardDeleteEdits(session.getTextSnapshot(), this.resolvedSelections())
-    const only = edits.length === 1 ? edits[0] : undefined
-    const mirrored = only ? this.mirroredEdit(session, only.from, only.to, '') : null
-    return mirrored ?? session.applyEdits(edits)
+  private mirrorForwardDelete(session: DocumentSession): DocumentSessionChange | null {
+    const snapshot = session.getSnapshot()
+    const target = this.singleSelection(session, snapshot)
+    if (!target) return null
+    const range = forwardDeleteRange(snapshot, target)
+    if (range.start === range.end) return null
+    return this.mirroredEdit(session, range.start, range.end, '')
   }
 
   /** A delete that meets an atomic replacement takes all of it, or null to delete as usual. */

@@ -139,6 +139,40 @@ describe.each(['default', 'edit-context'] as const)('%s editor basic editing', (
     expectSelection(instance, 5)
   })
 
+  it('keeps forward Delete at its intended caret in a buffer with newer inserted text', async () => {
+    const instance = await open('ab', 0)
+    instance.edit([{ from: 1, to: 1, text: 'XY' }])
+    instance.setSelection(0)
+    await commands.proofKeyPress('Delete')
+    expect(instance.materializeFullText()).toBe('XYb')
+    expectSelection(instance, 0)
+    const modifier = detectPlatform() === 'mac' ? 'Meta' : 'Control'
+    await commands.proofKeyPress(`${modifier}+z`)
+    expect(instance.materializeFullText()).toBe('aXYb')
+    expectSelection(instance, 0)
+    await commands.proofKeyPress(`${modifier}+Shift+z`)
+    expect(instance.materializeFullText()).toBe('XYb')
+    expectSelection(instance, 0)
+    await commands.proofKeyPress('Delete')
+    expect(instance.materializeFullText()).toBe('Yb')
+    expectSelection(instance, 0)
+  })
+
+  it('undoes and redoes repeated Delete as one keyboard run', async () => {
+    const instance = await open('abcdef', 0)
+    await commands.proofKeyPress('Delete')
+    await commands.proofKeyPress('Delete')
+    expect(instance.materializeFullText()).toBe('cdef')
+    expectSelection(instance, 0)
+    const modifier = detectPlatform() === 'mac' ? 'Meta' : 'Control'
+    await commands.proofKeyPress(`${modifier}+z`)
+    expect(instance.materializeFullText()).toBe('abcdef')
+    expectSelection(instance, 0)
+    await commands.proofKeyPress(`${modifier}+Shift+z`)
+    expect(instance.materializeFullText()).toBe('cdef')
+    expectSelection(instance, 0)
+  })
+
   it('undoes and redoes a typed replacement with keyboard shortcuts', async () => {
     const instance = await open('alpha bravo', 6)
     const modifier = detectPlatform() === 'mac' ? 'Meta' : 'Control'

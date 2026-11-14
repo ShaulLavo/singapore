@@ -407,39 +407,39 @@ describe('DocumentSession', () => {
     expect(session.canUndo()).toBe(false)
   })
 
-  // Deleting rightwards has no caret-only entry point on the session yet, so the
-  // run is driven through the buffer, which takes the selection to delete.
   it('undoes a run of forward deletions in one step', () => {
-    const buffer = createEditorTextBuffer('hello world')
+    const session = createDocumentSession('hello world')
+    session.setSelection(6)
     for (let index = 0; index < 5; index++) {
-      buffer.deleteSelection(rangeSelection(buffer, 6, 7))
+      session.deleteForward()
     }
 
-    expect(buffer.materializeFullText()).toBe('hello ')
+    expect(session.materializeFullText()).toBe('hello ')
 
-    const undone = buffer.undo()
+    const undone = session.undo()
 
     expect(undone.textSnapshot.materializeFullText()).toBe('hello world')
     expect(undone.edits).toEqual([{ from: 6, to: 6, text: 'world' }])
-    expect(buffer.canUndo()).toBe(false)
+    expect(session.canUndo()).toBe(false)
   })
 
   // Redo replays the snapshot, so only the reported edits expose whether the
   // coalesced range covers the whole run — and every consumer patching its own
   // copy of the text follows those edits rather than the snapshot.
   it('redoes a run of forward deletions as one range', () => {
-    const buffer = createEditorTextBuffer('hello world')
+    const session = createDocumentSession('hello world')
+    session.setSelection(6)
     for (let index = 0; index < 5; index++) {
-      buffer.deleteSelection(rangeSelection(buffer, 6, 7))
+      session.deleteForward()
     }
-    buffer.undo()
+    session.undo()
 
-    const redone = buffer.redo()
+    const redone = session.redo()
 
     expect(redone.edits).toEqual([{ from: 6, to: 11, text: '' }])
     expect(redone.transaction?.edits).toEqual([{ from: 6, to: 11, text: '' }])
     expect(redone.textSnapshot.materializeFullText()).toBe('hello ')
-    expect(buffer.canRedo()).toBe(false)
+    expect(session.canRedo()).toBe(false)
   })
 
   it('keeps backspace and forward deletion runs in separate undo entries', () => {
@@ -862,6 +862,7 @@ describe('prepared document transactions', () => {
     expect(buffer.applyEdits(selection, [{ from: 0, to: 1, text: 'A' }]).kind).toBe('none')
     expect(buffer.backspace(selection).kind).toBe('none')
     expect(buffer.deleteSelection(selection).kind).toBe('none')
+    expect(buffer.deleteForward(rangeSelection(buffer, 0, 0)).kind).toBe('none')
     expect(buffer.undo().kind).toBe('none')
     expect(buffer.redo().kind).toBe('none')
     expect(buffer.materializeFullText()).toBe('abc!')
