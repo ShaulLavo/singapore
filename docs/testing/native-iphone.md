@@ -1,8 +1,14 @@
 # Run the iPhone editor entry
 
 The maintained entry lives in [examples/app/native-iphone](../../examples/app/native-iphone).
-It imports the public editor entry and Waffle's published `0.0.129` page runner.
+It imports the public editor entry and Waffle's published `0.0.130` page runner.
 It changes no production API and requires no document identity or language server.
+
+This SDK preserves cleanup child errors, nested causes, and stacks in final JSON.
+Safari setup allows 20 seconds for launcher readiness, 30 seconds for session
+creation, and 5 seconds for configuration. Case, command, navigation, cleanup,
+and absolute run limits are unchanged. The original Firefox shutdown cause
+remains unknown; this release does not claim to repair it.
 
 ## Coverage
 
