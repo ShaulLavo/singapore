@@ -48,6 +48,9 @@ for example:
 bun --cwd packages/editor x playwright install chromium firefox webkit
 ```
 
+For the maintained native iPhone entry and its Linux WebKit control, see
+[Run the iPhone editor entry](testing/native-iphone.md).
+
 The documentation site has its own checks:
 
 ```sh

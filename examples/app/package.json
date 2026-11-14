@@ -8,7 +8,10 @@
     "build": "tsc && vite build",
     "test": "vitest run --browser.enabled --browser.headless",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit",
+    "test:iphone": "bun native-iphone/native.ts",
+    "test:iphone:webkit": "bun native-iphone/local.ts",
+    "typecheck:iphone": "tsc --noEmit -p native-iphone/tsconfig.json",
+    "typecheck": "tsc --noEmit && bun run typecheck:iphone",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
@@ -34,11 +37,13 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "@types/bun": "catalog:",
     "@vitest/browser-playwright": "5.0.2",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
     "typescript": "7.0.2",
     "vite": "8.3.1",
-    "vitest": "5.0.2"
+    "vitest": "5.0.2",
+    "waffle": "https://github.com/ShaulLavo/waffle/releases/download/waffle-v0.0.129/waffle-0.0.129.tgz"
   }
 }
