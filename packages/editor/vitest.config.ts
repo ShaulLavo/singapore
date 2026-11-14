@@ -57,12 +57,12 @@ export default defineConfig({
         server: { fs: { allow: [workspaceRoot] } },
         optimizeDeps: {
           // tree-sitter-md is plain ESM over web-tree-sitter; served as-is, it is never discovered.
-          exclude: basicEditingTests.concat([
+          exclude: [
             'web-tree-sitter',
             'tree-sitter-md',
             'micromark-util-decode-string',
             'micromark-util-normalize-identifier',
-          ]),
+          ],
           include: [
             'evlog/client',
             '@fregat/hotkeys',
@@ -158,13 +158,13 @@ export default defineConfig({
             ],
           },
           include: ['test/**/*.browser.test.ts'],
-          exclude: [
+          exclude: basicEditingTests.concat([
             // Full-document pixels and restore timings use vitest.snapshot.config.ts.
             'test/documentPaint.browser.test.ts',
             'test/highlightPaint.browser.test.ts',
             'test/markdownFencePaint.browser.test.ts',
             'test/paintOrigin.browser.test.ts',
-          ],
+          ]),
         },
       },
       {

@@ -71,10 +71,36 @@ it('deletes at multiple carets and selected ranges while preserving a caret at E
 })
 
 it('mirrors a forward deletion at a caret into the matching tag name', () => {
-  const instance = open('<divx>hi</divx>', { languageId: 'tsx' })
+  const instance = open('')
+  instance.setText('<divx>hi</divx>', { languageId: 'tsx' })
   instance.setSelection(4)
   instance.dispatchCommand('deleteForward')
   expect(instance.materializeFullText()).toBe('<div>hi</div>')
   instance.dispatchCommand('undo')
   expect(instance.materializeFullText()).toBe('<divx>hi</divx>')
+})
+
+it.each([
+  { anchor: 1, head: 4 },
+  { anchor: 4, head: 1 },
+])(
+  'deletes a selected range and restores its direction on undo: $anchor to $head',
+  ({ anchor, head }) => {
+    const instance = open('alpha')
+    instance.setSelection(anchor, head)
+    instance.dispatchCommand('deleteForward')
+    expect(instance.materializeFullText()).toBe('aa')
+    expect(instance.getSelections()).toMatchObject([{ anchorOffset: 1, headOffset: 1 }])
+    instance.dispatchCommand('undo')
+    expect(instance.materializeFullText()).toBe('alpha')
+    expect(instance.getSelections()).toMatchObject([{ anchorOffset: anchor, headOffset: head }])
+  },
+)
+
+it('does not delete from a readonly editor', () => {
+  const instance = open('alpha', { editability: 'readonly' })
+  instance.setSelection(0)
+  instance.dispatchCommand('deleteForward')
+  expect(instance.materializeFullText()).toBe('alpha')
+  expect(instance.getSelections()).toMatchObject([{ anchorOffset: 0, headOffset: 0 }])
 })
