@@ -37,12 +37,14 @@
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
+        "@types/bun": "catalog:",
         "@vitest/browser-playwright": "5.0.2",
         "oxfmt": "0.70.0",
         "oxlint": "1.85.0",
         "typescript": "7.0.2",
         "vite": "8.3.1",
         "vitest": "5.0.2",
+        "waffle": "https://github.com/ShaulLavo/waffle/releases/download/waffle-v0.0.129/waffle-0.0.129.tgz",
       },
     },
     "examples/stress": {
@@ -1966,6 +1968,8 @@
     "vscode-languageserver-protocol": ["vscode-languageserver-protocol@3.18.5", "", { "dependencies": { "vscode-jsonrpc": "10.0.0", "vscode-languageserver-types": "3.18.5" } }, "sha512-FW4fBMzZ99N8xeob4py0l050wgCoRgTpEq5Xcsb9lM1bc29UKGR/wSV+4knaqFxssFHajy7OzNiKP/m3U1ZEuA=="],
 
     "vscode-languageserver-types": ["vscode-languageserver-types@3.18.5", "", {}, "sha512-kPd6+JQNz3HMJvjKlqUxERSlZHAntl/aGpsk7ImwIh0ewDKDcjgAEyVSYciPiOJD3ftbK9IrfiqUeTZLSbCizw=="],
+
+    "waffle": ["waffle@https://github.com/ShaulLavo/waffle/releases/download/waffle-v0.0.129/waffle-0.0.129.tgz", { "hasInstallScript": true }, "sha512-FzFPEKd+DcRH4aHNURKHB3xMmOmtmL502RZRrm6UAdjJ90qrI3UPmHVxPd4RND2davR3AJQOrTyAN2ZBd3hERQ=="],
 
     "walk-up-path": ["walk-up-path@4.0.0", "", {}, "sha512-3hu+tD8YzSLGuFYtPRb48vdhKMi0KQV5sn+uWr8+7dMEq/2G/dtLrdDinkLjqq5TIbIBjYJ4Ax/n3YiaW7QM8A=="],
 
