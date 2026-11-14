@@ -129,7 +129,7 @@ jobs:
       #
       # Chromium and its headless shell, deliberately: vitest browser mode runs `headless: true`,
       # which launches `chrome-headless-shell`, a separate download from `chromium`. Firefox and
-      # WebKit are for core's highlight-paint project only.
+      # WebKit also run core editing, scroll, layout, and paint checks.
       - name: Install Playwright browsers
         working-directory: packages/editor
         run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit

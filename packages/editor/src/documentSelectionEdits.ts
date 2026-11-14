@@ -1,5 +1,5 @@
 import { normalizeTabSize, visualColumnLength } from './displayTransforms'
-import { previousDeleteBoundary } from './graphemes'
+import { MAX_BOUNDARY_WINDOW, nextGraphemeBoundary, previousDeleteBoundary } from './graphemes'
 import {
   applyBatchToPieceTable,
   lineRange,
@@ -196,11 +196,41 @@ export const backspaceSelections = (
   set: SelectionSet<PieceTableAnchor>,
   tabSize: number | undefined = undefined,
   applyEdits: typeof applyBatchToPieceTable = applyBatchToPieceTable,
+): SelectionEditResult =>
+  deleteSelectionTargets(
+    snapshot,
+    set,
+    (selection) => backspaceTargetForSelection(snapshot, selection, tabSize),
+    applyEdits,
+  )
+
+export const forwardDeleteSelections = (
+  snapshot: PieceTableSnapshot,
+  set: SelectionSet<PieceTableAnchor>,
+  applyEdits: typeof applyBatchToPieceTable = applyBatchToPieceTable,
+): SelectionEditResult =>
+  deleteSelectionTargets(
+    snapshot,
+    set,
+    (selection) => ({
+      range: forwardDeleteRange(snapshot, selection),
+      id: selection.id,
+      goal: selection.goal,
+      affinity: selection.affinity,
+    }),
+    applyEdits,
+  )
+
+const deleteSelectionTargets = (
+  snapshot: PieceTableSnapshot,
+  set: SelectionSet<PieceTableAnchor>,
+  targetForSelection: (selection: ResolvedSelection) => SelectionEditTarget,
+  applyEdits: typeof applyBatchToPieceTable,
 ): SelectionEditResult => {
   const normalized = normalizeSelectionSet(snapshot, set)
   const targets = normalized.selections
     .map((selection) => resolveSelection(snapshot, selection))
-    .map((selection) => backspaceTargetForSelection(snapshot, selection, tabSize))
+    .map(targetForSelection)
   const lastAddedTarget = targets[normalized.lastAddedIndex ?? 0]
   const orderedTargets = targets.sort(compareSelectionEditTargets)
   const edits = mergeOrderedTargetRanges(orderedTargets).map((range) => rangeToEdit(range, ''))
@@ -216,18 +246,18 @@ export const backspaceSelections = (
 
   return {
     snapshot: nextSnapshot,
-    selections: backspaceSelectionsAfterEdits(nextSnapshot, orderedTargets, edits, lastAddedTarget),
+    selections: deleteSelectionsAfterEdits(nextSnapshot, orderedTargets, edits, lastAddedTarget),
     edits,
   }
 }
 
-const backspaceSelectionsAfterEdits = (
+const deleteSelectionsAfterEdits = (
   snapshot: PieceTableSnapshot,
   targets: readonly SelectionEditTarget[],
   edits: readonly PieceTableEdit[],
   lastAddedTarget: SelectionEditTarget | undefined,
 ): SelectionSet<PieceTableAnchor> => {
-  const projectOffset = createBackspaceOffsetProjector(edits)
+  const projectOffset = createDeleteOffsetProjector(edits)
   const selections = targets.map((target) => {
     const offset = projectOffset(target.range.start)
     return createAnchorSelection(snapshot, offset, offset, {
@@ -246,7 +276,7 @@ const backspaceSelectionsAfterEdits = (
   })
 }
 
-const createBackspaceOffsetProjector = (
+const createDeleteOffsetProjector = (
   edits: readonly PieceTableEdit[],
 ): ((offset: number) => number) => {
   let delta = 0
@@ -387,6 +417,23 @@ const selectionOptions = (selection: ResolvedSelection): CreateAnchorSelectionOp
  * dozen code units at the outside, so this much always holds every candidate.
  */
 const DELETE_READ_WINDOW = 64
+
+export const forwardDeleteRange = (
+  snapshot: PieceTableSnapshot,
+  selection: ResolvedSelection,
+): OffsetRange => {
+  const start = selection.startOffset
+  if (!selection.collapsed) return { start, end: selection.endOffset }
+
+  for (let reach = 8; ; reach = Math.min(reach * 2, MAX_BOUNDARY_WINDOW)) {
+    const end = Math.min(snapshot.length, start + reach)
+    const text = readPieceTableTextRange(snapshot, start, end)
+    const boundary = nextGraphemeBoundary(text, 0)
+    if (boundary < text.length || end === snapshot.length || reach === MAX_BOUNDARY_WINDOW) {
+      return { start, end: start + boundary }
+    }
+  }
+}
 
 const characterDeleteStart = (snapshot: PieceTableSnapshot, offset: number): number => {
   const windowStart = Math.max(0, offset - DELETE_READ_WINDOW)

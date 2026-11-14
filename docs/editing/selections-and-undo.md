@@ -119,6 +119,7 @@ Initial command surface:
 
 - replace every active selection/cursor with the same text
 - delete selected ranges
+- forward-delete the next grapheme at collapsed carets
 - backspace collapsed cursors at grapheme-aware delete boundaries, with indentation-aware tab-stop
   deletion
 
@@ -127,11 +128,15 @@ the original snapshot, apply them through `applyBatchToPieceTable`, then collaps
 selection to its post-edit caret while preserving id, goal, and affinity. Indent and outdent instead
 project both original endpoints through their edits, preserving selection shape and direction.
 
-Backspace computes one target for every original selection, coalesces overlapping deletion ranges
-only for the piece-table batch, then projects every target through those edits. This keeps
-affinity-distinct carets, last-added identity, and document-start no-op carets even when several
+Backspace and forward Delete compute one target for every original selection, coalesce overlapping
+deletion ranges only for the piece-table batch, then project every target through those edits. This
+keeps affinity-distinct carets, last-added identity, and boundary no-op carets even when several
 targets share one physical deletion. Undo and redo restore the resulting selection set with the
 snapshot.
+
+`DocumentSession.deleteForward()` deletes the next grapheme at a caret or the selected text.
+`DocumentSession.deleteSelection()` removes selected text only, as cut requires. Forward Delete
+records keyboard deletion intent, so repeated single-character deletions form one undo entry.
 
 ---
 

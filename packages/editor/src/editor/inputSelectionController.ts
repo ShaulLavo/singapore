@@ -19,6 +19,7 @@ import type {
   DocumentSessionSelectionRange,
 } from '../documentSession'
 import { previousDeleteBoundary } from '../graphemes'
+import { forwardDeleteRange } from '../documentSelectionEdits'
 import {
   normalizeLineEndings,
   offsetToPoint,
@@ -1192,7 +1193,7 @@ export class InputSelectionController {
         ? (this.deleteAutoClosedPair(session) ??
           this.mirrorBackspaceDelete(session) ??
           session.backspace(this.options.tabSize))
-        : (this.mirrorSelectionDelete(session) ?? session.deleteSelection()))
+        : (this.mirrorForwardDelete(session) ?? session.deleteForward()))
     this.pendingKeyboardEdit = atCarets
     this.applyChange(
       mergeChangeTimings(change, selectionChange),
@@ -1200,6 +1201,15 @@ export class InputSelectionController {
       start,
     )
     return true
+  }
+
+  private mirrorForwardDelete(session: DocumentSession): DocumentSessionChange | null {
+    const snapshot = session.getSnapshot()
+    const target = this.singleSelection(session, snapshot)
+    if (!target) return null
+    const range = forwardDeleteRange(snapshot, target)
+    if (range.start === range.end) return null
+    return this.mirroredEdit(session, range.start, range.end, '')
   }
 
   /** A delete that meets an atomic replacement takes all of it, or null to delete as usual. */
