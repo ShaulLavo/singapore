@@ -1,5 +1,11 @@
 # @singapore-editor/collaboration
 
+## 0.0.8
+
+### Patch Changes
+
+- Update packed Singapore dependency versions for the core forward Delete fix.
+
 ## 0.0.7
 
 ### Patch Changes

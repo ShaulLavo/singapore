@@ -1,5 +1,11 @@
 # @singapore-editor/highlighting
 
+## 0.2.13
+
+### Patch Changes
+
+- Update packed Singapore dependency versions for the core forward Delete fix.
+
 ## 0.2.12
 
 ### Patch Changes
