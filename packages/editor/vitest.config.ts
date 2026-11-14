@@ -8,6 +8,8 @@ import { devices } from '@playwright/test'
 import { defineConfig } from 'vitest/config'
 import type { BrowserCommand } from 'vitest/node'
 
+const basicEditingTests = ['test/basicEditing.browser.test.ts']
+
 const crossEngineScrollTests = [
   'test/hiddenInputSelection.browser.test.ts',
   'test/{virtualizedTextView,virtualizedTextViewGeometry,wheelScrollTarget,gutterScroll,gutterLeadingInset,gutterPointerEvents,wrappedLineGutter,wrappedLineHighlight,mouseSelectionAutoScroll,navigationReveal,initialViewport,firstPaint,longLineMeasurements,millionLinePaint,codeViewport,renderDisposal,rowPresentation,proportionalRows,proportionalWrap,freeSansShaping,freeSansNativeCarets,wordWrap,defaultLargeDocument,metricProbeScrollExtent,tailGeometry,typography,selectionCopy}.browser.test.ts',
@@ -55,12 +57,12 @@ export default defineConfig({
         server: { fs: { allow: [workspaceRoot] } },
         optimizeDeps: {
           // tree-sitter-md is plain ESM over web-tree-sitter; served as-is, it is never discovered.
-          exclude: [
+          exclude: basicEditingTests.concat([
             'web-tree-sitter',
             'tree-sitter-md',
             'micromark-util-decode-string',
             'micromark-util-normalize-identifier',
-          ],
+          ]),
           include: [
             'evlog/client',
             '@fregat/hotkeys',
@@ -163,6 +165,40 @@ export default defineConfig({
             'test/markdownFencePaint.browser.test.ts',
             'test/paintOrigin.browser.test.ts',
           ],
+        },
+      },
+      {
+        plugins: [browserTestResponses()],
+        server: { fs: { allow: [workspaceRoot] } },
+        test: {
+          name: 'editing',
+          include: basicEditingTests,
+          browser: {
+            enabled: true,
+            headless: true,
+            viewport: { width: 800, height: 600 },
+            fileParallelism: false,
+            provider: playwright(),
+            commands: {
+              proofType: async ({ page }, text: string) => {
+                await page.keyboard.type(text)
+              },
+              proofKeyPress: async ({ page }, key: string) => {
+                await page.keyboard.press(key)
+              },
+            },
+            instances: [
+              { browser: 'chromium', name: 'editing-chromium' },
+              { browser: 'firefox', name: 'editing-firefox' },
+              { browser: 'webkit', name: 'editing-webkit' },
+              {
+                browser: 'webkit',
+                name: 'editing-mobile-webkit',
+                viewport: devices['iPhone 15'].viewport,
+                provider: playwright({ contextOptions: devices['iPhone 15'] }),
+              },
+            ],
+          },
         },
       },
       {

@@ -311,6 +311,16 @@ export function atomicDeleteAction(
   }
 }
 
+export function forwardDeleteEdits(
+  source: TextReadSnapshot,
+  selections: readonly ResolvedSelection[],
+): readonly TextEdit[] {
+  const ranges = selections
+    .map((selection) => plainDeleteSpan(source, selection, 'forward'))
+    .filter((range) => range.start !== range.end)
+  return mergeOffsetRanges(ranges).map((range) => rangeToEdit(range, ''))
+}
+
 function atomicSelectionDeleteSpan(
   atomic: AtomicRanges,
   selection: ResolvedSelection,

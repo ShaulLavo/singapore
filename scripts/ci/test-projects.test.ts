@@ -15,6 +15,27 @@ test('ordinary CI owns every required project and file exactly once', () => {
   expect(checkCoverage(actual)).toEqual([])
 })
 
+test('basic editing runs once per desktop engine and mobile WebKit in ordinary CI', () => {
+  const projects = actual.projects.filter(
+    (project) =>
+      project.directory === 'packages/editor' &&
+      project.files.includes('test/basicEditing.browser.test.ts'),
+  )
+  expect(projects.map((project) => [project.name, project.engine]).sort()).toEqual([
+    ['editing-chromium', 'chromium'],
+    ['editing-firefox', 'firefox'],
+    ['editing-mobile-webkit', 'webkit'],
+    ['editing-webkit', 'webkit'],
+  ])
+  expect(projects.every((project) => project.policy.kind === 'required')).toBe(true)
+  const invocations = actual.invocations.filter(
+    (invocation) =>
+      invocation.directory === 'packages/editor' &&
+      invocation.files.includes('test/basicEditing.browser.test.ts'),
+  )
+  expect(checkCoverage({ ...actual, projects, invocations })).toEqual([])
+})
+
 test('TypeScript source-worker synchronization and parity have ordinary CI owners', () => {
   const required = actual.projects.filter(
     (project) => project.directory === 'packages/typescript-lsp',

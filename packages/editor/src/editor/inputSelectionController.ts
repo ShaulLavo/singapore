@@ -72,6 +72,7 @@ import { childContainingNode, childNodeIndex, elementBoundaryToTextOffset } from
 import {
   atomicDeleteAction,
   editActionForCommand,
+  forwardDeleteEdits,
   listItemLineBreak,
   trimTrailingWhitespaceAction,
   type EditorDocumentLine,
@@ -1192,7 +1193,7 @@ export class InputSelectionController {
         ? (this.deleteAutoClosedPair(session) ??
           this.mirrorBackspaceDelete(session) ??
           session.backspace(this.options.tabSize))
-        : (this.mirrorSelectionDelete(session) ?? session.deleteSelection()))
+        : this.forwardDelete(session))
     this.pendingKeyboardEdit = atCarets
     this.applyChange(
       mergeChangeTimings(change, selectionChange),
@@ -1200,6 +1201,13 @@ export class InputSelectionController {
       start,
     )
     return true
+  }
+
+  private forwardDelete(session: DocumentSession): DocumentSessionChange {
+    const edits = forwardDeleteEdits(session.getTextSnapshot(), this.resolvedSelections())
+    const only = edits.length === 1 ? edits[0] : undefined
+    const mirrored = only ? this.mirroredEdit(session, only.from, only.to, '') : null
+    return mirrored ?? session.applyEdits(edits)
   }
 
   /** A delete that meets an atomic replacement takes all of it, or null to delete as usual. */
