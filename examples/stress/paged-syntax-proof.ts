@@ -73,7 +73,7 @@ export async function runPagedSyntaxProof(page: Page) {
 
   const rapid = await verifyRapidJump(page, tileBytes, replacementBlock)
   const closedHighlighted = await closeSyntaxView(page, 'highlighted')
-  const failedJump = await verifyFailedJump(page, fixtureBytes + tileBytes)
+  const failedJump = await verifyFailedJump(page, fixtureBytes)
   await holdNextReply(page)
   const pending = await jumpTo(page, distantByte)
   await waitForHeldReply(page)
@@ -177,13 +177,17 @@ async function verifyRapidJump(page: Page, tileBytes: number, replacementBlock: 
   return { latest, distinctLayouts: { before: oldRow, current: newRow } }
 }
 
-async function verifyFailedJump(page: Page, outside: number) {
+async function verifyFailedJump(page: Page, fixtureBytes: number) {
   await holdNextReply(page)
   const before = await open(page, { prewarmed: true })
   await waitForHeldReply(page)
   const original = await page.locator(rows).first().elementHandle()
   try {
-    await page.getByRole('spinbutton', { name: 'Byte offset' }).fill(String(outside))
+    const byte = page.getByRole('spinbutton', { name: 'Byte offset' })
+    const end = page.getByRole('button', { name: 'End', exact: true })
+    assert.equal(before.source.totals.byteLength, undefined)
+    assert(await end.isDisabled())
+    await byte.fill(String(fixtureBytes + 1))
     await page.getByRole('button', { name: 'Go to byte' }).click()
     await page.getByRole('status').filter({ hasText: 'outside the file' }).waitFor()
     assert(
@@ -191,6 +195,9 @@ async function verifyFailedJump(page: Page, outside: number) {
     )
     const failed = await read(page)
     assert(failed.source.sourceRequests > before.source.sourceRequests)
+    assert.equal(failed.source.totals.byteLength, fixtureBytes)
+    assert(await end.isEnabled())
+    assert.equal(await byte.getAttribute('max'), String(fixtureBytes))
     assert.equal(failed.syntax.status.kind, 'pending')
     await page.evaluate(() => __pagedSliceReplies.release())
     const recovered = await colored(page, failed)

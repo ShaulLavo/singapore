@@ -222,6 +222,7 @@ export class PagedViewport {
       if (generation !== this.#generation) return
       if (window.kind === 'unavailable') {
         this.#status.textContent = availability(window)
+        this.updateControls()
         return
       }
       this.render(window, scrollTop(window), startedAt)
