@@ -28,6 +28,8 @@ const proofStyledWrapScreenshot: BrowserCommand = async ({ iframe, project }, wi
 export default defineConfig({
   server: { fs: { allow: [workspaceRoot] } },
   test: {
+    // Passing --reporter through Turbo changes the build dependency cache keys.
+    reporters: process.env.CI === 'true' ? 'verbose' : undefined,
     projects: [
       {
         test: {

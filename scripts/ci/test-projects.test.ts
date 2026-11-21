@@ -216,15 +216,15 @@ test('a group cannot become unfiltered or lose its serial package limit', async 
   ).rejects.toThrow('--concurrency=1')
 }, 120_000)
 
-test('streamed verbose test output preserves every required owner', async () => {
+test('test logging flags preserve every required owner', async () => {
   const workflow = actual.workflow.replace(
-    '--filter=@singapore-editor/core --log-order=stream -- --reporter=verbose',
-    '--filter=@singapore-editor/core',
+    '--filter=@singapore-editor/core --log-order=stream',
+    '--filter=@singapore-editor/core -- --reporter=verbose',
   )
   expect(workflow === actual.workflow).toBe(false)
-  const quiet = await readCoverage({ workflow })
-  expect(quiet.invocations).toEqual(actual.invocations)
-  expect(checkCoverage(quiet)).toEqual([])
+  const withDifferentLogging = await readCoverage({ workflow })
+  expect(withDifferentLogging.invocations).toEqual(actual.invocations)
+  expect(checkCoverage(withDifferentLogging)).toEqual([])
 }, 120_000)
 
 test('unsupported test flags and recursive package scripts fail closed', async () => {
