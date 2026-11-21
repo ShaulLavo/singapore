@@ -91,6 +91,20 @@ it.each([
   expect(nativeOffsets).toEqual([])
 })
 
+it('respects scroll padding when revealing a distant page row', async () => {
+  const { editor, host, parent } = mount()
+  parent.style.scrollPaddingBottom = '60px'
+  editor.setText('row\n'.repeat(300))
+  await expect.poll(() => row(host, 0)?.textContent).toBe('row')
+  expect(row(host, 100)).toBeNull()
+
+  editor.setSelection(400, 400, { reveal: true, revealBlock: 'end' })
+
+  await expect
+    .poll(() => row(host, 100)?.getBoundingClientRect().bottom)
+    .toBeCloseTo(parent.getBoundingClientRect().bottom - 60, 0)
+})
+
 it('reports the clipped row window and releases its rows when scrolled offscreen', async () => {
   const { editor, host, parent } = mount()
   const clip = document.createElement('div')

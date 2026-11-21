@@ -1,16 +1,20 @@
 import type { RevealBlock } from './revealBlock'
 
 export function revealContentRow(row: HTMLElement, requested: RevealBlock): void {
+  const reading = contentReadingBounds(row)
   let block: ScrollLogicalPosition = 'nearest'
   if (requested !== 'center-if-outside') block = requested
-  if (requested === 'center-if-outside' && !contentRowIsVisible(row)) block = 'center'
-  row.scrollIntoView({ block, inline: 'nearest', behavior: 'instant' })
-  alignToClippedViewport(row, block)
+  if (requested === 'center-if-outside' && !contentRowIsVisible(row, reading)) block = 'center'
+  row.scrollIntoView({
+    block,
+    inline: 'nearest',
+    behavior: reading.hasNonScrollingClip ? 'instant' : 'auto',
+  })
+  if (reading.hasNonScrollingClip && !contentRowIsVisible(row)) alignToClippedViewport(row, block)
 }
 
-function contentRowIsVisible(row: HTMLElement): boolean {
+function contentRowIsVisible(row: HTMLElement, reading = contentReadingBounds(row)): boolean {
   const bounds = row.getBoundingClientRect()
-  const reading = contentReadingBounds(row)
   return bounds.top >= reading.top && bounds.bottom <= reading.bottom
 }
 
@@ -52,6 +56,7 @@ export function contentReadingBounds(element: HTMLElement): {
   readonly right: number
   readonly top: number
   readonly bottom: number
+  readonly hasNonScrollingClip: boolean
 } {
   const window = element.ownerDocument.defaultView!
   const viewport = window.visualViewport
@@ -59,6 +64,8 @@ export function contentReadingBounds(element: HTMLElement): {
   let right = left + (viewport?.width ?? window.innerWidth)
   let top = viewport?.offsetTop ?? 0
   let bottom = top + (viewport?.height ?? window.innerHeight)
+  let clipTop = top
+  let clipBottom = bottom
   for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
     if (ancestor === element.ownerDocument.scrollingElement) continue
     const style = window.getComputedStyle(ancestor)
@@ -71,13 +78,25 @@ export function contentReadingBounds(element: HTMLElement): {
       left = Math.max(left, box.left + ancestor.clientLeft * scale)
       right = Math.min(right, box.left + (ancestor.clientLeft + ancestor.clientWidth) * scale)
     }
-    if (clipsY) {
-      const scale = ancestor.offsetHeight > 0 ? box.height / ancestor.offsetHeight : 1
-      top = Math.max(top, box.top + ancestor.clientTop * scale)
-      bottom = Math.min(bottom, box.top + (ancestor.clientTop + ancestor.clientHeight) * scale)
+    if (!clipsY) continue
+    const scale = ancestor.offsetHeight > 0 ? box.height / ancestor.offsetHeight : 1
+    const innerTop = box.top + ancestor.clientTop * scale
+    const innerBottom = box.top + (ancestor.clientTop + ancestor.clientHeight) * scale
+    if (style.overflowY === 'clip') {
+      clipTop = Math.max(clipTop, innerTop)
+      clipBottom = Math.min(clipBottom, innerBottom)
+      continue
     }
+    top = Math.max(top, innerTop)
+    bottom = Math.min(bottom, innerBottom)
   }
-  return { left, right, top, bottom }
+  return {
+    left,
+    right,
+    top: Math.max(top, clipTop),
+    bottom: Math.min(bottom, clipBottom),
+    hasNonScrollingClip: clipTop > top || clipBottom < bottom,
+  }
 }
 
 export function clipsOverflow(overflow: string): boolean {
