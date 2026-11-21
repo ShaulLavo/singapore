@@ -77,16 +77,15 @@ describe('createStickyScrollPlugin', () => {
     expect(stickyRoot(testContext)).toBeNull()
   })
 
-  it('spans the innermost scope it heads, which is what pushes the stack out as that scope ends', () => {
+  it('pushes the stack up as the innermost scope ends', () => {
     const registration = registeredProvider(createStickyScrollPlugin())
     const testContext = context(scrolledSnapshot(60))
 
-    registration?.createContribution(testContext)
+    const contribution = registration?.createContribution(testContext)
 
-    // Rows 0-4: from the outermost header row down to the last row of the innermost scope, so the
-    // 40px stack starts sliding out once less than 40px of that scope is left on screen.
     expect(stickyRoot(testContext)?.style.top).toBe('0px')
-    expect(stickyRoot(testContext)?.style.height).toBe('100px')
+    contribution?.updateViewport?.({ ...scrolledSnapshot(60).viewport, scrollTop: 70 })
+    expect(stickyRoot(testContext)?.style.top).toBe('-10px')
   })
 
   it('follows the scope chain out as the inner scopes end', () => {
@@ -101,7 +100,6 @@ describe('createStickyScrollPlugin', () => {
     expect(mirroredLines(testContext)).toEqual(['function outer() {'])
     expect(stickyLineView(testContext)?.style.height).toBe('20px')
     expect(stickyRoot(testContext)?.style.top).toBe('0px')
-    expect(stickyRoot(testContext)?.style.height).toBe('120px')
   })
 
   it('holds an outgoing branch until a sibling on its last row can take over', () => {
@@ -124,7 +122,7 @@ describe('createStickyScrollPlugin', () => {
     const contribution = registration?.createContribution(testContext)
 
     expect(mirroredLines(testContext)).toEqual([LINES[0], LINES[2]])
-    expect(stickyRoot(testContext)?.style.height).toBe('100px')
+    expect(stickyRoot(testContext)?.style.top).toBe('-13px')
 
     contribution?.update(
       { ...scrolledSnapshot(81), foldMarkers: foldMarkersSharingARow },
@@ -132,7 +130,7 @@ describe('createStickyScrollPlugin', () => {
     )
 
     expect(mirroredLines(testContext)).toEqual([LINES[0], LINES[4]])
-    expect(stickyRoot(testContext)?.style.height).toBe('120px')
+    expect(stickyRoot(testContext)?.style.top).toBe('-1px')
     contribution?.dispose()
   })
 
@@ -301,40 +299,13 @@ describe('createStickyScrollPlugin', () => {
     expect(mirroredLines(testContext)).toEqual(['function outer() {'])
   })
 
-  it('uses the text viewport without subtracting the minimap lane again', () => {
+  it('mounts the stack in the viewport overlay', () => {
     const registration = registeredProvider(createStickyScrollPlugin())
-    const viewSnapshot = scrolledSnapshot(60)
-    const testContext = context({
-      ...viewSnapshot,
-      viewport: { ...viewSnapshot.viewport, scrollWidth: 372 },
-    })
-    const reservedWidth = vi.fn(() => 44)
-    testContext.getReservedOverlayWidth = reservedWidth
+    const testContext = context(scrolledSnapshot(60))
 
     const contribution = registration?.createContribution(testContext)
 
-    const root = stickyRoot(testContext)
-    expect(root?.parentElement).toBe(testContext.contentElement)
-    expect(root?.style.getPropertyValue('--editor-sticky-scroll-viewport-width')).toBe('320px')
-    expect(root?.style.getPropertyValue('--editor-sticky-scroll-content-width')).toBe('372px')
-    expect(reservedWidth).not.toHaveBeenCalled()
-
-    contribution?.update(
-      { ...viewSnapshot, viewport: { ...viewSnapshot.viewport, scrollWidth: 412 } },
-      'viewport',
-    )
-
-    expect(root?.style.getPropertyValue('--editor-sticky-scroll-content-width')).toBe('412px')
-
-    contribution?.update(
-      {
-        ...viewSnapshot,
-        viewport: { ...viewSnapshot.viewport, clientWidth: 240, scrollWidth: 412 },
-      },
-      'viewport',
-    )
-    expect(root?.style.getPropertyValue('--editor-sticky-scroll-viewport-width')).toBe('240px')
-    expect(reservedWidth).not.toHaveBeenCalled()
+    expect(stickyRoot(testContext)?.parentElement).toBe(testContext.viewportOverlayElement)
     contribution?.dispose()
   })
 
@@ -369,7 +340,6 @@ const MOUNTED_LINES = ['function outer() {', '  const a = 1', '  if (a) {'].conc
   Array.from({ length: 20 }, (_, index) => `after(${index})`),
 )
 /** Last row of the inner region, and so the row the stack is pinned until. */
-const MOUNTED_INNER_END_ROW = 2 + MOUNTED_BODY_ROWS
 
 describe('sticky scroll in a mounted editor', () => {
   let container: HTMLElement
@@ -414,7 +384,6 @@ describe('sticky scroll in a mounted editor', () => {
 
     await expect.poll(mountedStickyLines).toEqual(['function outer() {', '  if (a) {'])
     expect(root()?.style.top).toBe('0px')
-    expect(root()?.style.height).toBe(`${(MOUNTED_INNER_END_ROW + 1) * rowHeight}px`)
     expect(mountedStack()?.style.height).toBe(`${2 * rowHeight}px`)
 
     editor.setScrollPosition({ top: 0 })

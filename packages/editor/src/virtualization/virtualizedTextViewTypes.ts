@@ -14,6 +14,7 @@ import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
 import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
 import type { MeasuredText } from '../textMeasurements'
 import type { WrapBreak } from './displayProjectionTypes'
+import type { EditorSizing } from '../editor/editorHeight'
 
 type CaretPositionResult = {
   readonly offsetNode: Node
@@ -74,6 +75,7 @@ export type VirtualizedTextViewOptions = {
   readonly rowGap?: number
   readonly overscan?: number
   readonly scrollMode?: VirtualizedTextViewScrollMode
+  readonly sizing?: EditorSizing
   readonly rowPositioning?: VirtualizedTextViewRowPositioning
   readonly className?: string
   readonly gutterWidth?: number | ((context: EditorGutterWidthContext) => number)

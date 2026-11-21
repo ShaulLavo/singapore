@@ -18,6 +18,7 @@ export function mountExample(
     label: string
     snapshot?: string
     fallbackFont?: boolean
+    maxHeight?: number
   },
 ) {
   const language = fenceLanguage(options.language)
@@ -25,9 +26,14 @@ export function mountExample(
   const element = document.createElement('div')
   element.className = 'sg-example-editor'
   host.append(element)
+  let syntaxSettled = false
   const editor = new Editor(element, {
     presentationReady: false,
-    scrollMode: 'content',
+    height: 'content',
+    maxHeight: options.maxHeight,
+    onInitialPaint: (event) => {
+      if (event.phase === 'highlight-settled') syntaxSettled = true
+    },
     wordWrap: true,
     wordWrapBreak: 'word',
     fontFamily: options.fallbackFont ? '"Singapore Mono Fallback", monospace' : '"JetBrains Mono"',
@@ -66,7 +72,7 @@ export function mountExample(
     async ready() {
       const started = performance.now()
       editor.setPresentationReady(true)
-      while (editor.captureSnapshot({ scope: 'document' }).status !== 'ready') {
+      while (!syntaxSettled || editor.getPresentationState() !== 'live') {
         if (performance.now() - started > 15000)
           throw new TypeError(`Example paint did not become ready for ${language}`)
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))

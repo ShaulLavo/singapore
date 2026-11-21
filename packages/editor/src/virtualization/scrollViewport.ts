@@ -10,6 +10,7 @@ export class ScrollViewport {
   public readonly textContent: HTMLDivElement
   public readonly textSpacer: HTMLDivElement
   public readonly gutterSpacer: HTMLDivElement
+  public readonly overlay: HTMLDivElement
   private readonly extent: HTMLDivElement
   private readonly frame: HTMLDivElement
   private readonly layers: readonly [ScrollLayer, ScrollLayer]
@@ -18,26 +19,41 @@ export class ScrollViewport {
   private viewportWidth = -1
   private viewportHeight = -1
   private originY = 0
+  private pageScrolled = false
   /** Every reservation change passes through here, including the provisional paint's. */
   public onReservedOverlayWidthChange: ((side: 'left' | 'right') => void) | null = null
 
-  public constructor(private readonly scrollElement: HTMLDivElement) {
+  public constructor(
+    private readonly scrollElement: HTMLDivElement,
+    options: { readonly capture?: boolean } = {},
+  ) {
     const document = scrollElement.ownerDocument
     this.extent = document.createElement('div')
     this.extent.className = 'editor-virtualized-extent'
+    if (options.capture) {
+      this.extent.style.cssText = 'position:absolute;inset:0 auto auto 0;opacity:0;contain:strict'
+      this.extent.inert = true
+      this.extent.setAttribute('aria-hidden', 'true')
+    }
     this.frame = document.createElement('div')
     this.frame.className = 'editor-virtualized-viewport'
+    this.overlay = document.createElement('div')
+    this.overlay.className = 'editor-virtualized-viewport-overlay'
     const text = createScrollLayer(document, 'text')
     const gutter = createScrollLayer(document, 'gutter')
     this.layers = [text, gutter]
     this.textContent = text.content
     this.textSpacer = text.spacer
     this.gutterSpacer = gutter.spacer
-    this.frame.append(text.clip, gutter.clip)
+    this.frame.append(text.clip, gutter.clip, this.overlay)
     this.extent.append(this.frame)
     scrollElement.append(this.extent)
     // The origin waits for the first viewport size: reading padding here would force a style pass
     // on every editor built, before the open that lays it out anyway.
+  }
+
+  public dispose(): void {
+    this.extent.remove()
   }
 
   public reserveOverlayWidth(side: 'left' | 'right', width: number): boolean {
@@ -89,7 +105,21 @@ export class ScrollViewport {
     return this.gutterScroll === 'content' ? Math.max(0, width - left) : width
   }
 
-  public setScrollPosition(left: number, top: number): void {
+  public setScrollPosition(
+    left: number,
+    top: number,
+    pageScrolled = false,
+    nativeOverlayOffset = 0,
+  ): void {
+    if (this.pageScrolled !== pageScrolled) {
+      this.pageScrolled = pageScrolled
+      this.synchronizeOrigin()
+    }
+    const overlayTop = pageScrolled ? top : nativeOverlayOffset
+    const overlayTransform = overlayTop ? `translateY(${overlayTop}px)` : ''
+    if (this.overlay.style.transform !== overlayTransform)
+      this.overlay.style.transform = overlayTransform
+    if (pageScrolled) top = 0
     const textTransform = `translate(${-left}px, ${-top}px)`
     const gutterLeft = this.gutterScroll === 'content' ? left : 0
     const gutterTransform = `translate(${-gutterLeft}px, ${-top}px)`
@@ -108,7 +138,12 @@ export class ScrollViewport {
     return -this.originY
   }
 
-  public setDocumentHeight(height: number, offsetY: number, scrollTop = 0): boolean {
+  public setDocumentHeight(
+    height: number,
+    offsetY: number,
+    scrollTop = 0,
+    compressed = false,
+  ): boolean {
     // Capped scrolling needs viewport-sized row coordinates to retain fractional paint precision.
     const originStep = offsetY !== 0 && this.viewportHeight > 0 ? this.viewportHeight : height
     const originY = height > 0 ? Math.floor(scrollTop / originStep) * originStep : 0
@@ -117,6 +152,8 @@ export class ScrollViewport {
     const value = `${height}px`
     const shiftedOffsetY = offsetY + originY
     const transform = shiftedOffsetY === 0 ? '' : `translateY(${shiftedOffsetY}px)`
+    const overflowY = this.pageScrolled && compressed ? 'clip' : ''
+    if (this.extent.style.overflowY !== overflowY) this.extent.style.overflowY = overflowY
     if (this.extent.style.height !== value) {
       this.extent.style.height = value
       for (const layer of this.layers) layer.spacer.style.height = value
@@ -129,8 +166,8 @@ export class ScrollViewport {
 
   private synchronizeOrigin(): void {
     const padding = scrollElementPadding(this.scrollElement)
-    this.frame.style.left = `${padding.left}px`
-    this.frame.style.top = `${padding.top}px`
+    this.frame.style.left = this.pageScrolled ? '0px' : `${padding.left}px`
+    this.frame.style.top = this.pageScrolled ? '0px' : `${padding.top}px`
   }
 }
 

@@ -29,7 +29,15 @@ export type {
   EditorWorkTaskClass as EditorSecondaryWorkTaskClass,
 } from '../editor/workScheduler'
 
-export type EditorSecondaryTextViewOptions = VirtualizedTextViewOptions
+export type EditorSecondaryTextViewOptions = Omit<
+  VirtualizedTextViewOptions,
+  'sizing' | 'scrollMode'
+> & {
+  /** Set false to show every row in a view that never scrolls. */
+  readonly scroll?: boolean
+  /** @deprecated Use `scroll: false` for a non-scrolling view. */
+  readonly scrollMode?: VirtualizedTextViewOptions['scrollMode']
+}
 
 /**
  * A read-only view of rows the editor already shows elsewhere, such as a sticky-scroll stack. It
@@ -49,7 +57,13 @@ export function createEditorSecondaryTextView(
   container: HTMLElement,
   options: EditorSecondaryTextViewOptions,
 ): EditorSecondaryTextView {
-  const view = new VirtualizedTextView(container, options)
+  const { scroll, scrollMode, ...viewOptions } = options
+  const mode = scroll === undefined ? scrollMode : scroll ? 'virtualized' : 'static'
+  const view = new VirtualizedTextView(container, {
+    ...viewOptions,
+    scrollMode: mode,
+  })
+  if (mode === 'static') view.scrollElement.style.overflow = 'clip'
   view.setEditable(false)
   view.scrollElement.tabIndex = -1
   view.inputElement.tabIndex = -1

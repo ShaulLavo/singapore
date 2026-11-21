@@ -16,7 +16,10 @@ CSS Highlight API, selection APIs, and measured browser boxes for geometry.
 
 ### Scroll Space
 
-The editor owns one scroll container.
+An editor with `height: 'container'` takes its host's height and owns its scroll container.
+With `height: 'content'`, the editor sets its height from the document and lets the page or a
+scrolling ancestor move it. Set `maxHeight` in CSS pixels to switch to internal scrolling when
+the document exceeds that height. `setHeight(height, maxHeight?)` changes both settings.
 
 Inside it:
 
@@ -24,6 +27,21 @@ Inside it:
 - mounted rows are absolutely positioned by virtual row start
 - each mounted row lets the browser lay out its text normally
 - horizontal scrolling is native
+
+In content-height mode, the visible row window comes from the editor's intersection with its
+clipping ancestors and the visual viewport. The virtualizer keeps at least one viewport of extra
+rows on each side. It updates the window during the scroll event and stops listening for scroll
+when the editor leaves the screen. Plugin snapshots report the visible window in editor
+coordinates in both modes. Browser find-in-page and print cover only mounted rows.
+
+`captureSnapshot({ scope: 'document' })` uses the same row renderer to capture missing rows in
+small batches. The live editor keeps its current mounted rows and scroll position.
+
+`scrollMode` and `setScrollMode` are deprecated for one release. In an editor, legacy `content`
+maps to `height: 'content'`, and both `virtualized` and `static` map to `height: 'container'`.
+Explicit `height` wins when both options are present. A secondary view can use `scroll: false` to
+show all of its rows without scrolling. Legacy `scrollMode: 'static'` on a secondary view still
+selects that layout.
 
 ### Vertical Virtualization
 

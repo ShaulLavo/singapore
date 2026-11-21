@@ -1,8 +1,16 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { build, serve } from 'bun'
+
+export async function settleDocumentPaint(target: Locator): Promise<void> {
+  await target.scrollIntoViewIfNeeded()
+  await target.evaluate(async () => {
+    for (let frame = 0; frame < 3; frame++)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  })
+}
 
 export async function proveDocumentPaintFirstFrame(
   page: Page,

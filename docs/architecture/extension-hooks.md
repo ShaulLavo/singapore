@@ -122,6 +122,7 @@ exported), **host** (the host's API, not a plugin hook), **gap** (not available)
 | `EditorViewContribution.update`      | One snapshot per pass; measure first, then write.                        | Reentrant requests queue, depth capped at 32.          | all view contributions | supported   |
 | `requestViewUpdate`                  | View context. Schedules a `layout` pass.                                 | Coalesced into the queue.                              | minimap, sticky scroll | supported   |
 | `captureVisiblePaint`, `snapshotKey` | Paint restoration.                                                       | A pending capture at restore removes the contribution. | scope lines            | supported   |
+| `captureDocumentHeadings(source)`    | Supplies headings by buffer row for the supplied text snapshot.          | Can describe rows outside the live viewport.           | markdown               | supported   |
 | Frame callback, work scheduler       | `scheduleFrame`, `workScheduler`, `secondaryWorkScheduler` are internal. | —                                                      | —                      | unsupported |
 
 ### Scrolling
@@ -132,7 +133,11 @@ exported), **host** (the host's API, not a plugin hook), **gap** (not available)
 | `setScrollPosition`, `revealLine`                        | View context. Updates both axes.                      | —                                              | find, diff             | supported |
 | `reserveOverlayWidth`, `onDidChangeReservedOverlayWidth` | View context.                                         | Never coalesced.                               | find, minimap          | supported |
 | `registerWheelScrollTarget`                              | External overlay joins native scrolling.              | Dispose with the contribution.                 | find widget            | supported |
-| `Editor.onDidScroll`                                     | Host.                                                 | After the virtualizer folds the scroll in.     | Platform               | host      |
+| `Editor.onDidScroll`                                     | Host. Tracks the editor's own scroll position.        | After the virtualizer folds the scroll in.     | Platform               | host      |
+
+`snapshot.viewport` reports the visible row window for both editor and page scrolling. Mount
+viewport-fixed paint in `viewportOverlayElement`. Mount paint that moves with document rows in
+`contentElement`.
 
 ### Document lifecycle
 

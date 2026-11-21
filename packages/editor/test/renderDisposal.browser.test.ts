@@ -89,3 +89,66 @@ it.each(['content-height', 'gutter-width', 'gutter-create', 'gutter-update'])(
     expect(cells.every((cell) => cleanup.get(cell) === 1)).toBe(true)
   },
 )
+
+it.each(['throw', 'dispose'] as const)(
+  'releases staged document-paint cells when a gutter update can %s',
+  async (failure) => {
+    const host = document.createElement('div')
+    host.style.cssText = 'width:400px;height:100px;overflow:clip'
+    document.body.append(host)
+    const staged = new Set<HTMLElement>()
+    const released = vi.fn()
+    let arming = false
+    let editor: Editor
+    editor = new Editor(host, {
+      height: 'content',
+      lineHeight: 20,
+      plugins: [
+        {
+          activate: (context) =>
+            context.registerGutterContribution({
+              id: 'line-gutter',
+              width: () => 25,
+              snapshotRenderer: { key: 'test', capture: () => '', restore: () => true },
+              createCell(document) {
+                const cell = document.createElement('div')
+                if (arming) staged.add(cell)
+                return cell
+              },
+              updateCell() {
+                if (!arming) return
+                if (failure === 'throw') throw new Error('staged cell update failed')
+                editor.dispose()
+              },
+              disposeCell: (cell) => {
+                if (staged.has(cell)) released(cell)
+              },
+            }),
+        },
+      ],
+    })
+    releases.push(() => {
+      editor.dispose()
+      host.remove()
+    })
+    editor.setText('row\n'.repeat(148) + 'tail')
+    await expect
+      .poll(() => host.querySelectorAll('[data-editor-virtual-row]').length)
+      .toBeGreaterThan(0)
+    arming = true
+    if (failure === 'throw')
+      expect(() => editor.captureSnapshot({ scope: 'document' })).toThrow(
+        'staged cell update failed',
+      )
+    else
+      expect(editor.captureSnapshot({ scope: 'document' })).toMatchObject({
+        status: 'unsupported',
+        reason: 'document-not-ready',
+      })
+    expect(staged.size).toBeGreaterThan(0)
+    expect(released.mock.calls.map(([cell]) => cell)).toEqual(Array.from(staged))
+    expect(host.querySelectorAll('.editor-virtualized-extent')).toHaveLength(
+      failure === 'throw' ? 1 : 0,
+    )
+  },
+)

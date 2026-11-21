@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Singapore 76 page fling</title>
+  <link rel="stylesheet" href="./contentModeFling.css" />
+  <style>
+    body {
+      margin: 0;
+    }
+    #editor {
+      width: 100%;
+      padding-bottom: 0;
+    }
+    #fling {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      background: white;
+      color: black;
+      padding: 4px;
+      pointer-events: none;
+      font: 13px system-ui;
+      z-index: 10;
+    }
+  </style>
+  <main id="editor"></main>
+  <output id="fling">Preparing the editor</output>
+  <script type="module" src="./contentModeFling.js"></script>
+</html>

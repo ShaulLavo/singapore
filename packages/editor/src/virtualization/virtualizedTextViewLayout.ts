@@ -1,5 +1,4 @@
-import { DisplayProjection } from './displayProjection'
-import { assertContentLayout } from './contentLayout'
+import type { EditorSizing } from '../editor/editorHeight'
 import type { TextContent } from '../textContent'
 import type { MeasuredText } from '../textMeasurements'
 import type { FoldMap } from '../foldMap'
@@ -32,6 +31,7 @@ import type {
   MultiLineEditPatch,
   SameLineEditPatch,
   VirtualizedFoldMarker,
+  VirtualizedTextViewScrollMode,
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
 import {
@@ -329,40 +329,43 @@ export function setInjectedTextRowsLayout(
   refreshDisplayProjection(view, viewportColumns)
 }
 
-export function assertContentSnapshot(
-  view: VirtualizedTextViewInternal,
-  textSnapshot: TextSnapshot,
-  replacement = false,
-): void {
-  if (view.scrollMode !== 'content') return
-  assertContentLayout(textSnapshot.length, 0, 0)
-  const projection = new DisplayProjection({
-    ...view.model.projection.config,
-    textSnapshot,
-    ...(replacement ? { foldMap: null, inlineMap: null, injectedTextRows: [] } : {}),
-  })
-  const count = projection.rowCount
-  assertContentLayout(
-    textSnapshot.length,
-    count,
-    count * getRowHeight(view) + Math.max(0, count - 1) * view.rowGap,
-  )
+function displayHeight(view: VirtualizedTextViewInternal, count: number): number {
+  return count * getRowHeight(view) + Math.max(0, count - 1) * view.rowGap
+}
+
+export function sizedScrollMode(
+  sizing: EditorSizing | null,
+  height: number,
+  unsized: VirtualizedTextViewScrollMode,
+): VirtualizedTextViewScrollMode {
+  if (!sizing) return unsized
+  return sizing.height === 'content' && height <= (sizing.maxHeight ?? Infinity)
+    ? 'content'
+    : 'virtualized'
 }
 
 export function updateVirtualizerRows(view: VirtualizedTextViewInternal): void {
   const count = visibleLineCount(view)
-  if (view.scrollMode === 'content')
-    assertContentLayout(
-      view.model.textLength,
-      count,
-      count * getRowHeight(view) + Math.max(0, count - 1) * view.rowGap,
-    )
+  const height = displayHeight(view, count)
+  const mode = sizedScrollMode(view.sizing, height, view.scrollMode)
+  if (mode !== view.scrollMode) {
+    view.scrollMode = mode
+    view.scrollElement.dataset.editorScrollMode = mode
+    view.lastRenderedRowsKey = ''
+  }
   const changed = view.virtualizer.updateOptions({
     count,
     rowGap: view.rowGap,
     rowHeight: getRowHeight(view),
+    scrollMode: mode,
   })
   if (!changed && view.lastRenderedRowsKey === '') view.virtualizer.refresh()
+}
+
+export function applySizingStyle(element: HTMLElement, sizing: EditorSizing | null): void {
+  if (sizing) element.dataset.editorHeight = sizing.height
+  if (sizing?.maxHeight === undefined) element.style.removeProperty('--editor-height')
+  else element.style.setProperty('--editor-height', `${sizing.maxHeight}px`)
 }
 
 export function rowTop(view: VirtualizedTextViewInternal, row: number): number {
@@ -515,7 +518,13 @@ export function bufferRowForOffset(view: VirtualizedTextViewInternal, offset: nu
 }
 
 export function rowForViewportY(view: VirtualizedTextViewInternal, y: number): number {
-  return fixedRowForOffset(view, view.scrollElement.scrollTop + y)
+  return fixedRowForOffset(view, scrollOffsetForPoint(view) + y)
+}
+
+export function scrollOffsetForPoint(view: VirtualizedTextViewInternal): number {
+  if (view.scrollMode !== 'content') return view.scrollElement.scrollTop
+  const snapshot = view.virtualizer.getViewportSnapshot()
+  return snapshot.scrollTop - snapshot.nativeScrollTop
 }
 
 export function visibleLineCount(view: VirtualizedTextViewInternal): number {

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { webkit, type Browser } from 'playwright'
+import { webkit, type Browser, type Locator } from 'playwright'
 import { hasChromium, startPreview, type Preview } from './preview'
 
 const evidence = join(
@@ -26,6 +26,32 @@ for (const engine of ['chromium', 'webkit'] as const) {
       afterAll(async () => {
         if (engine === 'webkit') await browser?.close()
         await preview?.stop()
+      })
+      test('a large paste switches the example to bounded internal scrolling', async () => {
+        const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+        try {
+          const page = await context.newPage()
+          await page.goto(`${preview.base}/docs/start-here/quick-start/`)
+          const example = page.locator('[data-example]').first()
+          await example.getByRole('button', { name: /Edit/ }).click()
+          await expect.poll(() => example.getAttribute('data-example-live')).toBe('')
+          const editor = example.locator('.example-prepared .editor-virtualized')
+          expect(await editor.getAttribute('data-editor-scroll-mode')).toBe('content')
+
+          await page.keyboard.insertText('const value = 1\n'.repeat(6_000))
+          await expect
+            .poll(() => editor.getAttribute('data-editor-scroll-mode'))
+            .toBe('virtualized')
+          const metrics = await editor.evaluate((element) => ({
+            scrolls: element.scrollHeight > element.clientHeight,
+            rows: element.querySelectorAll('[data-editor-virtual-row]').length,
+          }))
+          expect(metrics.scrolls).toBe(true)
+          expect(metrics.rows).toBeGreaterThan(0)
+          expect(metrics.rows).toBeLessThan(200)
+        } finally {
+          await context.close()
+        }
       })
       test.each(['/', '/docs/start-here/playground/'])(
         'resizing %s preserves the frame and live wrapping',
@@ -125,22 +151,10 @@ for (const engine of ['chromium', 'webkit'] as const) {
               .evaluate((element) => element.clientWidth)
             await example.getByRole('button', { name: /Edit/ }).click()
             await expect.poll(() => example.getAttribute('data-example-live')).toBe('')
-            const textRows = example.locator(
-              '.example-prepared .editor-virtualized-text-clip .editor-virtualized-row',
+            await expectExampleWrapping(
+              example.locator('.example-prepared .editor-virtualized'),
+              staticRows,
             )
-            // Virtualized rows keep their DOM nodes while their visual positions change.
-            await expect
-              .poll(() =>
-                textRows.evaluateAll((elements) => {
-                  const rows = Array.from(elements, (element) => ({
-                    top: element.getBoundingClientRect().top,
-                    text: element.textContent,
-                  }))
-                  rows.sort((first, second) => first.top - second.top)
-                  return rows.map((row) => row.text)
-                }),
-              )
-              .toEqual(staticRows)
             await page.screenshot({ path: join(evidence, `${label}.png`), fullPage: true })
             const geometry = await example.evaluate((element) => {
               const frame = element.querySelector<HTMLElement>('.example-prepared')!
@@ -174,4 +188,36 @@ for (const engine of ['chromium', 'webkit'] as const) {
       )
     },
   )
+}
+
+async function expectExampleWrapping(editor: Locator, expected: readonly string[]): Promise<void> {
+  const rows = editor.locator('[data-editor-virtual-row]')
+  const step = await editor.evaluate((element) => {
+    const rowHeight = Number.parseFloat(
+      getComputedStyle(element).getPropertyValue('--editor-row-height'),
+    )
+    return Math.max(1, Math.floor(window.innerHeight / rowHeight / 2))
+  })
+  for (let first = 0; first < expected.length; first += step) {
+    await editor.evaluate((element, index) => {
+      const rowHeight = Number.parseFloat(
+        getComputedStyle(element).getPropertyValue('--editor-row-height'),
+      )
+      const top = element.getBoundingClientRect().top + window.scrollY + index * rowHeight
+      window.scrollTo({ top, behavior: 'instant' })
+    }, first)
+    const band = expected.slice(first, first + step)
+    await expect
+      .poll(async () => {
+        const mounted = await rows.evaluateAll((elements) =>
+          Array.from(elements, (element): [number, string | null] => [
+            Number(element.getAttribute('data-editor-virtual-row')),
+            element.textContent,
+          ]),
+        )
+        const byIndex = new Map(mounted)
+        return band.map((_, offset) => byIndex.get(first + offset))
+      })
+      .toEqual(band)
+  }
 }

@@ -62,6 +62,7 @@ function prepare(example: HTMLElement) {
         label: `${source.language || 'Text'} example editor`,
         snapshot: source[dark ? 'dark' : 'light'].paint,
         fallbackFont,
+        maxHeight: exampleHeightLimit(stage),
       })
       state.editor = editor
       await editor.ready()
@@ -78,6 +79,17 @@ function prepare(example: HTMLElement) {
   })
   return state
 }
+
+function exampleHeightLimit(stage: HTMLElement): number {
+  let height = 480
+  // Preserve the original example at every responsive width.
+  for (const paint of stage.querySelectorAll<HTMLElement>(
+    '.example-static [data-editor-document-paint]',
+  ))
+    height = Math.max(height, Number.parseFloat(paint.style.height) || 0)
+  return height
+}
+
 function reveal(example: HTMLElement, editor: ExampleEditor, focus: boolean) {
   const y = window.scrollY
   example.dataset.exampleLive = ''

@@ -1,4 +1,6 @@
 import { createError } from '../logging/errors'
+import type { TextReadSnapshot } from '../documentTextSnapshot'
+import type { DocumentPaintRow } from './documentPaint'
 import type {
   EditorContributionChange,
   EditorViewContribution,
@@ -25,6 +27,7 @@ export type EditorViewContributionFailurePhase =
   | 'update'
   | 'viewport'
   | 'capture-visible-paint'
+  | 'capture-document-paint'
 
 export type EditorViewContributionFailureHandler = (
   contribution: EditorViewContribution,
@@ -78,6 +81,23 @@ export class EditorViewContributionController {
     private readonly onDisposed: (contribution: EditorViewContribution) => void = () => undefined,
   ) {
     for (const contribution of contributions) this.join(contribution)
+  }
+
+  public captureDocumentHeadings(
+    source: TextReadSnapshot,
+  ): ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>> {
+    const headings = new Map<number, NonNullable<DocumentPaintRow['heading']>>()
+    for (const contribution of this.contributions.slice()) {
+      if (!contribution.captureDocumentHeadings || !this.members.has(contribution)) continue
+      try {
+        const rows = contribution.captureDocumentHeadings(source)
+        for (const [row, heading] of rows ?? []) headings.set(row, heading)
+      } catch (error) {
+        this.removeFailedContribution(contribution, 'capture-document-paint', error)
+        this.notifyMembershipChange()
+      }
+    }
+    return headings
   }
 
   private join(contribution: EditorViewContribution): void {

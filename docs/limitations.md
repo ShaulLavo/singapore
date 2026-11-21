@@ -29,7 +29,7 @@ Each entry names its source and whether the limit is expected to change.
 
 ### Native scroll height
 
-- Limit. The default physical scroll extent is **16,000,000 CSS pixels**. Virtualized views lazily probe the browser's sticky-position limit when logical content height exceeds **4,000,000 pixels**, one quarter of the default. The measured cap can be lower, especially in Firefox. There is no fixed Firefox value in the source.
+- Limit. The default physical scroll extent is **16,000,000 CSS pixels**. Both height modes lazily probe the browser's sticky-position limit when logical content height exceeds **4,000,000 pixels**, one quarter of the default. The measured cap can be lower, especially in Firefox. There is no fixed Firefox value in the source.
 - Source. `DEFAULT_MAX_SCROLL_HEIGHT` in [fixedRowVirtualizer.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/virtualization/fixedRowVirtualizer.ts#L90), `stickyScrollHeightLimit` in [scrollViewport.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/virtualization/scrollViewport.ts#L137), and `renderSnapshot` in [virtualizedTextView.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/virtualization/virtualizedTextView.ts#L1639).
 - What you see. The virtualizer maps the larger logical document onto a capped native scroll extent and shifts the painted origin near the viewport. This is a physical-coordinate limit, not a line-count refusal. Native scrollbar distance no longer equals logical document distance.
 - Why. Browser element-height and sticky-translation ceilings would otherwise leave the end of a large document unreachable or incorrectly painted. Discovery waits until a large document needs it to avoid forced layout on ordinary opens.
@@ -51,6 +51,8 @@ Each entry names its source and whether the limit is expected to change.
 - Outlook. No change is planned.
 
 ### Emitted document snapshot syntax paint
+
+- Capture limits. Document paint accepts at most **10,000 display rows**, **1,048,576 UTF-16 code units**, and **1,000,000 CSS pixels** of content height. These limits apply to document paint capture. Live editing and scrolling use the browser's physical scroll cap described above.
 
 - Requirement. Emitted document-snapshot HTML uses native CSS Custom Highlight ranges to preserve continuous text shaping across syntax-colour boundaries. Run `preparePaintSnapshotHighlights(document)` from `@singapore-editor/core/paint` in a small inline head bundle before emitting roots. It installs a JavaScript-only visibility gate that keeps snapshot layout while streamed markup waits for activation. Call `activatePaintSnapshotHighlights(root, paint)` synchronously after each root; every activation attempt reveals its root, including refusals and exceptions. The interactive ready-state transition releases remaining gates as parsing finishes, before deferred or module scripts load, including when activation is missing. A fresh document key prevents serialized readiness from bypassing the gate. Both APIs work without an Editor, parser or worker; `mountPaintSnapshot` activates automatically.
 - Admission. Emit the complete root produced by `mountPaintSnapshot`. Activation validates the ordered, contiguous source slices and full source coverage before allocating ranges. Repeated, overlapping, missing, reordered, oversized or nested malformed slices are refused; traversal and range work are bounded by the decoded document's text, rows and runs.

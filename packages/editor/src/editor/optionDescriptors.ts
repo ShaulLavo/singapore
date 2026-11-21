@@ -1,9 +1,9 @@
 import { normalizeEditorEditability } from './editorDocument'
+import { editorSizing, type EditorSizing } from './editorHeight'
 import {
   normalizeGutterLeadingInset,
   normalizeRowGap,
   normalizeRowHeight,
-  normalizeScrollMode,
 } from '../virtualization/virtualizedTextViewHelpers'
 import { normalizeHiddenCharactersMode } from '../virtualization/virtualizedTextViewHiddenCharacters'
 import {
@@ -18,7 +18,6 @@ import type {
   EditorEditability,
   EditorGutterScroll,
   EditorRangeDecoration,
-  EditorScrollMode,
   EditorScrollPosition,
 } from './types'
 import type { EditorTheme } from '../theme'
@@ -39,11 +38,11 @@ type EditorControlledOptions = {
   readonly gutterLeadingInset?: number
   readonly gutterScroll?: EditorGutterScroll
   readonly hiddenCharacters?: HiddenCharactersMode
+  readonly height: EditorSizing
   readonly keymap?: EditorKeymapOptions
   readonly lineHeight?: number
   readonly rangeDecorations?: readonly EditorRangeDecoration[]
   readonly rowGap?: number
-  readonly scrollMode?: EditorScrollMode
   readonly scrollPosition?: EditorScrollPosition | null
   readonly selection?: EditorControlledSelection | null
   readonly suspiciousCharacters?: EditorSuspiciousCharactersOptions
@@ -54,6 +53,7 @@ type EditorControlledOptions = {
 }
 
 export type EditorControlledOptionName = keyof EditorControlledOptions
+type EditorControlledInputName = EditorControlledOptionName | 'maxHeight' | 'scrollMode'
 
 type EditorControlledOptionValue = EditorControlledOptions[EditorControlledOptionName]
 
@@ -88,6 +88,7 @@ export type EditorOptionDescriptor<
   // Handed out by position when the registry below is built, so it means nothing away from that
   // array — which is what lets change tracking keep its per-option state in a plain dense list.
   readonly id: number
+  readInput(read: (name: EditorControlledInputName) => unknown): unknown
 }
 
 export type EditorOptionSync = {
@@ -255,13 +256,15 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     },
   }),
   defineOption({
-    name: 'scrollMode',
-    defaultValue: 'virtualized',
-    validate: (input) =>
-      input === undefined ? undefined : normalizeScrollMode(input as EditorScrollMode),
-    equals: Object.is,
-    applyTo: (editor, scrollMode) => {
-      editor.setScrollMode(scrollMode)
+    name: 'height',
+    defaultValue: { height: 'container' },
+    validate: (input) => {
+      if (!isRecord(input)) return editorSizing(input)
+      return editorSizing(input.height, input.maxHeight, input.scrollMode)
+    },
+    equals: (left, right) => left.height === right.height && left.maxHeight === right.maxHeight,
+    applyTo: (editor, sizing) => {
+      editor.setHeight(sizing.height, sizing.maxHeight)
       return true
     },
   }),
@@ -358,7 +361,14 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
       return true
     },
   }),
-].map((definition, id): EditorOptionDescriptor => ({ ...definition, id }))
+].map((definition, id): EditorOptionDescriptor => ({
+  ...definition,
+  id,
+  readInput: (read) =>
+    definition.name === 'height'
+      ? { height: read('height'), maxHeight: read('maxHeight'), scrollMode: read('scrollMode') }
+      : read(definition.name),
+}))
 
 export function createEditorOptionSync(): EditorOptionSync {
   const applied: (AppliedOption | undefined)[] = []

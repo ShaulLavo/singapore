@@ -94,6 +94,7 @@ export function createTestViewContributionContext(
     container,
     scrollElement,
     contentElement: scrollElement,
+    viewportOverlayElement: scrollElement,
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: () => missing('getSnapshot'),

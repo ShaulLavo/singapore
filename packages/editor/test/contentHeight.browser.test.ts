@@ -6,6 +6,7 @@ import { createInlineMap } from '../src/inlineMap'
 import { createEditorFindPlugin } from '../../find/src/plugin'
 import '../src/style.css'
 import { glyphAdvancesFor } from '../src/virtualization/glyphAdvances'
+import type { EditorViewportSnapshot } from '../src/plugins'
 
 declare module 'vitest/browser' {
   interface BrowserCommands {
@@ -23,9 +24,16 @@ afterEach(() => {
     editor.dispose()
     parent.remove()
   }
+  window.scrollTo(0, 0)
 })
 
-function mount(width = 390) {
+function mount(
+  width = 390,
+  options: Pick<
+    import('../src/editor/types').EditorOptions,
+    'height' | 'maxHeight' | 'scrollMode'
+  > = { height: 'content' },
+) {
   const parent = document.createElement('div')
   parent.id = 'content-height-proof'
   parent.style.cssText = 'height:240px;overflow:auto'
@@ -38,7 +46,7 @@ function mount(width = 390) {
   parent.append(before, host, after)
   document.body.append(parent)
   const editor = new Editor(host, {
-    scrollMode: 'content',
+    ...options,
     wordWrap: true,
     lineHeight: 20,
     fontSize: 14,
@@ -46,6 +54,7 @@ function mount(width = 390) {
     plugins: [createEditorFindPlugin()],
   })
   mounted.push({ editor, host, parent })
+  parent.scrollTop = before.offsetHeight
   return { editor, host, parent }
 }
 
@@ -57,6 +66,127 @@ const scroller = (host: HTMLElement) => host.querySelector<HTMLElement>('.editor
 const row = (host: HTMLElement, index: number) =>
   host.querySelector<HTMLElement>(`[data-editor-virtual-row="${index}"]`)!
 
+it.each([
+  ['nearest', 100, 80],
+  ['center', 100, 40],
+  ['center', 140, 60],
+] as const)('reveals a row with %s in a %i px clip', async (block, height, top) => {
+  const { editor, host, parent } = mount()
+  const clip = document.createElement('div')
+  clip.style.cssText = `height:${height}px;overflow:clip`
+  parent.before(clip)
+  clip.append(parent)
+  mounted[mounted.length - 1]!.parent = clip
+  const nativeOffsets: number[] = []
+  editor.onDidScroll(({ top }) => nativeOffsets.push(top))
+  editor.setText('row\n'.repeat(12_000))
+  parent.scrollTop = 360
+  await expect.poll(() => row(host, 0)?.textContent).toBe('row')
+  expect(row(host, 1000)).toBeNull()
+
+  editor.setSelection(4000, 4000, { reveal: true, revealBlock: block })
+  await expect
+    .poll(() => row(host, 1000)?.getBoundingClientRect().top)
+    .toBeCloseTo(clip.getBoundingClientRect().top + top, 0)
+  expect(editor.getScrollPosition().top).toBe(0)
+  expect(nativeOffsets).toEqual([])
+})
+
+it('respects scroll padding when revealing a distant page row', async () => {
+  const { editor, host, parent } = mount()
+  parent.style.scrollPaddingBottom = '60px'
+  editor.setText('row\n'.repeat(300))
+  await expect.poll(() => row(host, 0)?.textContent).toBe('row')
+  expect(row(host, 100)).toBeNull()
+
+  editor.setSelection(400, 400, { reveal: true, revealBlock: 'end' })
+
+  await expect
+    .poll(() => row(host, 100)?.getBoundingClientRect().bottom)
+    .toBeCloseTo(parent.getBoundingClientRect().bottom - 60, 0)
+})
+
+it('reports the clipped row window and releases its rows when scrolled offscreen', async () => {
+  const { editor, host, parent } = mount()
+  const clip = document.createElement('div')
+  clip.style.cssText = 'height:120px;overflow:clip'
+  parent.before(clip)
+  clip.append(parent)
+  mounted[mounted.length - 1]!.parent = clip
+  let viewport: EditorViewportSnapshot | undefined
+  editor.addPlugin({
+    name: 'page-viewport-proof',
+    activate: (context) =>
+      context.registerViewContribution({
+        createContribution: () => ({
+          update: (snapshot) => {
+            viewport = snapshot.viewport
+          },
+          updateViewport: (snapshot) => {
+            viewport = snapshot
+          },
+          dispose() {},
+        }),
+      }),
+  })
+  editor.setText('row\n'.repeat(12_000))
+  parent.scrollTop = 360 + 800
+  await expect.poll(() => viewport?.visibleRange).toEqual({ start: 40, end: 46 })
+  expect(viewport?.scrollTop).toBe(800)
+  expect(viewport?.clientHeight).toBe(120)
+  expect(scroller(host).scrollTop).toBe(0)
+  expect(row(host, 42)).not.toBeNull()
+  expect(row(host, 0)).toBeNull()
+
+  clip.style.height = '160px'
+  await expect.poll(() => viewport?.visibleRange).toEqual({ start: 40, end: 48 })
+
+  parent.scrollTop = 0
+  await expect.poll(() => host.querySelectorAll('[data-editor-virtual-row]').length).toBe(0)
+  expect(host.getBoundingClientRect().height).toBe(editor.getContentHeight())
+
+  parent.scrollTop = 360 + 28_000
+  await expect.poll(() => viewport?.visibleRange).toEqual({ start: 1400, end: 1408 })
+  expect(row(host, 1400)).not.toBeNull()
+})
+
+it('grows to the configured height, scrolls through a large paste and shrinks again', async () => {
+  const { editor, host } = mount(390, { height: 'content', maxHeight: 120 })
+  editor.setText('first\nsecond')
+  await frames()
+  expect(scroller(host).clientHeight).toBe(40)
+
+  const text = 'row\n'.repeat(12_000) + 'last'
+  editor.setText(text)
+  await frames()
+  expect(scroller(host).clientHeight).toBe(120)
+  expect(scroller(host).scrollHeight).toBeGreaterThan(120)
+  expect(host.querySelectorAll('[data-editor-virtual-row]').length).toBeLessThan(30)
+  editor.setSelection(text.length)
+  await frames()
+  expect(row(host, 12_000)?.textContent).toBe('last')
+
+  editor.setText('short')
+  await frames()
+  expect(scroller(host).clientHeight).toBe(20)
+  expect(scroller(host).scrollTop).toBe(0)
+})
+
+it('lets explicit height override the old alias and maps the old static editor to container', async () => {
+  const { editor, host } = mount(390, { height: 'container', scrollMode: 'content' })
+  host.style.height = '100px'
+  editor.setText('row\n'.repeat(200))
+  await frames()
+  expect(scroller(host).dataset.editorScrollMode).toBe('virtualized')
+  editor.setScrollMode('static')
+  expect(scroller(host).dataset.editorScrollMode).toBe('virtualized')
+  editor.setHeight('content', 80)
+  await frames()
+  expect(scroller(host).clientHeight).toBe(80)
+  editor.setScrollMode('content')
+  expect(scroller(host).dataset.editorScrollMode).toBe('content')
+})
+
 it.each([390, 752])(
   'sizes the plain-text editor in normal flow at %s px and reveals outside it',
   async (width) => {
@@ -65,7 +195,7 @@ it.each([390, 752])(
     editor.setText(text)
     await frames()
     expect(host.getBoundingClientRect().height).toBe(editor.getContentHeight())
-    expect(host.querySelectorAll('[data-editor-virtual-row]')).toHaveLength(80)
+    expect(host.querySelectorAll('[data-editor-virtual-row]').length).toBeLessThan(80)
     expect(getComputedStyle(scroller(host)).overflowY).toBe('visible')
     expect(getComputedStyle(scroller(host)).overflowX).toBe('visible')
     const readingScrollports = [...host.querySelectorAll<HTMLElement>('*')].filter((element) => {
@@ -145,7 +275,7 @@ it('uses the same content extent with a document session and switches scroll mod
   editor.setScrollMode('content')
   await frames()
   expect(host.getBoundingClientRect().height).toBe(820)
-  expect(host.querySelectorAll('[data-editor-virtual-row]')).toHaveLength(41)
+  expect(host.querySelectorAll('[data-editor-virtual-row]').length).toBeLessThan(41)
   session.applyEdits([{ from: 0, to: 0, text: 'new line\n' }])
   await frames()
   expect(host.getBoundingClientRect().height).toBe(840)
@@ -273,19 +403,41 @@ it('find results and heading jumps reveal through the outside scroller', async (
   expect(parent.scrollTop).toBeLessThanOrEqual(360)
 })
 
-it('refuses oversized content paint while keeping virtualized mode available', async () => {
-  const { editor, host } = mount()
-  editor.setText('small')
-  expect(() => editor.setText('x'.repeat(1_048_577))).toThrow('content layout limit')
-  editor.setScrollMode('virtualized')
-  editor.setText('x\n'.repeat(10_001))
+it('changes to content height for a document past the old row limit', async () => {
+  const { editor, host } = mount(390, { height: 'container' })
+  host.style.height = '240px'
+  editor.setText('row\n'.repeat(12_000) + 'last')
   await frames()
-  expect(() => editor.setScrollMode('content')).toThrow('content layout limit')
-  expect(scroller(host).dataset.editorScrollMode).toBe('virtualized')
-  editor.setText('short')
-  editor.setScrollMode('content')
+
+  host.style.height = ''
+  editor.setHeight('content')
   await frames()
-  expect(host.getBoundingClientRect().height).toBe(20)
+  expect(editor.getContentHeight()).toBe(240_020)
+  expect(host.querySelectorAll('[data-editor-virtual-row]').length).toBeLessThan(50)
+  editor.jumpTo(editor.getTextSnapshot().length)
+  await frames()
+  expect(row(host, 12_000)?.textContent).toBe('last')
+})
+
+it('reaches the last row after capping the page editor at the native height limit', async () => {
+  const { editor, host, parent } = mount()
+  editor.setWordWrap(false)
+  editor.setLineHeight(120)
+  const count = 150_000
+  const text = 'row\n'.repeat(count) + 'tail'
+  editor.setText(text)
+  await expect.poll(() => host.getBoundingClientRect().height).toBeGreaterThan(0)
+  expect(editor.getContentHeight()).toBe((count + 1) * 120)
+  expect(parent.scrollHeight).toBeLessThanOrEqual(16_001_000)
+
+  editor.setSelection(text.length, text.length, { reveal: true, revealBlock: 'center' })
+  await expect.poll(() => row(host, count)?.textContent).toBe('tail')
+  const tail = row(host, count).getBoundingClientRect()
+  const clip = parent.getBoundingClientRect()
+  expect(tail.top).toBeGreaterThanOrEqual(clip.top - 1)
+  expect(tail.bottom).toBeLessThanOrEqual(clip.bottom + 1)
+  expect(host.querySelectorAll('[data-editor-virtual-row]').length).toBeLessThan(50)
+  expect(parent.scrollHeight).toBeLessThanOrEqual(16_001_000)
 })
 
 it('reveals caret and heading offsets through document scrolling', async () => {
@@ -311,8 +463,9 @@ it('keeps unwrapped rows complete and reveals horizontally outside the editor', 
   editor.setWordWrap(false)
   const text = 'W'.repeat(200)
   editor.setText(text)
+  parent.scrollTop = 360
   await frames()
-  expect(row(host, 0).textContent).toBe(text)
+  await expect.poll(() => row(host, 0)?.textContent).toBe(text)
   expect(parent.scrollWidth).toBeGreaterThan(parent.clientWidth)
   editor.setSelection(text.length, text.length, { reveal: true })
   await frames()
@@ -336,40 +489,6 @@ function mountUnwrapped() {
   mounted.push({ editor, host, parent })
   return { editor, host, parent }
 }
-it('review: refused replacement preserves document and paint', async () => {
-  const { editor, host } = mountUnwrapped()
-  const session = createDocumentSession('small')
-  editor.attachSession(session)
-  editor.setSelection(1, 4)
-  const selection = editor.getSelections()
-  const snapshot = session.getSnapshot()
-  await frames()
-  expect(() => editor.setText('x'.repeat(1_048_577))).toThrow('content layout limit')
-  expect(editor.getTextSnapshot().length).toBe(5)
-  expect(editor.getSelections()).toEqual(selection)
-  expect(session.getSnapshot()).toBe(snapshot)
-  expect(row(host, 0).textContent).toBe('small')
-  session.applyEdits([{ from: 0, to: 1, text: 'S' }])
-  await frames()
-  expect(row(host, 0).textContent).toBe('Small')
-})
-it('review: same-line session edit cannot exceed content admission', async () => {
-  const { editor, host } = mountUnwrapped()
-  const session = createDocumentSession('small')
-  editor.attachSession(session)
-  await frames()
-  let thrown: unknown
-  try {
-    session.applyEdits([{ from: 5, to: 5, text: 'x'.repeat(1_048_577) }])
-  } catch (error) {
-    thrown = error
-  }
-  await frames()
-  expect(thrown).toMatchObject({ code: 'EDITOR_CONTENT_LAYOUT_LIMIT' })
-  expect(session.getTextSnapshot().length).toBe(5)
-  expect(row(host, 0).textContent).toBe('small')
-  expect(session.canUndo()).toBe(false)
-})
 it('review: outside horizontal scrolling keeps tail text hit-testable', async () => {
   const { editor, host } = mountUnwrapped()
   const text = 'W'.repeat(200)
@@ -426,67 +545,18 @@ it('review: page down uses outside reading viewport', async () => {
   expect(editor.getSelections()[0].headOffset).toBeGreaterThan(0)
 })
 
-it.each(['rows', 'height', 'wrapped rows'] as const)(
-  'preserves the session and paint when replacement exceeds %s',
-  async (dimension) => {
-    const { editor, host } = mountUnwrapped()
-    const session = createDocumentSession('small')
-    editor.attachSession(session)
-    editor.setSelection(1, 3)
-    if (dimension === 'height') editor.setLineHeight(200)
-    if (dimension === 'wrapped rows') {
-      host.style.width = '16px'
-      editor.setWordWrap(true)
-    }
-    await frames()
-    const selection = editor.getSelections()
-    const snapshot = session.getSnapshot()
-    const text =
-      dimension === 'rows'
-        ? 'x\n'.repeat(10_000)
-        : dimension === 'height'
-          ? 'x\n'.repeat(5_000)
-          : 'W'.repeat(30_000)
-    expect(() => editor.setText(text)).toThrow(
-      expect.objectContaining({ code: 'EDITOR_CONTENT_LAYOUT_LIMIT' }),
-    )
-    expect(session.getSnapshot()).toBe(snapshot)
-    expect(editor.getTextSnapshot().readRange(0, 5)).toBe('small')
-    expect(editor.getSelections()).toEqual(selection)
-    expect(
-      host.querySelector('.editor-virtualized-content')?.textContent ??
-        [...host.querySelectorAll('[data-editor-virtual-row]')]
-          .map((row) => row.textContent)
-          .join(''),
-    ).toBe('small')
-  },
-)
-
-it('refuses ordinary and reconciled edits before changing selections or history', async () => {
+it('edits a shared session past the old display row limit', async () => {
   const { editor, host } = mountUnwrapped()
-  const session = createDocumentSession('small')
+  const session = createDocumentSession('row\n'.repeat(10_000))
   editor.attachSession(session)
-  editor.setSelection(1, 4)
-  const selection = editor.getSelections()
-  const snapshot = session.getSnapshot()
-  const text = 'x'.repeat(1_048_577)
-  expect(() => editor.edit({ from: 5, to: 5, text })).toThrow(
-    expect.objectContaining({ code: 'EDITOR_CONTENT_LAYOUT_LIMIT' }),
-  )
-  expect(() =>
-    session.reconcile(snapshot, [[{ from: 5, to: 5, text }]], {
-      origin: 'remote',
-      edits: [{ from: 5, to: 5, text }],
-    }),
-  ).toThrow(expect.objectContaining({ code: 'EDITOR_CONTENT_LAYOUT_LIMIT' }))
-  expect(session.getSnapshot()).toBe(snapshot)
-  expect(editor.getSelections()).toEqual(selection)
-  expect(session.canUndo()).toBe(false)
   await frames()
-  expect(row(host, 0).textContent).toBe('small')
-  editor.setScrollMode('virtualized')
-  editor.edit({ from: 5, to: 5, text })
-  expect(session.getTextSnapshot().length).toBe(text.length + 5)
+  session.applyEdits([{ from: 0, to: 0, text: 'first\n' }])
+  await frames()
+
+  expect(session.getTextSnapshot().readRange(0, 5)).toBe('first')
+  expect(row(host, 0)?.textContent).toBe('first')
+  expect(host.querySelectorAll('[data-editor-virtual-row]').length).toBeLessThan(50)
+  expect(editor.getContentHeight()).toBe(200_040)
 })
 
 it.each(['cursorPageDown', 'cursorPageUp', 'selectPageDown', 'selectPageUp'] as const)(
@@ -520,22 +590,4 @@ it('uses the window viewport for page movement in document flow', async () => {
   editor.dispatchCommand('cursorPageDown')
   const expectedRows = Math.max(1, Math.floor(window.innerHeight / 20) - 1)
   expect(editor.getSelections()[0]?.headOffset).toBe(expectedRows * 2)
-})
-
-it('rejects oversized session attachment and releases admission when disposed', async () => {
-  const { editor, host } = mountUnwrapped()
-  const original = createDocumentSession('small')
-  editor.attachSession(original)
-  editor.setSelection(1, 3)
-  const selection = editor.getSelections()
-  const oversized = createDocumentSession('x'.repeat(1_048_577))
-  expect(() => editor.attachSession(oversized)).toThrow(
-    expect.objectContaining({ code: 'EDITOR_CONTENT_LAYOUT_LIMIT' }),
-  )
-  expect(editor.getSelections()).toEqual(selection)
-  await frames()
-  expect(row(host, 0).textContent).toBe('small')
-  editor.dispose()
-  expect(() => original.applyEdits([{ from: 5, to: 5, text: 'x'.repeat(1_048_577) }])).not.toThrow()
-  expect(original.getTextSnapshot().length).toBe(1_048_582)
 })

@@ -1,5 +1,4 @@
 import { recordEditorPerformanceDiagnostic } from '../editor/performanceDiagnostics'
-import { contentReadingBounds } from './contentLayout'
 import { completeRowPresentation, invalidateRowPresentations } from '../rowPresentation'
 import { createError } from '../logging/errors'
 import { pointViewport } from './pointViewport'
@@ -219,17 +218,17 @@ function reconcileRows(
 ): void {
   const contributions = view.gutterContributions
   const reusableRows = releaseRowsOutside(view, items)
-  for (const item of items) {
-    mountOrUpdateRow(view, item, reusableRows, snapshot, updatePass)
-    if (view.disposed) break
+  try {
+    for (const item of items) {
+      mountOrUpdateRow(view, item, reusableRows, snapshot, updatePass)
+      if (view.disposed) break
+    }
+  } finally {
+    if (view.disposed)
+      disposeResourceSnapshot(reusableRows, (row) => disposeUnownedRow(row, contributions))
+    else removeReusableRows(view, reusableRows, onRemoveSlot)
   }
-
-  if (view.disposed) {
-    for (const row of reusableRows) disposeUnownedRow(row, contributions)
-    return
-  }
-  removeReusableRows(view, reusableRows, onRemoveSlot)
-  updateReadingOrder(view, items)
+  if (!view.disposed) updateReadingOrder(view, items)
 }
 
 // Separate package instances share the page, so each module owns a distinct id namespace.
@@ -270,13 +269,16 @@ function mountOrUpdateRow(
   if (!row) return
   const contributions = view.gutterContributions
   const gutterParent = view.gutterContributions.length > 0 ? view.gutterElement : null
-  restoreRowElements(row, view.spacer, gutterParent)
-  updateRow(view, row, item, snapshot, updatePass)
-  if (view.disposed) {
-    disposeUnownedRow(row, contributions)
-    return
+  let mounted = false
+  try {
+    restoreRowElements(row, view.spacer, gutterParent)
+    updateRow(view, row, item, snapshot, updatePass)
+    if (view.disposed) return
+    view.rowElements.set(item.index, row)
+    mounted = true
+  } finally {
+    if (!mounted) disposeUnownedRow(row, contributions)
   }
-  view.rowElements.set(item.index, row)
 }
 
 function disposeUnownedRow(
@@ -367,10 +369,15 @@ function createGutterCells(
 ): Map<string, HTMLElement> {
   const cells = new Map<string, HTMLElement>()
   const contributions = view.gutterContributions
-  for (const contribution of contributions) {
-    const cell = createGutterCell(view, contribution, document)
-    if (!cell) break
-    cells.set(contribution.id, cell)
+  try {
+    for (const contribution of contributions) {
+      const cell = createGutterCell(view, contribution, document)
+      if (!cell) break
+      cells.set(contribution.id, cell)
+    }
+  } catch (error) {
+    disposeGutterCellMap(cells, contributions)
+    throw error
   }
 
   if (view.disposed) disposeGutterCellMap(cells, contributions)
@@ -3036,6 +3043,7 @@ function applyTotalHeight(
     snapshot.nativeScrollHeight,
     snapshot.nativeScrollTop - snapshot.scrollTop,
     snapshot.scrollTop,
+    snapshot.nativeScrollHeight < snapshot.scrollHeight,
   )
   if (!originChanged) return
 
@@ -3044,6 +3052,17 @@ function applyTotalHeight(
     positionRowElement(view, row.gutterElement, row.top)
   }
   view.lastRenderedRowsKey = ''
+}
+
+export function renderCaptureBatch(
+  view: VirtualizedTextViewInternal,
+  snapshot: FixedRowVirtualizerSnapshot,
+): readonly MountedVirtualizedTextRow[] {
+  const items = snapshot.virtualItems
+  reconcileRows(view, items, snapshot, createRowUpdatePass(view, items), () => {})
+  if (view.disposed) return []
+  renderHiddenCharacters(view)
+  return getMountedRows(view)
 }
 
 export function getMountedRows(
@@ -3421,12 +3440,8 @@ function caretPositionAtX(
 }
 
 export function pageRowDelta(view: VirtualizedTextViewInternal): number {
-  let viewportHeight = view.virtualizer.getSnapshot().viewportHeight
-  if (view.scrollMode === 'content') {
-    const bounds = contentReadingBounds(view.scrollElement)
-    viewportHeight =
-      Math.max(0, bounds.bottom - bounds.top) / pointViewport(view.scrollElement).scale
-  }
+  view.virtualizer.refreshPageViewport()
+  const { viewportHeight } = view.virtualizer.getViewportSnapshot()
   return Math.max(1, Math.floor(viewportHeight / rowStride(view)) - 1)
 }
 

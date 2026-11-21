@@ -80,11 +80,11 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     applied: [[{ start: 2, end: 5, className: 'sample' }]],
   },
   rowGap: { initial: 1, next: 9, method: 'setRowGap', applied: [9] },
-  scrollMode: {
-    initial: 'static',
-    next: 'virtualized',
-    method: 'setScrollMode',
-    applied: ['virtualized'],
+  height: {
+    initial: 'container',
+    next: 'content',
+    method: 'setHeight',
+    applied: ['content', undefined],
   },
   scrollPosition: {
     initial: { top: 3, left: 1 },
@@ -139,6 +139,26 @@ afterEach(() => {
 })
 
 describe('controlled options', () => {
+  it('tracks the maxHeight accessor while explicit height takes precedence over the old alias', async () => {
+    const [maxHeight, setMaxHeight] = createSignal(120)
+    const mounted = mountInRoot(() =>
+      createEditor({
+        document: DOCUMENT,
+        height: () => 'content',
+        maxHeight,
+        scrollMode: () => 'static',
+      }),
+    )
+    const instance = mounted.controller.editor()!
+    const sizing = vi.spyOn(instance, 'setHeight')
+
+    setMaxHeight(200)
+    await flushEffects()
+
+    expect(sizing.mock.calls).toEqual([['content', 200]])
+    mounted.dispose()
+  })
+
   for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
     it(`applies a changed ${descriptor.name} to the mounted editor`, async () => {
       const sample = OPTION_SAMPLES[descriptor.name]

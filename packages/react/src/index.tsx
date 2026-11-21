@@ -634,7 +634,11 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     descriptors: readonly EditorOptionDescriptor[] = EDITOR_OPTION_DESCRIPTORS,
   ): void {
     for (const descriptor of descriptors) {
-      this.optionSync.apply(editor, descriptor, this.options[descriptor.name])
+      this.optionSync.apply(
+        editor,
+        descriptor,
+        descriptor.readInput((name) => this.options[name]),
+      )
     }
   }
 

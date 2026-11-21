@@ -1,4 +1,5 @@
 import '../style.css'
+import { editorSizing, type EditorHeight } from './editorHeight'
 import { projectReconciliationEdits } from '../reconciliation'
 import { acquireEditorDocumentAnalysis, type EditorDocumentAnalysis } from './documentAnalysis'
 import { normalizeGutterLeadingInset } from '../virtualization/virtualizedTextViewHelpers'
@@ -9,7 +10,6 @@ import { decodeSnapshot as decodePaintSnapshot, type DocumentPaintCapture } from
 import { detectPlatform } from '@shaulavo/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
-  registerDocumentSnapshotConstraint,
   getDocumentMutationLeaseState,
   subscribeDocumentMutationLeaseState,
   subscribeDocumentTransactions,
@@ -428,7 +428,6 @@ export class Editor {
   private readonly viewContributions: EditorViewContributionController
   private readonly secondaryWork = new EditorSecondaryWorkScheduler()
   private readonly detachedEditChain = new DocumentEditChain(0, 0)
-  private unregisterContentConstraint: (() => void) | null = null
   private unsubscribeBufferChanges: (() => void) | null = null
   private transactionAttachment: TransactionAttachment | null = null
   private unsubscribeLeaseChanges: (() => void) | null = null
@@ -610,7 +609,7 @@ export class Editor {
       lineHeight: options.lineHeight,
       rowGap: options.rowGap,
       rowPositioning: options.rowPositioning,
-      scrollMode: options.scrollMode,
+      sizing: editorSizing(options.height, options.maxHeight, options.scrollMode),
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
       inputRoute: options.inputRoute,
@@ -1001,7 +1000,10 @@ export class Editor {
     const appearance = this.paintAppearance('refuse', 'document')
     if (appearance === null)
       return { status: 'unsupported', reason: 'appearance-not-ready' } as const
-    return this.view.captureDocumentPaint(appearance)
+    return this.view.captureDocumentPaint(
+      appearance,
+      this.viewContributions.captureDocumentHeadings(this.textSnapshot),
+    )
   }
 
   private captureViewportSnapshot() {
@@ -1011,16 +1013,16 @@ export class Editor {
     const appearance = this.paintAppearance('refuse')
     if (appearance === null) return null
     const snapshot = this.viewContributions.captureSnapshot().toVisibleSnapshot()
-    if (!snapshot || snapshot.viewport.clientWidth <= 0 || snapshot.viewport.clientHeight <= 0)
-      return null
+    const viewport = this.view.getViewport('native')
+    if (!snapshot || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) return null
     if (snapshot.documentId !== this.documentId || snapshot.textVersion !== this.textVersion)
       return null
     const gutters = this.view.captureGutterPaint()
     if (!gutters) return null
     const json = snapshot.toJSON()
     const visible = json.rows.flatMap((row, index) =>
-      row.top + row.height > json.viewport.scrollTop &&
-      row.top < json.viewport.scrollTop + json.viewport.clientHeight
+      row.top + row.height > viewport.scrollTop &&
+      row.top < viewport.scrollTop + viewport.clientHeight
         ? [index]
         : [],
     )
@@ -1028,6 +1030,11 @@ export class Editor {
     const paint = encodePaintSnapshot(
       {
         ...json,
+        viewport: {
+          ...viewport,
+          borderBoxHeight: viewport.borderBoxHeight ?? null,
+          borderBoxWidth: viewport.borderBoxWidth ?? null,
+        },
         rows: visible.map((index) => json.rows[index]!),
         paintLayers: json.paintLayers.concat([this.view.captureSelectionPaint()]),
       },
@@ -2157,10 +2164,11 @@ export class Editor {
   }
 
   /**
-   * Called with the position after it changes, from a gesture, a programmatic move or a clamp. The
-   * virtualizer has already folded the scroll in, so the position is current, and nothing throttles it.
+   * Called when the editor's own scroll position changes, including after a programmatic move or
+   * clamp. View contributions receive the visible viewport when an outside ancestor scrolls.
    */
   onDidScroll(listener: (position: Required<EditorScrollPosition>) => void): EditorDisposable {
+    if (this.scrollListeners.size === 0) this.reportedScroll = this.getScrollPosition()
     this.scrollListeners.add(listener)
     return disposableOnce(() => this.scrollListeners.delete(listener))
   }
@@ -2186,6 +2194,7 @@ export class Editor {
   }
 
   getScrollPosition(): Required<EditorScrollPosition> {
+    if (this.view.isPageScrolled) return DOCUMENT_START_SCROLL_POSITION
     const provisional = this.view.provisionalScrollPosition
     if (provisional) return provisional
     const viewState = this.view.getState()
@@ -2423,16 +2432,21 @@ export class Editor {
     })
   }
 
-  setScrollMode(scrollMode: EditorOptions['scrollMode']): void {
-    if (!this.view.setScrollMode(scrollMode)) return
-    this.syncContentConstraint()
+  setHeight(height: EditorHeight, maxHeight?: number): void {
+    const sizing = editorSizing(height, maxHeight)
+    if (!this.view.setHeight(sizing)) return
 
     this.notifyViewContributions('layout', null)
     this.log({
-      action: 'editor.layout.scroll_mode_changed',
+      action: 'editor.layout.height_changed',
       level: 'info',
-      layout: { scrollMode },
+      layout: sizing,
     })
+  }
+
+  /** @deprecated Use `setHeight`. */
+  setScrollMode(scrollMode: EditorOptions['scrollMode']): void {
+    this.setHeight(editorSizing(undefined, undefined, scrollMode).height)
   }
 
   addPlugin(plugin: EditorPlugin): EditorDisposable {
@@ -2502,7 +2516,6 @@ export class Editor {
   }
 
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
-    this.view.assertContentSnapshot(session.getTextSnapshot(), true)
     const analysis = options.analysis ?? options.preparedDocument?.analysis
     if (analysis && analysis.buffer !== editorBufferSession(session)?.buffer)
       throw new TypeError('Document analysis must reference the attached buffer')
@@ -2669,7 +2682,6 @@ export class Editor {
     options: ResetOwnedDocumentOptions,
     transactionBefore?: ReplacementTransactionBefore,
   ): number {
-    this.view.assertContentSnapshot(document.text, true)
     this.preparingDocument = true
     const savedScroll = this.pendingDocumentScroll ?? this.view.provisionalScrollPosition
     if (!options.scrollPosition && savedScroll)
@@ -2807,6 +2819,7 @@ export class Editor {
   }
 
   private applyScrollPosition(scrollPosition: EditorScrollPosition): void {
+    if (this.view.isPageScrolled) return
     if (this.view.isProvisional) {
       this.pendingDocumentScroll = scrollPosition
       return
@@ -3667,6 +3680,7 @@ export class Editor {
       container,
       scrollElement: this.el,
       contentElement: this.view.contentElement,
+      viewportOverlayElement: this.view.viewportOverlayElement,
       highlightPrefix: this.highlightPrefix,
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
@@ -4002,7 +4016,6 @@ export class Editor {
     const bufferSession = editorBufferSession(session)
     if (!bufferSession) return
 
-    this.syncContentConstraint()
     this.syncTransactionSubscription()
     this.unsubscribeBufferChanges = bufferSession.buffer.subscribe((event) =>
       this.handleBufferChange(bufferSession, event),
@@ -4049,19 +4062,7 @@ export class Editor {
     }
   }
 
-  private syncContentConstraint(): void {
-    this.unregisterContentConstraint?.()
-    this.unregisterContentConstraint = null
-    const buffer = this.session && editorBufferSession(this.session)?.buffer
-    if (!buffer || this.view.scrollMode !== 'content') return
-    this.unregisterContentConstraint = registerDocumentSnapshotConstraint(buffer, (snapshot) =>
-      this.view.assertContentSnapshot(snapshot),
-    )
-  }
-
   private disposeBufferSubscriptions(): void {
-    this.unregisterContentConstraint?.()
-    this.unregisterContentConstraint = null
     this.releaseTransactionAttachment()
     this.bufferPublication = null
     this.unsubscribeBufferChanges?.()
@@ -4138,18 +4139,7 @@ export class Editor {
   private createViewSnapshot(): EditorViewSnapshot {
     const viewState = this.view.getState()
     const textSnapshot = this.textSnapshot
-    const viewport = {
-      scrollTop: viewState.scrollTop,
-      scrollRow: viewState.scrollRow,
-      scrollLeft: viewState.scrollLeft,
-      scrollHeight: viewState.scrollHeight,
-      scrollWidth: viewState.scrollWidth,
-      clientHeight: viewState.viewportHeight,
-      clientWidth: viewState.viewportWidth,
-      borderBoxHeight: viewState.borderBoxHeight,
-      borderBoxWidth: viewState.borderBoxWidth,
-      visibleRange: viewState.visibleRange,
-    }
+    const viewport = this.view.getViewport()
 
     // One view per text version: repeat snapshots share the same lazily
     // materialized array instead of rebuilding it.
@@ -4270,7 +4260,7 @@ export class Editor {
 
   private reportScroll(): void {
     if (this.scrollListeners.size === 0) return
-    const { scrollTop: top, scrollLeft: left } = this.view.getState()
+    const { top, left } = this.getScrollPosition()
     const reported = this.reportedScroll
     if (reported?.top === top && reported.left === left) return
 

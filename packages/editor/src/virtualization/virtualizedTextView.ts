@@ -1,6 +1,7 @@
 import { scheduleFrame, type ScheduledFrame } from '../editor/scheduleFrame'
+import type { EditorSizing } from '../editor/editorHeight'
 import type { RevealBlock } from './revealBlock'
-import { assertContentLayout, contentReadingBounds, revealContentRow } from './contentLayout'
+import { contentReadingBounds, revealContentRow } from './contentLayout'
 import { isElementNode, isTextareaElement } from '../dom'
 import {
   acquireRowPresentation,
@@ -15,6 +16,7 @@ import type { FoldMarkerSource } from './foldMarkerSource'
 import type { SavedPaint } from '../editor/paintSnapshot'
 import type {
   DocumentPaintCapture,
+  DocumentPaintRow,
   PaintSnapshot,
   SavedDocumentPaint,
 } from '../editor/documentPaint'
@@ -124,6 +126,7 @@ import {
   rowForCaretPosition,
   rowForOffset,
   rowForViewportY,
+  scrollOffsetForPoint,
   rowTop,
   sameLineEditPatch,
   setFoldStateLayout,
@@ -132,8 +135,9 @@ import {
   sourceEditPatch,
   setTextLayoutState,
   setWrapEnabledLayout,
-  assertContentSnapshot,
   updateVirtualizerRows,
+  applySizingStyle,
+  sizedScrollMode,
   visualColumnForOffset,
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
@@ -364,7 +368,8 @@ export class VirtualizedTextView {
     const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null
     const rowHeight = normalizeRowHeight(lineHeightOverride ?? measuredMetrics.rowHeight)
     const rowGap = normalizeRowGap(options.rowGap)
-    const scrollMode = normalizeScrollMode(options.scrollMode)
+    const sizing = options.sizing ?? null
+    const scrollMode = sizedScrollMode(sizing, rowHeight, normalizeScrollMode(options.scrollMode))
     const rowPositioning = options.rowPositioning ?? 'transform'
     const inputElement = createInputElement(
       container,
@@ -425,6 +430,7 @@ export class VirtualizedTextView {
       // Behind the live version, so the first rebuild always writes.
       renderedRangeHighlightRuleVersion: -1,
       virtualizer,
+      sizing,
       scrollMode,
       rowPositioning,
       longLineChunkSize,
@@ -493,6 +499,7 @@ export class VirtualizedTextView {
     scrollElement.style.setProperty('--editor-gutter-width', '0px')
     scrollElement.style.setProperty('--editor-tab-size', String(tabSize))
     setScrollModeAttribute(scrollElement, scrollMode)
+    applySizingStyle(scrollElement, sizing)
     scrollElement.dataset.editorRowPositioning = rowPositioning
     applyRowHeight(this.view, rowHeight)
     gutterElement.className = 'editor-virtualized-gutter'
@@ -513,6 +520,7 @@ export class VirtualizedTextView {
       },
       {
         readInitialScrollPosition: false,
+        observeNativeClip: options.onViewportChange !== undefined,
         onScroll: () => {
           this.synchronizeScrollPaint(virtualizer.getViewportSnapshot())
           options.onViewportScroll?.()
@@ -583,6 +591,7 @@ export class VirtualizedTextView {
   /** The offset the next text replacement should render at, so a restore costs one pass, not two. */
   public requestScrollTop(value: number): void {
     this.pendingReveal = null
+    if (this.isPageScrolled) return
     this.view.virtualizer.requestScrollTop(value)
   }
 
@@ -641,8 +650,11 @@ export class VirtualizedTextView {
     return this.pendingReveal !== null
   }
 
-  public captureDocumentPaint(appearance: string): DocumentPaintCapture {
-    return captureDocumentPaint(this.view, appearance)
+  public captureDocumentPaint(
+    appearance: string,
+    headings: ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>>,
+  ): DocumentPaintCapture {
+    return captureDocumentPaint(this.view, appearance, headings)
   }
 
   private provisionalDocumentPaint: {
@@ -715,6 +727,10 @@ export class VirtualizedTextView {
 
   public measureInitialViewport(): void {
     if (this.view.virtualizer.hasMeasuredViewport()) return
+    if (this.isPageScrolled) {
+      this.view.virtualizer.refreshPageViewport()
+      return
+    }
     // Layout first: the padding read after it finds style already clean.
     const clientWidth = this.scrollElement.clientWidth
     const clientHeight = this.scrollElement.clientHeight
@@ -764,7 +780,7 @@ export class VirtualizedTextView {
     this.view.viewport.setDocumentWidth(paint.scrollWidth)
     this.view.viewport.setDocumentHeight(paint.scrollHeight, 0)
     this.view.viewport.setViewportSize(paint.viewportWidth, paint.viewportHeight)
-    this.view.viewport.setScrollPosition(paint.scrollLeft, paint.scrollTop)
+    this.view.viewport.setScrollPosition(paint.scrollLeft, paint.scrollTop, this.isPageScrolled)
     this.scrollElement.style.setProperty('--editor-gutter-width', `${paint.gutterWidth}px`)
     setGutterLeadingInsetProperty(this.view, inset)
     const release = paintProvisionalRows(this.view, paint)
@@ -854,14 +870,8 @@ export class VirtualizedTextView {
     return this.atomicRenderDepth > 0 || this.flushingAtomicRender
   }
 
-  get scrollMode(): VirtualizedTextViewScrollMode {
-    return this.view.scrollMode
-  }
-
-  public assertContentSnapshot(text: string | TextSnapshot, replacement = false): void {
-    if (this.view.scrollMode !== 'content') return
-    const snapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
-    assertContentSnapshot(this.view, snapshot, replacement)
+  get isPageScrolled(): boolean {
+    return this.view.scrollMode === 'content'
   }
 
   public setText(
@@ -871,7 +881,6 @@ export class VirtualizedTextView {
   ): void {
     const textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
     const view = this.view
-    assertContentSnapshot(view, textSnapshot)
     this.pendingReveal = null
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
@@ -1104,10 +1113,6 @@ export class VirtualizedTextView {
     const nextScrollMode = normalizeScrollMode(scrollMode)
     if (view.scrollMode === nextScrollMode) return false
 
-    if (nextScrollMode === 'content') {
-      const snapshot = view.virtualizer.getSnapshot()
-      assertContentLayout(view.model.textLength, view.model.visibleLineCount, snapshot.totalSize)
-    }
     view.scrollMode = nextScrollMode
     setScrollModeAttribute(view.scrollElement, nextScrollMode)
     view.lastRenderedRowsKey = ''
@@ -1115,6 +1120,17 @@ export class VirtualizedTextView {
       scrollMode: nextScrollMode,
       maxScrollHeight: nextScrollMode === 'virtualized' ? this.measuredMaxScrollHeight : undefined,
     })
+    return true
+  }
+
+  public setHeight(sizing: EditorSizing): boolean {
+    const view = this.view
+    const previous = view.sizing
+    if (previous?.height === sizing.height && previous.maxHeight === sizing.maxHeight) return false
+
+    view.sizing = sizing
+    applySizingStyle(view.scrollElement, sizing)
+    updateVirtualizerRows(view)
     return true
   }
 
@@ -1155,7 +1171,6 @@ export class VirtualizedTextView {
     const view = this.view
     const textSnapshot =
       typeof nextText === 'string' ? createStringTextSnapshot(nextText) : nextText
-    assertContentSnapshot(view, textSnapshot)
     this.applyingEdit = true
     try {
       const sameLinePatch = sameLineEditPatch(view, edit)
@@ -1179,7 +1194,6 @@ export class VirtualizedTextView {
 
   public applyEditBatch(batch: TextEditBatch): void {
     const view = this.view
-    assertContentSnapshot(view, batch.after)
     const previousLineCount = view.model.lineCount
     applyTextLayoutTransition(view, batch)
     projectFoldMarkersThroughBatch(view, batch)
@@ -1384,12 +1398,6 @@ export class VirtualizedTextView {
     }
     const view = this.view
     this.pendingReveal = null
-    // Initial navigation can arrive before ResizeObserver measures the viewport.
-    if (requested !== 'nearest' && view.virtualizer.getSnapshot().viewportHeight === 0) {
-      this.pendingReveal = { offset, block: requested, affinity }
-      return
-    }
-
     if (view.scrollMode === 'content') {
       const index = affinity
         ? rowForCaretPosition(view, offset, affinity)
@@ -1399,6 +1407,14 @@ export class VirtualizedTextView {
       const target =
         view.selections[0]?.head === offset && !view.caretElement.hidden ? view.caretElement : row
       if (target) revealContentRow(target, requested)
+      else this.revealUnmountedPageRow(index, requested)
+      view.virtualizer.refreshPageViewport()
+      return
+    }
+
+    // Initial navigation can arrive before ResizeObserver measures the viewport.
+    if (requested !== 'nearest' && view.virtualizer.getSnapshot().viewportHeight === 0) {
+      this.pendingReveal = { offset, block: requested, affinity }
       return
     }
 
@@ -1411,6 +1427,32 @@ export class VirtualizedTextView {
 
     ensureOffsetMounted(view, offset, affinity)
     scrollOffsetIntoView(view, offset, affinity)
+  }
+
+  private revealUnmountedPageRow(index: number, block: RevealBlock): void {
+    const view = this.view
+    const offset = rowTop(view, index)
+    const snapshot = view.virtualizer.getViewportSnapshot()
+    const bounds = contentReadingBounds(view.scrollElement)
+    const height = Math.max(0, bounds.bottom - bounds.top) / pointViewport(view.scrollElement).scale
+    const available = Math.max(0, height - view.metrics.rowHeight)
+    const alignment =
+      block === 'center' || block === 'center-if-outside'
+        ? available / 2
+        : block === 'end' || offset > snapshot.scrollTop
+          ? available
+          : 0
+    const top =
+      view.virtualizer.pagePositionForRowOffset(offset, height, alignment) +
+      scrollElementPadding(view.scrollElement).top
+    const target = view.scrollElement.ownerDocument.createElement('div')
+    target.style.cssText = `position:absolute;pointer-events:none;inset-inline-start:0;top:${top}px;height:${view.metrics.rowHeight}px;width:1px`
+    view.scrollElement.append(target)
+    try {
+      revealContentRow(target, block)
+    } finally {
+      target.remove()
+    }
   }
 
   /** The rendered replacements a caret steps over whole and a delete takes whole. */
@@ -1484,7 +1526,11 @@ export class VirtualizedTextView {
   ): Range | null {
     if (this.view.provisional) return null
     const view = this.view
-    if (options.scrollIntoView !== false) ensureOffsetMounted(view, startOffset)
+    if (options.scrollIntoView !== false) {
+      if (this.isPageScrolled && !resolveMountedOffset(view, startOffset))
+        this.reveal(startOffset, 'nearest')
+      else ensureOffsetMounted(view, startOffset)
+    }
 
     const start = resolveMountedOffset(view, startOffset)
     const end = resolveMountedOffset(view, endOffset)
@@ -1496,9 +1542,12 @@ export class VirtualizedTextView {
     return range
   }
 
-  public getViewport(): EditorViewportSnapshot {
+  public getViewport(geometry: 'clipped' | 'native' = 'clipped'): EditorViewportSnapshot {
     const view = this.view
-    const snapshot = view.virtualizer.getViewportSnapshot()
+    const snapshot =
+      geometry === 'clipped'
+        ? view.virtualizer.getClippedViewportSnapshot()
+        : view.virtualizer.getViewportSnapshot()
     return {
       scrollTop: snapshot.scrollTop,
       scrollRow: snapshot.scrollRow,
@@ -1511,6 +1560,10 @@ export class VirtualizedTextView {
       borderBoxWidth: snapshot.borderBoxWidth,
       visibleRange: snapshot.visibleRange,
     }
+  }
+
+  public get viewportOverlayElement(): HTMLDivElement {
+    return this.view.viewport.overlay
   }
 
   public captureDeferredFoldMarkerSource(): FoldMarkerSource | null {
@@ -1795,8 +1848,7 @@ export class VirtualizedTextView {
     const view = this.view
     if (
       this.measuredMaxScrollHeight === undefined &&
-      view.scrollMode === 'virtualized' &&
-      snapshot.viewportHeight > 0 &&
+      view.scrollMode !== 'static' &&
       view.model.textLength > 0 &&
       // Discover before native caps are reached, while ordinary opens remain layout-free.
       snapshot.totalSize > DEFAULT_MAX_SCROLL_HEIGHT / 4 &&
@@ -1827,7 +1879,8 @@ export class VirtualizedTextView {
     }
     updateGutterWidthIfNeeded(view)
     if (view.disposed) return
-    if (visible && this.refreshWrapWidth(snapshot.viewportWidth)) return
+    const pageWidthKnown = this.isPageScrolled && snapshot.viewportWidth > 0
+    if ((visible || pageWidthKnown) && this.refreshWrapWidth(snapshot.viewportWidth)) return
     if (!visible) {
       this.cancelContentWidthMeasurement?.()
       this.cancelContentWidthMeasurement = null
@@ -1866,7 +1919,12 @@ export class VirtualizedTextView {
     snapshot: Pick<FixedRowVirtualizerSnapshot, 'scrollLeft' | 'nativeScrollTop'>,
   ): void {
     if (this.view.provisional || this.atomicRenderDepth > 0 || this.applyingEdit) return
-    this.view.viewport.setScrollPosition(snapshot.scrollLeft, snapshot.nativeScrollTop)
+    this.view.viewport.setScrollPosition(
+      snapshot.scrollLeft,
+      snapshot.nativeScrollTop,
+      this.isPageScrolled,
+      this.view.virtualizer.nativeOverlayOffset,
+    )
   }
 
   private flushPendingReveal(): void {
@@ -2112,7 +2170,7 @@ function locatePoint(
     return null
   const metrics = viewportPointMetrics(view, clientX, clientY)
   const index = rowForViewportY(view, metrics.y)
-  const y = view.scrollElement.scrollTop + metrics.y
+  const y = scrollOffsetForPoint(view) + metrics.y
   if (!clamp && (y < rowTop(view, index) || y >= rowTop(view, index) + view.metrics.rowHeight))
     return null
   const row = view.model.projection.getRowMetrics(index)

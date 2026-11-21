@@ -8,6 +8,7 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
+  EditorViewportSnapshot,
 } from '@singapore-editor/core/extensions'
 import {
   createEditorSecondaryTextView,
@@ -107,6 +108,7 @@ class StickyScrollContribution implements EditorViewContribution {
   private appliedMetrics: EditorViewSnapshot['metrics'] | null = null
   private contentKey = ''
   private layoutKey = ''
+  private header = EMPTY_HEADER
 
   public constructor(context: EditorViewContributionContext, options: ResolvedStickyScrollOptions) {
     this.context = context
@@ -129,8 +131,14 @@ class StickyScrollContribution implements EditorViewContribution {
     this.root.remove()
   }
 
+  public updateViewport(viewport: EditorViewportSnapshot): void {
+    if (this.lineView && this.header.rows.length)
+      this.syncLayout(this.lineView, viewport, this.header)
+  }
+
   private renderSnapshot(snapshot: EditorViewSnapshot): void {
     const header = stickyScrollHeader(snapshot, this.options)
+    this.header = header
     if (header.rows.length === 0) {
       this.root.hidden = true
       this.layoutKey = ''
@@ -141,7 +149,7 @@ class StickyScrollContribution implements EditorViewContribution {
     this.syncMetrics(lineView, snapshot)
     this.syncTheme(lineView, snapshot)
     this.syncContent(lineView, snapshot, header)
-    this.syncLayout(lineView, snapshot, header)
+    this.syncLayout(lineView, snapshot.viewport, header)
   }
 
   private ensureLineView(snapshot: EditorViewSnapshot): EditorSecondaryTextView {
@@ -198,30 +206,20 @@ class StickyScrollContribution implements EditorViewContribution {
 
   private syncLayout(
     lineView: EditorSecondaryTextView,
-    snapshot: EditorViewSnapshot,
+    viewport: EditorViewportSnapshot,
     header: StickyScrollHeader,
   ): void {
-    const key = [
-      header.top,
-      header.bottom,
-      header.stackHeight,
-      snapshot.viewport.scrollWidth,
-      snapshot.viewport.clientWidth,
-    ].join(':')
+    const scrollTop = viewport.scrollTop
+    const top = Math.max(
+      header.top - scrollTop,
+      Math.min(0, header.bottom - scrollTop - header.stackHeight),
+    )
+    const key = `${top}:${header.stackHeight}`
     this.root.hidden = false
     if (key === this.layoutKey) return
 
     this.layoutKey = key
-    this.root.style.top = `${header.top}px`
-    this.root.style.height = `${header.bottom - header.top}px`
-    this.root.style.setProperty(
-      '--editor-sticky-scroll-content-width',
-      `${snapshot.viewport.scrollWidth}px`,
-    )
-    this.root.style.setProperty(
-      '--editor-sticky-scroll-viewport-width',
-      `${snapshot.viewport.clientWidth}px`,
-    )
+    this.root.style.top = `${top}px`
     lineView.setHeight(header.stackHeight)
   }
 }
@@ -245,7 +243,7 @@ function createRoot(context: EditorViewContributionContext): HTMLDivElement {
   root.className = 'editor-sticky-scroll'
   root.setAttribute('aria-hidden', 'true')
   root.hidden = true
-  context.contentElement.appendChild(root)
+  context.viewportOverlayElement.appendChild(root)
   return root
 }
 
@@ -260,8 +258,7 @@ function createLineView(
 ): EditorSecondaryTextView {
   return createEditorSecondaryTextView(root, {
     className: 'editor-sticky-scroll-lines',
-    // Static: every line of the stack is on screen at once, so there is nothing to virtualize away.
-    scrollMode: 'static',
+    scroll: false,
     overscan: 0,
     lineHeight: snapshot.metrics.rowHeight,
     tabSize: snapshot.tabSize,

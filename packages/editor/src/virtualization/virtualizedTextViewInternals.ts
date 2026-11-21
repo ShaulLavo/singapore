@@ -1,4 +1,5 @@
 import type { EditorDisposable } from '../editor/disposables'
+import type { EditorSizing } from '../editor/editorHeight'
 import type { ScheduledFrame } from '../editor/scheduleFrame'
 import type { WrapAdvance, WrapBreak } from './displayProjectionTypes'
 import type { GlyphAdvances } from './glyphAdvances'
@@ -88,6 +89,7 @@ export interface VirtualizedTextViewInternal {
   readonly styleEl: HTMLStyleElement
   readonly highlightScope: string
   readonly virtualizer: FixedRowVirtualizer
+  sizing: EditorSizing | null
   scrollMode: VirtualizedTextViewScrollMode
   readonly rowPositioning: VirtualizedTextViewRowPositioning
   readonly longLineChunkSize: number
