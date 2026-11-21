@@ -255,3 +255,24 @@ test('a redirect cannot switch a bootstrapped source to a stranger with the same
     await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
+
+test.each(['pinned', 'opening'])('snapshots a mutable URL before the %s read', async (mode) => {
+  const address = new URL(url)
+  const seen: string[] = []
+  const replies = [partial('bytes 0-3/*', 'one\n'), partial('bytes 4-7/8', 'two\n')]
+  const fetcher: typeof fetch = async (input) => {
+    seen.push(String(input))
+    await Promise.resolve()
+    return replies.shift()!
+  }
+
+  const opened =
+    mode === 'opening'
+      ? openHttpRangeSource(address, { id: 'local', firstBytes: 4, fetch: fetcher })
+      : Promise.resolve(httpRangeSource(address, { id: 'local', etag, fetch: fetcher }))
+  address.pathname = '/other'
+  const source = await opened
+  await source.readBytes(0, 4, signal)
+  await source.readBytes(4, 8, signal)
+  expect(seen).toEqual([url, url])
+})

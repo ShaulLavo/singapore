@@ -49,9 +49,9 @@ Use `sourceId`, `revision`, `start.byteOffset`, and `end.byteOffset` to identify
 interval across renders. Include `lineBreak` when passing fragment text to a parser. Highlight
 spans and selection columns count UTF-16 units in the fragment. A selection can reach one column
 past the text to include an owned LF. Copy uses the retained endpoint text and reads only any
-gap between them. To copy between overlapping fragments from different windows, both fragments
-need exact global UTF-16 origins. Global line and UTF-16 offsets are optional and exact when
-present.
+gap between them. For overlapping fragments, exact global UTF-16 origins align their columns.
+Without both origins, the copy decodes only the interval between the two fragment starts.
+Global line and UTF-16 offsets are optional and exact when present.
 
 Decoding preserves the UTF-8 BOM and CRLF. It counts LF as the row boundary. Malformed UTF-8 uses
 replacement characters with positions in the original byte stream. The viewer rejects UTF-16 BOMs
@@ -84,7 +84,7 @@ bounded slices. The host is responsible for stable identity and the snapshot's l
 `httpRangeSource(url, { id, etag })` sends `Range` and `If-Match` using a pinned strong ETag.
 Alternatively, give it `{ id, revision, immutable: true }` for a versioned immutable URL.
 `openHttpRangeSource(url, { id, signal })` establishes a strong ETag with one bounded opening read
-and reuses its bytes. Use the final range URL because redirects are rejected. Open the source before associating a trusted index with it.
+and reuses its bytes. The adapter captures the URL at construction or opening and rejects redirects. Open the source before associating a trusted index with it.
 
 The HTTP adapter validates single-range `206` responses and caps the retained payload at the declared range.
 A `206` with total `*` can make short progress without revealing the file size. A valid `416` gives
@@ -101,7 +101,8 @@ network-level transfers can differ from those counters.
 
 ## Work and lifetime
 
-The defaults allow two views, two in-flight reads, 64 KiB pages, and an 8 MiB cache. An operation
+The defaults allow two views, two in-flight source reads, two in-flight external index lookups,
+64 KiB pages, and an 8 MiB cache. Source reads and index lookups have separate queues. An operation
 reserves up to 1 MiB of input and 32 source calls, and returns up to 128 fragments and 512 Ki
 UTF-16 units. Cache hits and restart bytes use the work budget. Copies that exceed their budget
 return a limit result. The model retains at most 4,096 discovered checkpoints and bounds the

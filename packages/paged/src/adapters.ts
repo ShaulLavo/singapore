@@ -38,13 +38,14 @@ export type HttpOpenOptions = HttpOptions & {
 }
 
 export function httpRangeSource(url: string | URL, options: HttpRangeOptions): RangeSource {
+  const address = String(url)
   const pinned = 'etag' in options
   const revision = pinned ? strongEtag(options.etag) : options.revision
   return {
     id: options.id,
     revision,
     readBytes: (start, end, signal) =>
-      httpRead(url, { fetch: options.fetch, revision, pin: pinned }, start, end, signal),
+      httpRead(address, { fetch: options.fetch, revision, pin: pinned }, start, end, signal),
   }
 }
 
@@ -52,16 +53,17 @@ export async function openHttpRangeSource(
   url: string | URL,
   options: HttpOpenOptions,
 ): Promise<RangeSource> {
+  const address = String(url)
   const firstBytes = options.firstBytes ?? PAGED_PROOF_OPTIONS.pageBytes
   const signal = options.signal ?? new AbortController().signal
   let opening: RangeRead | null = await httpRead(
-    url,
+    address,
     { fetch: options.fetch, pin: true },
     0,
     firstBytes,
     signal,
   )
-  const source = httpRangeSource(url, { ...options, etag: opening.revision })
+  const source = httpRangeSource(address, { ...options, etag: opening.revision })
   return {
     ...source,
     byteLength: opening.byteLength,
@@ -92,7 +94,7 @@ type HttpReadOptions = {
 }
 
 async function httpRead(
-  url: string | URL,
+  url: string,
   options: HttpReadOptions,
   start: number,
   end: number,

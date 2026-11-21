@@ -48,6 +48,57 @@ function observe<T>(result: Promise<T>, signal: AbortSignal): Promise<T> {
 
 type Slot = { start(): void }
 
+class WorkPool {
+  readonly #queue = new Set<Slot>()
+  active = 0
+  peak = 0
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(signal: AbortSignal, run: () => Promise<T>) {
+    await this.acquire(signal)
+    try {
+      signal.throwIfAborted()
+      return await run()
+    } finally {
+      this.active--
+      this.#queue.values().next().value?.start()
+    }
+  }
+
+  private acquire(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    if (this.active < this.limit) {
+      this.takeSlot()
+      return Promise.resolve()
+    }
+    return new Promise((resolve, reject) => {
+      const remove = () => {
+        this.#queue.delete(slot)
+        signal.removeEventListener('abort', abort)
+      }
+      const abort = () => {
+        remove()
+        reject(signal.reason)
+      }
+      const slot = {
+        start: () => {
+          remove()
+          this.takeSlot()
+          resolve()
+        },
+      }
+      this.#queue.add(slot)
+      signal.addEventListener('abort', abort, { once: true })
+    })
+  }
+
+  private takeSlot() {
+    this.active++
+    this.peak = Math.max(this.peak, this.active)
+  }
+}
+
 type SourceEvents = {
   close(): void
   inspect(start: number, bytes: Uint8Array, upperBound: number | undefined): void
@@ -57,13 +108,12 @@ export class SourceReader {
   readonly #lifetime = new AbortController()
   readonly #cache = new Map<number, Interval>()
   readonly #flights = new Map<string, Flight>()
-  readonly #queue = new Set<Slot>()
+  readonly #io: WorkPool
+  readonly #locators: WorkPool
   readonly #maxEntries: number
   #state: 'open' | 'stale' | 'disposed' = 'open'
   #cachedBytes = 0
   #peakCachedBytes = 0
-  #inFlight = 0
-  #peakInFlight = 0
   #requestedBytes = 0
   #deliveredBytes = 0
   #sourceRequests = 0
@@ -87,6 +137,8 @@ export class SourceReader {
     this.id = source.id
     this.revision = source.revision
     this.#byteLength = mergeExact(byteLength, source.byteLength, 'byte length')
+    this.#io = new WorkPool(options.maxInFlight)
+    this.#locators = new WorkPool(options.maxInFlight)
     this.#maxEntries = Math.ceil(options.cacheBytes / options.pageBytes) * 2
   }
 
@@ -96,8 +148,8 @@ export class SourceReader {
       byteLength: this.#byteLength,
       cachedBytes: this.#cachedBytes,
       peakCachedBytes: this.#peakCachedBytes,
-      inFlight: this.#inFlight,
-      peakInFlight: this.#peakInFlight,
+      inFlight: this.#io.active,
+      peakInFlight: this.#io.peak,
       requestedBytes: this.#requestedBytes,
       deliveredBytes: this.#deliveredBytes,
       sourceRequests: this.#sourceRequests,
@@ -136,20 +188,28 @@ export class SourceReader {
     this.assertLive(signal)
     const validate = this.source.validate
     if (!validate) return false
-    const result = await this.run(signal, (active) => validate.call(this.source, active))
+    const result = await this.run(this.#io, signal, (active) => validate.call(this.source, active))
     this.assertLive(signal)
     if (result.revision !== this.revision) this.rethrow(new PagedSourceInvalidatedError(), signal)
     return true
   }
 
-  async run<T>(signal: AbortSignal | undefined, use: (active: AbortSignal) => Promise<T>) {
+  locate<T>(signal: AbortSignal, use: (active: AbortSignal) => Promise<T>) {
+    return this.run(this.#locators, signal, use)
+  }
+
+  private async run<T>(
+    pool: WorkPool,
+    signal: AbortSignal | undefined,
+    use: (active: AbortSignal) => Promise<T>,
+  ) {
     this.assertLive(signal)
     const combined = signal
       ? AbortSignal.any([signal, this.#lifetime.signal])
       : this.#lifetime.signal
     try {
       const result = await observe(
-        this.schedule(combined, () => use(combined)),
+        pool.run(combined, () => use(combined)),
         combined,
       )
       this.assertLive(signal)
@@ -205,7 +265,7 @@ export class SourceReader {
     const flight = {
       controller,
       readers: 0,
-      result: this.schedule(combined, () => this.fetch(start, end, combined)),
+      result: this.#io.run(combined, () => this.fetch(start, end, combined)),
     }
     this.#flights.set(key, flight)
     void flight.result.finally(() => this.removeFlight(key, flight)).catch(() => {})
@@ -298,48 +358,5 @@ export class SourceReader {
     this.assertLive(signal)
     if (error instanceof PagedSourceInvalidatedError) this.close('stale')
     throw error
-  }
-
-  private async schedule<T>(signal: AbortSignal, run: () => Promise<T>) {
-    await this.acquire(signal)
-    try {
-      signal.throwIfAborted()
-      return await run()
-    } finally {
-      this.#inFlight--
-      this.#queue.values().next().value?.start()
-    }
-  }
-
-  private acquire(signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted()
-    if (this.#inFlight < this.options.maxInFlight) {
-      this.takeSlot()
-      return Promise.resolve()
-    }
-    return new Promise((resolve, reject) => {
-      const remove = () => {
-        this.#queue.delete(slot)
-        signal.removeEventListener('abort', abort)
-      }
-      const abort = () => {
-        remove()
-        reject(signal.reason)
-      }
-      const slot = {
-        start: () => {
-          remove()
-          this.takeSlot()
-          resolve()
-        },
-      }
-      this.#queue.add(slot)
-      signal.addEventListener('abort', abort, { once: true })
-    })
-  }
-
-  private takeSlot() {
-    this.#inFlight++
-    this.#peakInFlight = Math.max(this.#peakInFlight, this.#inFlight)
   }
 }
