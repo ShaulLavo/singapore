@@ -2,14 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Paged read-only proof</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paged UTF-8 file viewer</title>
   </head>
   <body>
-    <h1>Paged read-only UTF-8 proof</h1>
-    <p>
-      Editing, saving, undo, syntax and language servers are unavailable. Copy is limited to 1 MiB
-      of UTF-16 text.
-    </p>
+    <h1>Paged UTF-8 file viewer</h1>
+    <label>Open a UTF-8 file <input id="file" type="file" /></label>
+    <button id="close" type="button">Close file</button>
     <main id="view"></main>
     <script type="module" src="./src/paged/proof.ts"></script>
   </body>

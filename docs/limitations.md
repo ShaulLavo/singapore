@@ -35,6 +35,13 @@ Each entry names its source and whether the limit is expected to change.
 - Why. Browser element-height and sticky-translation ceilings would otherwise leave the end of a large document unreachable or incorrectly painted. Discovery waits until a large document needs it to avoid forced layout on ordinary opens.
 - Outlook. The mapping and probe already handle this cap. The browser's physical limit stays. Engine-specific details belong in [browser quirks](https://github.com/ShaulLavo/singapore/blob/main/docs/display/browser-quirks.md).
 
+### Sticky scope headers
+
+- Limit. The sticky stack uses at most **one third of the editor's visible height**, rounded down to whole rows. A caller can lower the limit with `maxLineCount`. A zero-row budget hides the stack.
+- Source. `stickyScrollHeader` in [stickyScroll.ts](../packages/scope-lines/src/stickyScroll.ts).
+- What you see. When scopes overflow, the stack keeps the innermost rows. With at least three slots, it also shows the outermost row and the number of hidden scopes.
+- Why. The stack leaves room to read the code in short editors.
+
 ### Visible paint snapshots
 
 - Limits. A visible-paint snapshot accepts at most **32 layers** and **8,192 rectangles in total**. Layer identifiers must contain **1 to 128 code units**, and rectangle color strings **1 to 256 code units**.
@@ -158,11 +165,10 @@ Each entry names its source and whether the limit is expected to change.
 
 ### Experimental paged viewer
 
-- Default limits. `PAGED_PROOF_OPTIONS` permits **2 views**, **128 rows per window request**, **524,288 decoded code units per window or copy**, and **2 in-flight page reads**. Its byte cache is **8,388,608 bytes**, with **65,536-byte pages** and at most **4,096 checkpoints**. Callers can supply different positive limits through `PagedOptions`.
-- Source. `PAGED_PROOF_OPTIONS`, `createView`, `readLines`, `copyRange` and checkpoint retention in [document.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/paged/src/document.ts#L36), and truncation in [window.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/paged/src/window.ts).
-- What you see. Opening a third view, requesting too many rows, or copying too large a range throws. A displayed window whose requested text exceeds the code-unit budget reports `truncated: true` and retains a prefix of its text. Exactly 524,288 code units fit without truncation. Extra reads wait for an in-flight slot. Cache eviction and wider checkpoint spacing can cause more source reads. The viewer is read-only and experimental.
-- Why. Range-based UTF-8 inspection needs explicit bounds on resident text, concurrent I/O and index memory.
-- Outlook. These are configurable proof defaults, not a maximum source-file byte size.
+- Defaults. `PAGED_PROOF_OPTIONS` allows two views, two in-flight source reads and two in-flight index lookups, 64 KiB pages, an 8 MiB cache, and 4,096 discovered checkpoints. One request reserves up to 1 MiB of input and 32 source calls. A window contains at most 128 fragments and 524,288 UTF-16 units, including line breaks. The same text limit applies to a copy.
+- Source. [Paging options](../packages/paged/src/types.ts) and [contract](../packages/paged/docs/contract.md).
+- What you see. A window stops at a limit and returns a continuation. A giant line can continue in another window. A copy can return a limit outcome. Distant exact line and UTF-16 positions need an index or previously discovered mapping.
+- Why. Read and output limits keep work bounded even when a source has no known size or contains a long line.
 
 ### Collaboration message framing
 

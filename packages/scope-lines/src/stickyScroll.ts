@@ -18,6 +18,7 @@ import './style.css'
 
 export type StickyScrollPluginOptions = {
   readonly enabled?: boolean
+  /** Cap sticky rows, including the collapsed count row, below the default viewport limit. */
   readonly maxLineCount?: number
 }
 
@@ -27,14 +28,15 @@ type ResolvedStickyScrollOptions = {
 }
 
 type StickyScrollHeader = {
-  /** Header rows of the enclosing scopes, outermost first. */
-  readonly rows: readonly number[]
+  readonly rows: readonly StickyScrollRow[]
   readonly key: string
   /** The headed scope in content coordinates: the top of its header row, and where it ends. */
   readonly top: number
   readonly bottom: number
   readonly stackHeight: number
 }
+
+type StickyScrollRow = number | { readonly collapsedScopeCount: number }
 
 /**
  * Where rows sit, in content coordinates, for as far as the mounted band reaches. Rows past it are
@@ -62,8 +64,6 @@ type StickyScrollRowRange = {
   readonly start: number
   readonly end: number
 }
-
-const DEFAULT_MAX_LINE_COUNT = 5
 
 const EMPTY_HEADER: StickyScrollHeader = {
   rows: [],
@@ -234,9 +234,8 @@ function resolveStickyScrollOptions(
 }
 
 function normalizeMaxLineCount(value: number | undefined): number {
-  if (value === undefined) return DEFAULT_MAX_LINE_COUNT
-  if (!Number.isFinite(value)) return DEFAULT_MAX_LINE_COUNT
-  return Math.max(1, Math.floor(value))
+  if (value === undefined || !Number.isFinite(value)) return Number.POSITIVE_INFINITY
+  return Math.max(0, Math.floor(value))
 }
 
 function createRoot(context: EditorViewContributionContext): HTMLDivElement {
@@ -273,39 +272,64 @@ function stickyScrollHeader(
   snapshot: EditorViewSnapshot,
   options: ResolvedStickyScrollOptions,
 ): StickyScrollHeader {
+  const rowBudget = Math.min(
+    options.maxLineCount,
+    Math.floor(snapshot.viewport.clientHeight / (3 * snapshot.metrics.rowHeight)),
+  )
+  if (rowBudget <= 0) return EMPTY_HEADER
+
   const geometry = stickyScrollRowGeometry(snapshot)
   if (!geometry) return EMPTY_HEADER
 
-  const rows: number[] = []
+  const scopeRows: number[] = []
   let top = 0
   let bottom = 0
+  let innermostEndOffset = Number.POSITIVE_INFINITY
   for (const marker of stickyScrollCandidates(snapshot, geometry)) {
+    // Sibling folds can share a display row. Once a scope takes a slot, later scopes must
+    // start inside it until it scrolls out of that slot.
+    if (marker.startOffset >= innermostEndOffset) break
+
     // Scopes that open on one row — an arrow function and the object it returns — head the same row,
     // so the first of them to be accepted has already said everything the stack can say about it.
-    if (rows.at(-1) === marker.startRow) continue
+    if (scopeRows.at(-1) === marker.startRow) continue
 
     const headerRowTop = contentRowTop(geometry, marker.startRow)
     const scopeBottom = contentRowBottom(geometry, marker.endRow)
-    // The slot is the one this scope would actually be given, which is the next free row of the
-    // stack: a slot counted from containment depth instead skips ahead over every enclosing scope
-    // the filters below rejected, and a slot the stack never reaches admits its scope too early.
-    const slotTop = rows.length * geometry.rowHeight
+    // Once the stack fills, another scope can only displace an existing row. Keep checking at the
+    // last slot so deeper scopes enter only when their headers reach the actual stack.
+    const slotTop = Math.min(scopeRows.length, rowBudget - 1) * geometry.rowHeight
     // A slot above the row it would stand in for is a slot for a row still on screen, which needs no
     // stand-in; a slot below the end of its scope belongs to a scope already behind us.
     if (slotTop <= headerRowTop - geometry.scrollTop) continue
     if (slotTop > scopeBottom - geometry.scrollTop) continue
 
-    if (rows.length === 0) top = headerRowTop
-    // Each scope accepted after the first is nested in the one before it, so the last one accepted is
-    // the first to end — and the stack travels with whichever ends first.
+    if (scopeRows.length === 0) top = headerRowTop
+    innermostEndOffset = marker.endOffset
     bottom = scopeBottom
-    rows.push(marker.startRow)
-    if (rows.length === options.maxLineCount) break
+    scopeRows.push(marker.startRow)
   }
 
-  if (rows.length === 0) return EMPTY_HEADER
+  if (scopeRows.length === 0) return EMPTY_HEADER
 
-  return { rows, key: rows.join(','), top, bottom, stackHeight: rows.length * geometry.rowHeight }
+  const rows = selectStickyScrollRows(scopeRows, rowBudget)
+  const key = rows.map((row) => (typeof row === 'number' ? row : `+${row.collapsedScopeCount}`))
+  return { rows, key: key.join(','), top, bottom, stackHeight: rows.length * geometry.rowHeight }
+}
+
+function selectStickyScrollRows(
+  scopeRows: readonly number[],
+  rowBudget: number,
+): readonly StickyScrollRow[] {
+  if (scopeRows.length <= rowBudget) return scopeRows
+  if (rowBudget <= 2) return scopeRows.slice(-rowBudget)
+
+  const firstRows: StickyScrollRow[] = [
+    scopeRows[0]!,
+    { collapsedScopeCount: scopeRows.length - rowBudget + 1 },
+  ]
+  const innerCount = rowBudget - firstRows.length
+  return firstRows.concat(scopeRows.slice(-innerCount))
 }
 
 /**
@@ -425,7 +449,7 @@ function contentRowBottom(geometry: StickyScrollRowGeometry, row: number): numbe
  */
 function stickyScrollContent(
   snapshot: EditorViewSnapshot,
-  rows: readonly number[],
+  rows: readonly StickyScrollRow[],
 ): StickyScrollContent {
   const textSnapshot = snapshot.textSnapshot
   const lines: string[] = []
@@ -433,6 +457,13 @@ function stickyScrollContent(
   let base = 0
 
   for (const row of rows) {
+    if (typeof row !== 'number') {
+      const label = `⋯ ${row.collapsedScopeCount} scopes`
+      lines.push(label)
+      base += label.length + 1
+      continue
+    }
+
     const range = rowTextRange(snapshot, textSnapshot, row)
     lines.push(range ? textSnapshot.readRange(range.start, range.end) : '')
     if (range) appendRowTokens(tokens, snapshot.tokens, range, base)

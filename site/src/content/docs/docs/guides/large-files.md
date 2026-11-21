@@ -18,7 +18,11 @@ A code-unit count differs from file bytes. Emoji occupy two UTF-16 units, and UT
 
 ## 3. Use the paged viewer when it fits the task
 
-Consult the generated `@singapore-editor/paged` reference for its file source and loading APIs. Keep the file source alive for the view lifetime. Verify decoding, navigation and cleanup with your actual file format.
+Create a `PagedDocument` from a replayable byte source. Use `blobRangeSource` for a local file, or `httpRangeSource` for a server that supports byte ranges and pins a revision. `openHttpRangeSource` can learn a strong ETag on its first range request.
+
+Request `view.first(count)` to display the first window. Render each fragment and use the window’s continuation cursors to navigate. The file size can stay unknown. Offer precise global jumps when you have a trusted index or a discovered position, and copy visible selections using fragment positions.
+
+Keep the source alive while the views are open. Dispose each view when it closes, then dispose the document. See the [paged API reference](/docs/reference/api/paged/overview/) for size and work limits.
 
 ## Result and limits
 

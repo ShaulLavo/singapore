@@ -1,7 +1,26 @@
+export { blobRangeSource, httpRangeSource, openHttpRangeSource } from './adapters'
+export type { HttpOpenOptions, HttpRangeOptions } from './adapters'
+export { PagedDocument, PagedDocumentView } from './document'
 export {
-  PagedDocument,
-  PagedDocumentView,
-  PagedSourceInvalidatedError,
+  PAGED_POSITION_POLICY,
   PAGED_PROOF_OPTIONS,
-} from './document'
-export type { RangeSource, PagedOptions, PagedRow, PagedWindow } from './document'
+  PagedSourceError,
+  PagedSourceInvalidatedError,
+} from './types'
+export type {
+  PagedCheckpoint,
+  PagedCoordinate,
+  PagedCopyResult,
+  PagedCursor,
+  PagedEndpoint,
+  PagedFragment,
+  PagedIndex,
+  PagedIndexCoverage,
+  PagedOpenOptions,
+  PagedOptions,
+  PagedTotals,
+  PagedUnavailable,
+  PagedWindow,
+  RangeRead,
+  RangeSource,
+} from './types'

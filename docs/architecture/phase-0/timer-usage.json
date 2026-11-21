@@ -27,6 +27,14 @@
       "snippet": "this.timer = setTimeout(() => {"
     },
     {
+      "api": "setInterval",
+      "file": "examples/stress/paged.ts",
+      "id": "examples/stress/paged.ts:setInterval:935acebcea",
+      "justification": "The benchmark samples renderer heap while a scenario runs and clears the sampler in finally.",
+      "line": 122,
+      "snippet": "const timer = setInterval(() => {"
+    },
+    {
       "api": "setTimeout",
       "file": "examples/stress/src/boundary.ts",
       "id": "examples/stress/src/boundary.ts:setTimeout:e6eb9a6545",
@@ -147,12 +155,12 @@
       "snippet": "queueMicrotask(() => {"
     },
     {
-      "api": "setTimeout",
+      "api": "requestAnimationFrame",
       "file": "examples/stress/src/paged/proof.ts",
-      "id": "examples/stress/src/paged/proof.ts:setTimeout:c28c04b837",
-      "justification": "Simulated source latency for the paged proof; it only resolves the awaited read, and the abort signal is checked right after.",
-      "line": 21,
-      "snippet": "if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs))"
+      "id": "examples/stress/src/paged/proof.ts:requestAnimationFrame:7a5908e8b6",
+      "justification": "The proof samples disposed state after the aborted read releases its slot. The snapshot check excludes later sessions.",
+      "line": 159,
+      "snippet": "requestAnimationFrame(() => {"
     },
     {
       "api": "setTimeout",
@@ -444,11 +452,11 @@
     },
     {
       "api": "setTimeout",
-      "file": "packages/paged/src/document.ts",
-      "id": "packages/paged/src/document.ts:setTimeout:b2279f38a6",
-      "justification": "Yields once per MiB so indexing a large source never holds the thread; it only resolves the awaited promise, and the next page read carries the lifetime signal.",
-      "line": 253,
-      "snippet": "await new Promise<void>((resolve) => setTimeout(resolve, 0))"
+      "file": "packages/paged/src/window.ts",
+      "id": "packages/paged/src/window.ts:setTimeout:79c0cb252b",
+      "justification": "A task boundary lets input and cancellation run during cached decoding.",
+      "line": 256,
+      "snippet": "return new Promise<void>((resolve) => setTimeout(resolve, 0))"
     },
     {
       "api": "setTimeout",
