@@ -647,3 +647,40 @@ test('tail checks relative checkpoint coordinates when the buffered suffix canno
   await expect(doc.createView().end(1)).rejects.toThrow('contradicts an index checkpoint')
   expect(calls[0]?.[0]).toBe(19)
 })
+
+test.each(['last', 'last!'])(
+  'tail uses buffered checkpoint evidence before rendering %s',
+  async (last) => {
+    const { source } = fixture(encode(`0123456789\nA\nB\n${last}`), Infinity, true)
+    const index = indexed(source, {
+      checkpoints: [
+        { byteOffset: 11, line: 1, utf16Offset: 11 },
+        { byteOffset: 13, line: 3, utf16Offset: 12 },
+      ],
+    })
+    const doc = new PagedDocument(source, { ...small, index, maxWindowUnits: 8 })
+
+    await expect(doc.createView().end(1)).rejects.toThrow('contradicts an index checkpoint')
+  },
+)
+
+test('gap copy checks the coordinates of the right cursor even if the left cursor is unmapped', async () => {
+  const { source } = fixture(encode('01234567890123456\nA\nBcd\nlastlast'), Infinity, true)
+  const index = indexed(source, {
+    checkpoints: [{ byteOffset: 20, line: 2, utf16Offset: 19 }],
+    totals: { lineCount: 4, utf16Length: 32 },
+  })
+  const view = new PagedDocument(source, { ...small, index, maxWindowUnits: 8 }).createView()
+  const right = await view.end(1)
+  const left = await view.seekByte(10, 1)
+  if (left.kind !== 'window' || right.kind !== 'window') throw new Error('Missing selection bounds')
+  expect(left.fragments[0]?.utf16Offset).toBeUndefined()
+  expect(right.fragments[0]?.utf16Offset).toBe(24)
+
+  await expect(
+    view.copy(
+      { fragment: left.fragments[0]!, column: 8 },
+      { fragment: right.fragments[0]!, column: 1 },
+    ),
+  ).rejects.toThrow('contradicts the cursor coordinates')
+})

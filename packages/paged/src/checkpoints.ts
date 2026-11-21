@@ -173,8 +173,8 @@ export class TrustedIndex {
 
   verifyDecoded(pos: Position, bytes: Uint8Array): Position | undefined {
     if (!this.#checkpoints.length) return undefined
-    if (pos.lineStart) this.verify(pos)
-    let mapped = pos
+    const checkpointAtStart = pos.lineStart ? this.#atByte.get(pos.byteOffset) : undefined
+    let mapped = checkpointAtStart ? this.mapCheckpoint(pos, checkpointAtStart) : pos
     let start = 0
     const first = upperBound(
       this.#checkpoints,
@@ -186,18 +186,21 @@ export class TrustedIndex {
       const end = checkpoint.byteOffset - pos.byteOffset
       if (end > bytes.length) break
       const part = bytes.subarray(start, end)
-      mapped = advanceText(mapped, part, decode(part))
-      this.verify(mapped)
-      mapped = {
-        ...mapped,
-        line: mapped.line ?? checkpoint.line,
-        utf16Offset: mapped.utf16Offset ?? checkpoint.utf16Offset,
-      }
+      mapped = this.mapCheckpoint(advanceText(mapped, part, decode(part)), checkpoint)
       start = end
     }
-    if (!start) return undefined
+    if (!start && !checkpointAtStart) return undefined
     const tail = bytes.subarray(start)
     return advanceText(mapped, tail, decode(tail))
+  }
+
+  private mapCheckpoint(pos: Position, checkpoint: PagedCheckpoint): Position {
+    this.verify(pos)
+    return {
+      ...pos,
+      line: pos.line ?? checkpoint.line,
+      utf16Offset: pos.utf16Offset ?? checkpoint.utf16Offset,
+    }
   }
 
   verify(pos: Position) {

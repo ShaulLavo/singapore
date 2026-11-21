@@ -51,6 +51,16 @@ export function advanceText(pos: Position, bytes: Uint8Array, text: string): Pos
   }
 }
 
+export function assertMatchingCoordinates(actual: Position, expected: Position) {
+  if (
+    (actual.line !== undefined && expected.line !== undefined && actual.line !== expected.line) ||
+    (actual.utf16Offset !== undefined &&
+      expected.utf16Offset !== undefined &&
+      actual.utf16Offset !== expected.utf16Offset)
+  )
+    throw new PagedSourceError('Read content contradicts the cursor coordinates')
+}
+
 type VerifyDecoded = (position: Position, bytes: Uint8Array) => Position | undefined
 
 export type ReverseProbe =
@@ -419,16 +429,14 @@ function verifyPreviousBytes(
   verify: VerifyDecoded,
 ) {
   if (end.byteOffset !== buffer.length) {
-    const bytes = buffer.subarray(min)
-    return verify(reversePosition(end, bytes, buffer[min - 1] === 10), bytes) ?? end
+    const firstBufferedLine = buffer.subarray(0, min).indexOf(10) + 1
+    const start = firstBufferedLine || min
+    const bytes = buffer.subarray(start)
+    return verify(reversePosition(end, bytes, buffer[start - 1] === 10), bytes) ?? end
   }
   splitBlock(buffer, true, 0)
   const mappedEnd = verify(origin, buffer) ?? advanceText(origin, buffer, decode(buffer))
-  if (
-    (end.line !== undefined && end.line !== mappedEnd.line) ||
-    (end.utf16Offset !== undefined && end.utf16Offset !== mappedEnd.utf16Offset)
-  )
-    throw new PagedSourceError('Read content contradicts the cursor coordinates')
+  assertMatchingCoordinates(mappedEnd, end)
   return mappedEnd
 }
 

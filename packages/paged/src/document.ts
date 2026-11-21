@@ -18,6 +18,7 @@ import {
   type RangeSource,
 } from './types'
 import {
+  assertMatchingCoordinates,
   origin,
   positionBefore,
   readText,
@@ -397,7 +398,7 @@ export class PagedDocument {
     if (units > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
     if (left.end.byteOffset === right.start.byteOffset) return this.copied(prefix + suffix)
     const parts = [prefix]
-    const result = await this.readCopy(left.end, right.start.byteOffset, signal, (text) => {
+    const result = await this.readCopy(left.end, right.start, signal, (text) => {
       units += text.length
       if (units > this.#options.maxWindowUnits) return true
       parts.push(text)
@@ -419,7 +420,7 @@ export class PagedDocument {
     if (left.start.utf16Offset !== undefined && right.start.utf16Offset !== undefined) {
       shift = right.start.utf16Offset - left.start.utf16Offset
     } else {
-      const result = await this.readCopy(left.start, right.start.byteOffset, signal, (text) => {
+      const result = await this.readCopy(left.start, right.start, signal, (text) => {
         shift += text.length
         return false
       })
@@ -444,18 +445,21 @@ export class PagedDocument {
 
   private readCopy(
     start: Position,
-    boundary: number,
+    boundary: number | Position,
     signal: AbortSignal,
     consume: (text: string, end: Position) => boolean,
   ) {
+    const stop = typeof boundary === 'number' ? boundary : boundary.byteOffset
     return readText(
       this.#reader,
       start,
-      boundary,
+      stop,
       signal,
       new ReadBudget(this.#options, start.carry?.length),
       (text, end) => {
         this.checkMappedTotals(end)
+        if (typeof boundary !== 'number' && end.byteOffset === stop)
+          assertMatchingCoordinates(end, boundary)
         return consume(text, end)
       },
       this.verifyDecoded,
