@@ -197,6 +197,14 @@ test('unknown workspace selection fails closed', async () => {
   ).rejects.toThrow('Unknown workspace filter')
 }, 120_000)
 
+test('an extra condition cannot silently skip a required test route', async () => {
+  const workflow = actual.workflow.replace(
+    "steps.filter.outputs.code == 'true'",
+    "steps.filter.outputs.code == 'true' && false",
+  )
+  await expect(readCoverage({ workflow })).rejects.toThrow('Conditional test selection')
+}, 120_000)
+
 test('a group cannot become unfiltered or lose its serial package limit', async () => {
   const workflow = actual.workflow.replace(
     'bun run test:browser -- --concurrency=1 --filter=@singapore-editor/typescript-lsp',
