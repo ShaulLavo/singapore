@@ -149,7 +149,13 @@ function stepCommands(step: Record<string, unknown>, owner: string, all: Workspa
         )
       )
         return ignoreSetupCommand(line)
-      if (step.if && step.if !== '${{ !cancelled() }}')
+      const codeChange =
+        "github.event_name != 'pull_request' || steps.filter.outputs.code == 'true'"
+      if (
+        step.if &&
+        step.if !== '${{ ' + codeChange + ' }}' &&
+        step.if !== '${{ !cancelled() && (' + codeChange + ') }}'
+      )
         throw new Error(`Conditional test selection: ${owner}`)
       if (step['working-directory']) throw new Error(`Unsupported test working-directory: ${owner}`)
       const args = tokens(line)

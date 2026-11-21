@@ -13,7 +13,7 @@ mkdir "$output"
 output=$(cd "$output" && pwd)
 cd "$root"
 
-bun run build -- --filter=singapore-editor-site --filter=@singapore-editor/example-app
+bun run build -- --filter='singapore-editor-site^...' --filter='@singapore-editor/example-app^...'
 SITE_ORIGIN=https://singapore.shaulavo.dev bun run --cwd site build --base /
 VITE_BASE_PATH=/demo/ bun run --cwd examples/app build
 
