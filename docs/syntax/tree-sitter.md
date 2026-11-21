@@ -75,6 +75,16 @@ Tree-sitter highlight queries are the long-term source of syntax highlighting.
 
 Highlight output should be represented as dense decorations with offsets or line-scoped ranges. It must not allocate an anchor per token. The renderer may continue using the CSS Highlight API, but the source of ranges should be Tree-sitter query output.
 
+### Read-only slices
+
+`createTreeSitterSliceHighlighter` uses the same worker, root grammar, highlight query, and token styles. It accepts a plain string and returns UTF-16 spans relative to that string. A caller can include adjacent text it already holds and choose which spans to paint. Pass the input verbatim, including CRLF and any real line breaks at fragment boundaries. The slice highlighter has no source reader or document session.
+
+Set `startsAtSourceStart` and `endsAtSourceEnd` from the actual source boundaries. Analysis starts with the root grammar's initial state. An answer that starts at the source origin has `known-start` quality. Any other answer is `provisional` and can color tokens inside a continued comment, template, or TSX construct differently from a resident editor. The reported end flag distinguishes a partial suffix from source EOF. Grammar recovery near either cut can still affect the colors. The slice uses root-language captures, including those around embedded constructs. It does not parse injected languages.
+
+Configure one highlighter per viewport and language or query generation. Each highlighter retains successful results for one source revision, keyed by location, both boundary flags, and the exact submitted text. `lookup` returns a retained result synchronously. `highlight` chooses the current slice and supersedes older unfinished requests. Passing a new source or revision clears the cache. Token styles refer to the editor palette through CSS variables, so a theme can change the displayed color without a new parse.
+
+`prewarm` loads the grammar and query without any text. If a grammar is missing or analysis exceeds the [slice limits](../limitations.md#tree-sitter-slice-highlighting), callers can keep displaying the original text. A slice answer describes only its submitted span. It never schedules a complete parse.
+
 ## Structural Selection
 
 Structural selection is syntax-driven and anchor-backed.

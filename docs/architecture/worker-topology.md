@@ -75,6 +75,8 @@ Disposal and restart:
 - The next request on the same owner creates a new worker generation and runs `init` again.
 - Callers must reissue failed parse/query work. The owner does not replay failed requests.
 
+The read-only slice API uses this same owner and language runtime without a document source connection. Each request owns a bounded text string and an ephemeral parser and tree. A reply carries packed tokens, and the viewport highlighter can retain those tokens in its own bounded cache. Disposing a highlighter cancels its work and releases the cache. A caller-supplied worker owner stays alive for its other views.
+
 ## Minimap Worker
 
 Owner: `MinimapWorkerOwner`, with `MinimapWorkerClient` owning the editor-facing projection state.

@@ -86,6 +86,13 @@ Each entry names its source and whether the limit is expected to change.
 - Why. Expensive grammar work must give up, and stale analysis must not block newer work indefinitely.
 - Outlook. No change is planned for the 20-second budget.
 
+### Tree-sitter slice highlighting
+
+- Limit. A request can submit at most **65,536 UTF-16 units**, including any caller-supplied context. Source ID, revision, and location each use at most **1,024 units**. The worker uses a **40 ms** parse budget, a **25 ms** query and token conversion budget, **1,024** pending query matches, and an **8,192** capture and token ceiling. Budgets are cooperative. Grammar loading is outside the parse budget.
+- Retention. Each highlighter owns one active and one queued request, with the queue holding only the latest slice. It keeps at most **32** completed slices, **262,144** cached text units, and **24,576** cached tokens. The three packed token arrays use **12 bytes per token**. These counts exclude JavaScript object and style storage. The worker releases each slice parser and tree, and keeps shared language runtimes. Slice analysis performs no speculative work.
+- Source. `createTreeSitterSliceHighlighter` in [sliceHighlighting.ts](../packages/tree-sitter/src/sliceHighlighting.ts) and the worker limits in [sliceLimits.ts](../packages/tree-sitter/src/treeSitter/sliceLimits.ts).
+- What you see. Over-budget or unsupported slices stay plain. A window with unknown preceding syntax can show provisional colors.
+
 ### Nested language injections
 
 - Limit. Injection depth is **8**, with the host root at depth zero. Once a parent reaches depth 8, the worker stops adding its child injections.

@@ -219,12 +219,35 @@ type TreeSitterInitRequest = {
 type TreeSitterRegisterLanguagesRequest = {
   readonly type: 'registerLanguages'
   readonly languages: readonly TreeSitterLanguageDescriptor[]
+  readonly registration: number
 }
 
 type TreeSitterWarmLanguagesRequest = {
   readonly type: 'warmLanguages'
   readonly languageIds: readonly TreeSitterLanguageId[]
 }
+
+export type TreeSitterHighlightSliceRequest = {
+  readonly type: 'highlightSlice'
+  readonly languageId: TreeSitterLanguageId
+  readonly registration: number
+  readonly text: string
+  readonly cancellationBuffer?: SharedArrayBuffer
+}
+
+export type TreeSitterSliceTimings = {
+  readonly parseMs: number
+  readonly queryMs: number
+  readonly workerMs: number
+}
+
+export type TreeSitterHighlightSliceResult =
+  | {
+      readonly sliceStatus: 'highlighted'
+      readonly tokensPacked: PackedEditorTokens
+      readonly timings: TreeSitterSliceTimings
+    }
+  | { readonly sliceStatus: 'unsupported-language' | 'over-budget' | 'unavailable' }
 
 export type TreeSitterParseRequest = {
   readonly type: 'parse'
@@ -321,6 +344,7 @@ export type TreeSitterWorkerRequestPayload =
   | TreeSitterInitRequest
   | TreeSitterRegisterLanguagesRequest
   | TreeSitterWarmLanguagesRequest
+  | TreeSitterHighlightSliceRequest
   | TreeSitterParseRequest
   | TreeSitterEditRequest
   | TreeSitterRangeRequest
@@ -342,6 +366,7 @@ export type TreeSitterWorkerResult =
   | TreeSitterMergeUnitResult
   | TreeSitterProjectedMergeUnitsResult
   | TreeSitterReviewBatchResult
+  | TreeSitterHighlightSliceResult
   | { readonly retention: TreeSitterWorkerRetentionSnapshot }
   | undefined
 

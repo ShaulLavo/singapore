@@ -1,5 +1,14 @@
 export { createTreeSitterInputEdits } from './treeSitter/edits'
 export {
+  createTreeSitterSliceHighlighter,
+  TreeSitterSliceHighlighter,
+  type TreeSitterHighlightedSlice,
+  type TreeSitterHighlightSlice,
+  type TreeSitterSliceHighlighterOptions,
+  type TreeSitterSliceHighlightLimits,
+  type TreeSitterSliceHighlightResult,
+} from './sliceHighlighting'
+export {
   createTreeSitterReviewSyntax,
   type TreeSitterReviewSyntax,
   type TreeSitterReviewRead,
