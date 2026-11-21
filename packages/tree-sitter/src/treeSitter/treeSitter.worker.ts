@@ -14,7 +14,7 @@ import {
   SLICE_QUERY_WORK_LIMIT,
   SLICE_TEXT_LIMIT,
 } from './sliceLimits'
-import { supportsSlicePredicates } from './sliceQueryPolicy'
+import { OMIT_SLICE_PATTERN, prepareSliceQuery } from './sliceQueryPolicy'
 import {
   analyzeLineMergeUnit,
   enclosingMergeUnit,
@@ -92,6 +92,7 @@ import type {
   TreeSitterHighlightSliceRequest,
   TreeSitterHighlightSliceResult,
   TreeSitterPrepareSliceLanguageRequest,
+  TreeSitterPrepareSliceLanguageResult,
 } from './types'
 
 type HighlightRuntime = {
@@ -258,6 +259,8 @@ class SyntaxRequestCancelled extends Error {
     super('Tree-sitter request cancelled')
   }
 }
+
+class UnsupportedSliceQuery extends Error {}
 
 const assertRuntimeSessionActive = (runtimeSessionId: string): void => {
   if (!disposedRuntimeSessions.has(runtimeSessionId)) return
@@ -2570,15 +2573,18 @@ const spendPredicateText = (budget: PredicateBudget, units: number): void => {
   assertNotCancelled(context)
 }
 
-const prepareSliceLanguage = async (request: TreeSitterPrepareSliceLanguageRequest) => {
+const prepareSliceLanguage = async (
+  request: TreeSitterPrepareSliceLanguageRequest,
+): Promise<TreeSitterPrepareSliceLanguageResult> => {
   const { sliceLanguageId, descriptor } = request
   const runtime = loadSliceRuntime(descriptor)
   sliceRuntimes.set(sliceLanguageId, runtime)
   try {
     await runtime
-    return undefined
+    return { slicePreparation: 'ready' }
   } catch (error) {
     if (sliceRuntimes.get(sliceLanguageId) === runtime) sliceRuntimes.delete(sliceLanguageId)
+    if (error instanceof UnsupportedSliceQuery) return { slicePreparation: 'unsupported-query' }
     throw error
   }
 }
@@ -2587,14 +2593,34 @@ const loadSliceRuntime = async (
   descriptor: TreeSitterLanguageDescriptor,
 ): Promise<SliceRuntime> => {
   const query = descriptor.highlightQuerySource
-  if (!query || query.length > SLICE_QUERY_SOURCE_LIMIT || !supportsSlicePredicates(query))
-    throw new Error('Invalid slice highlight query')
+  if (!query || query.length > SLICE_QUERY_SOURCE_LIMIT) throw new UnsupportedSliceQuery()
+  const prepared = prepareSliceQuery(query)
+  if (prepared === null || prepared.length > SLICE_QUERY_SOURCE_LIMIT)
+    throw new UnsupportedSliceQuery()
   await ensureParserRuntime()
   const language = await sliceGrammar(descriptor)
-  const highlightQuery = new Query(language, query)
+  const highlightQuery = new Query(language, prepared)
+  if (!enableSupportedSlicePatterns(highlightQuery)) {
+    highlightQuery.delete()
+    throw new UnsupportedSliceQuery()
+  }
   const references = query.match(/@[\w.-]+/g)?.length ?? 0
   const queryWeight = Math.max(highlightQuery.patternCount(), references)
   return { descriptor, language, highlightQuery, queryWeight }
+}
+
+const enableSupportedSlicePatterns = (query: Query): boolean => {
+  let enabled = 0
+  const count = query.patternCount()
+  for (let index = 0; index < count; index++) {
+    const predicates = query.predicatesForPattern(index)
+    if (predicates.some(({ operator }) => operator === OMIT_SLICE_PATTERN)) {
+      query.disablePattern(index)
+      continue
+    }
+    enabled++
+  }
+  return enabled > 0
 }
 
 const sliceGrammar = (descriptor: TreeSitterLanguageDescriptor): Promise<Language> => {

@@ -8,36 +8,56 @@ const MEMBERSHIP = new Set(['any-of?', 'not-any-of?'])
 const ANCHORED_SEQUENCE = /^\^(?:[\w -]|\[\^?(?:[\w.-]|\\[dws])+\])+(?:[?*+])?\$?$/
 const ANCHORED_ALTERNATIVES = /^\^\([\w-]+(?:\|[\w-]+)+\)\$$/
 const REGEX_LITERAL = /^"(?:[^"\\]|\\\\)*"$/
+export const OMIT_SLICE_PATTERN = 'omit!'
 
-export function supportsSlicePredicates(query: string): boolean {
-  const tokens = Array.from(
-    query.matchAll(/;[^\r\n]*|"(?:[^"\\]|\\[\s\S])*"|[()]|[^\s;"()]+/g),
-    ([token]) => token,
-  ).filter((token) => !token.startsWith(';'))
+export function prepareSliceQuery(query: string): string | null {
+  if (query.includes('\0')) return null
+  const tokens = tokenize(query)
+  if (!tokens) return null
+  const parts: string[] = []
+  let copied = 0
   for (let index = 0; index < tokens.length; index++) {
-    if (tokens[index] !== '(') continue
-    const prefix = tokens[index + 1]
-    if (!prefix?.startsWith('#') && !prefix?.startsWith('.')) continue
-    const operation = prefix.length === 1 ? index + 2 : index + 1
-    const name = tokens[operation]?.slice(prefix.length === 1 ? 0 : 1) ?? ''
-    if (!supportsPredicate(name, tokens, operation + 1)) return false
+    if (tokens[index]?.text !== '(') continue
+    const operation = tokens[index + 1]
+    if (!operation || !/^[#.]/.test(operation.text)) continue
+    if (supportsPredicate(operation.text.slice(1), tokens, index + 2)) continue
+    const start = operation.start + 1
+    parts.push(query.slice(copied, start), OMIT_SLICE_PATTERN)
+    copied = operation.start + operation.text.length
   }
-  return true
+  if (!parts.length) return query
+  parts.push(query.slice(copied))
+  return parts.join('')
 }
 
-function supportsPredicate(name: string, tokens: readonly string[], from: number): boolean {
+type QueryToken = { readonly text: string; readonly start: number }
+
+function tokenize(query: string): QueryToken[] | null {
+  const tokens: QueryToken[] = []
+  // Tree-sitter's semicolon comments end at LF. Inside a quoted literal only an escaped LF is valid.
+  for (const { 0: text, index } of query.matchAll(
+    /;[^\n]*|"(?:[^"\\\n]|\\[\s\S])*"|[()]|[^ \t\r\n\v\f;"()]+|"/g,
+  )) {
+    if (text.startsWith(';')) continue
+    if (text === '"' || (!text.startsWith('"') && !/^[!-~]+$/.test(text))) return null
+    tokens.push({ text, start: index })
+  }
+  return tokens
+}
+
+function supportsPredicate(name: string, tokens: readonly QueryToken[], from: number): boolean {
   if (METADATA.has(name)) return true
-  if (!tokens[from]?.startsWith('@')) return false
+  if (!tokens[from]?.text.startsWith('@')) return false
   if (MEMBERSHIP.has(name)) return stringArguments(tokens, from + 1)
-  const value = tokens[from + 1]
-  if (!value?.startsWith('"') || tokens[from + 2] !== ')') return false
+  const value = tokens[from + 1]?.text
+  if (!value?.startsWith('"') || tokens[from + 2]?.text !== ')') return false
   if (COMPARISONS.has(name)) return true
   return REGULAR_EXPRESSIONS.has(name) && supportsRegularExpression(value)
 }
 
-function stringArguments(tokens: readonly string[], from: number): boolean {
+function stringArguments(tokens: readonly QueryToken[], from: number): boolean {
   for (let index = from; index < tokens.length; index++) {
-    const token = tokens[index]
+    const token = tokens[index]?.text
     if (token === ')') return true
     if (!token?.startsWith('"')) return false
   }

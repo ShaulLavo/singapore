@@ -52,7 +52,7 @@ type SliceLanguageEntry = {
 }
 
 export type TreeSitterSliceLanguage = {
-  prepare(): Promise<boolean>
+  prepare(): Promise<'ready' | 'unavailable' | 'unsupported-query'>
   highlight(text: string, signal: AbortSignal): Promise<TreeSitterHighlightSliceResult | undefined>
   dispose(): void
 }
@@ -286,9 +286,11 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     }
   }
 
-  private async prepareSliceLanguage(entry: SliceLanguageEntry): Promise<boolean> {
+  private async prepareSliceLanguage(
+    entry: SliceLanguageEntry,
+  ): ReturnType<TreeSitterSliceLanguage['prepare']> {
     const handle = await this.ensureWorkerReady()
-    if (!handle || !entry.refs) return false
+    if (!handle || !entry.refs) return 'unavailable'
     if (entry.worker !== handle || !entry.preparation) {
       entry.worker = handle
       entry.preparation = this.postRequest(
@@ -302,8 +304,10 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     }
     const preparation = entry.preparation
     try {
-      await preparation
-      return this.worker === handle && entry.refs > 0
+      const result = await preparation
+      if (this.worker !== handle || !entry.refs || !result || !('slicePreparation' in result))
+        return 'unavailable'
+      return result.slicePreparation
     } catch (error) {
       if (entry.preparation === preparation) entry.preparation = null
       if (!entry.refs) this.discardSliceLanguage(entry)
