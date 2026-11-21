@@ -7,7 +7,10 @@ import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 import { browserTestResponses } from '../../scripts/browser-test-responses.ts'
 import { workspaceRoot } from '../../scripts/workspace-root.ts'
-import { proveDocumentPaintFirstFrame } from './test/env/document-paint-first-frame.ts'
+import {
+  proveDocumentPaintFirstFrame,
+  settleDocumentPaint,
+} from './test/env/document-paint-first-frame.ts'
 
 const evidence = mkdtempSync(join(tmpdir(), 'singapore-document-paint-'))
 const results: unknown[] = []
@@ -167,13 +170,14 @@ export default defineConfig({
           const target = iframe.locator('#document-paint-proof')
           const bounds = await target.boundingBox()
           if (bounds) {
-            const height = Math.min(16000, Math.ceil(bounds.y + bounds.height + 100))
+            const height = Math.min(16000, Math.ceil(bounds.height + 100))
             await page.setViewportSize({ width: 1400, height })
             await page.locator('iframe').evaluateAll((frames, height) => {
               for (const frame of frames)
                 frame.style.setProperty('height', `${height}px`, 'important')
             }, height)
           }
+          await settleDocumentPaint(target)
           const image = await target.screenshot({ animations: 'allow' })
           writeFileSync(join(evidence, `${project.name}-${label}.png`), image)
           return image.toString('base64')

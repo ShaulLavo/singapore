@@ -58,10 +58,12 @@ export function createEditorSecondaryTextView(
   options: EditorSecondaryTextViewOptions,
 ): EditorSecondaryTextView {
   const { scroll, scrollMode, ...viewOptions } = options
+  const mode = scroll === undefined ? scrollMode : scroll ? 'virtualized' : 'static'
   const view = new VirtualizedTextView(container, {
     ...viewOptions,
-    scrollMode: scroll === undefined ? scrollMode : scroll ? 'virtualized' : 'static',
+    scrollMode: mode,
   })
+  if (mode === 'static') view.scrollElement.style.overflow = 'clip'
   view.setEditable(false)
   view.scrollElement.tabIndex = -1
   view.inputElement.tabIndex = -1

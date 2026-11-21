@@ -28,6 +28,7 @@ import {
   setElementHidden,
   setStyleValue,
   type TokenSegmentAppendResult,
+  tokenRangeForChunk,
   tokenRowSignature,
 } from './virtualizedTextViewHelpers'
 import {
@@ -833,6 +834,32 @@ function appendTokenSegmentsForMountedRow(
   for (const chunk of row.chunks) {
     appendTokenSegmentsForChunk(view, segmentsByRow, row, chunk, stats)
   }
+}
+
+export function documentPaintTokenRanges(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): readonly { readonly style: EditorTokenStyle; readonly range: AbstractRange }[] {
+  if (!view.highlightRegistry || view.tokens.length === 0) return []
+  const segments = new Map<number, TokenRowSegment[]>()
+  appendTokenSegmentsForMountedRow(view, segments, row, null)
+  const styles = new Map<string, EditorTokenStyle>()
+  const ranges = new Map<string, AbstractRange[]>()
+  for (const segment of segments.get(row.tokenHighlightSlotId) ?? []) {
+    const range = tokenRangeForChunk(
+      row.element.ownerDocument,
+      row,
+      segment.chunk,
+      segment.start,
+      segment.end,
+    )
+    if (!range) continue
+    styles.set(segment.styleKey, segment.style)
+    appendTokenRange(ranges, segment.styleKey, range)
+  }
+  return Array.from(ranges, ([key, group]) =>
+    group.map((range) => ({ style: styles.get(key)!, range })),
+  ).flat()
 }
 
 function appendTokenSegmentsForChunk(

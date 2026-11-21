@@ -381,13 +381,24 @@ export function addTokenRangeToChunk(
   start: number,
   end: number,
 ): AbstractRange | null {
-  const range =
-    createStaticRangeForChunkRange(document, row, chunk, start, end) ??
-    createDomRangeForChunkRange(document, row, chunk, start, end, 'highlight')
+  const range = tokenRangeForChunk(document, row, chunk, start, end)
   if (!range) return null
 
   highlight.add(range)
   return range
+}
+
+export function tokenRangeForChunk(
+  document: Document,
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  start: number,
+  end: number,
+): AbstractRange | null {
+  return (
+    createStaticRangeForChunkRange(document, row, chunk, start, end) ??
+    createDomRangeForChunkRange(document, row, chunk, start, end, 'highlight')
+  )
 }
 
 export function appendTokenRange(

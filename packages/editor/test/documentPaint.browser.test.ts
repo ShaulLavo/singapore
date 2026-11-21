@@ -209,6 +209,60 @@ function changedPixels(before: ImageData, after: ImageData): number {
 const code =
   'const value = "a long string with words and averylongidentifier";\n// spaces   tabs\tCJK 中文 combining é emoji 😀\nlast'
 
+it('captures rows outside the live window without changing it or the scroll position', async () => {
+  const lines = Array.from({ length: 150 }, (_, i) => `const row${i} = ${i}`)
+  const text = lines.join('\n')
+  const { host, editor } = mount(text, false, 'Snapshot Mono', false)
+  editor.setTokens([
+    {
+      start: text.lastIndexOf('const'),
+      end: text.lastIndexOf('const') + 5,
+      style: { color: '#00820a' },
+    },
+  ])
+  window.scrollTo(0, 0)
+  await frames()
+  const mounted = () => Array.from(host.querySelectorAll('[data-editor-virtual-row]'))
+  const before = mounted()
+  const scrollY = window.scrollY
+  expect(before.length).toBeLessThan(lines.length)
+
+  const saved = editor.captureSnapshot({ scope: 'document' })
+  expect(saved.status, JSON.stringify(saved)).toBe('ready')
+  if (saved.status !== 'ready') return
+  const paint = decodePaintSnapshot(saved.paint)
+  expect(paint?.format).toBe(6)
+  if (paint?.format !== 6) return
+  expect(paint.rows.map((row) => row.runs.map((run) => run.text).join(''))).toEqual(lines)
+  expect(paint.rows.at(-1)?.runs[0]?.style.color).toBe('rgb(0, 130, 10)')
+  expect(paint.rows.at(-1)?.gutter[0]?.text).toBe('150')
+  expect(mounted()).toEqual(before)
+  expect(window.scrollY).toBe(scrollY)
+})
+
+it('keeps a Markdown heading outside the live window in document paint', async () => {
+  const { editor, host } = mount(
+    'body\n\n'.repeat(90) + '# A distant heading',
+    true,
+    'Snapshot Mono',
+    false,
+  )
+  editor.setSelection(0, 0, { reveal: false })
+  window.scrollTo(0, 0)
+  await frames()
+  expect(host.querySelector('[role="heading"]')).toBeNull()
+
+  const saved = editor.captureSnapshot({ scope: 'document' })
+  expect(saved.status, JSON.stringify(saved)).toBe('ready')
+  if (saved.status !== 'ready') return
+  const paint = decodePaintSnapshot(saved.paint)
+  expect(paint?.format === 6 ? paint.rows.at(-1)?.heading : null).toEqual({
+    id: 'a-distant-heading',
+    level: 1,
+    name: 'A distant heading',
+  })
+})
+
 it.each([false, true])(
   'reflows one captured code document with zero changed pixels, dark=%s',
   async (dark) => {
@@ -278,7 +332,6 @@ it.each([
     const { host, options, item, installPreview } = fixture
     let editor = fixture.editor
     await frames()
-    expect(editor.captureSnapshot()).toBeNull()
     const saved = editor.captureSnapshot({ scope: 'document' })
     expect(saved.status, JSON.stringify(saved)).toBe('ready')
     if (saved.status !== 'ready') return
@@ -286,11 +339,11 @@ it.each([
     for (const width of [320, 390, 1280]) {
       host.style.width = `${width}px`
       await frames()
+      const live = await pixels(`markdown-${family}-${dark}-${width}-live`)
       const liveText = [...host.querySelectorAll<HTMLElement>('[data-editor-virtual-row]')]
         .sort((a, b) => Number(a.dataset.editorVirtualRow) - Number(b.dataset.editorVirtualRow))
         .map((row) => row.textContent)
         .join('')
-      const live = await pixels(`markdown-${family}-${dark}-${width}-live`)
       const overlay = document.createElement('div')
       overlay.style.cssText = 'position:absolute;inset:0'
       host.append(overlay)
@@ -364,7 +417,10 @@ it('captures and mounts every row in a document above 400 rows', async () => {
   const restored = mountPaintSnapshot(target, decodePaintSnapshot(saved.paint)!, { width: 320 })!
   expect(restored.rowCount).toBeGreaterThanOrEqual(450)
   expect(restored.element.textContent).toContain('line 449 alpha beta gamma')
-  expect(editor.captureSnapshot()).toBeNull()
+  const viewport = editor.captureSnapshot()
+  const visible = viewport && decodePaintSnapshot(viewport.paint)
+  expect(visible?.format).toBe(5)
+  expect(visible?.rows.length).toBeLessThan(450)
   restored.dispose()
   target.remove()
   for (const width of [320, 390, 1280]) await benchmark(saved.paint, width, { fixture: '450-rows' })

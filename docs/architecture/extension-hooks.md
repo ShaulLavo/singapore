@@ -126,13 +126,21 @@ exported), **host** (the host's API, not a plugin hook), **gap** (not available)
 
 ### Scrolling
 
-| Hook                                                     | Scope, phase, rights                                  | Order, cancel, dispose                         | Consumer               | Status    |
-| -------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- | ---------------------- | --------- |
-| `updateViewport`                                         | View contribution. Display rate, no snapshot rebuild. | Only contributions that define it are visited. | minimap, sticky scroll | supported |
-| `setScrollPosition`, `revealLine`                        | View context. Updates both axes.                      | —                                              | find, diff             | supported |
-| `reserveOverlayWidth`, `onDidChangeReservedOverlayWidth` | View context.                                         | Never coalesced.                               | find, minimap          | supported |
-| `registerWheelScrollTarget`                              | External overlay joins native scrolling.              | Dispose with the contribution.                 | find widget            | supported |
-| `Editor.onDidScroll`                                     | Host.                                                 | After the virtualizer folds the scroll in.     | Platform               | host      |
+| Hook             | Scope, phase, rights                                  | Order, cancel, dispose                         | Consumer               | Status    |
+| ---------------- | ----------------------------------------------------- | ---------------------------------------------- | ---------------------- | --------- |
+| `updateViewport` | View contribution. Display rate, no snapshot rebuild. | Only contributions that define it are visited. | minimap, sticky scroll | supported |
+
+`snapshot.viewport` reports the visible row window for both editor and page scrolling. Mount
+viewport-fixed paint in `viewportOverlayElement`. Mount paint that moves with document rows in
+`contentElement`.
+
+`captureDocumentHeadings(source)` supplies heading metadata by buffer row during document paint
+capture. Return the headings for the supplied text snapshot so capture can include rows outside the
+live viewport.
+| `setScrollPosition`, `revealLine` | View context. Updates both axes. | — | find, diff | supported |
+| `reserveOverlayWidth`, `onDidChangeReservedOverlayWidth` | View context. | Never coalesced. | find, minimap | supported |
+| `registerWheelScrollTarget` | External overlay joins native scrolling. | Dispose with the contribution. | find widget | supported |
+| `Editor.onDidScroll` | Host. | After the virtualizer folds the scroll in. | Platform | host |
 
 ### Document lifecycle
 

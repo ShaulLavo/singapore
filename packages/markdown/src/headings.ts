@@ -112,6 +112,10 @@ export function headingContribution(
   return {
     inputs: ['content', 'tokens', 'viewport', 'layout'],
     update,
+    captureDocumentHeadings(source) {
+      const headings = read()
+      return headings?.source === source ? headings.rows : null
+    },
     dispose() {
       for (const [index, presentation] of mounted) clear(index, presentation)
     },

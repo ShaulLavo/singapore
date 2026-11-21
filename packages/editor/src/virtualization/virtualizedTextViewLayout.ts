@@ -1,6 +1,4 @@
-import { DisplayProjection } from './displayProjection'
 import type { EditorSizing } from '../editor/editorHeight'
-import { assertContentLayout } from './contentLayout'
 import type { TextContent } from '../textContent'
 import type { MeasuredText } from '../textMeasurements'
 import type { FoldMap } from '../foldMap'
@@ -331,28 +329,6 @@ export function setInjectedTextRowsLayout(
   refreshDisplayProjection(view, viewportColumns)
 }
 
-export function assertContentSnapshot(
-  view: VirtualizedTextViewInternal,
-  textSnapshot: TextSnapshot,
-  replacement = false,
-): void {
-  if (!usesContentHeight(view)) return
-  if (view.sizing?.maxHeight === undefined) assertContentLayout(textSnapshot.length, 0, 0)
-  const projection = new DisplayProjection({
-    ...view.model.projection.config,
-    textSnapshot,
-    ...(replacement ? { foldMap: null, inlineMap: null, injectedTextRows: [] } : {}),
-  })
-  const count = projection.rowCount
-  const height = displayHeight(view, count)
-  if (sizedScrollMode(view.sizing, height, 'content') === 'content')
-    assertContentLayout(textSnapshot.length, count, height)
-}
-
-export function usesContentHeight(view: VirtualizedTextViewInternal): boolean {
-  return view.sizing ? view.sizing.height === 'content' : view.scrollMode === 'content'
-}
-
 function displayHeight(view: VirtualizedTextViewInternal, count: number): number {
   return count * getRowHeight(view) + Math.max(0, count - 1) * view.rowGap
 }
@@ -372,7 +348,6 @@ export function updateVirtualizerRows(view: VirtualizedTextViewInternal): void {
   const count = visibleLineCount(view)
   const height = displayHeight(view, count)
   const mode = sizedScrollMode(view.sizing, height, view.scrollMode)
-  if (mode === 'content') assertContentLayout(view.model.textLength, count, height)
   if (mode !== view.scrollMode) {
     view.scrollMode = mode
     view.scrollElement.dataset.editorScrollMode = mode
@@ -543,7 +518,13 @@ export function bufferRowForOffset(view: VirtualizedTextViewInternal, offset: nu
 }
 
 export function rowForViewportY(view: VirtualizedTextViewInternal, y: number): number {
-  return fixedRowForOffset(view, view.scrollElement.scrollTop + y)
+  return fixedRowForOffset(view, scrollOffsetForPoint(view) + y)
+}
+
+export function scrollOffsetForPoint(view: VirtualizedTextViewInternal): number {
+  if (view.scrollMode !== 'content') return view.scrollElement.scrollTop
+  const snapshot = view.virtualizer.getViewportSnapshot()
+  return snapshot.scrollTop - snapshot.nativeScrollTop
 }
 
 export function visibleLineCount(view: VirtualizedTextViewInternal): number {

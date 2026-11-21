@@ -1,5 +1,4 @@
 import { recordEditorPerformanceDiagnostic } from '../editor/performanceDiagnostics'
-import { contentReadingBounds } from './contentLayout'
 import { completeRowPresentation, invalidateRowPresentations } from '../rowPresentation'
 import { createError } from '../logging/errors'
 import { pointViewport } from './pointViewport'
@@ -3036,6 +3035,7 @@ function applyTotalHeight(
     snapshot.nativeScrollHeight,
     snapshot.nativeScrollTop - snapshot.scrollTop,
     snapshot.scrollTop,
+    snapshot.nativeScrollHeight < snapshot.scrollHeight,
   )
   if (!originChanged) return
 
@@ -3044,6 +3044,16 @@ function applyTotalHeight(
     positionRowElement(view, row.gutterElement, row.top)
   }
   view.lastRenderedRowsKey = ''
+}
+
+export function renderCaptureBatch(
+  view: VirtualizedTextViewInternal,
+  snapshot: FixedRowVirtualizerSnapshot,
+): readonly MountedVirtualizedTextRow[] {
+  const items = snapshot.virtualItems
+  reconcileRows(view, items, snapshot, createRowUpdatePass(view, items), () => {})
+  renderHiddenCharacters(view)
+  return getMountedRows(view)
 }
 
 export function getMountedRows(
@@ -3421,12 +3431,8 @@ function caretPositionAtX(
 }
 
 export function pageRowDelta(view: VirtualizedTextViewInternal): number {
-  let viewportHeight = view.virtualizer.getSnapshot().viewportHeight
-  if (view.scrollMode === 'content') {
-    const bounds = contentReadingBounds(view.scrollElement)
-    viewportHeight =
-      Math.max(0, bounds.bottom - bounds.top) / pointViewport(view.scrollElement).scale
-  }
+  view.virtualizer.refreshPageViewport()
+  const { viewportHeight } = view.virtualizer.getViewportSnapshot()
   return Math.max(1, Math.floor(viewportHeight / rowStride(view)) - 1)
 }
 

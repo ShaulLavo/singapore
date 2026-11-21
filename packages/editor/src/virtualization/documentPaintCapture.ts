@@ -1,5 +1,6 @@
 import {
   encodeDocumentPaint,
+  DOCUMENT_PAINT_LIMITS,
   safePaintLink,
   type DocumentPaintCapture,
   type DocumentPaintRow,
@@ -9,9 +10,19 @@ import {
 import type { EditorTokenStyle } from '../tokens'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
 import type { MountedVirtualizedTextRow } from './virtualizedTextViewTypes'
-import { getMountedRows } from './virtualizedTextViewRows'
+import {
+  getMountedRows,
+  renderCaptureBatch,
+  takeGutterCells,
+  takeInlineWidgets,
+} from './virtualizedTextViewRows'
+import { ScrollViewport } from './scrollViewport'
+import { rowTop } from './virtualizedTextViewLayout'
+import type { FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
+import { documentPaintTokenRanges } from './virtualizedTextViewHighlights'
 import { glyphAdvancesFor } from './glyphAdvances'
 
+const CAPTURE_BATCH_SIZE = 64
 const MARKDOWN_KIND =
   /^editor-inline-(?:marker|heading-marker-[1-6]|fence-marker|task-marker|list-marker|quote-marker|link|link-marker|link-target)$/
 const SAFE_INLINE_CLASS = new Set([
@@ -26,61 +37,25 @@ const SAFE_INLINE_CLASS = new Set([
 export function captureDocumentPaint(
   view: VirtualizedTextViewInternal,
   appearance: string,
+  headings: ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>>,
 ): DocumentPaintCapture {
-  if (view.scrollMode !== 'content') return unsupported('content-layout-required')
+  if (view.sizing?.height !== 'content' && view.scrollMode !== 'content')
+    return unsupported('content-layout-required')
   if (view.model.foldMap?.ranges.length) return unsupported('folded-document')
   if (view.rangeHighlightGroups.size) return unsupported('range-highlight')
-  const mounted = getMountedRows(view)
-  if (!mounted.length || mounted.some((row, index) => row.index !== index))
-    return unsupported('incomplete-document')
+  if (view.selections.some((selection) => selection.start !== selection.end))
+    return unsupported('unsafe-or-unsupported-fragment')
+  if (
+    view.model.visibleLineCount > DOCUMENT_PAINT_LIMITS.rows ||
+    view.model.textLength > DOCUMENT_PAINT_LIMITS.text ||
+    view.virtualizer.getViewportSnapshot().totalSize > DOCUMENT_PAINT_LIMITS.height
+  )
+    return unsupported('document-paint-limit')
   const rows: DocumentPaintRow[] = []
-  let previousBufferRow = -1
-  for (const row of mounted) {
-    if (row.source !== 'document') return unsupported('injected-row')
-    if (row.foldMarker?.collapsed) return unsupported('fold-placeholder')
-    if (row.coreBidiRefusal) return unsupported('bidi-row')
-    if (row.leftSpacerWidth) return unsupported('horizontally-windowed-row')
-    if (row.rowDecorationClassName && !row.rowDecorationSnapshotStyle)
-      return unsupported('plugin-row-style')
-    if (row.rowDecorationGutterClassName && !row.rowDecorationSnapshotStyle)
-      return unsupported('plugin-gutter-style')
-    if (row.inlineKindsClassName.split(/\s+/).some((name) => name && !MARKDOWN_KIND.test(name)))
-      return unsupported('plugin-inline-kind')
-    const runs = captureRuns(view, row)
-    if (!runs) return unsupported('unsafe-or-unsupported-fragment')
-    const prior = rows.at(-1)
-    if (prior && row.bufferRow === previousBufferRow) {
-      rows[rows.length - 1] = { ...prior, runs: mergeRuns(prior.runs.concat(runs)) }
-      continue
-    }
-    const gutter = captureGutter(view, row)
-    if (!gutter) return unsupported('unsupported-gutter')
-    const level = row.element.getAttribute('aria-level')
-    rows.push({
-      height: row.height,
-      characterWidth: glyphAdvancesFor(row.element)?.advance(48) ?? view.metrics.characterWidth,
-      style: captureStyle(row.element),
-      runs,
-      heading:
-        row.element.getAttribute('role') === 'heading'
-          ? {
-              level: Number(level),
-              name: row.element.getAttribute('aria-label') ?? row.element.textContent ?? '',
-              id: row.element.id,
-            }
-          : null,
-      gutterBackgroundColor: view.currentGutterWidth
-        ? getComputedStyle(row.gutterElement).backgroundColor
-        : 'transparent',
-      gutterInsetBackgroundColor: row.gutterElement.classList.contains(
-        'editor-virtualized-cursor-line-gutter-band',
-      )
-        ? getComputedStyle(row.gutterElement, '::before').backgroundColor
-        : 'transparent',
-      gutter,
-    })
-    previousBufferRow = row.bufferRow
-  }
+  const refusal = captureDocumentRowBatches(view, (source, batch) =>
+    captureBatch(source, batch, rows, headings),
+  )
+  if (refusal) return unsupported(refusal)
   if (rows.length !== view.model.lineCount) return unsupported('incomplete-document')
   return encodeDocumentPaint({
     format: 6,
@@ -98,6 +73,145 @@ export function captureDocumentPaint(
     wrap: view.wrapEnabled ? view.wrapBreak : null,
     rows,
   })
+}
+
+function captureDocumentRowBatches(
+  view: VirtualizedTextViewInternal,
+  capture: (
+    source: VirtualizedTextViewInternal,
+    rows: readonly MountedVirtualizedTextRow[],
+  ) => string | null,
+): string | null {
+  const count = view.model.visibleLineCount
+  const mounted = getMountedRows(view)
+  if (mounted.length === count) return capture(view, mounted)
+
+  const snapshot = view.virtualizer.getViewportSnapshot()
+  if (snapshot.viewportWidth <= 0) return 'document-layout-not-ready'
+  const viewport = new ScrollViewport(view.scrollElement, { capture: true })
+  const gutterElement = view.scrollElement.ownerDocument.createElement('div')
+  gutterElement.className = view.gutterElement.className
+  gutterElement.style.cssText = view.gutterElement.style.cssText
+  viewport.gutterSpacer.append(gutterElement)
+  const source: VirtualizedTextViewInternal = {
+    ...view,
+    scrollMode: 'content',
+    viewport,
+    contentElement: viewport.textContent,
+    spacer: viewport.textSpacer,
+    gutterElement,
+    rowElements: new Map(),
+    rowPool: [],
+    rowTokenSignatures: new Map(),
+    nextTokenHighlightSlotId: 0,
+  }
+  viewport.setViewportSize(snapshot.viewportWidth, CAPTURE_BATCH_SIZE * view.metrics.rowHeight)
+  viewport.setDocumentWidth(snapshot.viewportWidth)
+  try {
+    return captureDocumentRows(source, count, snapshot, capture)
+  } finally {
+    const releaseWidgets = takeInlineWidgets(source)
+    const releaseCells = takeGutterCells(
+      source,
+      Array.from(source.rowElements.values()).concat(source.rowPool),
+    )
+    viewport.dispose()
+    try {
+      releaseWidgets()
+    } finally {
+      releaseCells()
+    }
+  }
+}
+
+function captureDocumentRows(
+  source: VirtualizedTextViewInternal,
+  count: number,
+  snapshot: Omit<FixedRowVirtualizerSnapshot, 'virtualItems'>,
+  capture: (
+    source: VirtualizedTextViewInternal,
+    rows: readonly MountedVirtualizedTextRow[],
+  ) => string | null,
+): string | null {
+  for (let start = 0; start < count; start += CAPTURE_BATCH_SIZE) {
+    const end = Math.min(start + CAPTURE_BATCH_SIZE, count)
+    const items = Array.from({ length: end - start }, (_, offset) => {
+      const index = start + offset
+      return { index, start: rowTop(source, index), size: source.metrics.rowHeight }
+    })
+    const batch = { ...snapshot, scrollTop: 0, scrollLeft: 0, virtualItems: items }
+    const refusal = capture(source, renderCaptureBatch(source, batch))
+    if (refusal) return refusal
+  }
+  return null
+}
+
+function captureBatch(
+  view: VirtualizedTextViewInternal,
+  batch: readonly MountedVirtualizedTextRow[],
+  rows: DocumentPaintRow[],
+  headings: ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>>,
+): string | null {
+  for (const row of batch) {
+    const rowRefusal = unsupportedRowReason(row)
+    if (rowRefusal) return rowRefusal
+    const runs = captureRuns(view, row)
+    if (!runs) return 'unsafe-or-unsupported-fragment'
+    const prior = rows.at(-1)
+    if (prior && row.bufferRow === rows.length - 1) {
+      rows[rows.length - 1] = { ...prior, runs: mergeRuns(prior.runs.concat(runs)) }
+      continue
+    }
+    const gutter = captureGutter(view, row)
+    if (!gutter) return 'unsupported-gutter'
+    rows.push(captureRow(view, row, runs, gutter, headings.get(row.bufferRow)))
+  }
+  return null
+}
+
+function unsupportedRowReason(row: MountedVirtualizedTextRow): string | null {
+  if (row.source !== 'document') return 'injected-row'
+  if (row.foldMarker?.collapsed) return 'fold-placeholder'
+  if (row.coreBidiRefusal) return 'bidi-row'
+  if (row.leftSpacerWidth) return 'horizontally-windowed-row'
+  if (row.rowDecorationClassName && !row.rowDecorationSnapshotStyle) return 'plugin-row-style'
+  if (row.rowDecorationGutterClassName && !row.rowDecorationSnapshotStyle)
+    return 'plugin-gutter-style'
+  if (row.inlineKindsClassName.split(/\s+/).some((name) => name && !MARKDOWN_KIND.test(name)))
+    return 'plugin-inline-kind'
+  return null
+}
+
+function captureRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  runs: readonly DocumentPaintRun[],
+  gutter: DocumentPaintRow['gutter'],
+  heading: DocumentPaintRow['heading'] | undefined,
+): DocumentPaintRow {
+  return {
+    height: row.height,
+    characterWidth: glyphAdvancesFor(row.element)?.advance(48) ?? view.metrics.characterWidth,
+    style: captureStyle(row.element),
+    runs,
+    heading:
+      row.element.getAttribute('role') === 'heading'
+        ? {
+            level: Number(row.element.getAttribute('aria-level')),
+            name: row.element.getAttribute('aria-label') ?? row.element.textContent ?? '',
+            id: row.element.id,
+          }
+        : (heading ?? null),
+    gutterBackgroundColor: view.currentGutterWidth
+      ? getComputedStyle(row.gutterElement).backgroundColor
+      : 'transparent',
+    gutterInsetBackgroundColor: row.gutterElement.classList.contains(
+      'editor-virtualized-cursor-line-gutter-band',
+    )
+      ? getComputedStyle(row.gutterElement, '::before').backgroundColor
+      : 'transparent',
+    gutter,
+  }
 }
 
 function unsupported(reason: string): DocumentPaintCapture {
@@ -138,7 +252,7 @@ function captureRuns(
   const nodes: Text[] = []
   for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text)
   const runs: DocumentPaintRun[] = []
-  const ranges = view.rowTokenRanges.get(row.tokenHighlightSlotId)
+  const ranges = documentPaintTokenRanges(view, row)
   const nodeIndexes = new Map(nodes.map((node, index) => [node, index]))
   for (const node of nodes) {
     const parent = node.parentElement!
@@ -153,20 +267,16 @@ function captureRuns(
       end: number
       style: NonNullable<ReturnType<typeof view.tokenGroups.get>>['style']
     }[] = []
-    for (const [key, tokenRanges] of ranges ?? []) {
-      const group = view.tokenGroups.get(key)
-      if (!group) continue
-      for (const range of tokenRanges) {
-        const first = nodeIndexes.get(range.startContainer as Text)
-        const last = nodeIndexes.get(range.endContainer as Text)
-        const index = nodeIndexes.get(node)!
-        if (first === undefined || last === undefined || index < first || index > last) continue
-        const start = index === first ? range.startOffset : 0
-        const end = index === last ? range.endOffset : node.length
-        cuts.add(start)
-        cuts.add(end)
-        styles.push({ start, end, style: group.style })
-      }
+    for (const { range, style } of ranges) {
+      const first = nodeIndexes.get(range.startContainer as Text)
+      const last = nodeIndexes.get(range.endContainer as Text)
+      const index = nodeIndexes.get(node)!
+      if (first === undefined || last === undefined || index < first || index > last) continue
+      const start = index === first ? range.startOffset : 0
+      const end = index === last ? range.endOffset : node.length
+      cuts.add(start)
+      cuts.add(end)
+      styles.push({ start, end, style })
     }
     const resolvedStyles = new Map<EditorTokenStyle, EditorTokenStyle>()
     const boundaries = [...cuts].sort((a, b) => a - b)

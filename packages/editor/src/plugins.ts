@@ -14,6 +14,7 @@ import type {
 } from './documentSession'
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type { TextReadSnapshot } from './documentTextSnapshot'
+import type { DocumentPaintRow } from './editor/documentPaint'
 import type { EditorCommandContext } from './editor/commands'
 import type {
   EditorAnyCommandId,
@@ -553,6 +554,8 @@ export type EditorViewContributionContext = {
   readonly scrollElement: HTMLDivElement
   /** Document paint parent inside the code viewport, separate from native scrollbars. */
   readonly contentElement: HTMLDivElement
+  /** Paint parent anchored to the visible viewport, outside the translated document rows. */
+  readonly viewportOverlayElement: HTMLDivElement
   /** Unique per editor, so two editors' CSS highlights never share a registry name. */
   readonly highlightPrefix: string
   hasDocument(): boolean
@@ -710,6 +713,10 @@ export type EditorViewContribution = EditorDisposable & {
   /** Capture contributors opt into synchronous restoration with a configuration-specific key. */
   readonly snapshotKey?: string
   captureVisiblePaint?(snapshot: EditorViewSnapshot): EditorVisiblePaintCapture
+  /** Supplies headings for document rows outside the mounted window during document capture. */
+  captureDocumentHeadings?(
+    source: TextReadSnapshot,
+  ): ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>> | null
   /** Scroll feedback at display rate, without rebuilding the document or mounted-row snapshot. */
   updateViewport?(viewport: EditorViewportSnapshot): void
   update(

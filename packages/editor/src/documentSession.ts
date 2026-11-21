@@ -676,34 +676,6 @@ export function subscribeDocumentTransactions(
   }
 }
 
-const snapshotConstraints = new WeakMap<
-  EditorTextBuffer,
-  Set<(snapshot: DocumentTextSnapshot) => void>
->()
-
-export function registerDocumentSnapshotConstraint(
-  buffer: EditorTextBuffer,
-  validate: (snapshot: DocumentTextSnapshot) => void,
-): () => void {
-  let constraints = snapshotConstraints.get(buffer)
-  if (!constraints) {
-    constraints = new Set()
-    snapshotConstraints.set(buffer, constraints)
-  }
-  constraints.add(validate)
-  return () => {
-    constraints.delete(validate)
-    if (constraints.size === 0) snapshotConstraints.delete(buffer)
-  }
-}
-
-function assertDocumentSnapshot(buffer: EditorTextBuffer, snapshot: PieceTableSnapshot): void {
-  const constraints = snapshotConstraints.get(buffer)
-  if (!constraints) return
-  const text = createDocumentTextSnapshot(snapshot)
-  for (const validate of constraints) validate(text)
-}
-
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private readonly pendingChanges: EditorTextBufferChange[] = []
   private publishingChanges = false
@@ -750,17 +722,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     this.tooLargeForHeapOperation = exceedsHeapOperationBudget(snapshot.length)
   }
 
-  private get admittedEditAuthor(): DocumentEditAuthor {
-    if (!snapshotConstraints.has(this)) return this.applyLocalEdits
-    return (before, edits, options) => {
-      const proposed = applyBatchToPieceTable(before, edits)
-      assertDocumentSnapshot(this, proposed)
-      return this.applyLocalEdits === applyBatchToPieceTable
-        ? proposed
-        : this.applyLocalEdits(before, edits, options)
-    }
-  }
-
   public setEditAuthor(author: DocumentEditAuthor): { dispose(): void } {
     if (this.applyLocalEdits !== applyBatchToPieceTable)
       throw new TypeError('document already has an edit author')
@@ -802,7 +763,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history.current,
       selections,
       text,
-      this.admittedEditAuthor,
+      this.applyLocalEdits,
     )
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
@@ -825,7 +786,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (this.mutationLease) {
       return appendTiming(this.createChange('none', []), 'session.indentSelection', start)
     }
-    const result = indentSelections(this.history.current, selections, text, this.admittedEditAuthor)
+    const result = indentSelections(this.history.current, selections, text, this.applyLocalEdits)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
@@ -851,7 +812,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history.current,
       selections,
       tabSize,
-      this.admittedEditAuthor,
+      this.applyLocalEdits,
     )
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
@@ -892,7 +853,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     // undo inversion, incremental re-render, decoration remapping, the LSP's
     // copy of the document — has to be told what actually happened.
     const appliedEdits = snapBatchEditRanges(this.history.current, normalizedEdits)
-    const nextSnapshot = this.admittedEditAuthor(this.history.current, appliedEdits, options)
+    const nextSnapshot = this.applyLocalEdits(this.history.current, appliedEdits, options)
     const effectiveEdits = appliedEdits.filter(isEffectiveTextEdit)
     if (effectiveEdits.length === 0) {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
@@ -930,7 +891,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       const edits = snapBatchEditRanges(snapshot, normalizeTextEdits(batch))
       snapshot = applyBatchToPieceTable(snapshot, edits)
     }
-    assertDocumentSnapshot(this, snapshot)
     if (this.mutationLease) {
       this.deferredReconcile = { snapshot, options, sourceView }
       return this.createChange('none', [])
@@ -984,7 +944,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history.current,
       selections,
       tabSize,
-      this.admittedEditAuthor,
+      this.applyLocalEdits,
     )
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
@@ -1006,7 +966,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (this.mutationLease) {
       return appendTiming(this.createChange('none', []), 'session.delete', start)
     }
-    const result = deleteSelections(this.history.current, selections, this.admittedEditAuthor)
+    const result = deleteSelections(this.history.current, selections, this.applyLocalEdits)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
@@ -1027,11 +987,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (this.mutationLease) {
       return appendTiming(this.createChange('none', []), 'session.delete', start)
     }
-    const result = forwardDeleteSelections(
-      this.history.current,
-      selections,
-      this.admittedEditAuthor,
-    )
+    const result = forwardDeleteSelections(this.history.current, selections, this.applyLocalEdits)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
@@ -1062,7 +1018,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return appendTiming(this.createChange('none', []), 'session.undo', start)
     }
 
-    assertDocumentSnapshot(this, next.current)
     this.typingRun = null
     this.history = next
     const publication = {
@@ -1105,7 +1060,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return appendTiming(this.createChange('none', []), 'session.redo', start)
     }
 
-    assertDocumentSnapshot(this, next.current)
     this.typingRun = null
     this.history = next
     const publication = {
@@ -1220,7 +1174,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return appendTiming(this.createChange('none', []), 'session.checkout', start)
     }
 
-    assertDocumentSnapshot(this, next.current)
     this.typingRun = null
     const from = this.history.current
     const selectionBefore = this.history.selections
@@ -1261,7 +1214,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     sourceView: EditorViewSession | null,
   ): DocumentSessionChange {
     if (next === this.history) return this.createChange('none', [])
-    assertDocumentSnapshot(this, next.current)
     const previous = this.history
     const from = editorHistoryPath(previous, previous.currentId)
     const to = editorHistoryPath(previous, next.currentId)
@@ -1578,7 +1530,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return this.commitLogicalOnly(target, prepared, cumulativeBarrier)
     }
 
-    assertDocumentSnapshot(this, prepared.snapshotAfter)
     const selectionBefore = target.sourceView?.getSelections() ?? this.history.selections
     const selectionAfter = this.selectionsAfterProgrammaticEdit(
       prepared.snapshotAfter,
@@ -1636,7 +1587,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (!this.canReverse(target, receipt, barrier)) return { status: 'stale' }
 
     const transaction = barrier.segments[0]!
-    assertDocumentSnapshot(this, transaction.snapshotBefore)
     const historyAtAfter = this.history
     const wasInstalled = barrier.installed
     this.restoreHistoryForReverse(barrier, transaction)
@@ -1710,7 +1660,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return { status: 'stale' }
     }
 
-    assertDocumentSnapshot(this, transaction.snapshotBefore)
     if (segmentIndex === state.receipt.segmentCount - 1 && state.wasInstalled) {
       this.currentBarrier = state.barrier.older
       state.barrier.installed = false
@@ -2045,7 +1994,6 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     options: CommitEditOptions,
   ): DocumentSessionChange {
     if (edits.length === 0) return this.createChange('none', [])
-    assertDocumentSnapshot(this, snapshot)
 
     const transaction = this.createTransaction(
       snapshot,

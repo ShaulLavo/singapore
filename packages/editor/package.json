@@ -124,6 +124,7 @@
     "bench:fold-map": "bun bench/foldMap.ts",
     "bench:piece-table": "bun bench/pieceTable-insertions.ts",
     "bench:virtualization": "bun bench/virtualization.ts",
+    "bench:content-fling": "bun bench/contentModeProbe.ts",
     "test:reading": "node test/reading-order.proof.mjs",
     "bench:walker": "bun bench/pieceTable-walker.ts",
     "bench:tokens": "bun bench/tokenStore.ts",

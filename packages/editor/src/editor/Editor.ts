@@ -10,7 +10,6 @@ import { decodeSnapshot as decodePaintSnapshot, type DocumentPaintCapture } from
 import { detectPlatform } from '@shaulavo/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
-  registerDocumentSnapshotConstraint,
   getDocumentMutationLeaseState,
   subscribeDocumentMutationLeaseState,
   subscribeDocumentTransactions,
@@ -429,7 +428,6 @@ export class Editor {
   private readonly viewContributions: EditorViewContributionController
   private readonly secondaryWork = new EditorSecondaryWorkScheduler()
   private readonly detachedEditChain = new DocumentEditChain(0, 0)
-  private unregisterContentConstraint: (() => void) | null = null
   private unsubscribeBufferChanges: (() => void) | null = null
   private transactionAttachment: TransactionAttachment | null = null
   private unsubscribeLeaseChanges: (() => void) | null = null
@@ -1002,7 +1000,10 @@ export class Editor {
     const appearance = this.paintAppearance('refuse', 'document')
     if (appearance === null)
       return { status: 'unsupported', reason: 'appearance-not-ready' } as const
-    return this.view.captureDocumentPaint(appearance)
+    return this.view.captureDocumentPaint(
+      appearance,
+      this.viewContributions.captureDocumentHeadings(this.textSnapshot),
+    )
   }
 
   private captureViewportSnapshot() {
@@ -2187,6 +2188,7 @@ export class Editor {
   }
 
   getScrollPosition(): Required<EditorScrollPosition> {
+    if (this.view.isPageScrolled) return DOCUMENT_START_SCROLL_POSITION
     const provisional = this.view.provisionalScrollPosition
     if (provisional) return provisional
     const viewState = this.view.getState()
@@ -2427,7 +2429,6 @@ export class Editor {
   setHeight(height: EditorHeight, maxHeight?: number): void {
     const sizing = editorSizing(height, maxHeight)
     if (!this.view.setHeight(sizing)) return
-    this.syncContentConstraint()
 
     this.notifyViewContributions('layout', null)
     this.log({
@@ -2509,7 +2510,6 @@ export class Editor {
   }
 
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
-    this.view.assertContentSnapshot(session.getTextSnapshot(), true)
     const analysis = options.analysis ?? options.preparedDocument?.analysis
     if (analysis && analysis.buffer !== editorBufferSession(session)?.buffer)
       throw new TypeError('Document analysis must reference the attached buffer')
@@ -2676,7 +2676,6 @@ export class Editor {
     options: ResetOwnedDocumentOptions,
     transactionBefore?: ReplacementTransactionBefore,
   ): number {
-    this.view.assertContentSnapshot(document.text, true)
     this.preparingDocument = true
     const savedScroll = this.pendingDocumentScroll ?? this.view.provisionalScrollPosition
     if (!options.scrollPosition && savedScroll)
@@ -2814,6 +2813,7 @@ export class Editor {
   }
 
   private applyScrollPosition(scrollPosition: EditorScrollPosition): void {
+    if (this.view.isPageScrolled) return
     if (this.view.isProvisional) {
       this.pendingDocumentScroll = scrollPosition
       return
@@ -3674,6 +3674,7 @@ export class Editor {
       container,
       scrollElement: this.el,
       contentElement: this.view.contentElement,
+      viewportOverlayElement: this.view.viewportOverlayElement,
       highlightPrefix: this.highlightPrefix,
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
@@ -4009,7 +4010,6 @@ export class Editor {
     const bufferSession = editorBufferSession(session)
     if (!bufferSession) return
 
-    this.syncContentConstraint()
     this.syncTransactionSubscription()
     this.unsubscribeBufferChanges = bufferSession.buffer.subscribe((event) =>
       this.handleBufferChange(bufferSession, event),
@@ -4056,19 +4056,7 @@ export class Editor {
     }
   }
 
-  private syncContentConstraint(): void {
-    this.unregisterContentConstraint?.()
-    this.unregisterContentConstraint = null
-    const buffer = this.session && editorBufferSession(this.session)?.buffer
-    if (!buffer || !this.view.usesContentHeight) return
-    this.unregisterContentConstraint = registerDocumentSnapshotConstraint(buffer, (snapshot) =>
-      this.view.assertContentSnapshot(snapshot),
-    )
-  }
-
   private disposeBufferSubscriptions(): void {
-    this.unregisterContentConstraint?.()
-    this.unregisterContentConstraint = null
     this.releaseTransactionAttachment()
     this.bufferPublication = null
     this.unsubscribeBufferChanges?.()

@@ -159,7 +159,7 @@ describe('fixed row virtualizer', () => {
         scrollMode,
       })
       virtualizer.attachScrollElement(document.createElement('div'), onChange)
-      expect(virtualizer.getSnapshot().virtualItems).toHaveLength(5)
+      expect(virtualizer.getSnapshot().virtualItems).toHaveLength(scrollMode === 'static' ? 5 : 0)
 
       virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 0 })
       expect(onChange).toHaveBeenCalledTimes(1)
@@ -415,36 +415,33 @@ describe('fixed row virtualizer', () => {
     virtualizer.dispose()
   })
 
-  it.each(['static', 'content'] as const)(
-    'renders the full document range in %s scroll mode',
-    (scrollMode) => {
-      const virtualizer = new FixedRowVirtualizer({
-        count: 5,
-        rowHeight: 20,
-        overscan: 0,
-        scrollMode,
-      })
+  it('renders the full document range in static mode', () => {
+    const virtualizer = new FixedRowVirtualizer({ count: 5, rowHeight: 20, scrollMode: 'static' })
+    virtualizer.setScrollMetrics({ scrollTop: 60, viewportHeight: 40 })
+    expect(virtualizer.getSnapshot()).toMatchObject({
+      nativeScrollHeight: 100,
+      nativeScrollTop: 0,
+      scrollHeight: 100,
+      scrollTop: 0,
+      totalSize: 100,
+      viewportHeight: 100,
+      visibleRange: { start: 0, end: 5 },
+    })
+  })
 
-      virtualizer.setScrollMetrics({ scrollTop: 60, viewportHeight: 40 })
-
-      expect(virtualizer.getSnapshot()).toMatchObject({
-        nativeScrollHeight: 100,
-        nativeScrollTop: 0,
-        scrollHeight: 100,
-        scrollTop: 0,
-        totalSize: 100,
-        viewportHeight: 100,
-        visibleRange: { start: 0, end: 5 },
-        virtualItems: [
-          { index: 0, start: 0, size: 20 },
-          { index: 1, start: 20, size: 20 },
-          { index: 2, start: 40, size: 20 },
-          { index: 3, start: 60, size: 20 },
-          { index: 4, start: 80, size: 20 },
-        ],
-      })
-    },
-  )
+  it('overscans a viewport on each side of the visible page rows', () => {
+    const virtualizer = new FixedRowVirtualizer({
+      count: 100,
+      rowHeight: 20,
+      scrollMode: 'content',
+    })
+    virtualizer.setScrollMetrics({ scrollTop: 500, viewportHeight: 100 })
+    const snapshot = virtualizer.getSnapshot()
+    expect(snapshot.visibleRange).toEqual({ start: 25, end: 30 })
+    expect(snapshot.virtualItems[0]?.index).toBe(20)
+    expect(snapshot.virtualItems.at(-1)?.index).toBe(34)
+    expect(snapshot.nativeScrollHeight).toBe(2000)
+  })
 
   it.each(['static', 'content'] as const)(
     'skips scroll listeners and logical scroll properties in %s scroll mode',
