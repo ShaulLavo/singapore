@@ -21,13 +21,15 @@ let holdReads = false
 let closed: PagedDocument['stats'] | undefined
 let cancelled = 0
 let minimumReadStart = 0
+let localRevision = 0
 
 type PagedMode = 'demand' | 'indexed' | 'traverse'
 
 function virtualSource(size: number, mode: PagedMode): RangeSource {
+  const revision = String(size)
   return {
     id: 'generated-utf8',
-    revision: 'one',
+    revision,
     async readBytes(start, end, signal) {
       if (start < minimumReadStart) throw new Error('Read before the supplied index checkpoint')
       if (mode === 'demand' && end > 2 * PAGED_PROOF_OPTIONS.pageBytes + 4096)
@@ -39,7 +41,7 @@ function virtualSource(size: number, mode: PagedMode): RangeSource {
       const through = Math.min(size, first ? 27 * tile.length : end, end)
       const bytes = virtualBytes(start, Math.max(start, through))
       return {
-        revision: 'one',
+        revision,
         bytes,
         eof: mode !== 'demand' && through >= size,
         ...(reportLength ? { byteLength: size } : {}),
@@ -191,7 +193,7 @@ file.addEventListener('change', () => {
   const blob = file.files?.[0]
   if (!blob) return
   dispose()
-  void mount(blobRangeSource(blob, { id: blob.name, revision: String(blob.lastModified) }))
+  void mount(blobRangeSource(blob, { id: blob.name, revision: String(++localRevision) }))
 })
 
 const proof = {

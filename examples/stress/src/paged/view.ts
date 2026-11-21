@@ -167,7 +167,8 @@ export class PagedViewport {
       },
       (window) => {
         if (displacement === undefined) return 0
-        const prepend = window.fragments.indexOf(current.fragments[0]!)
+        const anchor = window.fragments.indexOf(current.fragments[0]!)
+        const prepend = anchor < 0 ? window.fragments.length : anchor
         return Math.max(0, prepend * ROW_HEIGHT + displacement)
       },
     )
