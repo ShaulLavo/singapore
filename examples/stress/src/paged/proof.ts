@@ -1,135 +1,216 @@
 import { createEditorTextBuffer, createEditorBufferSession } from '@singapore-editor/core/document'
-import { PagedDocument, PAGED_PROOF_OPTIONS, type RangeSource } from '@singapore-editor/paged'
+import {
+  blobRangeSource,
+  PAGED_POSITION_POLICY,
+  PAGED_PROOF_OPTIONS,
+  PagedDocument,
+  type PagedIndex,
+  type RangeSource,
+} from '@singapore-editor/paged'
 import { PagedViewport } from './view'
 
 const TILE = 'row🙂 e\u0301 中 payload\r\n'
 const tile = new TextEncoder().encode(TILE)
-let documentSource: PagedDocument | null = null
-let viewport: PagedViewport | null = null
-let revision = 'one'
-let delayMs = 0
-let resident: ReturnType<typeof createEditorTextBuffer> | null = null
+const host = document.querySelector<HTMLElement>('#view')!
+const file = document.querySelector<HTMLInputElement>('#file')!
+let documentSource: PagedDocument | undefined
+let viewport: PagedViewport | undefined
+let retained: ReturnType<typeof createEditorTextBuffer> | undefined
+let reportLength = false
+let holdReads = false
+let closed: PagedDocument['stats'] | undefined
+let cancelled = 0
+let minimumReadStart = 0
+let localRevision = 0
 
-function source(size: number): RangeSource {
+type PagedMode = 'demand' | 'indexed' | 'traverse'
+
+function virtualSource(size: number, mode: PagedMode): RangeSource {
+  const revision = String(size)
   return {
     id: 'generated-utf8',
     revision,
-    byteLength: size,
     async readBytes(start, end, signal) {
-      // @justification Simulated source latency for the paged proof; it only resolves the awaited
-      // read, and the abort signal is checked right after.
-      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs))
-      signal.throwIfAborted()
-      const bytes = new Uint8Array(end - start)
-      for (let at = 0; at < bytes.length; at++) bytes[at] = tile[(start + at) % tile.length]!
-      return { revision, bytes }
+      if (start < minimumReadStart) throw new Error('Read before the supplied index checkpoint')
+      if (mode === 'demand' && end > 2 * PAGED_PROOF_OPTIONS.pageBytes + 4096)
+        throw new Error('Read outside the permitted demand region')
+      if (holdReads) {
+        await holdUntilCancelled(signal)
+      }
+      const first = start === 0 && mode === 'demand'
+      const through = Math.min(size, first ? 27 * tile.length : end, end)
+      const bytes = virtualBytes(start, Math.max(start, through))
+      return {
+        revision,
+        bytes,
+        eof: mode !== 'demand' && through >= size,
+        ...(reportLength ? { byteLength: size } : {}),
+      }
     },
   }
 }
 
-async function open(size: number) {
-  dispose()
-  revision = 'one'
-  const bytes = Math.floor(size / tile.length) * tile.length
-  const doc = new PagedDocument(source(bytes))
+function holdUntilCancelled(signal: AbortSignal) {
+  return new Promise<void>((_resolve, reject) => {
+    const abort = () => {
+      cancelled++
+      reject(signal.reason)
+    }
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
+function virtualBytes(start: number, end: number) {
+  const bytes = new Uint8Array(end - start)
+  for (let at = 0; at < bytes.length; at++) bytes[at] = tile[(start + at) % tile.length]!
+  return bytes
+}
+
+async function mount(source: RangeSource, index?: PagedIndex) {
+  const doc = new PagedDocument(source, { index })
   documentSource = doc
-  const host = document.querySelector<HTMLElement>('#view')!
-  viewport = new PagedViewport(host, doc)
+  viewport = new PagedViewport(host, doc, { indexedLines: Boolean(index) })
   const start = performance.now()
-  const indexing = doc.initialize()
-  await viewport.show(0)
-  const firstRangeMs = performance.now() - start
-  await indexing
+  await viewport.first()
+  return performance.now() - start
+}
+
+async function open(size: number, mode: PagedMode) {
+  dispose()
+  closed = undefined
+  cancelled = 0
+  minimumReadStart = 0
+  holdReads = false
+  reportLength = false
+  const bytes = Math.floor(size / tile.length) * tile.length
+  const source = virtualSource(bytes, mode)
+  const farLine = Math.floor((bytes / tile.length) * 0.9)
+  const farByte = farLine * tile.length
+  const index: PagedIndex | undefined =
+    mode === 'indexed'
+      ? {
+          sourceId: source.id,
+          revision: source.revision,
+          positionPolicy: PAGED_POSITION_POLICY,
+          coverage: [{ kind: 'line', start: farLine, end: farLine + 1 }],
+          checkpoints: [{ byteOffset: farByte, line: farLine, utf16Offset: farLine * TILE.length }],
+        }
+      : undefined
+  const firstContentMs = await mount(source, index)
   return {
     bytes,
-    firstRangeMs,
-    indexedMs: performance.now() - start,
+    firstContentMs,
     tile: TILE,
     tileBytes: tile.length,
-    stats: doc.stats,
+    farLine,
+    farByte,
+    stats: documentSource!.stats,
   }
 }
 
 async function compare(mode: 'resident' | 'streamed', size: number) {
   dispose()
-  revision = 'one'
   const bytes = Math.floor(size / tile.length) * tile.length
-  const data = source(bytes)
   const start = performance.now()
   if (mode === 'resident') {
-    const response = await data.readBytes(0, bytes, new AbortController().signal)
-    resident = createEditorTextBuffer(new TextDecoder().decode(response.bytes))
-    return { bytes, units: resident.getSnapshot().length, buildMs: performance.now() - start }
+    retained = createEditorTextBuffer(new TextDecoder().decode(virtualBytes(0, bytes)))
+    return { bytes, units: retained.getSnapshot().length, buildMs: performance.now() - start }
   }
-  resident = createEditorTextBuffer('')
-  const session = createEditorBufferSession(resident)
+  retained = createEditorTextBuffer('')
+  const session = createEditorBufferSession(retained)
   const decoder = new TextDecoder()
   let pendingCR = ''
   for (let offset = 0; offset < bytes; offset += PAGED_PROOF_OPTIONS.pageBytes) {
-    const part = await data.readBytes(
-      offset,
-      Math.min(bytes, offset + PAGED_PROOF_OPTIONS.pageBytes),
-      new AbortController().signal,
-    )
-    const text = pendingCR + decoder.decode(part.bytes, { stream: true })
+    const part = virtualBytes(offset, Math.min(bytes, offset + PAGED_PROOF_OPTIONS.pageBytes))
+    const text = pendingCR + decoder.decode(part, { stream: true })
     pendingCR = text.endsWith('\r') ? '\r' : ''
     const complete = pendingCR ? text.slice(0, -1) : text
     session.applyEdits(
-      [{ from: resident.getSnapshot().length, to: resident.getSnapshot().length, text: complete }],
+      [{ from: retained.getSnapshot().length, to: retained.getSnapshot().length, text: complete }],
       { history: 'skip' },
     )
   }
   const tail = pendingCR + decoder.decode()
   if (tail)
     session.applyEdits(
-      [{ from: resident.getSnapshot().length, to: resident.getSnapshot().length, text: tail }],
+      [{ from: retained.getSnapshot().length, to: retained.getSnapshot().length, text: tail }],
       { history: 'skip' },
     )
-  return { bytes, units: resident.getSnapshot().length, buildMs: performance.now() - start }
+  return { bytes, units: retained.getSnapshot().length, buildMs: performance.now() - start }
 }
 
 function dispose() {
+  const doc = documentSource
   viewport?.dispose()
-  documentSource?.dispose()
-  viewport = null
-  documentSource = null
-  resident = null
+  doc?.dispose()
+  if (doc) captureClosed(doc)
+  viewport = undefined
+  documentSource = undefined
+  retained = undefined
+  file.value = ''
 }
+
+function captureClosed(doc: PagedDocument) {
+  const snapshot = doc.stats
+  closed = snapshot
+  if (!snapshot.inFlight) return
+  // @justification The proof samples disposed state after the aborted read releases its slot. The snapshot check excludes later sessions.
+  requestAnimationFrame(() => {
+    if (closed === snapshot) closed = doc.stats
+  })
+}
+
+async function traverse() {
+  const doc = documentSource!
+  const view = doc.createView()
+  const start = performance.now()
+  let pieces = 0
+  let through = 0
+  try {
+    let window = await view.first(PAGED_PROOF_OPTIONS.maxWindowRows)
+    while (true) {
+      for (const piece of window.fragments) {
+        if (
+          piece.start.byteOffset !== through ||
+          (piece.lineBreak && piece.text + piece.lineBreak !== TILE)
+        )
+          throw new Error('Traversal differs from the virtual source')
+        through = piece.end.byteOffset
+        pieces++
+      }
+      if (!window.next) break
+      window = await view.next(window.next, PAGED_PROOF_OPTIONS.maxWindowRows)
+    }
+    return { ms: performance.now() - start, pieces, through, stats: doc.stats }
+  } finally {
+    view.dispose()
+  }
+}
+
+document.querySelector('#close')?.addEventListener('click', dispose)
+file.addEventListener('change', () => {
+  const blob = file.files?.[0]
+  if (!blob) return
+  dispose()
+  void mount(blobRangeSource(blob, { id: blob.name, revision: String(++localRevision) }))
+})
 
 const proof = {
   open,
   compare,
   dispose,
-  sweep: async () => {
-    const doc = documentSource!
-    const view = doc.createView()
-    try {
-      const step = Math.max(1, Math.floor(PAGED_PROOF_OPTIONS.pageBytes / tile.length))
-      for (let line = 0; line < doc.stats.lines - 1; line += step) {
-        const window = await view.readLines(line, 1)
-        if (window.rows[0]?.text !== TILE.slice(0, -1))
-          throw new Error('Sweep differs from the source')
-      }
-      return doc.stats
-    } finally {
-      view.dispose()
-    }
-  },
+  traverse,
   stats: () => documentSource?.stats,
-  show: (line: number) => viewport!.show(line),
-  setDelay: (delay: number) => {
-    delayMs = delay
+  closed: () => ({ stats: closed, cancelled }),
+  revealLength: () => {
+    reportLength = true
   },
-  changeRevision: () => {
-    revision = 'two'
+  holdReads: () => {
+    holdReads = true
   },
-  copy: async (start: number, end: number) => {
-    const view = documentSource!.createView()
-    try {
-      return await view.copyRange(start, end)
-    } finally {
-      view.dispose()
-    }
+  requireReadStart: (start: number) => {
+    minimumReadStart = start
   },
 }
 
