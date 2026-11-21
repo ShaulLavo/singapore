@@ -17,6 +17,7 @@ import {
 import type { TreeSitterWorkerRequest } from '../src/treeSitter/types'
 import { treeSitterBackendForOwner } from '../src/treeSitter/workerClient'
 import { createTreeDocument, disposeTreeDocuments } from './factories/document'
+import sliceHighlighterSource from '../src/sliceHighlighting.ts?raw'
 
 const highlighters = new Set<TreeSitterSliceHighlighter>()
 const owners = new Set<ReturnType<typeof createTreeSitterWorkerOwner>>()
@@ -84,6 +85,76 @@ it('marks distant TSX and a fragment inside a comment as provisional', async () 
   )
   expect(withoutPrefix.quality).toBe('provisional')
   expect(withoutPrefix.tokens.styleAt(0)).toEqual(styleForTreeSitterCapture('keyword.declaration'))
+})
+
+it('colors a 128-row window of real TypeScript with the shipped query', async () => {
+  const highlighter = createHighlighter()
+  await highlighter.prewarm()
+  const rows = sliceHighlighterSource.split('\n').slice(0, 128)
+  expect(rows).toHaveLength(128)
+  const text = rows.join('\n')
+  const result = await highlighted(highlighter, slice(text))
+  expect(result.tokens.length).toBeGreaterThan(200)
+  expect(
+    result.tokens.toTokens().some(({ start, end }) => text.slice(start, end) === 'import'),
+  ).toBe(true)
+})
+
+it('rejects unbounded query predicates and caps reads during supported predicate evaluation', async () => {
+  const { workerOwner, requests } = recordWorker()
+  const descriptor = await resolveTreeSitterLanguageContribution(TYPESCRIPT_TREE_SITTER_LANGUAGE)
+  const unsafe = createHighlighter({
+    workerOwner,
+    language: {
+      ...descriptor,
+      highlightQuerySource: '((identifier) @variable (#match? @variable "^(a+)+$"))',
+    },
+  })
+  expect(await unsafe.highlight(slice('const word = 1'))).toEqual({
+    kind: 'plain',
+    reason: 'unsupported-query',
+  })
+  expect(requests).toHaveLength(0)
+
+  const bounded = createHighlighter({
+    workerOwner,
+    language: {
+      ...descriptor,
+      highlightQuerySource: '((identifier) @variable (#match? @variable "^[a-z]"))',
+    },
+  })
+  const longIdentifier = 'z'.repeat(1025)
+  expect(await bounded.highlight(slice(`const ${longIdentifier} = 1`))).toEqual({
+    kind: 'plain',
+    reason: 'over-budget',
+  })
+  const normal = await highlighted(bounded, slice('const value = 1'))
+  expect(normal.tokens.length).toBe(1)
+})
+
+it('retries the same grammar on the same owner after a transient 503', async () => {
+  const workerOwner = createTreeSitterWorkerOwner({
+    workerFactory: () =>
+      new Worker(new URL('./fixtures/sliceRetry.worker.ts', import.meta.url), { type: 'module' }),
+  })
+  owners.add(workerOwner)
+  const descriptor = await resolveTreeSitterLanguageContribution(TYPESCRIPT_TREE_SITTER_LANGUAGE)
+  const wasmUrl = new URL(descriptor.wasmUrl, location.href)
+  wasmUrl.hash = 'slice-retry-fixture'
+  const highlighter = createHighlighter({
+    workerOwner,
+    language: { ...descriptor, wasmUrl: wasmUrl.href },
+  })
+  const input = slice('const recover = 1')
+  expect(await highlighter.highlight(input)).toEqual({ kind: 'plain', reason: 'unavailable' })
+  expect(await workerOwner.inspectRetention()).toMatchObject({
+    shared: { sliceLanguageCount: 0, sliceGrammarCount: 0 },
+  })
+  await highlighted(highlighter, input)
+  expect(workerOwner.inspect()).toMatchObject({ lifecycle: 'ready', workerGeneration: 1 })
+  expect(await workerOwner.inspectRetention()).toMatchObject({
+    shared: { sliceLanguageCount: 1, sliceGrammarCount: 1 },
+  })
 })
 
 it('checks exact text, location, source, revision, and context before reusing cached colors', async () => {

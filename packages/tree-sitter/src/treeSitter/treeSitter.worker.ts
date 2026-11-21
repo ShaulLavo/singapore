@@ -6,12 +6,15 @@ import {
   SLICE_CAPTURE_LIMIT,
   SLICE_GRAMMAR_LIMIT,
   SLICE_PARSE_BUDGET_MS,
+  SLICE_PREDICATE_TEXT_LIMIT,
+  SLICE_PREDICATE_TOTAL_LIMIT,
   SLICE_QUERY_BUDGET_MS,
   SLICE_QUERY_PROGRESS_LIMIT,
   SLICE_QUERY_SOURCE_LIMIT,
   SLICE_QUERY_WORK_LIMIT,
   SLICE_TEXT_LIMIT,
 } from './sliceLimits'
+import { supportsSlicePredicates } from './sliceQueryPolicy'
 import {
   analyzeLineMergeUnit,
   enclosingMergeUnit,
@@ -168,6 +171,8 @@ type CancellationContext = {
   readonly measurements?: Map<string, number>
   readonly counts?: Map<string, number>
 }
+
+type PredicateBudget = { context: CancellationContext | null; readUnits: number }
 
 type FlattenedDocument = Pick<
   TreeSitterParseResult,
@@ -2518,10 +2523,13 @@ const highlightSlice = async (
     ...createCancellationContext(cancellationBuffer, SLICE_PARSE_BUDGET_MS),
     isStale: () => !currentLanguage(),
   }
+  const predicateBudget: PredicateBudget = { context: null, readUnits: 0 }
+  const input = (index: number, _point?: unknown, endIndex?: number) => {
+    if (endIndex !== undefined) spendPredicateText(predicateBudget, endIndex - index)
+    return index < text.length ? text.slice(index, endIndex) : undefined
+  }
   let tree: Tree | null = null
   try {
-    const input = (index: number, _point?: unknown, endIndex?: number) =>
-      index < text.length ? text.slice(index, endIndex) : undefined
     tree = await parseTreeInput(runtime.language, input, parse, { phase: 'parseRoot' })
     assertNotCancelled(parse)
     if (tree.rootNode.descendantCount * runtime.queryWeight > SLICE_QUERY_WORK_LIMIT)
@@ -2530,6 +2538,7 @@ const highlightSlice = async (
       ...createCancellationContext(cancellationBuffer, SLICE_QUERY_BUDGET_MS),
       isStale: parse.isStale,
     }
+    predicateBudget.context = query
     const captures = collectCaptures(tree, runtime, query, undefined, SLICE_CAPTURE_LIMIT)
     const tokensPacked = packHighlights(captures, true, query)
     assertNotCancelled(query)
@@ -2552,19 +2561,33 @@ const highlightSlice = async (
   }
 }
 
+const spendPredicateText = (budget: PredicateBudget, units: number): void => {
+  const context = budget.context
+  if (!context) return
+  budget.readUnits += units
+  if (units > SLICE_PREDICATE_TEXT_LIMIT || budget.readUnits > SLICE_PREDICATE_TOTAL_LIMIT)
+    throw new SyntaxRequestCancelled()
+  assertNotCancelled(context)
+}
+
 const prepareSliceLanguage = async (request: TreeSitterPrepareSliceLanguageRequest) => {
   const { sliceLanguageId, descriptor } = request
   const runtime = loadSliceRuntime(descriptor)
   sliceRuntimes.set(sliceLanguageId, runtime)
-  await runtime
-  return undefined
+  try {
+    await runtime
+    return undefined
+  } catch (error) {
+    if (sliceRuntimes.get(sliceLanguageId) === runtime) sliceRuntimes.delete(sliceLanguageId)
+    throw error
+  }
 }
 
 const loadSliceRuntime = async (
   descriptor: TreeSitterLanguageDescriptor,
 ): Promise<SliceRuntime> => {
   const query = descriptor.highlightQuerySource
-  if (!query || query.length > SLICE_QUERY_SOURCE_LIMIT)
+  if (!query || query.length > SLICE_QUERY_SOURCE_LIMIT || !supportsSlicePredicates(query))
     throw new Error('Invalid slice highlight query')
   await ensureParserRuntime()
   const language = await sliceGrammar(descriptor)
@@ -2581,12 +2604,17 @@ const sliceGrammar = (descriptor: TreeSitterLanguageDescriptor): Promise<Languag
   if (sliceGrammars.size >= SLICE_GRAMMAR_LIMIT) throw new Error('Slice grammar limit reached')
 
   const resident = runtimePromises.get(descriptor.id)
-  const grammar =
+  const loaded =
     resident && languageDescriptors.get(descriptor.id)?.wasmUrl === url
-      ? resident.then((runtime) =>
-          runtime.descriptor.wasmUrl === url ? runtime.language : Language.load(url),
+      ? resident.then(
+          (runtime) => (runtime.descriptor.wasmUrl === url ? runtime.language : Language.load(url)),
+          () => Language.load(url),
         )
       : Language.load(url)
+  const grammar = loaded.catch((error: unknown) => {
+    if (sliceGrammars.get(url) === grammar) sliceGrammars.delete(url)
+    throw error
+  })
   sliceGrammars.set(url, grammar)
   return grammar
 }
