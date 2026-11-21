@@ -226,6 +226,42 @@ type TreeSitterWarmLanguagesRequest = {
   readonly languageIds: readonly TreeSitterLanguageId[]
 }
 
+export type TreeSitterHighlightSliceRequest = {
+  readonly type: 'highlightSlice'
+  readonly sliceLanguageId: number
+  readonly text: string
+  readonly cancellationBuffer?: SharedArrayBuffer
+}
+
+export type TreeSitterPrepareSliceLanguageRequest = {
+  readonly type: 'prepareSliceLanguage'
+  readonly sliceLanguageId: number
+  readonly descriptor: TreeSitterLanguageDescriptor
+}
+
+export type TreeSitterPrepareSliceLanguageResult = {
+  readonly slicePreparation: 'ready' | 'unsupported-query'
+}
+
+type TreeSitterDisposeSliceLanguageRequest = {
+  readonly type: 'disposeSliceLanguage'
+  readonly sliceLanguageId: number
+}
+
+export type TreeSitterSliceTimings = {
+  readonly parseMs: number
+  readonly queryMs: number
+  readonly workerMs: number
+}
+
+export type TreeSitterHighlightSliceResult =
+  | {
+      readonly sliceStatus: 'highlighted'
+      readonly tokensPacked: PackedEditorTokens
+      readonly timings: TreeSitterSliceTimings
+    }
+  | { readonly sliceStatus: 'unsupported-language' | 'over-budget' | 'unavailable' }
+
 export type TreeSitterParseRequest = {
   readonly type: 'parse'
   readonly documentId: string
@@ -321,6 +357,9 @@ export type TreeSitterWorkerRequestPayload =
   | TreeSitterInitRequest
   | TreeSitterRegisterLanguagesRequest
   | TreeSitterWarmLanguagesRequest
+  | TreeSitterPrepareSliceLanguageRequest
+  | TreeSitterHighlightSliceRequest
+  | TreeSitterDisposeSliceLanguageRequest
   | TreeSitterParseRequest
   | TreeSitterEditRequest
   | TreeSitterRangeRequest
@@ -342,6 +381,8 @@ export type TreeSitterWorkerResult =
   | TreeSitterMergeUnitResult
   | TreeSitterProjectedMergeUnitsResult
   | TreeSitterReviewBatchResult
+  | TreeSitterHighlightSliceResult
+  | TreeSitterPrepareSliceLanguageResult
   | { readonly retention: TreeSitterWorkerRetentionSnapshot }
   | undefined
 
@@ -391,6 +432,8 @@ export type TreeSitterWorkerRetentionSnapshot = {
     readonly parserCount: number
     readonly languageCount: number
     readonly queryCount: number
+    readonly sliceLanguageCount: number
+    readonly sliceGrammarCount: number
     readonly runtimes: readonly {
       readonly languageId: TreeSitterLanguageId
       readonly highlightQueryCount: number

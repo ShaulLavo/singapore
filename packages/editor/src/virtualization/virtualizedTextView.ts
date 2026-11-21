@@ -1879,7 +1879,8 @@ export class VirtualizedTextView {
     }
     updateGutterWidthIfNeeded(view)
     if (view.disposed) return
-    if (snapshot.viewportWidth > 0 && this.refreshWrapWidth(snapshot.viewportWidth)) return
+    const pageWidthKnown = this.isPageScrolled && snapshot.viewportWidth > 0
+    if ((visible || pageWidthKnown) && this.refreshWrapWidth(snapshot.viewportWidth)) return
     if (!visible) {
       this.cancelContentWidthMeasurement?.()
       this.cancelContentWidthMeasurement = null

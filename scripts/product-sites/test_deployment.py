@@ -145,7 +145,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_build_keeps_docs_and_demo_at_separate_routes(self):
         with tempfile.TemporaryDirectory(prefix='singapore-site-build-') as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             scripts = root / 'scripts/product-sites'
             scripts.mkdir(parents=True)
             source_root = Path(__file__).resolve().parents[2]
@@ -167,14 +167,17 @@ class DeploymentTests(unittest.TestCase):
                 **os.environ,
                 'PATH': f'{binary}{os.pathsep}{os.environ["PATH"]}',
                 'BUILD_LOG': str(log),
+                'SITE_ORIGIN': '',
+                'VITE_BASE_PATH': '',
             }
             output = root / 'output'
             subprocess.run(['bash', str(scripts / 'build.sh'), str(output)], env=env, check=True)
 
-            commands = log.read_text()
-            self.assertIn('https://singapore.shaulavo.dev  run --cwd site build --base /', commands)
-            self.assertIn(' /demo/ run --cwd examples/app build', commands)
-            self.assertIn('run build -- --filter=singapore-editor-site --filter=@singapore-editor/example-app', commands)
+            self.assertEqual(log.read_text().splitlines(), [
+                f'  run build -- --filter=singapore-editor-site^... --filter=@singapore-editor/example-app^... {root}',
+                f'https://singapore.shaulavo.dev  run --cwd site build --base / {root}',
+                f' /demo/ run --cwd examples/app build {root}',
+            ])
             self.assertEqual((output / 'index.html').read_text(), 'site')
             self.assertEqual((output / 'demo/index.html').read_text(), 'examples/app')
             self.assertEqual((output / '_headers').read_text(), (source_root / 'scripts/product-sites/_headers').read_text())

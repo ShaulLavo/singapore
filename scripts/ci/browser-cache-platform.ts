@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../..', import.meta.url))
 const workflow = readFileSync(resolve(root, '.github/workflows/ci.yml'), 'utf8')
 const expectedKey =
-  'playwright-v2-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.version }}-${{ github.job }}'
+  'playwright-v3-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.editor }}-${{ steps.playwright.outputs.site }}'
 const platformOutput = 'platform=${ID}-${VERSION_ID}-${{ runner.arch }}'
 
 function record(value: unknown): Record<string, unknown> {
@@ -16,59 +16,49 @@ function record(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value))
 }
 
-function browserCaches(source: string): { job: string; run: string; key: string }[] {
+function platformCommand(source: string): string {
   const jobs = record(record(Bun.YAML.parse(source)).jobs)
-  return ['core', 'packages'].map((job) => {
-    const steps = record(jobs[job]).steps
-    assert.ok(Array.isArray(steps), `${job} must have steps`)
-    const records = steps.map(record)
-    const platformIndex = records.findIndex((step) => step.id === 'playwright')
-    const cacheIndex = records.findIndex(
-      (step) => record(step.with ?? {}).path === '~/.cache/ms-playwright',
-    )
-    assert.ok(
-      platformIndex >= 0 && cacheIndex > platformIndex,
-      `${job} must compute the platform before restoring browsers`,
-    )
-    const run = records[platformIndex].run
-    assert.equal(typeof run, 'string')
-    assert.ok(
-      typeof run === 'string' && run.includes('. /etc/os-release'),
-      `${job} must read the hosted distribution`,
-    )
-    assert.ok(
-      run.includes(platformOutput),
-      `${job} browser platform must include distribution ID, version and runner architecture`,
-    )
-    const cache = record(records[cacheIndex].with)
-    assert.equal(
-      cache.key,
-      expectedKey,
-      `${job} browser cache must use its distribution/architecture output`,
-    )
-    assert.equal(
-      cache['restore-keys'],
-      undefined,
-      `${job} must not restore older or cross-distribution browser keys`,
-    )
-    return { job, run, key: expectedKey }
-  })
+  const steps = record(jobs.ci).steps
+  assert.ok(Array.isArray(steps), 'CI must have steps')
+  const records = steps.map(record)
+  const platformIndex = records.findIndex((step) => step.id === 'playwright')
+  const cacheIndex = records.findIndex(
+    (step) => record(step.with ?? {}).path === '~/.cache/ms-playwright',
+  )
+  assert.ok(
+    platformIndex >= 0 && cacheIndex > platformIndex,
+    'CI must compute the platform before restoring browsers',
+  )
+  const run = records[platformIndex].run
+  assert.ok(typeof run === 'string' && run.includes('. /etc/os-release'))
+  assert.ok(
+    run.includes(platformOutput),
+    'Browser platform must include distro, version and architecture',
+  )
+  const cache = record(records[cacheIndex].with)
+  assert.equal(
+    cache.key,
+    expectedKey,
+    'Browser cache must use the platform and both Playwright versions',
+  )
+  assert.equal(cache['restore-keys'], undefined, 'Browser cache requires an exact key match')
+  return run
 }
 
 function fixtureKey(
-  cache: { job: string; run: string; key: string },
+  command: string,
   directory: string,
   version: string,
   architecture: string,
 ): string {
-  const osRelease = join(directory, `${cache.job}-${version}-${architecture}.release`)
+  const osRelease = join(directory, `${version}-${architecture}.release`)
   const output = `${osRelease}.output`
   writeFileSync(osRelease, `ID=ubuntu\nVERSION_ID=${version}\n`)
-  const run = cache.run
+  const run = command
     .replace('/etc/os-release', `'${osRelease}'`)
     .replaceAll('${{ runner.arch }}', architecture)
   execFileSync('bash', ['-euo', 'pipefail', '-c', run], {
-    cwd: resolve(root, 'packages/editor'),
+    cwd: root,
     env: { ...process.env, GITHUB_OUTPUT: output },
     stdio: 'pipe',
   })
@@ -79,51 +69,52 @@ function fixtureKey(
       .map((line) => line.split('=')),
   )
   assert.equal(values.platform, `ubuntu-${version}-${architecture}`)
-  assert.match(values.version, /^\d+\.\d+\.\d+$/)
-  return cache.key
+  assert.match(values.editor, /^\d+\.\d+\.\d+$/)
+  assert.match(values.site, /^\d+\.\d+\.\d+$/)
+  return expectedKey
     .replaceAll('${{ runner.os }}', 'Linux')
     .replaceAll('${{ steps.playwright.outputs.platform }}', values.platform)
-    .replaceAll('${{ steps.playwright.outputs.version }}', values.version)
-    .replaceAll('${{ github.job }}', cache.job)
+    .replaceAll('${{ steps.playwright.outputs.editor }}', values.editor)
+    .replaceAll('${{ steps.playwright.outputs.site }}', values.site)
 }
 
-const caches = browserCaches(workflow)
+const command = platformCommand(workflow)
 assert.throws(() =>
-  browserCaches(workflow.replaceAll(platformOutput, 'platform=${ID}-${{ runner.arch }}')),
+  platformCommand(workflow.replaceAll(platformOutput, 'platform=${ID}-${{ runner.arch }}')),
 )
 assert.throws(() =>
-  browserCaches(workflow.replaceAll(platformOutput, 'platform=${VERSION_ID}-${{ runner.arch }}')),
+  platformCommand(workflow.replaceAll(platformOutput, 'platform=${VERSION_ID}-${{ runner.arch }}')),
 )
 assert.throws(() =>
-  browserCaches(workflow.replaceAll(platformOutput, 'platform=${ID}-${VERSION_ID}')),
+  platformCommand(workflow.replaceAll(platformOutput, 'platform=${ID}-${VERSION_ID}')),
 )
+for (const output of ['platform', 'editor', 'site']) {
+  assert.throws(() =>
+    platformCommand(workflow.replace('-${{ steps.playwright.outputs.' + output + ' }}', '')),
+  )
+}
 assert.throws(() =>
-  browserCaches(workflow.replaceAll('${{ steps.playwright.outputs.platform }}-', '')),
-)
-assert.throws(() =>
-  browserCaches(
-    workflow.replaceAll(
-      '          key: playwright-v2-',
-      '          restore-keys: playwright-Linux-\n          key: playwright-v2-',
+  platformCommand(
+    workflow.replace(
+      '          key: playwright-v3-',
+      '          restore-keys: playwright-Linux-\n          key: playwright-v3-',
     ),
   ),
 )
 
 const scratch = mkdtempSync(join(tmpdir(), 'sg-cache-'))
 try {
-  const keys = caches.flatMap((cache) =>
-    ['24.04', '26.04'].flatMap((version) =>
-      ['X64', 'ARM64'].map((architecture) => fixtureKey(cache, scratch, version, architecture)),
-    ),
+  const keys = ['24.04', '26.04'].flatMap((version) =>
+    ['X64', 'ARM64'].map((architecture) => fixtureKey(command, scratch, version, architecture)),
   )
   assert.equal(
     new Set(keys).size,
-    8,
-    'Every job/distribution/architecture combination needs a distinct browser cache',
+    4,
+    'Every distribution and architecture combination needs a distinct browser cache',
   )
   console.log(keys.join('\n'))
   console.log(
-    'Browser cache platform checks passed, including five source mutations and eight shell fixtures',
+    'Browser cache platform checks passed, including seven source mutations and four shell fixtures',
   )
 } finally {
   rmSync(scratch, { recursive: true })
