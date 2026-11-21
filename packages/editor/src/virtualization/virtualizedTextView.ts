@@ -520,6 +520,7 @@ export class VirtualizedTextView {
       },
       {
         readInitialScrollPosition: false,
+        observeNativeClip: options.onViewportChange !== undefined,
         onScroll: () => {
           this.synchronizeScrollPaint(virtualizer.getViewportSnapshot())
           options.onViewportScroll?.()
@@ -1541,9 +1542,12 @@ export class VirtualizedTextView {
     return range
   }
 
-  public getViewport(): EditorViewportSnapshot {
+  public getViewport(geometry: 'clipped' | 'native' = 'clipped'): EditorViewportSnapshot {
     const view = this.view
-    const snapshot = view.virtualizer.getViewportSnapshot()
+    const snapshot =
+      geometry === 'clipped'
+        ? view.virtualizer.getClippedViewportSnapshot()
+        : view.virtualizer.getViewportSnapshot()
     return {
       scrollTop: snapshot.scrollTop,
       scrollRow: snapshot.scrollRow,
@@ -1918,6 +1922,7 @@ export class VirtualizedTextView {
       snapshot.scrollLeft,
       snapshot.nativeScrollTop,
       this.isPageScrolled,
+      this.view.virtualizer.nativeOverlayOffset,
     )
   }
 

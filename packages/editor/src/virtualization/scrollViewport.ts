@@ -105,12 +105,18 @@ export class ScrollViewport {
     return this.gutterScroll === 'content' ? Math.max(0, width - left) : width
   }
 
-  public setScrollPosition(left: number, top: number, pageScrolled = false): void {
+  public setScrollPosition(
+    left: number,
+    top: number,
+    pageScrolled = false,
+    nativeOverlayOffset = 0,
+  ): void {
     if (this.pageScrolled !== pageScrolled) {
       this.pageScrolled = pageScrolled
       this.synchronizeOrigin()
     }
-    const overlayTransform = pageScrolled && top ? `translateY(${top}px)` : ''
+    const overlayTop = pageScrolled ? top : nativeOverlayOffset
+    const overlayTransform = overlayTop ? `translateY(${overlayTop}px)` : ''
     if (this.overlay.style.transform !== overlayTransform)
       this.overlay.style.transform = overlayTransform
     if (pageScrolled) top = 0

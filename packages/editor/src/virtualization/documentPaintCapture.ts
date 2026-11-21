@@ -39,6 +39,7 @@ export function captureDocumentPaint(
   appearance: string,
   headings: ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>>,
 ): DocumentPaintCapture {
+  if (view.disposed) return unsupported('document-not-ready')
   if (view.sizing?.height !== 'content' && view.scrollMode !== 'content')
     return unsupported('content-layout-required')
   if (view.model.foldMap?.ranges.length) return unsupported('folded-document')
@@ -95,6 +96,9 @@ function captureDocumentRowBatches(
   viewport.gutterSpacer.append(gutterElement)
   const source: VirtualizedTextViewInternal = {
     ...view,
+    get disposed() {
+      return view.disposed
+    },
     scrollMode: 'content',
     viewport,
     contentElement: viewport.textContent,
@@ -140,7 +144,9 @@ function captureDocumentRows(
       return { index, start: rowTop(source, index), size: source.metrics.rowHeight }
     })
     const batch = { ...snapshot, scrollTop: 0, scrollLeft: 0, virtualItems: items }
-    const refusal = capture(source, renderCaptureBatch(source, batch))
+    const mounted = renderCaptureBatch(source, batch)
+    if (source.disposed) return 'document-not-ready'
+    const refusal = capture(source, mounted)
     if (refusal) return refusal
   }
   return null

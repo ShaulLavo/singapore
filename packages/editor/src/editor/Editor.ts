@@ -1013,16 +1013,16 @@ export class Editor {
     const appearance = this.paintAppearance('refuse')
     if (appearance === null) return null
     const snapshot = this.viewContributions.captureSnapshot().toVisibleSnapshot()
-    if (!snapshot || snapshot.viewport.clientWidth <= 0 || snapshot.viewport.clientHeight <= 0)
-      return null
+    const viewport = this.view.getViewport('native')
+    if (!snapshot || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) return null
     if (snapshot.documentId !== this.documentId || snapshot.textVersion !== this.textVersion)
       return null
     const gutters = this.view.captureGutterPaint()
     if (!gutters) return null
     const json = snapshot.toJSON()
     const visible = json.rows.flatMap((row, index) =>
-      row.top + row.height > json.viewport.scrollTop &&
-      row.top < json.viewport.scrollTop + json.viewport.clientHeight
+      row.top + row.height > viewport.scrollTop &&
+      row.top < viewport.scrollTop + viewport.clientHeight
         ? [index]
         : [],
     )
@@ -1030,6 +1030,11 @@ export class Editor {
     const paint = encodePaintSnapshot(
       {
         ...json,
+        viewport: {
+          ...viewport,
+          borderBoxHeight: viewport.borderBoxHeight ?? null,
+          borderBoxWidth: viewport.borderBoxWidth ?? null,
+        },
         rows: visible.map((index) => json.rows[index]!),
         paintLayers: json.paintLayers.concat([this.view.captureSelectionPaint()]),
       },
@@ -2159,10 +2164,11 @@ export class Editor {
   }
 
   /**
-   * Called with the position after it changes, from a gesture, a programmatic move or a clamp. The
-   * virtualizer has already folded the scroll in, so the position is current, and nothing throttles it.
+   * Called when the editor's own scroll position changes, including after a programmatic move or
+   * clamp. View contributions receive the visible viewport when an outside ancestor scrolls.
    */
   onDidScroll(listener: (position: Required<EditorScrollPosition>) => void): EditorDisposable {
+    if (this.scrollListeners.size === 0) this.reportedScroll = this.getScrollPosition()
     this.scrollListeners.add(listener)
     return disposableOnce(() => this.scrollListeners.delete(listener))
   }
@@ -4133,18 +4139,7 @@ export class Editor {
   private createViewSnapshot(): EditorViewSnapshot {
     const viewState = this.view.getState()
     const textSnapshot = this.textSnapshot
-    const viewport = {
-      scrollTop: viewState.scrollTop,
-      scrollRow: viewState.scrollRow,
-      scrollLeft: viewState.scrollLeft,
-      scrollHeight: viewState.scrollHeight,
-      scrollWidth: viewState.scrollWidth,
-      clientHeight: viewState.viewportHeight,
-      clientWidth: viewState.viewportWidth,
-      borderBoxHeight: viewState.borderBoxHeight,
-      borderBoxWidth: viewState.borderBoxWidth,
-      visibleRange: viewState.visibleRange,
-    }
+    const viewport = this.view.getViewport()
 
     // One view per text version: repeat snapshots share the same lazily
     // materialized array instead of rebuilding it.
@@ -4265,7 +4260,7 @@ export class Editor {
 
   private reportScroll(): void {
     if (this.scrollListeners.size === 0) return
-    const { scrollTop: top, scrollLeft: left } = this.view.getState()
+    const { top, left } = this.getScrollPosition()
     const reported = this.reportedScroll
     if (reported?.top === top && reported.left === left) return
 

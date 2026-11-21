@@ -5,7 +5,7 @@ export type PageViewportMetrics = {
   readonly height: number
 }
 
-export function readPageViewport(element: HTMLElement): PageViewportMetrics {
+export function readPageViewport(element: HTMLElement, nativeHeight?: number): PageViewportMetrics {
   const rect = element.getBoundingClientRect()
   if (rect.height === 0) return { top: 0, height: 0 }
   const offsetHeight = element.offsetHeight
@@ -14,15 +14,20 @@ export function readPageViewport(element: HTMLElement): PageViewportMetrics {
   const origin =
     rect.top +
     (Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.paddingTop)) * scale
-  const limit =
+  const contentEnd =
     rect.bottom -
     (Number.parseFloat(style.borderBottomWidth) + Number.parseFloat(style.paddingBottom)) * scale
+  const limit =
+    nativeHeight === undefined ? contentEnd : Math.min(contentEnd, origin + nativeHeight * scale)
   const bounds = contentReadingBounds(element)
   const top = Math.min(limit, Math.max(origin, bounds.top))
   const bottom = Math.min(limit, bounds.bottom)
   const visibleLeft = Math.max(rect.left, bounds.left)
   const clipped = Math.min(rect.right, bounds.right) <= visibleLeft
-  if (clipped && !overflowReachesClip(element, rect, visibleLeft, bounds.right))
+  if (
+    clipped &&
+    (nativeHeight !== undefined || !overflowReachesClip(element, rect, visibleLeft, bounds.right))
+  )
     return { top: 0, height: 0 }
   return {
     top: Math.max(0, top - origin) / scale,
@@ -44,6 +49,7 @@ export function observePageViewport(
   element: HTMLElement,
   synchronize: () => void,
   hide: () => void,
+  ignoreOwnScroll = false,
 ): () => void {
   const window = element.ownerDocument.defaultView
   if (!window) return () => {}
@@ -51,6 +57,7 @@ export function observePageViewport(
   const visual = window.visualViewport
   const onScroll = (event: Event) => {
     const target = event.target
+    if (ignoreOwnScroll && target === element) return
     if (target instanceof window.Node && !target.contains(element)) return
     synchronize()
   }

@@ -66,6 +66,31 @@ const scroller = (host: HTMLElement) => host.querySelector<HTMLElement>('.editor
 const row = (host: HTMLElement, index: number) =>
   host.querySelector<HTMLElement>(`[data-editor-virtual-row="${index}"]`)!
 
+it.each([
+  ['nearest', 80],
+  ['center', 40],
+] as const)('reveals a distant row with %s alignment inside a nested clip', async (block, top) => {
+  const { editor, host, parent } = mount()
+  const clip = document.createElement('div')
+  clip.style.cssText = 'height:100px;overflow:clip'
+  parent.before(clip)
+  clip.append(parent)
+  mounted[mounted.length - 1]!.parent = clip
+  const nativeOffsets: number[] = []
+  editor.onDidScroll(({ top }) => nativeOffsets.push(top))
+  editor.setText('row\n'.repeat(12_000))
+  parent.scrollTop = 360
+  await expect.poll(() => row(host, 0)?.textContent).toBe('row')
+  expect(row(host, 1000)).toBeNull()
+
+  editor.setSelection(4000, 4000, { reveal: true, revealBlock: block })
+  await expect
+    .poll(() => row(host, 1000)?.getBoundingClientRect().top)
+    .toBeCloseTo(clip.getBoundingClientRect().top + top, 0)
+  expect(editor.getScrollPosition().top).toBe(0)
+  expect(nativeOffsets).toEqual([])
+})
+
 it('reports the clipped row window and releases its rows when scrolled offscreen', async () => {
   const { editor, host, parent } = mount()
   const clip = document.createElement('div')
