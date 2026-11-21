@@ -104,6 +104,38 @@ describe('createStickyScrollPlugin', () => {
     expect(stickyRoot(testContext)?.style.height).toBe('120px')
   })
 
+  it('holds an outgoing branch until a sibling on its last row can take over', () => {
+    const registration = registeredProvider(createStickyScrollPlugin({ maxLineCount: 2 }))
+    const starts = lineStarts()
+    const [outer, inner] = foldMarkers()
+    const foldMarkersSharingARow = [
+      { ...outer!, endRow: 6, endOffset: lineEnd(starts, 6) },
+      { ...inner!, endOffset: starts[4]! },
+      {
+        key: 'query:sibling',
+        startRow: 4,
+        endRow: 5,
+        startOffset: starts[4]! + 1,
+        endOffset: lineEnd(starts, 5),
+        collapsed: false,
+      },
+    ]
+    const testContext = context({ ...scrolledSnapshot(73), foldMarkers: foldMarkersSharingARow })
+    const contribution = registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toEqual([LINES[0], LINES[2]])
+    expect(stickyRoot(testContext)?.style.height).toBe('100px')
+
+    contribution?.update(
+      { ...scrolledSnapshot(81), foldMarkers: foldMarkersSharingARow },
+      'viewport',
+    )
+
+    expect(mirroredLines(testContext)).toEqual([LINES[0], LINES[4]])
+    expect(stickyRoot(testContext)?.style.height).toBe('120px')
+    contribution?.dispose()
+  })
+
   it('renders nothing while the scope headers are still on screen', () => {
     const registration = registeredProvider(createStickyScrollPlugin())
     const testContext = context(snapshot())
@@ -151,48 +183,109 @@ describe('createStickyScrollPlugin', () => {
     expect(stickyRoot(testContext)?.hidden).toBe(true)
   })
 
-  it('stops at the configured line count', () => {
+  it('keeps the innermost scope when the caller limits the stack to one row', () => {
     const registration = registeredProvider(createStickyScrollPlugin({ maxLineCount: 1 }))
     const testContext = context(scrolledSnapshot(60))
 
     registration?.createContribution(testContext)
 
-    expect(mirroredLines(testContext)).toEqual(['function outer() {'])
+    expect(mirroredLines(testContext)).toEqual(['  if (a) {'])
     expect(stickyLineView(testContext)?.style.height).toBe('20px')
   })
 
-  // A line count the stack cannot stop at is a stack that never stops, which covers the viewport.
-  it('keeps one line for a line count below one, and a whole line for a fractional one', () => {
-    for (const maxLineCount of [0, -3, 1.5]) {
-      const registration = registeredProvider(createStickyScrollPlugin({ maxLineCount }))
-      const testContext = context(scrolledSnapshot(60))
+  it.each([
+    { maxLineCount: -3, count: 0 },
+    { maxLineCount: 0, count: 0 },
+    { maxLineCount: 1.5, count: 1 },
+  ])('renders $count rows with an explicit cap of $maxLineCount', ({ maxLineCount, count }) => {
+    const registration = registeredProvider(createStickyScrollPlugin({ maxLineCount }))
+    const testContext = context(scrolledSnapshot(60))
 
+    registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toHaveLength(count)
+    expect(stickyRoot(testContext)?.hidden).toBe(count === 0)
+  })
+
+  it.each([
+    { height: 0, rows: [] },
+    { height: 59.9, rows: [] },
+    { height: 60, rows: DEEP_LINES.slice(6, 7) },
+    { height: 119.9, rows: DEEP_LINES.slice(6, 7) },
+    { height: 120, rows: DEEP_LINES.slice(5, 7) },
+    { height: 179.9, rows: DEEP_LINES.slice(5, 7) },
+    { height: 180, rows: [DEEP_LINES[0], '⋯ 5 scopes', DEEP_LINES[6]] },
+  ])('uses complete rows in $height px of viewport height', ({ height, rows }) => {
+    const registration = registeredProvider(createStickyScrollPlugin())
+    const testContext = context(deepSnapshot(height))
+
+    registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toEqual(rows)
+    expect(stickyRoot(testContext)?.hidden).toBe(rows.length === 0)
+    expect(stickyLineView(testContext)?.style.height).toBe(
+      rows.length ? `${rows.length * ROW_HEIGHT}px` : undefined,
+    )
+  })
+
+  it('uses the viewport budget when the supplied cap is NaN', () => {
+    const registration = registeredProvider(createStickyScrollPlugin({ maxLineCount: Number.NaN }))
+    const testContext = context(deepSnapshot(600))
+
+    registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toEqual(DEEP_LINES.slice(0, DEEP_DEPTH))
+  })
+
+  it('admits deeper scopes only once their rows reach the last slot of a full stack', () => {
+    const registration = registeredProvider(createStickyScrollPlugin())
+    const source = deepSnapshot(180)
+    const before = { ...source, viewport: { ...source.viewport, scrollTop: 40 } }
+    const testContext = context(before)
+    const contribution = registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toEqual([DEEP_LINES[0], '⋯ 2 scopes', DEEP_LINES[3]])
+
+    contribution?.update({ ...before, viewport: { ...before.viewport, scrollTop: 41 } }, 'viewport')
+
+    expect(mirroredLines(testContext)).toEqual([DEEP_LINES[0], '⋯ 3 scopes', DEEP_LINES[4]])
+  })
+
+  it('updates the collapsed count when qualifying scopes change and both ends stay put', () => {
+    const registration = registeredProvider(createStickyScrollPlugin())
+    const source = deepSnapshot(180)
+    const testContext = context(source)
+    const contribution = registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toEqual([DEEP_LINES[0], '⋯ 5 scopes', DEEP_LINES[6]])
+
+    const foldMarkers = source.foldMarkers.filter(({ startRow }) => startRow !== 3)
+    contribution?.update({ ...source, foldMarkers }, 'layout')
+
+    expect(mirroredLines(testContext)).toEqual([DEEP_LINES[0], '⋯ 4 scopes', DEEP_LINES[6]])
+  })
+
+  it('keeps token offsets on the innermost row after inserting a collapsed row', () => {
+    const setTokens = vi.spyOn(VirtualizedTextView.prototype, 'setTokens')
+    const registration = registeredProvider(createStickyScrollPlugin())
+    const source = deepSnapshot(180)
+    const start = source.lineStartsView.at(6)! + 12
+    const style = { color: 'function' }
+    const testContext = context({
+      ...source,
+      tokens: EditorTokenStore.fromTokens([{ start, end: start + 6, style }]),
+    })
+
+    try {
       registration?.createContribution(testContext)
 
-      expect(mirroredLines(testContext), `maxLineCount ${maxLineCount}`).toEqual([
-        'function outer() {',
+      const shiftedStart = `${DEEP_LINES[0]}\n⋯ 5 scopes\n${' '.repeat(12)}`.length
+      expect(setTokens.mock.lastCall?.[0]).toEqual([
+        { start: shiftedStart, end: shiftedStart + 6, style },
       ])
-      expect(stickyLineView(testContext)?.style.height).toBe('20px')
+    } finally {
+      setTokens.mockRestore()
     }
-  })
-
-  it('shows the outermost scopes up to the default line count when the nesting runs deeper', () => {
-    const registration = registeredProvider(createStickyScrollPlugin())
-    const testContext = context(deepSnapshot())
-
-    registration?.createContribution(testContext)
-
-    expect(mirroredLines(testContext)).toEqual(DEEP_LINES.slice(0, 5))
-    expect(stickyLineView(testContext)?.style.height).toBe('100px')
-  })
-
-  it('shows those same five lines for a line count that is not a number', () => {
-    const registration = registeredProvider(createStickyScrollPlugin({ maxLineCount: Number.NaN }))
-    const testContext = context(deepSnapshot())
-
-    registration?.createContribution(testContext)
-
-    expect(mirroredLines(testContext)).toEqual(DEEP_LINES.slice(0, 5))
   })
 
   it('re-renders for the viewport and does not ask for caret moves', () => {
@@ -292,7 +385,10 @@ describe('sticky scroll in a mounted editor', () => {
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, { plugins: [createStickyScrollPlugin()] })
+    editor = new Editor(container, {
+      lineHeight: ROW_HEIGHT,
+      plugins: [createStickyScrollPlugin()],
+    })
     const view: unknown = Reflect.get(editor, 'view')
     if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, 600)
     editor.openDocument({
@@ -469,9 +565,9 @@ function snapshot(): EditorViewSnapshot {
       scrollLeft: 0,
       scrollHeight: LINES.length * ROW_HEIGHT,
       scrollWidth: 160,
-      clientHeight: 100,
+      clientHeight: 120,
       clientWidth: 320,
-      borderBoxHeight: 100,
+      borderBoxHeight: 120,
       borderBoxWidth: 320,
       visibleRange: { start: 0, end: LINES.length },
     },
@@ -531,7 +627,7 @@ function tokens(): readonly EditorToken[] {
   ]
 }
 
-/** Scopes nested past the number of rows the stack may ever hold, and a body long enough to hold. */
+/** Seven nested scopes with a body long enough to scroll past every header. */
 const DEEP_DEPTH = 7
 const DEEP_LINES = Array.from(
   { length: DEEP_DEPTH },
@@ -543,7 +639,7 @@ const DEEP_LINES = Array.from(
 const DEEP_TEXT = DEEP_LINES.join('\n')
 
 /** Scrolled past every header row, so each of the scopes wants a slot in the stack. */
-function deepSnapshot(): EditorViewSnapshot {
+function deepSnapshot(clientHeight: number): EditorViewSnapshot {
   const starts = textLineStarts(DEEP_TEXT)
   const rowEnd = (row: number): number => starts[row]! + DEEP_LINES[row]!.length
   const rows: EditorVisibleRowSnapshot[] = []
@@ -586,6 +682,8 @@ function deepSnapshot(): EditorViewSnapshot {
     visibleRows: rows,
     viewport: {
       ...snapshot().viewport,
+      clientHeight,
+      borderBoxHeight: clientHeight,
       scrollTop: DEEP_DEPTH * ROW_HEIGHT,
       scrollRow: DEEP_DEPTH,
       scrollHeight: DEEP_LINES.length * ROW_HEIGHT,
