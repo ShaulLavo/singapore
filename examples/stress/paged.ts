@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util'
 import { chromium, type Browser, type CDPSession, type Page, type Route } from '@playwright/test'
 import { build } from 'vite'
 import { runPagedSyntaxProof } from './paged-syntax-proof.ts'
+import { installPagedSyntaxReplyControl } from './paged-syntax-replies.ts'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const origin = 'https://paged.local'
@@ -134,6 +135,7 @@ async function sample(browser: Browser, scenario: Scenario) {
     await context.route(`${origin}/**`, asset)
     const page = await context.newPage()
     page.setDefaultTimeout(30_000)
+    if (scenario.mode === 'highlighted') await page.addInitScript(installPagedSyntaxReplyControl)
     const entry = scenario.mode === 'highlighted' ? 'paged-code.html?proof' : 'paged.html'
     await page.goto(`${origin}/${entry}`)
     const cdp = await context.newCDPSession(page)

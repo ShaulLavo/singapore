@@ -61,13 +61,9 @@ export class PagedSyntax {
     return this.#highlighter.prewarm()
   }
 
-  cancel() {
+  private clear() {
     this.#generation++
     this.#highlighter.cancel()
-  }
-
-  clear() {
-    this.cancel()
     this.#painted = null
     this.paint([], new Map())
     this.#status = { kind: 'idle' }

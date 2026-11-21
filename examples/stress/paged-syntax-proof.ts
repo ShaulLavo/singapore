@@ -12,6 +12,8 @@ export async function runPagedSyntaxProof(page: Page) {
   assert.equal(beforeCold.source.totals.byteLength, undefined)
   assert.equal(beforeCold.source.totals.lineCount, undefined)
   assert.equal(beforeCold.source.totals.utf16Length, undefined)
+  assert.equal(await page.getByRole('button', { name: 'Go to byte' }).isVisible(), true)
+  assert.equal(await page.getByRole('button', { name: 'End', exact: true }).isDisabled(), true)
   const cold = await colored(page, beforeCold)
   assert.equal(cold.status.quality, 'known-start')
   assert.equal(cold.status.cached, false)
@@ -46,16 +48,18 @@ export async function runPagedSyntaxProof(page: Page) {
   const normalScroll = await colored(page, await read(page))
   assert.equal(normalScroll.status.quality, 'provisional')
 
-  const beforeWarm = await open(page, { prewarmed: true, lengthKnown: true })
+  const beforeWarm = await open(page, { prewarmed: true })
   const warm = await colored(page, beforeWarm)
   assert.deepEqual(beforeWarm.reads, beforeCold.reads)
   const distantBlock = 500_000
-  const tileBytes = await page.evaluate(() => __pagedCode.tileBytes)
+  const { tileBytes, fixtureBytes, replacementBlock } = await page.evaluate(() => ({
+    tileBytes: __pagedCode.tileBytes,
+    fixtureBytes: __pagedCode.fixtureBytes,
+    replacementBlock: __pagedCode.replacementBlock,
+  }))
   const distantByte = distantBlock * tileBytes
-  await page.getByRole('spinbutton', { name: 'Byte offset' }).fill(String(distantByte))
-  await page.getByRole('button', { name: 'Go to byte' }).click()
-  await page.locator(`${firstRow}[data-byte="${distantByte}"]`).waitFor()
-  const beforeJumpColor = await read(page)
+  const beforeJumpColor = await jumpTo(page, distantByte)
+  assert.equal(beforeJumpColor.source.totals.byteLength, undefined)
   assert(beforeJumpColor.reads.length > beforeWarm.reads.length)
   assert(
     beforeJumpColor.reads
@@ -67,20 +71,16 @@ export async function runPagedSyntaxProof(page: Page) {
   assert.equal(distant.status.cached, false)
   await assertBlock(page, distantBlock)
 
-  const rapid = await page.evaluate(
-    async ({ tileBytes }) => {
-      await __pagedCode.showByte(120_000 * tileBytes)
-      const superseded = __pagedCode.inspect()?.syntax.status.kind
-      await __pagedCode.showByte(320_000 * tileBytes)
-      return { superseded, snapshot: __pagedCode.inspect() }
-    },
-    { tileBytes },
-  )
-  assert.equal(rapid.superseded, 'pending')
-  assert(rapid.snapshot)
-  const latest = await colored(page, rapid.snapshot)
-  await assertBlock(page, 320_000)
+  const rapid = await verifyRapidJump(page, tileBytes, replacementBlock)
+  const closedHighlighted = await closeSyntaxView(page, 'highlighted')
+  const failedJump = await verifyFailedJump(page, fixtureBytes + tileBytes)
+  await holdNextReply(page)
+  const pending = await jumpTo(page, distantByte)
+  await waitForHeldReply(page)
+  assert.equal(pending.syntax.status.kind, 'pending')
+  const closedPending = await closeSyntaxView(page, 'pending')
 
+  await colored(page, await open(page, { prewarmed: true }))
   const retained = await longScroll(page, tileBytes)
   await page.evaluate(async (tileBytes) => {
     __pagedCode.revise()
@@ -103,7 +103,7 @@ export async function runPagedSyntaxProof(page: Page) {
   assert.equal(await visibleRangeCount(page), 0)
 
   return {
-    fixtureBytes: beforeWarm.source.totals.byteLength,
+    fixtureBytes,
     cold,
     warm,
     theme,
@@ -111,11 +111,165 @@ export async function runPagedSyntaxProof(page: Page) {
     back: back.syntax,
     normalScroll,
     distant,
-    latest,
+    latest: rapid.latest,
+    distinctLayouts: rapid.distinctLayouts,
+    failedJump,
+    closedHighlighted,
+    closedPending,
     retained,
     plain,
     giant: { units: giantUnits, ...giant },
   }
+}
+
+async function jumpTo(page: Page, byte: number): Promise<Snapshot> {
+  await page.getByRole('spinbutton', { name: 'Byte offset' }).fill(String(byte))
+  await page.getByRole('button', { name: 'Go to byte' }).click()
+  await page.locator(`${firstRow}[data-byte="${byte}"]`).waitFor()
+  return read(page)
+}
+
+async function holdNextReply(page: Page): Promise<void> {
+  await page.evaluate(() => __pagedSliceReplies.holdNext())
+}
+
+async function waitForHeldReply(page: Page): Promise<void> {
+  await page.waitForFunction(() => __pagedSliceReplies.status())
+  assert.equal(await page.evaluate(() => __pagedSliceReplies.status()), 'highlighted')
+}
+
+async function verifyRapidJump(page: Page, tileBytes: number, replacementBlock: number) {
+  const oldByte = 120_000 * tileBytes
+  const newByte = replacementBlock * tileBytes
+  await colored(page, await jumpTo(page, oldByte))
+  const oldLayout = await paintedRanges(page)
+  await colored(page, await jumpTo(page, newByte))
+  const expected = await paintedRanges(page)
+  const oldRow = oldLayout.filter((range) => range.row === 3)
+  const newRow = expected.filter((range) => range.row === 3)
+  assert(oldRow.some((range) => range.text === 'const'))
+  assert(newRow.some((range) => range.text === 'function'))
+  assert.notDeepEqual(
+    oldRow.map(({ from, to }) => [from, to]),
+    newRow.map(({ from, to }) => [from, to]),
+  )
+
+  await colored(page, await open(page, { prewarmed: true }))
+  await holdNextReply(page)
+  const oldWindow = await jumpTo(page, oldByte)
+  await waitForHeldReply(page)
+  assert.equal(oldWindow.syntax.status.kind, 'pending')
+  const current = await jumpTo(page, newByte)
+  assert.equal(current.syntax.status.kind, 'pending')
+  assert.deepEqual(await paintedRanges(page), [])
+  await page.evaluate(() => {
+    __pagedSliceReplies.release()
+    __pagedSliceReplies.holdNext()
+  })
+  await waitForHeldReply(page)
+  assert.equal((await read(page)).syntax.status.kind, 'pending')
+  assert.deepEqual(await paintedRanges(page), [])
+  await page.evaluate(() => __pagedSliceReplies.release())
+
+  const latest = await colored(page, current)
+  await assertBlock(page, replacementBlock)
+  assert.deepEqual(await paintedRanges(page), expected)
+  return { latest, distinctLayouts: { before: oldRow, current: newRow } }
+}
+
+async function verifyFailedJump(page: Page, outside: number) {
+  await holdNextReply(page)
+  const before = await open(page, { prewarmed: true })
+  await waitForHeldReply(page)
+  const original = await page.locator(rows).first().elementHandle()
+  try {
+    await page.getByRole('spinbutton', { name: 'Byte offset' }).fill(String(outside))
+    await page.getByRole('button', { name: 'Go to byte' }).click()
+    await page.getByRole('status').filter({ hasText: 'outside the file' }).waitFor()
+    assert(
+      await original.evaluate((node, selector) => node === document.querySelector(selector), rows),
+    )
+    const failed = await read(page)
+    assert(failed.source.sourceRequests > before.source.sourceRequests)
+    assert.equal(failed.syntax.status.kind, 'pending')
+    await page.evaluate(() => __pagedSliceReplies.release())
+    const recovered = await colored(page, failed)
+    assert(
+      await original.evaluate((node, selector) => node === document.querySelector(selector), rows),
+    )
+    assert(
+      (await paintedRanges(page)).some((range) => range.row === 0 && range.text === '/* Paged 🦊'),
+    )
+    return { mountedTextRetained: true, status: recovered.status }
+  } finally {
+    await original.dispose()
+  }
+}
+
+async function paintedRanges(page: Page) {
+  return page.evaluate((selector) => {
+    const textNodes = Array.from(
+      document.querySelectorAll(selector),
+      (element) => element.firstChild,
+    )
+    const results = []
+    for (const [name, highlight] of CSS.highlights) {
+      if (!name.startsWith('paged-syntax-')) continue
+      for (const range of highlight) results.push(readRange(name, range))
+    }
+    return results.sort(
+      (left, right) => left.row - right.row || left.from - right.from || left.to - right.to,
+    )
+
+    function readRange(name: string, range: AbstractRange) {
+      const { startContainer: node, endContainer, startOffset: from, endOffset: to } = range
+      if (
+        !(range instanceof Range) ||
+        !(node instanceof Text) ||
+        !node.isConnected ||
+        !node.parentElement ||
+        node !== endContainer
+      )
+        throw new Error('A syntax range points outside the current mounted text')
+      const row = textNodes.indexOf(node)
+      if (row === -1) throw new Error('A syntax range points outside the current mounted text')
+      const text = range.toString()
+      if (!text || text !== node.data.slice(from, to))
+        throw new Error('A syntax range changed its text')
+      return {
+        row,
+        from,
+        to,
+        text,
+        color: getComputedStyle(node.parentElement, `::highlight(${name})`).color,
+      }
+    }
+  }, rows)
+}
+
+async function closeSyntaxView(page: Page, phase: 'highlighted' | 'pending') {
+  assert.equal((await read(page)).syntax.status.kind, phase)
+  const before = await syntaxResources(page)
+  assert(before.styles > 0)
+  if (phase === 'highlighted') assert(before.highlights > 0)
+  await page.getByRole('button', { name: 'Close file' }).click()
+  if (phase === 'pending') await page.evaluate(() => __pagedSliceReplies.release())
+  assert.equal(await page.evaluate(() => __pagedCode.inspect()), null)
+  assert.equal(await page.locator(rows).count(), 0)
+  assert.deepEqual(await syntaxResources(page), { highlights: 0, styles: 0 })
+  return before
+}
+
+function syntaxResources(page: Page) {
+  return page.evaluate(() => ({
+    highlights: Array.from(CSS.highlights.keys()).filter((name) => name.startsWith('paged-syntax-'))
+      .length,
+    styles: Array.from(document.querySelectorAll('style')).filter((style) =>
+      Array.from(style.sheet?.cssRules ?? []).some((rule) =>
+        rule.cssText.includes('::highlight(paged-syntax-'),
+      ),
+    ).length,
+  }))
 }
 
 async function open(page: Page, options: OpenOptions = {}): Promise<Snapshot> {

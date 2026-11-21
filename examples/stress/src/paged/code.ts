@@ -4,21 +4,17 @@ import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-l
 import { PagedSyntax } from './syntax'
 import { PagedViewport } from './view'
 
-const code = [
-  '/* Paged 🦊',
-  ' * e\u0301 中 */',
-  'export const page = "00000000";',
-  'export const label = `Group ${page}`;',
-  '',
-].join('\r\n')
+const header = ['/* Paged 🦊', ' * e\u0301 中 */', 'export const page = "00000000";']
+const replacementBlock = 320_000
 const encoder = new TextEncoder()
-const tile = encoder.encode(code)
-const marker = encoder.encode(code.slice(0, code.indexOf('00000000'))).length
+const tile = codeTile('export const label = `Group ${page}`;')
+const replacementTile = codeTile('export function read() { return 42 }')
+const headerText = header.join('\r\n')
+const marker = encoder.encode(headerText.slice(0, headerText.indexOf('00000000'))).length
 const blocks = Math.ceil((64 * 1024 * 1024) / tile.length)
 const length = blocks * tile.length
 
 type CodeOptions = {
-  readonly lengthKnown?: boolean
   readonly prewarmed?: boolean
   readonly language?: 'typescript' | 'unsupported'
   readonly giantLine?: boolean
@@ -43,7 +39,6 @@ async function open(options: CodeOptions = {}) {
   const language = options.language === 'unsupported' ? null : TYPESCRIPT_TREE_SITTER_LANGUAGE
   const syntax = new PagedSyntax(host, language)
   const viewport = new PagedViewport(host, source, {
-    onWindowRequest: () => syntax.cancel(),
     onWindowCleared: () => void syntax.dispose(),
     renderFragments: (window, elements, startedAt) => syntax.render(window, elements, startedAt),
   })
@@ -62,7 +57,6 @@ function codeSource(
   return {
     id: 'paged-typescript',
     revision: openedRevision,
-    byteLength: options.lengthKnown ? length : undefined,
     async readBytes(start, end, signal) {
       signal.throwIfAborted()
       if (reads.length < 256) reads.push({ start, end })
@@ -81,8 +75,9 @@ function fillCode(bytes: Uint8Array, start: number): void {
     const offset = start + cursor
     const within = offset % tile.length
     const count = Math.min(tile.length - within, bytes.length - cursor)
-    bytes.set(tile.subarray(within, within + count), cursor)
     const block = Math.floor(offset / tile.length)
+    const source = block === replacementBlock ? replacementTile : tile
+    bytes.set(source.subarray(within, within + count), cursor)
     const id = String(block).padStart(8, '0')
     const to = Math.min(within + count, marker + id.length)
     for (let at = Math.max(marker, within); at < to; at++) {
@@ -90,6 +85,10 @@ function fillCode(bytes: Uint8Array, start: number): void {
     }
     cursor += count
   }
+}
+
+function codeTile(line: string): Uint8Array {
+  return encoder.encode(header.concat([line.padEnd(40), '']).join('\r\n'))
 }
 
 function inspect() {
@@ -114,6 +113,8 @@ const proof = {
   inspect,
   dispose,
   tileBytes: tile.length,
+  fixtureBytes: length,
+  replacementBlock,
   revise: () => revision++,
   showByte: (offset: number) => current?.viewport.showByte(offset),
 }

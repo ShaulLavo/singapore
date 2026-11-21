@@ -14,7 +14,6 @@ const WINDOW_ROWS = VISIBLE_ROWS + 3
 
 export type PagedViewportOptions = {
   readonly indexedLines?: boolean
-  readonly onWindowRequest?: () => void
   readonly onWindowCleared?: () => void
   readonly renderFragments?: (
     window: PagedWindow,
@@ -30,7 +29,6 @@ export class PagedViewport {
   readonly #jump = document.createElement('input')
   readonly #byte = document.createElement('input')
   readonly #jumpControls = document.createElement('span')
-  readonly #byteControls = document.createElement('span')
   readonly #previous: HTMLButtonElement
   readonly #next: HTMLButtonElement
   readonly #end: HTMLButtonElement
@@ -66,10 +64,6 @@ export class PagedViewport {
       this.#jump,
       button('Go to line', () => this.showLine(Number(this.#jump.value) - 1)),
     )
-    this.#byteControls.append(
-      this.#byte,
-      button('Go to byte', () => this.showByte(Number(this.#byte.value))),
-    )
     const controls = document.createElement('div')
     controls.append(
       button('Home', () => this.first()),
@@ -77,7 +71,8 @@ export class PagedViewport {
       this.#next,
       this.#end,
       this.#jumpControls,
-      this.#byteControls,
+      this.#byte,
+      button('Go to byte', () => this.showByte(Number(this.#byte.value))),
     )
     this.#rows.addEventListener('scroll', () => void this.rebase())
     this.#rows.addEventListener('wheel', (event) => this.wheel(event), { passive: false })
@@ -220,7 +215,6 @@ export class PagedViewport {
   ) {
     const generation = ++this.#generation
     const startedAt = performance.now()
-    this.options.onWindowRequest?.()
     this.#status.textContent = 'Loading file range…'
     this.host.setAttribute('aria-busy', 'true')
     try {
@@ -264,7 +258,6 @@ export class PagedViewport {
     this.#previous.disabled = !this.#window?.previous
     this.#next.disabled = !this.#window?.next
     this.#end.disabled = byteLength === undefined
-    this.#byteControls.hidden = byteLength === undefined
     this.#byte.max = byteLength === undefined ? '' : String(byteLength)
   }
 
