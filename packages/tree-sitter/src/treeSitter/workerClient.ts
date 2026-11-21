@@ -31,6 +31,7 @@ import type {
   TreeSitterWorkerResponse,
   TreeSitterWorkerResult,
   TreeSitterWorkerRetentionSnapshot,
+  TreeSitterHighlightSliceResult,
 } from './types'
 
 type PendingRequest = {
@@ -40,6 +41,20 @@ type PendingRequest = {
   readonly payload: TreeSitterWorkerRequestPayload
   readonly resolve: (result: TreeSitterWorkerResult) => void
   readonly reject: (error: Error) => void
+}
+
+type SliceLanguageEntry = {
+  readonly id: number
+  readonly descriptor: TreeSitterLanguageDescriptor
+  refs: number
+  worker: Worker | null
+  preparation: Promise<TreeSitterWorkerResult> | null
+}
+
+export type TreeSitterSliceLanguage = {
+  prepare(): Promise<'ready' | 'unavailable' | 'unsupported-query'>
+  highlight(text: string, signal: AbortSignal): Promise<TreeSitterHighlightSliceResult | undefined>
+  dispose(): void
 }
 
 type TreeSitterParseDocumentRequest = Omit<
@@ -170,6 +185,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   private disposeTask: Promise<void> | null = null
   private nextRequestId = 1
   private nextGeneration = 1
+  private nextSliceLanguageId = 0
   private workerGeneration = 0
   private lifecycle: TreeSitterWorkerLifecycleState = 'idle'
   private lastError: Error | null = null
@@ -187,6 +203,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     TreeSitterLanguageDescriptor
   >()
   private readonly warmedLanguages = new Set<TreeSitterLanguageId>()
+  private readonly sliceLanguages = new Set<SliceLanguageEntry>()
 
   public get generation(): number | null {
     return this.worker ? this.workerGeneration : null
@@ -247,6 +264,109 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
 
     for (const languageId of languageIds) this.warmedLanguages.add(languageId)
     await this.postRequest({ type: 'warmLanguages', languageIds })
+  }
+
+  public retainSliceLanguage(descriptor: TreeSitterLanguageDescriptor): TreeSitterSliceLanguage {
+    const existing = Array.from(this.sliceLanguages).find((entry) =>
+      sameLanguageRegistration(entry.descriptor, descriptor),
+    )
+    const entry = existing ?? {
+      id: ++this.nextSliceLanguageId,
+      descriptor,
+      refs: 0,
+      worker: null,
+      preparation: null,
+    }
+    this.sliceLanguages.add(entry)
+    entry.refs++
+    return {
+      prepare: () => this.trackClientTask(this.prepareSliceLanguage(entry)),
+      highlight: (text, signal) => this.trackClientTask(this.highlightSlice(entry, text, signal)),
+      dispose: () => this.releaseSliceLanguage(entry),
+    }
+  }
+
+  private async prepareSliceLanguage(
+    entry: SliceLanguageEntry,
+  ): ReturnType<TreeSitterSliceLanguage['prepare']> {
+    const handle = await this.ensureWorkerReady()
+    if (!handle || !entry.refs) return 'unavailable'
+    if (entry.worker !== handle || !entry.preparation) {
+      entry.worker = handle
+      entry.preparation = this.postRequest(
+        {
+          type: 'prepareSliceLanguage',
+          sliceLanguageId: entry.id,
+          descriptor: entry.descriptor,
+        },
+        false,
+      )
+    }
+    const preparation = entry.preparation
+    try {
+      const result = await preparation
+      if (this.worker !== handle || !entry.refs || !result || !('slicePreparation' in result))
+        return 'unavailable'
+      return result.slicePreparation
+    } catch (error) {
+      if (entry.preparation === preparation) entry.preparation = null
+      if (!entry.refs) this.discardSliceLanguage(entry)
+      throw error
+    }
+  }
+
+  private releaseSliceLanguage(entry: SliceLanguageEntry): void {
+    if (--entry.refs !== 0) return
+    const preparation = entry.preparation
+    if (!preparation) {
+      this.discardSliceLanguage(entry)
+      return
+    }
+    // Let another view join the same in-progress grammar load before releasing the registration.
+    const discard = () => {
+      if (entry.refs === 0 && entry.preparation === preparation) this.discardSliceLanguage(entry)
+    }
+    void preparation.then(discard, discard)
+  }
+
+  private discardSliceLanguage(entry: SliceLanguageEntry): void {
+    if (!this.sliceLanguages.delete(entry)) return
+    if (entry.worker && entry.worker === this.worker) {
+      const release = this.postRequest(
+        { type: 'disposeSliceLanguage', sliceLanguageId: entry.id },
+        false,
+      )
+      void this.trackClientTask(release).catch(() => undefined)
+    }
+  }
+
+  private async highlightSlice(
+    entry: SliceLanguageEntry,
+    text: string,
+    signal: AbortSignal,
+  ): Promise<TreeSitterHighlightSliceResult | undefined> {
+    if (!entry.worker || this.worker !== entry.worker || signal.aborted) return
+    const cancellationBuffer = supportsSharedCancellation() ? new SharedArrayBuffer(4) : undefined
+    const flag = cancellationBuffer ? new Int32Array(cancellationBuffer) : null
+    const cancel = () => {
+      if (flag) Atomics.store(flag, 0, 1)
+    }
+    signal.addEventListener('abort', cancel, { once: true })
+    try {
+      // Wait for the worker's reply before sending the next slice, even after abort.
+      const result = await this.postRequest(
+        {
+          type: 'highlightSlice',
+          sliceLanguageId: entry.id,
+          text,
+          cancellationBuffer,
+        },
+        false,
+      )
+      return result && 'sliceStatus' in result ? result : undefined
+    } finally {
+      signal.removeEventListener('abort', cancel)
+    }
   }
 
   public parse(
@@ -819,6 +939,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     this.initPromise = null
     this.registeredLanguages.clear()
     this.warmedLanguages.clear()
+    if (lifecycle === 'disposed') this.sliceLanguages.clear()
     this.connection = null
     this.nextRegistration = 0
   }
@@ -831,7 +952,7 @@ export class TreeSitterWorkerOwner {
   constructor(options: { readonly workerFactory?: () => Worker } = {}) {
     this.#backend = new TreeSitterWorkerClient(options)
   }
-  [backendBinding](): TreeSitterBackend {
+  [backendBinding](): TreeSitterWorkerClient {
     return this.#backend
   }
   reviewBatch(payload: Omit<TreeSitterReviewBatchRequest, 'type'>) {
@@ -868,7 +989,7 @@ export function createTreeSitterWorkerOwner(
   return new TreeSitterWorkerOwner(options)
 }
 
-export function treeSitterBackendForOwner(owner: TreeSitterWorkerOwner): TreeSitterBackend {
+export function treeSitterBackendForOwner(owner: TreeSitterWorkerOwner): TreeSitterWorkerClient {
   return owner[backendBinding]()
 }
 
