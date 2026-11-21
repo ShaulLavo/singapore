@@ -23,8 +23,8 @@ export class ReadBudget {
   remaining: number
   requests: number
 
-  constructor(options: PagedOptions) {
-    this.remaining = options.maxReadBytes
+  constructor(options: PagedOptions, overlap = 0) {
+    this.remaining = options.maxReadBytes - overlap
     this.requests = options.maxReadRequests
   }
 }
@@ -47,6 +47,11 @@ function observe<T>(result: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 type Slot = { start(): void }
+
+type SourceEvents = {
+  close(): void
+  inspect(start: number, bytes: Uint8Array, upperBound: number | undefined): void
+}
 
 export class SourceReader {
   readonly #lifetime = new AbortController()
@@ -75,7 +80,7 @@ export class SourceReader {
     private readonly source: RangeSource,
     private readonly options: PagedOptions,
     byteLength: number | undefined,
-    private readonly onClose: () => void,
+    private readonly events: SourceEvents,
   ) {
     if (!source.id || !source.revision)
       throw new PagedSourceError('A source needs an id and revision')
@@ -117,32 +122,48 @@ export class SourceReader {
   }
 
   close(state: 'stale' | 'disposed') {
+    if (this.#state === state || this.#state === 'disposed') return
     this.#state = state
+    this.#cancelledReads += this.#flights.size
+    this.#flights.clear()
     this.#lifetime.abort()
     this.#cache.clear()
     this.#cachedBytes = 0
-    this.onClose()
+    this.events.close()
   }
 
-  async validate(signal: AbortSignal) {
+  async validate(signal?: AbortSignal) {
     this.assertLive(signal)
     const validate = this.source.validate
     if (!validate) return false
-    const combined = AbortSignal.any([signal, this.#lifetime.signal])
-    const result = await observe(
-      this.schedule(combined, () => validate.call(this.source, combined)),
-      combined,
-    ).catch((error: unknown) => this.rethrow(error, signal))
+    const result = await this.run(signal, (active) => validate.call(this.source, active))
     this.assertLive(signal)
     if (result.revision !== this.revision) this.rethrow(new PagedSourceInvalidatedError(), signal)
     return true
+  }
+
+  async run<T>(signal: AbortSignal | undefined, use: (active: AbortSignal) => Promise<T>) {
+    this.assertLive(signal)
+    const combined = signal
+      ? AbortSignal.any([signal, this.#lifetime.signal])
+      : this.#lifetime.signal
+    try {
+      const result = await observe(
+        this.schedule(combined, () => use(combined)),
+        combined,
+      )
+      this.assertLive(signal)
+      return result
+    } catch (error) {
+      return this.rethrow(error, signal)
+    }
   }
 
   async read(start: number, limit: number, budget: ReadBudget, signal: AbortSignal) {
     this.assertLive(signal)
     if (this.eofAt(start)) return empty
     let end = Math.min(
-      start + Math.min(this.options.pageBytes, budget.remaining),
+      start + Math.min(this.options.pageBytes, budget.remaining, 65_536),
       limit,
       this.#byteLength ?? this.#eofUpper ?? Number.MAX_SAFE_INTEGER,
     )
@@ -208,6 +229,8 @@ export class SourceReader {
     this.#requestedBytes += end - start
     try {
       const result = await this.source.readBytes(start, end, signal)
+      if (!(result.bytes instanceof Uint8Array) || typeof result.eof !== 'boolean')
+        throw new PagedSourceError('Invalid source response')
       this.#deliveredBytes += result.bytes.length
       this.assertLive(signal)
       this.checkRevision(result.revision)
@@ -223,8 +246,6 @@ export class SourceReader {
   }
 
   private accept(start: number, end: number, result: RangeRead) {
-    if (!(result.bytes instanceof Uint8Array) || typeof result.eof !== 'boolean')
-      throw new PagedSourceError('Invalid source response')
     const count = result.bytes.length
     if (count > end - start) throw new PagedSourceError('The source returned too many bytes')
     if (!count && !result.eof) throw new PagedSourceError('The source made no progress')
@@ -243,6 +264,7 @@ export class SourceReader {
       (exact !== undefined && upper !== undefined && exact > upper)
     )
       throw new PagedSourceError('The source response contradicts the known end of the file')
+    this.events.inspect(start, result.bytes, knownEnd)
     this.#confirmedEnd = confirmedEnd
     this.#eofUpper = upper
     this.#byteLength = exact
@@ -272,7 +294,7 @@ export class SourceReader {
     if (revision !== this.revision) throw new PagedSourceInvalidatedError()
   }
 
-  private rethrow(error: unknown, signal: AbortSignal): never {
+  private rethrow(error: unknown, signal?: AbortSignal): never {
     this.assertLive(signal)
     if (error instanceof PagedSourceInvalidatedError) this.close('stale')
     throw error

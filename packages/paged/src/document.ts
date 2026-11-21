@@ -1,6 +1,8 @@
+import { createError } from '@singapore-editor/core/logging/evlog'
 import { DiscoveredPrefix, mergeTotals, TrustedIndex } from './checkpoints'
 import { natural, ReadBudget, SourceReader } from './source'
 import {
+  createCursor,
   PAGED_PROOF_OPTIONS,
   PagedSourceError,
   type PagedCoordinate,
@@ -33,7 +35,8 @@ const outsideSource: PagedUnavailable = { kind: 'unavailable', reason: 'outside-
 type CursorState = {
   readonly pos: Position
   readonly goal?: Goal
-  readonly retryBefore?: number
+  readonly reverseProbe?: Uint8Array
+  readonly tail?: boolean
 }
 
 type OpenWindow = PagedWindow | PagedUnavailable
@@ -47,15 +50,15 @@ type ViewActions = {
   end(rows: number, signal: AbortSignal): Promise<OpenWindow>
   copy(start: PagedEndpoint, end: PagedEndpoint, signal: AbortSignal): Promise<PagedCopyResult>
   copyRange(start: number, end: number, signal: AbortSignal): Promise<PagedCopyResult>
+  assertLive(signal: AbortSignal): void
   release(): void
 }
 
 export class PagedDocument {
   readonly #reader: SourceReader
   readonly #options: PagedOptions
-  readonly #lifetime = new AbortController()
-  readonly #cursors = new WeakMap<PagedCursor, CursorState>()
-  readonly #fragments = new WeakSet<PagedFragment>()
+  #cursors = new WeakMap<PagedCursor, CursorState>()
+  #fragments = new WeakSet<PagedFragment>()
   #totals: PagedTotals
   #prefix: DiscoveredPrefix
   #index: TrustedIndex | undefined
@@ -69,7 +72,13 @@ export class PagedDocument {
     })
     this.#prefix = new DiscoveredPrefix(options.checkpointLimit, options.checkpointStride)
     this.#index = index && new TrustedIndex(index, source, this.#totals, options.checkpointLimit)
-    this.#reader = new SourceReader(source, options, this.#totals.byteLength, () => this.clear())
+    this.#reader = new SourceReader(source, options, this.#totals.byteLength, {
+      close: () => this.clear(),
+      inspect: (start, bytes, upperBound) => {
+        this.checkExtent(upperBound)
+        this.#index?.verifyBytes(start, bytes, upperBound)
+      },
+    })
     this.#options = options
   }
 
@@ -103,7 +112,7 @@ export class PagedDocument {
     return Promise.resolve()
   }
 
-  validate(signal = this.#lifetime.signal) {
+  validate(signal?: AbortSignal) {
     return this.#reader.validate(signal)
   }
 
@@ -121,6 +130,7 @@ export class PagedDocument {
       end: (rows, signal) => this.tail(rows, signal),
       copy: (start, end, signal) => this.copy(start, end, signal),
       copyRange: (start, end, signal) => this.copyRange(start, end, signal),
+      assertLive: (signal) => this.#reader.assertLive(signal),
       release: () => {
         this.#views--
       },
@@ -132,7 +142,8 @@ export class PagedDocument {
   }
 
   private clear() {
-    this.#lifetime.abort()
+    this.#cursors = new WeakMap()
+    this.#fragments = new WeakSet()
     this.#index = undefined
     this.#totals = {}
     this.#prefix = new DiscoveredPrefix(
@@ -142,7 +153,7 @@ export class PagedDocument {
   }
 
   private cursor(state: CursorState) {
-    const cursor = Object.freeze({ byteOffset: state.pos.byteOffset }) as PagedCursor
+    const cursor = createCursor(state.pos.byteOffset)
     this.#cursors.set(cursor, state)
     return cursor
   }
@@ -219,12 +230,21 @@ export class PagedDocument {
       end,
       rows,
       signal,
-      state.retryBefore,
+      state.reverseProbe,
+      state.tail,
     )
-    if (previous.retryAt !== undefined) {
-      const retry = { pos: end, retryBefore: previous.retryAt }
+    this.#reader.assertLive(signal)
+    if (previous.reverseProbe) {
+      const retry = { ...state, reverseProbe: previous.reverseProbe }
       return this.window([], retry, state, 'budget')
     }
+    for (const piece of previous.pieces) {
+      this.#index?.verify(piece.start)
+      this.#index?.verify(piece.end)
+      this.checkMappedTotals(piece.end)
+    }
+    const last = previous.pieces.at(-1)?.end
+    if (last && state.tail && previous.pieces[0]?.start.byteOffset === 0) this.learnTotals(last)
     return this.beforeWindow(previous.pieces, state)
   }
 
@@ -233,8 +253,8 @@ export class PagedDocument {
     return this.window(
       pieces,
       first?.byteOffset ? { pos: first } : null,
-      { pos: state.pos },
-      'boundary',
+      state.tail ? null : { pos: state.pos },
+      state.tail ? 'eof' : 'boundary',
     )
   }
 
@@ -275,14 +295,19 @@ export class PagedDocument {
     const offset = this.#reader.byteLength
     if (offset === undefined) return { kind: 'unavailable', reason: 'unknown-length' }
     if (!offset) return this.forward({ pos: origin }, rows, signal)
-    const previous = await this.backward(
-      { pos: { byteOffset: offset, lineStart: false } },
+    return this.backward(
+      {
+        pos: {
+          byteOffset: offset,
+          lineStart: false,
+          line: this.#totals.lineCount === undefined ? undefined : this.#totals.lineCount - 1,
+          utf16Offset: this.#totals.utf16Length,
+        },
+        tail: true,
+      },
       rows,
       signal,
     )
-    return previous.stop === 'budget'
-      ? previous
-      : { ...previous, next: null, atEnd: true, stop: 'eof' }
   }
 
   private async locate(target: PagedCoordinate, signal: AbortSignal) {
@@ -292,27 +317,32 @@ export class PagedDocument {
       (target.kind === 'line' ? discovered.line : discovered.utf16Offset) === target.value
     )
       return discovered
-    const combined = AbortSignal.any([signal, this.#lifetime.signal])
-    let trusted: Position | undefined
-    try {
-      trusted = await this.#index?.locate(
-        target,
-        { ...this.#totals, byteLength: this.#reader.byteLength },
-        combined,
-      )
-    } finally {
-      this.#reader.assertLive(signal)
-    }
+    const trusted = await this.#index?.locate(
+      target,
+      { ...this.#totals, byteLength: this.#reader.byteLength },
+      this.#reader,
+      signal,
+    )
+    this.#reader.assertLive(signal)
     return !trusted || (discovered && discovered.byteOffset > trusted.byteOffset)
       ? discovered
       : trusted
   }
 
+  private checkExtent(upperBound: number | undefined) {
+    if (upperBound === undefined) return
+    const { lineCount, utf16Length } = this.#totals
+    if ((lineCount ?? 1) - 1 > upperBound || (utf16Length ?? 0) > upperBound)
+      throw new PagedSourceError('The known byte range contradicts the supplied totals')
+  }
+
   private checkMappedTotals(pos: Position) {
     const { lineCount, utf16Length } = this.#totals
     if (
-      (lineCount !== undefined && pos.line !== undefined && pos.line >= lineCount) ||
-      (utf16Length !== undefined && pos.utf16Offset !== undefined && pos.utf16Offset > utf16Length)
+      (pos.line !== undefined &&
+        (!natural(pos.line) || (lineCount !== undefined && pos.line >= lineCount))) ||
+      (pos.utf16Offset !== undefined &&
+        (!natural(pos.utf16Offset) || (utf16Length !== undefined && pos.utf16Offset > utf16Length)))
     )
       throw new PagedSourceError('Read content contradicts the supplied totals')
   }
@@ -334,7 +364,13 @@ export class PagedDocument {
       column > fragment.text.length + fragment.lineBreak.length
     )
       throw new PagedSourceError('Invalid selection endpoint')
-    return { column, offset: fragment.start.byteOffset, text: fragment.text + fragment.lineBreak }
+    return {
+      column,
+      start: fragment.start.byteOffset,
+      end: fragment.end.byteOffset,
+      utf16Offset: fragment.utf16Offset,
+      text: fragment.text + fragment.lineBreak,
+    }
   }
 
   private async copy(
@@ -345,37 +381,62 @@ export class PagedDocument {
     this.#reader.assertLive(signal)
     const start = this.endpoint(first)
     const end = this.endpoint(second)
-    const [left, right] = start.offset <= end.offset ? [start, end] : [end, start]
-    if (left.offset === right.offset) {
+    const [left, right] = start.start <= end.start ? [start, end] : [end, start]
+    if (left.start === right.start) {
       const text = left.text.length >= right.text.length ? left.text : right.text
-      return {
-        kind: 'text',
-        text: text.slice(Math.min(left.column, right.column), Math.max(left.column, right.column)),
-      }
+      return this.copied(
+        text.slice(Math.min(left.column, right.column), Math.max(left.column, right.column)),
+      )
     }
-    const parts: string[] = []
-    let units = 0
+    if (left.end > right.start) return this.copyOverlap(left, right)
+    const prefix = left.text.slice(left.column)
+    const suffix = right.text.slice(0, right.column)
+    let units = prefix.length + suffix.length
+    if (units > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
+    if (left.end === right.start) return this.copied(prefix + suffix)
+    const parts = [prefix]
     const result = await readText(
       this.#reader,
-      left.offset,
-      right.offset,
+      left.end,
+      right.start,
       signal,
       new ReadBudget(this.#options),
       (text) => {
-        parts.push(text.slice(Math.max(0, left.column - units)))
         units += text.length
-        return units - left.column > this.#options.maxWindowUnits
+        if (units > this.#options.maxWindowUnits) return true
+        parts.push(text)
+        return false
       },
     )
-    if (units - left.column > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
+    if (units > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
     if (result === 'budget') return { kind: 'limit', reason: 'budget' }
     if (result === 'eof') throw new PagedSourceError('Read content ends before the selection')
-    const remaining = units - left.column + right.column
-    if (Math.abs(remaining) > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
-    if (remaining < 0)
-      return { kind: 'text', text: left.text.slice(units + right.column, left.column) }
-    parts.push(right.text.slice(Math.max(0, left.column - units), right.column))
-    return { kind: 'text', text: parts.join('') }
+    parts.push(suffix)
+    return this.copied(parts.join(''))
+  }
+
+  private copyOverlap(
+    left: ReturnType<PagedDocument['endpoint']>,
+    right: ReturnType<PagedDocument['endpoint']>,
+  ) {
+    if (left.utf16Offset === undefined || right.utf16Offset === undefined) return noMapping
+    const shift = right.utf16Offset - left.utf16Offset
+    if (!natural(shift) || shift > left.text.length)
+      throw new PagedSourceError('The selection endpoints contradict their shared text')
+    const through = shift + right.column
+    if (through <= left.text.length)
+      return this.copied(
+        left.text.slice(Math.min(left.column, through), Math.max(left.column, through)),
+      )
+    return this.copied(
+      left.text.slice(left.column) + right.text.slice(left.text.length - shift, right.column),
+    )
+  }
+
+  private copied(text: string): PagedCopyResult {
+    return text.length > this.#options.maxWindowUnits
+      ? { kind: 'limit', reason: 'text' }
+      : { kind: 'text', text }
   }
 
   private async copyRange(
@@ -392,6 +453,7 @@ export class PagedDocument {
     const pos = await this.locate({ kind: 'utf16', value: start }, signal)
     if (pos?.utf16Offset === undefined) return noMapping
     const parts: string[] = []
+    let mapped: Position = pos
     let units = pos.utf16Offset
     const result = await readText(
       this.#reader,
@@ -399,13 +461,23 @@ export class PagedDocument {
       maxByte,
       signal,
       new ReadBudget(this.#options),
-      (text) => {
+      (text, bytes, byteOffset) => {
+        this.#index?.verifyDecoded(mapped, bytes)
         if (units + text.length > start)
           parts.push(text.slice(Math.max(0, start - units), end - units))
         units += text.length
+        mapped = {
+          byteOffset,
+          line: mapped.line === undefined ? undefined : mapped.line + text.split('\n').length - 1,
+          lineStart: bytes.at(-1) === 10,
+          utf16Offset: units,
+        }
+        this.checkMappedTotals(mapped)
         return units >= end
       },
     )
+    this.#reader.assertLive(signal)
+    this.learnTotals(mapped)
     if (result === 'budget') return { kind: 'limit', reason: 'budget' }
     if (units < end) return outsideSource
     return { kind: 'text', text: parts.join('') }
@@ -424,9 +496,11 @@ function validateOptions(options: PagedOptions) {
     options.maxReadBytes < 4 ||
     options.maxWindowUnits < 2
   )
-    throw new PagedSourceError(
-      'Paging requires two checkpoints, one cached page, and room for a UTF-8 code point',
-    )
+    throw createError({
+      code: 'PAGED_DOCUMENT_INVALID',
+      status: 422,
+      message: 'Paging requires two checkpoints, one cached page, and room for a UTF-8 code point',
+    })
 }
 
 function checkRows(rows: number, max: number) {
@@ -491,7 +565,7 @@ export class PagedDocumentView {
     const combined = signal ? AbortSignal.any([request.signal, signal]) : request.signal
     try {
       const result = await action(combined)
-      combined.throwIfAborted()
+      this.actions.assertLive(combined)
       return result
     } finally {
       if (this.#request === request) this.#request = undefined

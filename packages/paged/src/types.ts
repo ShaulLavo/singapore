@@ -81,10 +81,14 @@ export type PagedOpenOptions = Partial<PagedOptions> & {
   readonly index?: PagedIndex
 }
 
-declare const cursorBrand: unique symbol
+const cursorBrand = Symbol('PagedCursor')
 export type PagedCursor = {
   readonly byteOffset: number
   readonly [cursorBrand]: true
+}
+
+export function createCursor(byteOffset: number): PagedCursor {
+  return Object.freeze<PagedCursor>({ byteOffset, [cursorBrand]: true })
 }
 
 export type PagedFragment = {

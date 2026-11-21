@@ -1,75 +1,68 @@
-# Bounded read-only proof
+# Paged UTF-8 browser proof
 
-## Contracts and decision
+The browser proof exercises the read-only viewer in Chromium with a deterministic UTF-8
+source containing emoji, combining marks, CJK, and CRLF. It generates ranges on demand
+without a resident fixture file.
 
-The resident Editor remains the editing implementation. Streaming construction reduces peak text
-copies but retains the complete buffer and indexes. The new `@singapore-editor/paged` controller
-supports a separate read-only range view with stable global positions. It never impersonates a
-complete `TextSnapshot`.
-
-| Capability           | Resident Editor             | Streamed resident construction            | Paged read-only                      |
-| -------------------- | --------------------------- | ----------------------------------------- | ------------------------------------ |
-| Text retained        | Complete                    | Complete, appended from decoded chunks    | 8 MiB raw page cache                 |
-| First usable content | After complete construction | After complete construction in this proof | First range during indexing          |
-| Edit, undo, save     | Yes                         | Same complete buffer after construction   | Unavailable                          |
-| Syntax and LSP       | Subject to host tiers       | Same host tiers                           | Unavailable                          |
-| Global line jump     | Indexed complete buffer     | Indexed complete buffer                   | Sparse index; discovery may wait     |
-| Copy                 | Complete document           | Complete document                         | Up to 1 MiB of UTF-16 text           |
-| Revision safety      | Host owns reads/writes      | Host owns stream revision                 | Every range repeats opening revision |
-
-Go for the read-only capability envelope. Keep resident editing at its measured supported limit.
-Editable paging needs a separate dirty-page/history/save design. Streaming is useful for lowering
-construction copies; it does not solve steady-state residency.
-
-## Reproduction
+## Reproduce
 
 ```sh
 bun run stress:build
-node examples/stress/paged.mjs --sizes 52428800,209715200 --modes resident,streamed --output /tmp/editor-paged/resident.json
-node examples/stress/paged.mjs --sizes 314572800,629145600 --modes paged --output /tmp/editor-paged/paged.json
+bun run --cwd examples/stress bench:paged --sizes 629145600 --modes demand,indexed --output /tmp/paged-windows.json
+bun run --cwd examples/stress bench:paged --sizes 10485760 --modes traverse --output /tmp/paged-traverse.json
 ```
 
-The range source generates deterministic repeated UTF-8 containing a surrogate pair, a combining
-sequence, CJK and CRLF. It allocates requested byte ranges only. All modes read the same source.
-Resident and streamed paths create real Editor buffers; the stream publishes a complete buffer
-only after all chunks are appended. CRLF split across chunks carries a trailing CR forward.
-Resident offsets normalize line endings; paged positions preserve raw decoded text, including BOM.
-The browser proof compares each visited line and a UTF-16 copy range with the generator oracle,
-uses real line controls for a distant jump, captures screenshots, verifies visible pending state,
-and rejects a changed file revision. A sweep visits every page-sized region and checks every row.
+- **Demand.** Open without a byte length, line count, or index. The source returns a short first
+  response and never signals EOF. Verify the initial rows, observe idle request counts, and scroll
+  two rows plus seven pixels. The next read reports a byte length. The first visible byte and
+  its pixel offset stay fixed as the view makes room for the next rows. Scroll up by one row
+  across the window boundary and verify the same pixel offset after prepending. Copy a selected range
+  across two lines with Chromium's clipboard, then close while a user-requested range is pending.
+  The virtual source rejects reads outside the allowed region.
+- **Indexed.** Use the line control to jump to 90% of a file with one supplied checkpoint. The
+  fixture forbids reads before that checkpoint once the jump starts.
+- **Traverse.** Explicitly request each continuation through EOF. This separate mode measures a
+  full traversal and checks every fragment against the generator.
+- **Resident and streamed.** Optional comparison modes construct the editable buffer from one
+  decoded string or from successively decoded chunks.
 
-The controller's unit tests additionally compare all rows and copied text with a complete decoder
-for split multibyte UTF-8, combining text, CRLF, UTF-8 BOM, malformed/truncated UTF-8, no final newline,
-and long lines. They exercise two readers, checkpoint compaction, small-cache eviction, delayed
-cancellation despite a source ignoring abort, and changed-revision invalidation. UTF-16 is refused.
+The report records time to first DOM content, scroll, copy, and jump times, and traversal time.
+It includes source calls, requested and delivered bytes, cache hits, cancellation, peak cached
+bytes, checkpoint retention, and CDP samples of main-renderer JavaScript heap. Timings include
+browser automation. They do not measure compositor paint or network throughput.
 
-## Measurements, 2026-09-28
+## Demand and traversal measurements
 
-Chromium 153, one browser context per configuration. Main-renderer CDP reports after GC; backing
-storage is separate from JS heap. Peak JS heap is sampled every 100ms and may miss brief peaks.
-The source generator is part of construction CPU and does not represent disk/network throughput.
-First-range time ends at decoded DOM update, not physical display paint. Jump time includes
-Playwright UI dispatch and DOM observation.
+Chromium 156.0.8078.4 on the PC heavy runner, November 21, 2026. The measured commit was
+`0babd97af374d89600edcbca9cb6d1d32c2692bc`.
 
-| Mode/input       | Construction/index | Steady JS heap | Backing storage | Sampled JS peak |
-| ---------------- | -----------------: | -------------: | --------------: | --------------: |
-| Resident 50 MiB  |             446 ms |       76.8 MiB |         8.1 MiB |       196.8 MiB |
-| Streamed 50 MiB  |             217 ms |       77.6 MiB |        0.16 MiB |        82.5 MiB |
-| Resident 200 MiB |            1776 ms |      304.8 MiB |        32.1 MiB |       784.8 MiB |
-| Streamed 200 MiB |             832 ms |      307.1 MiB |        0.16 MiB |       318.9 MiB |
-| Paged 300 MiB    |      2104 ms index |       2.26 MiB |        8.16 MiB |        7.10 MiB |
-| Paged 600 MiB    |      4292 ms index |       2.30 MiB |        8.16 MiB |        9.95 MiB |
+| Operation                                           | Source calls | Requested bytes | Delivered bytes | Cache hits | Peak raw cache |     Retained checkpoints |
+| --------------------------------------------------- | -----------: | --------------: | --------------: | ---------: | -------------: | -----------------------: |
+| Open unknown 600 MiB source, then idle              |            1 |          65,536 |             675 |          0 |          675 B |                        1 |
+| Open, scroll both ways, copy, and revisit the start |            2 |         131,072 |          66,211 |          2 |       66,211 B |                        1 |
+| Open and jump to 90% using an index                 |            2 |         131,072 |         131,072 |          0 |        128 KiB | 1 discovered, 1 supplied |
+| Traverse 10 MiB explicitly, including open          |          160 |      10,485,760 |      10,485,750 |      3,271 |          8 MiB |                       40 |
 
-Paged first ranges took 2.4/2.3ms and distant UI jumps 39.7/39.9ms. The 300/600 MiB sweeps retained
-exactly 8 MiB cached pages with at most two reads in flight and 1200/2400 checkpoints. The index
-cap is verified with a smaller limit in unit tests; those document sizes do not yet need compaction.
-Index plus full sweep fetched about twice the file size. Paging bounds residency, not total I/O.
+The unknown source showed its first content in 8.9 ms. Downward and upward rebases took 59.8
+and 34.8 ms, respectively, and kept a seven-pixel offset. Clipboard copy took 7.4 ms with no
+additional reads. Closing cancelled one pending read and left zero in-flight reads and cached
+bytes. The indexed jump took 26.7 ms and used one range beginning at byte 566,231,025. The
+separate full traversal took 340.4 ms. Sampled JavaScript heap peaks were 3.2 MiB for demand,
+1.8 MiB for the indexed jump, and 9.3 MiB for traversal.
 
-Raw evidence is in `docs/performance/e015-results/`; browser screenshots and complete captures are
-in the local run directory. Paged disposal drops backing storage from 8.16 MiB to about
-0.11 MiB. The streamed 200 MiB sample still retained its buffer at the immediate disposal GC;
-that is recorded, not reported as successful collection. Closing its isolated browser context
-releases it. No general buffer-reclamation claim follows from this construction experiment.
+## Historical baseline
 
-Platform owns the live filesystem range session, stable identity, authorization, expiry and
-external-change checks. This standalone proof does not substitute for verifying that real boundary.
+The September 28 E015 run measured bounded residency while the viewer still indexed the whole
+source on startup. Its 300 and 600 MiB inputs fetched about twice the source size over indexing
+plus a full sweep. Paged backing storage was about 8.16 MiB. Those results establish the old
+residency envelope. The demand proof above measures the new request behavior. The
+[historical results](e015-results/) retain the original samples.
+
+| Historical input | Construction or index | Steady JS heap | Backing storage | Sampled JS peak |
+| ---------------- | --------------------: | -------------: | --------------: | --------------: |
+| Resident 50 MiB  |                446 ms |       76.8 MiB |         8.1 MiB |       196.8 MiB |
+| Streamed 50 MiB  |                217 ms |       77.6 MiB |        0.16 MiB |        82.5 MiB |
+| Resident 200 MiB |              1,776 ms |      304.8 MiB |        32.1 MiB |       784.8 MiB |
+| Streamed 200 MiB |                832 ms |      307.1 MiB |        0.16 MiB |       318.9 MiB |
+| Paged 300 MiB    |              2,104 ms |       2.26 MiB |        8.16 MiB |        7.10 MiB |
+| Paged 600 MiB    |              4,292 ms |       2.30 MiB |        8.16 MiB |        9.95 MiB |

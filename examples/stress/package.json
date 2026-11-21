@@ -25,7 +25,7 @@
     "bench:reclamation-live": "node reclamation-live.mjs",
     "bench:geometry": "node geometry.mjs",
     "bench:blink": "node blink.mjs",
-    "bench:paged": "node paged.mjs"
+    "bench:paged": "node paged.ts"
   },
   "dependencies": {
     "@singapore-editor/core": "workspace:*",
