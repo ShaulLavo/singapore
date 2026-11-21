@@ -1,4 +1,5 @@
 import '../style.css'
+import { editorSizing, type EditorHeight } from './editorHeight'
 import { projectReconciliationEdits } from '../reconciliation'
 import { acquireEditorDocumentAnalysis, type EditorDocumentAnalysis } from './documentAnalysis'
 import { normalizeGutterLeadingInset } from '../virtualization/virtualizedTextViewHelpers'
@@ -610,7 +611,7 @@ export class Editor {
       lineHeight: options.lineHeight,
       rowGap: options.rowGap,
       rowPositioning: options.rowPositioning,
-      scrollMode: options.scrollMode,
+      sizing: editorSizing(options.height, options.maxHeight, options.scrollMode),
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
       inputRoute: options.inputRoute,
@@ -2423,16 +2424,22 @@ export class Editor {
     })
   }
 
-  setScrollMode(scrollMode: EditorOptions['scrollMode']): void {
-    if (!this.view.setScrollMode(scrollMode)) return
+  setHeight(height: EditorHeight, maxHeight?: number): void {
+    const sizing = editorSizing(height, maxHeight)
+    if (!this.view.setHeight(sizing)) return
     this.syncContentConstraint()
 
     this.notifyViewContributions('layout', null)
     this.log({
-      action: 'editor.layout.scroll_mode_changed',
+      action: 'editor.layout.height_changed',
       level: 'info',
-      layout: { scrollMode },
+      layout: sizing,
     })
+  }
+
+  /** @deprecated Use `setHeight`. */
+  setScrollMode(scrollMode: EditorOptions['scrollMode']): void {
+    this.setHeight(editorSizing(undefined, undefined, scrollMode).height)
   }
 
   addPlugin(plugin: EditorPlugin): EditorDisposable {
@@ -4053,7 +4060,7 @@ export class Editor {
     this.unregisterContentConstraint?.()
     this.unregisterContentConstraint = null
     const buffer = this.session && editorBufferSession(this.session)?.buffer
-    if (!buffer || this.view.scrollMode !== 'content') return
+    if (!buffer || !this.view.usesContentHeight) return
     this.unregisterContentConstraint = registerDocumentSnapshotConstraint(buffer, (snapshot) =>
       this.view.assertContentSnapshot(snapshot),
     )

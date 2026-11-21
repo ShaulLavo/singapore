@@ -69,6 +69,7 @@ export type {
   EditorOpenDocumentOptions,
   EditorOptions,
   EditorRangeDecoration,
+  EditorHeight,
   EditorScrollMode,
   EditorGutterScroll,
   EditorScrollPosition,

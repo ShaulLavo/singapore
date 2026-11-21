@@ -261,8 +261,7 @@ function createLineView(
 ): EditorSecondaryTextView {
   return createEditorSecondaryTextView(root, {
     className: 'editor-sticky-scroll-lines',
-    // Static: every line of the stack is on screen at once, so there is nothing to virtualize away.
-    scrollMode: 'static',
+    scroll: false,
     overscan: 0,
     lineHeight: snapshot.metrics.rowHeight,
     tabSize: snapshot.tabSize,

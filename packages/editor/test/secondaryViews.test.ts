@@ -62,24 +62,28 @@ describe('secondary view projections', () => {
     expect(projection.visibleLineModel.rows.map((row) => row.text)).toEqual(['alpha'])
   })
 
-  it('creates a read-only text view outside the tab order that sizes itself', () => {
-    const host = document.createElement('div')
-    document.body.append(host)
-    const view = createEditorSecondaryTextView(host, { scrollMode: 'static', overscan: 0 })
+  it.each([{ scroll: false }, { scrollMode: 'static' as const }])(
+    'creates a read-only text view outside the tab order that sizes itself with %o',
+    (options) => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      const view = createEditorSecondaryTextView(host, { ...options, overscan: 0 })
 
-    view.setText('alpha')
-    view.setHeight(40)
+      view.setText('alpha')
+      view.setHeight(40)
 
-    const scrollElement = host.querySelector<HTMLElement>('.editor-virtualized')
-    const inputElement = host.querySelector('textarea')
-    expect(scrollElement?.style.height).toBe('40px')
-    expect(scrollElement?.tabIndex).toBe(-1)
-    expect(inputElement?.tabIndex).toBe(-1)
-    expect(inputElement?.readOnly).toBe(true)
-    expect(EditorSecondaryViewScheduler).toBeTypeOf('function')
-    view.dispose()
-    host.remove()
-  })
+      const scrollElement = host.querySelector<HTMLElement>('.editor-virtualized')
+      const inputElement = host.querySelector('textarea')
+      expect(scrollElement?.style.height).toBe('40px')
+      expect(scrollElement?.dataset.editorScrollMode).toBe('static')
+      expect(scrollElement?.tabIndex).toBe(-1)
+      expect(inputElement?.tabIndex).toBe(-1)
+      expect(inputElement?.readOnly).toBe(true)
+      expect(EditorSecondaryViewScheduler).toBeTypeOf('function')
+      view.dispose()
+      host.remove()
+    },
+  )
 })
 
 function editorViewSnapshot(text: string): EditorViewSnapshot {

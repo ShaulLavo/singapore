@@ -29,7 +29,7 @@ The editor's stylesheet loads with the module, through any bundler that handles 
 
 Use content mode for a code sample or document that scrolls with its page. Give the host its width and leave its height automatic.
 
-Create the view with `new Editor(host, { scrollMode: 'content', wordWrap: true })`, then load the sample with `setText()`.
+Create the view with `new Editor(host, { height: 'content', wordWrap: true })`, then load the sample with `setText()`.
 
 Content mode paints every display row and grows after edits, font changes, preview replacements and resizing. Caret and search reveal scroll outside ancestors. `setScrollMode('content')` switches an existing view to this layout. `static` keeps its existing all-row layout with horizontal editor scrolling; `virtualized` keeps a bounded window of rows.
 

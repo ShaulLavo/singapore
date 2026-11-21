@@ -1,7 +1,6 @@
 import {
   createEditorOptionSync,
   EDITOR_OPTION_DESCRIPTORS,
-  type EditorControlledOptionName,
   type EditorControlledSelection,
   type EditorOptionSync,
 } from '@singapore-editor/core'
@@ -83,9 +82,11 @@ export type SolidEditorOptions = Omit<
   | 'fontSize'
   | 'gutterLeadingInset'
   | 'gutterScroll'
+  | 'height'
   | 'hiddenCharacters'
   | 'keymap'
   | 'lineHeight'
+  | 'maxHeight'
   | 'onChange'
   | 'rangeDecorations'
   | 'rowGap'
@@ -102,12 +103,15 @@ export type SolidEditorOptions = Omit<
   readonly fontSize?: SolidEditorReactiveValue<number | undefined>
   readonly gutterLeadingInset?: SolidEditorReactiveValue<number | undefined>
   readonly gutterScroll?: SolidEditorReactiveValue<EditorOptions['gutterScroll']>
+  readonly height?: SolidEditorReactiveValue<EditorOptions['height']>
   readonly theme?: SolidEditorReactiveValue<EditorTheme | null | undefined>
   readonly hiddenCharacters?: SolidEditorReactiveValue<HiddenCharactersMode | undefined>
   readonly keymap?: SolidEditorReactiveValue<EditorKeymapOptions | undefined>
   readonly lineHeight?: SolidEditorReactiveValue<number | undefined>
+  readonly maxHeight?: SolidEditorReactiveValue<number | undefined>
   readonly rangeDecorations?: SolidEditorReactiveValue<readonly EditorRangeDecoration[] | undefined>
   readonly rowGap?: SolidEditorReactiveValue<number | undefined>
+  /** @deprecated Use `height`. Explicit height takes precedence. */
   readonly scrollMode?: SolidEditorReactiveValue<EditorScrollMode | undefined>
   readonly selection?: SolidEditorReactiveValue<SolidEditorSelection | null | undefined>
   readonly scrollPosition?: SolidEditorReactiveValue<EditorScrollPosition | null | undefined>
@@ -290,7 +294,7 @@ function mountEditor(
   untrack(() => {
     syncDocument(instance, readReactive(options.document), documentState)
     for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
-      optionSync.apply(instance, descriptor, controlledOptionInput(options, descriptor.name))
+      optionSync.apply(instance, descriptor, controlledOptionInput(options, descriptor))
     }
   })
 }
@@ -307,9 +311,11 @@ function createConstructorOptions(
     fontSize,
     gutterLeadingInset,
     gutterScroll,
+    height,
     hiddenCharacters,
     keymap,
     lineHeight,
+    maxHeight,
     onChange,
     onTextChange,
     plugins,
@@ -333,9 +339,11 @@ function createConstructorOptions(
     fontSize: readReactive(fontSize),
     gutterLeadingInset: readReactive(gutterLeadingInset),
     gutterScroll: readReactive(gutterScroll),
+    height: readReactive(height),
     hiddenCharacters: readReactive(hiddenCharacters),
     keymap: readReactive(keymap),
     lineHeight: readReactive(lineHeight),
+    maxHeight: readReactive(maxHeight),
     rangeDecorations: readReactive(rangeDecorations),
     rowGap: readReactive(rowGap),
     scrollMode: readReactive(scrollMode),
@@ -365,20 +373,18 @@ function createReactiveEffects(
   // One effect per descriptor, so each option tracks only the source it was given.
   for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
     createEffect(() =>
-      optionSync.apply(
-        runtime.getEditor(),
-        descriptor,
-        controlledOptionInput(options, descriptor.name),
-      ),
+      optionSync.apply(runtime.getEditor(), descriptor, controlledOptionInput(options, descriptor)),
     )
   }
 }
 
 function controlledOptionInput(
   options: SolidEditorOptions,
-  name: EditorControlledOptionName,
+  descriptor: (typeof EDITOR_OPTION_DESCRIPTORS)[number],
 ): unknown {
-  return readReactive(options[name] as SolidEditorReactiveValue<unknown>)
+  return descriptor.readInput((name) =>
+    readReactive(options[name] as SolidEditorReactiveValue<unknown>),
+  )
 }
 
 function createSolidSyncPlugin(runtime: SolidEditorRuntime): EditorPlugin {

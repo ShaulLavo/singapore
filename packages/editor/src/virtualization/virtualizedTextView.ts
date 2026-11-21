@@ -1,4 +1,5 @@
 import { scheduleFrame, type ScheduledFrame } from '../editor/scheduleFrame'
+import type { EditorSizing } from '../editor/editorHeight'
 import type { RevealBlock } from './revealBlock'
 import { assertContentLayout, contentReadingBounds, revealContentRow } from './contentLayout'
 import { isElementNode, isTextareaElement } from '../dom'
@@ -134,6 +135,9 @@ import {
   setWrapEnabledLayout,
   assertContentSnapshot,
   updateVirtualizerRows,
+  applySizingStyle,
+  sizedScrollMode,
+  usesContentHeight,
   visualColumnForOffset,
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
@@ -364,7 +368,8 @@ export class VirtualizedTextView {
     const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null
     const rowHeight = normalizeRowHeight(lineHeightOverride ?? measuredMetrics.rowHeight)
     const rowGap = normalizeRowGap(options.rowGap)
-    const scrollMode = normalizeScrollMode(options.scrollMode)
+    const sizing = options.sizing ?? null
+    const scrollMode = sizedScrollMode(sizing, rowHeight, normalizeScrollMode(options.scrollMode))
     const rowPositioning = options.rowPositioning ?? 'transform'
     const inputElement = createInputElement(
       container,
@@ -425,6 +430,7 @@ export class VirtualizedTextView {
       // Behind the live version, so the first rebuild always writes.
       renderedRangeHighlightRuleVersion: -1,
       virtualizer,
+      sizing,
       scrollMode,
       rowPositioning,
       longLineChunkSize,
@@ -493,6 +499,7 @@ export class VirtualizedTextView {
     scrollElement.style.setProperty('--editor-gutter-width', '0px')
     scrollElement.style.setProperty('--editor-tab-size', String(tabSize))
     setScrollModeAttribute(scrollElement, scrollMode)
+    applySizingStyle(scrollElement, sizing)
     scrollElement.dataset.editorRowPositioning = rowPositioning
     applyRowHeight(this.view, rowHeight)
     gutterElement.className = 'editor-virtualized-gutter'
@@ -854,12 +861,12 @@ export class VirtualizedTextView {
     return this.atomicRenderDepth > 0 || this.flushingAtomicRender
   }
 
-  get scrollMode(): VirtualizedTextViewScrollMode {
-    return this.view.scrollMode
+  get usesContentHeight(): boolean {
+    return usesContentHeight(this.view)
   }
 
   public assertContentSnapshot(text: string | TextSnapshot, replacement = false): void {
-    if (this.view.scrollMode !== 'content') return
+    if (!this.usesContentHeight) return
     const snapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
     assertContentSnapshot(this.view, snapshot, replacement)
   }
@@ -1115,6 +1122,20 @@ export class VirtualizedTextView {
       scrollMode: nextScrollMode,
       maxScrollHeight: nextScrollMode === 'virtualized' ? this.measuredMaxScrollHeight : undefined,
     })
+    return true
+  }
+
+  public setHeight(sizing: EditorSizing): boolean {
+    const view = this.view
+    const previous = view.sizing
+    if (previous?.height === sizing.height && previous.maxHeight === sizing.maxHeight) return false
+
+    const snapshot = view.virtualizer.getSnapshot()
+    if (sizedScrollMode(sizing, snapshot.totalSize, view.scrollMode) === 'content')
+      assertContentLayout(view.model.textLength, view.model.visibleLineCount, snapshot.totalSize)
+    view.sizing = sizing
+    applySizingStyle(view.scrollElement, sizing)
+    updateVirtualizerRows(view)
     return true
   }
 

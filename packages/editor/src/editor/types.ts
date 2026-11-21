@@ -30,6 +30,9 @@ import type { TextEdit } from '../tokens'
 import type { EditorTokenInput } from '../syntax/tokenStore'
 import type { SelectionAffinity } from '../selections'
 import type { EditorPreparedDocument, EditorPreparedTagValue } from './preparedDocument'
+import type { EditorHeight } from './editorHeight'
+
+export type { EditorHeight } from './editorHeight'
 
 /** Minimal interface for the CSS Custom Highlight API registry. */
 export interface HighlightRegistry {
@@ -66,6 +69,7 @@ export type EditorInputCommandState = {
   readonly canRedo: boolean
 }
 
+/** @deprecated Use EditorHeight to size an editor. */
 export type EditorScrollMode = VirtualizedTextViewScrollMode
 
 export type EditorGutterScroll = NonNullable<VirtualizedTextViewOptions['gutterScroll']>
@@ -163,7 +167,11 @@ export type EditorOptions = {
    * Defaults off on Windows and on elsewhere.
    */
   readonly rtlMoveVisually?: boolean
-  /** `content` paints every row at natural height; outside ancestors own scrolling. */
+  /** Where the editor gets its height. Defaults to `container`. */
+  readonly height?: EditorHeight
+  /** Positive CSS pixels. A content-height editor scrolls internally once it reaches this height. */
+  readonly maxHeight?: number
+  /** @deprecated Use `height`. Explicit height takes precedence. */
   readonly scrollMode?: EditorScrollMode
   readonly selectionSyncMode?: EditorSelectionSyncMode
   /** Confusable and invisible characters to point out; both families report unless turned off. */

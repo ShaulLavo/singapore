@@ -84,11 +84,11 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     applied: [[{ start: 0, end: 3, className: 'sample' }]],
   },
   rowGap: { initial: 0, next: 6, method: 'setRowGap', applied: [6] },
-  scrollMode: {
-    initial: 'virtualized',
-    next: 'static',
-    method: 'setScrollMode',
-    applied: ['static'],
+  height: {
+    initial: 'container',
+    next: 'content',
+    method: 'setHeight',
+    applied: ['content', undefined],
   },
   scrollPosition: {
     initial: { top: 0, left: 0 },
@@ -146,6 +146,28 @@ afterEach(() => {
 })
 
 describe('controlled options', () => {
+  it('applies height and maxHeight together, using the old alias when height is omitted', () => {
+    const mounted = mountReactEditor({
+      document: DOCUMENT,
+      height: 'container',
+      scrollMode: 'content',
+    })
+    const instance = mounted.controller.getEditor()!
+    const sizing = vi.spyOn(instance, 'setHeight')
+
+    mounted.render({ document: DOCUMENT, height: 'content', maxHeight: 160, scrollMode: 'static' })
+    mounted.render({ document: DOCUMENT, height: 'content', maxHeight: 240, scrollMode: 'static' })
+    mounted.render({ document: DOCUMENT, maxHeight: 240, scrollMode: 'content' })
+    mounted.render({ document: DOCUMENT, scrollMode: 'static' })
+
+    expect(sizing.mock.calls).toEqual([
+      ['content', 160],
+      ['content', 240],
+      ['container', undefined],
+    ])
+    mounted.dispose()
+  })
+
   for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
     it(`applies a changed ${descriptor.name} to the mounted editor`, () => {
       const sample = OPTION_SAMPLES[descriptor.name]
@@ -228,7 +250,7 @@ describe('controlled options', () => {
 
   it('coerces input the editor cannot use to the descriptor default', () => {
     const rowGap = descriptorFor('rowGap')
-    const scrollMode = descriptorFor('scrollMode')
+    const height = descriptorFor('height')
     const selection = descriptorFor('selection')
 
     expect(rowGap.validate(Number.NaN)).toBe(rowGap.defaultValue)
@@ -237,7 +259,7 @@ describe('controlled options', () => {
     expect(inset.validate(Number.NaN)).toBe(inset.defaultValue)
     expect(inset.validate(-12)).toBe(inset.defaultValue)
     expect(inset.validate(11.2)).toBe(12)
-    expect(scrollMode.validate('sideways')).toBe(scrollMode.defaultValue)
+    expect(height.validate('sideways')).toEqual(height.defaultValue)
     expect(selection.validate({ anchor: 'first' })).toBe(selection.defaultValue)
   })
 })

@@ -25,7 +25,13 @@ afterEach(() => {
   }
 })
 
-function mount(width = 390) {
+function mount(
+  width = 390,
+  options: Pick<
+    import('../src/editor/types').EditorOptions,
+    'height' | 'maxHeight' | 'scrollMode'
+  > = { height: 'content' },
+) {
   const parent = document.createElement('div')
   parent.id = 'content-height-proof'
   parent.style.cssText = 'height:240px;overflow:auto'
@@ -38,7 +44,7 @@ function mount(width = 390) {
   parent.append(before, host, after)
   document.body.append(parent)
   const editor = new Editor(host, {
-    scrollMode: 'content',
+    ...options,
     wordWrap: true,
     lineHeight: 20,
     fontSize: 14,
@@ -56,6 +62,43 @@ const frames = async () => {
 const scroller = (host: HTMLElement) => host.querySelector<HTMLElement>('.editor-virtualized')!
 const row = (host: HTMLElement, index: number) =>
   host.querySelector<HTMLElement>(`[data-editor-virtual-row="${index}"]`)!
+
+it('grows to the configured height, scrolls through a large paste and shrinks again', async () => {
+  const { editor, host } = mount(390, { height: 'content', maxHeight: 120 })
+  editor.setText('first\nsecond')
+  await frames()
+  expect(scroller(host).clientHeight).toBe(40)
+
+  const text = 'row\n'.repeat(12_000) + 'last'
+  editor.setText(text)
+  await frames()
+  expect(scroller(host).clientHeight).toBe(120)
+  expect(scroller(host).scrollHeight).toBeGreaterThan(120)
+  expect(host.querySelectorAll('[data-editor-virtual-row]').length).toBeLessThan(30)
+  editor.setSelection(text.length)
+  await frames()
+  expect(row(host, 12_000)?.textContent).toBe('last')
+
+  editor.setText('short')
+  await frames()
+  expect(scroller(host).clientHeight).toBe(20)
+  expect(scroller(host).scrollTop).toBe(0)
+})
+
+it('lets explicit height override the old alias and maps the old static editor to container', async () => {
+  const { editor, host } = mount(390, { height: 'container', scrollMode: 'content' })
+  host.style.height = '100px'
+  editor.setText('row\n'.repeat(200))
+  await frames()
+  expect(scroller(host).dataset.editorScrollMode).toBe('virtualized')
+  editor.setScrollMode('static')
+  expect(scroller(host).dataset.editorScrollMode).toBe('virtualized')
+  editor.setHeight('content', 80)
+  await frames()
+  expect(scroller(host).clientHeight).toBe(80)
+  editor.setScrollMode('content')
+  expect(scroller(host).dataset.editorScrollMode).toBe('content')
+})
 
 it.each([390, 752])(
   'sizes the plain-text editor in normal flow at %s px and reveals outside it',
