@@ -153,6 +153,7 @@ function captureClosed(doc: PagedDocument) {
   const snapshot = doc.stats
   closed = snapshot
   if (!snapshot.inFlight) return
+  // @justification The proof samples disposed state after the aborted read releases its slot. The snapshot check excludes later sessions.
   requestAnimationFrame(() => {
     if (closed === snapshot) closed = doc.stats
   })

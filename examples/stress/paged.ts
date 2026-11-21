@@ -118,6 +118,7 @@ async function sample(browser: Browser, size: number, mode: Mode) {
     const cdp = await context.newCDPSession(page)
     const emptyHeap = await heap(cdp)
     let peakHeap = emptyHeap.usedSize
+    // @justification The benchmark samples renderer heap while a scenario runs and clears the sampler in finally.
     const timer = setInterval(() => {
       void cdp
         .send('Runtime.getHeapUsage')

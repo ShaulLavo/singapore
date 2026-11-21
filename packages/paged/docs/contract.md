@@ -84,7 +84,7 @@ Alternatively, give it `{ id, revision, immutable: true }` for a versioned immut
 `openHttpRangeSource(url, { id, signal })` establishes a strong ETag with one bounded opening read
 and reuses its bytes. Use the final range URL. Open the source before associating a trusted index with it.
 
-The HTTP adapter validates single-range `206` responses and reads at most the declared range.
+The HTTP adapter validates single-range `206` responses and caps the retained payload at the declared range.
 A `206` with total `*` can make short progress without revealing the file size. A valid `416` gives
 the exact length if its bounds and identity agree. An ignored range cancels the body. A `200` is
 accepted only for a verified empty representation with an explicit zero Content-Length. A
