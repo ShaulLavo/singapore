@@ -16,19 +16,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
-    name: Typecheck, lint, catalog
-    if: &ready ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+  ci:
+    name: CI
     runs-on: ubuntu-latest
-    permissions: &code-permissions
+    timeout-minutes: 40
+    permissions:
       contents: read
       pull-requests: read
     steps:
-      # Filter in each worker so its runner can queue as soon as GitHub receives the PR event.
+      - name: Require a ready PR
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft
+        run: |
+          echo '::error::Mark this PR ready for review to run the required checks.'
+          exit 1
+
       # Markdown under plans or docs and root Markdown skip workspace checks. Package READMEs
       # and other data read by tests still count as code. Main and dispatch check every file.
-      - &classify
-        name: Classify changed files
+      - name: Classify changed files
         id: filter
         if: ${{ github.event_name == 'pull_request' }}
         timeout-minutes: 5
@@ -42,25 +46,50 @@ jobs:
               - '!docs/**/*.md'
               - '!*.md'
 
-      - &checkout
-        name: Checkout
+      - name: Checkout
         if: &code ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - &setup
-        name: Setup
+      - name: Setup
         if: *code
         uses: ./.github/actions/setup
-
-      # The site has its own pinned Playwright release for build-time capture.
-      - name: Install site Playwright Chromium
-        if: *code
-        working-directory: site
-        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       - name: Check browser cache platform isolation
         if: *code
         run: bun scripts/ci/browser-cache-platform.ts
+
+      - name: Playwright versions and platform
+        if: *code
+        id: playwright
+        shell: bash
+        run: |
+          . /etc/os-release
+          : "${ID:?}" "${VERSION_ID:?}"
+          editor=$(packages/editor/node_modules/.bin/playwright --version | cut -d ' ' -f 2)
+          site=$(site/node_modules/.bin/playwright --version | cut -d ' ' -f 2)
+          printf '%s\n' "platform=${ID}-${VERSION_ID}-${{ runner.arch }}" \
+            "editor=${editor:?}" "site=${site:?}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        if: *code
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-v3-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.editor }}-${{ steps.playwright.outputs.site }}
+
+      # The editor's browser projects also need the headless shell. The site uses a
+      # different Playwright release for build-time capture.
+      - name: Install Playwright browsers
+        if: *code
+        run: |
+          packages/editor/node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit
+          site/node_modules/.bin/playwright install --with-deps chromium
+
+      # Typecheck and test reuse these builds through Turbo. Cap build and check
+      # concurrency at the four CPUs on the hosted runner.
+      - name: Build packages
+        if: *code
+        run: bun run build -- --concurrency=4 --filter='./packages/*'
 
       - name: Check turbo inputs
         if: *code
@@ -70,115 +99,7 @@ jobs:
         if: *code
         run: bun run --cwd packages/tree-sitter-languages languages:generate -- --check
 
-      - name: Typecheck
-        if: *code
-        run: bun run typecheck
-
-      - name: Lint
-        if: *code
-        run: bun run lint
-
-      # Typecheck already built the site. Run its tests on the runner that has that build.
-      - name: Test documentation site
-        if: &code-unless-cancelled ${{ !cancelled() && (github.event_name != 'pull_request' || steps.filter.outputs.code == 'true') }}
-        run: bun run test -- --filter=singapore-editor-site
-
-      # Every save carries the restored entries forward, so entries written over three days ago go;
-      # one still in use is rebuilt once.
-      - &prune-cache
-        name: Prune turbo cache
-        if: ${{ always() && (github.event_name != 'pull_request' || steps.filter.outputs.code == 'true') }}
-        run: find .turbo/cache -type f -mtime +3 -delete 2>/dev/null || true
-
-  core:
-    name: Test (core)
-    timeout-minutes: 20
-    if: *ready
-    runs-on: ubuntu-latest
-    permissions: *code-permissions
-    steps:
-      - *classify
-      - *checkout
-      - *setup
-
-      - name: Playwright version and platform
-        if: *code
-        id: playwright
-        working-directory: packages/editor
-        run: |
-          . /etc/os-release
-          : "${ID:?}" "${VERSION_ID:?}"
-          echo "version=$(./node_modules/.bin/playwright --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
-          echo "platform=${ID}-${VERSION_ID}-${{ runner.arch }}" >> "$GITHUB_OUTPUT"
-
-      # Browsers are a download per Playwright release; the OS libraries still come from apt.
-      - name: Cache Playwright browsers
-        if: *code
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-v2-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
-
-      # Browser projects check geometry and CSS behavior that happy-dom cannot reproduce.
-      # Run the workspace's own Playwright, not `bunx playwright` — bare `bunx` fetches the latest
-      # from the registry, which downloads browsers into a revision directory the pinned version
-      # does not look in, so the install "succeeds" and the launch still fails.
-      #
-      # Chromium and its headless shell, deliberately: vitest browser mode runs `headless: true`,
-      # which launches `chrome-headless-shell`, a separate download from `chromium`. Firefox and
-      # WebKit also run core editing, scroll, layout, and paint checks.
-      - name: Install Playwright browsers
-        if: *code
-        working-directory: packages/editor
-        run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit
-
-      - name: Test
-        if: *code
-        run: bun run test -- --filter=@singapore-editor/core --log-order=stream -- --reporter=verbose
-
-      - *prune-cache
-
-  packages:
-    name: Test (packages)
-    if: *ready
-    runs-on: ubuntu-latest
-    permissions: *code-permissions
-    steps:
-      - *classify
-      - *checkout
-      - *setup
-
-      - name: Playwright version and platform
-        if: *code
-        id: playwright
-        working-directory: packages/editor
-        run: |
-          . /etc/os-release
-          : "${ID:?}" "${VERSION_ID:?}"
-          echo "version=$(./node_modules/.bin/playwright --version | cut -d ' ' -f 2)" >> "$GITHUB_OUTPUT"
-          echo "platform=${ID}-${VERSION_ID}-${{ runner.arch }}" >> "$GITHUB_OUTPUT"
-
-      # Browsers are a download per Playwright release; the OS libraries still come from apt.
-      - name: Cache Playwright browsers
-        if: *code
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-v2-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.version }}-${{ github.job }}
-
-      - name: Install Playwright browsers
-        if: *code
-        working-directory: packages/editor
-        run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit
-
-      # The worker test imports built packages; turbo replays the build from the cache.
-      - name: Build packages
-        if: *code
-        run: bun run build -- --filter='./packages/*'
-
-      # Health must inspect the fresh package exports produced by this job. Keeping it after the
-      # build makes the existing CI verdict block changes without rebuilding the workspace in a
-      # separate workflow.
+      # Health reads the built package exports.
       - name: Check architecture health baselines
         if: *code
         run: bun run health
@@ -186,6 +107,24 @@ jobs:
       - name: Check CI test ownership and mutation controls
         if: *code
         run: bun run test:ci
+
+      - name: Typecheck
+        if: *code
+        run: bun run typecheck -- --concurrency=4
+
+      - name: Lint
+        if: *code
+        run: bun run lint -- --concurrency=4
+
+      # Typecheck already built the site. Run its tests on the runner that has that build.
+      - name: Test documentation site
+        if: &code-unless-cancelled ${{ !cancelled() && (github.event_name != 'pull_request' || steps.filter.outputs.code == 'true') }}
+        run: bun run test -- --filter=singapore-editor-site
+
+      - name: Test core editor
+        if: *code
+        timeout-minutes: 20
+        run: bun run test -- --filter=@singapore-editor/core --log-order=stream
 
       - name: Test TypeScript source worker and browser parity
         if: *code
@@ -225,30 +164,14 @@ jobs:
           --filter=!@singapore-editor/typescript-lsp
           --filter=!singapore-editor-site
 
-      - *prune-cache
-
-  # The one status to read: red when any job failed or was cancelled; a job skipped because the
-  # change cannot affect it counts as passed.
-  verdict:
-    name: CI
-    needs: [check, core, packages]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require a ready PR
-        if: github.event_name == 'pull_request' && github.event.pull_request.draft
-        run: |
-          echo '::error::Mark this PR ready for review to run the required checks.'
-          exit 1
-      - name: Verdict
-        env:
-          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
-        run: test "$FAILED" = false
+      # Each save carries restored entries forward. Drop entries older than three days.
+      - name: Prune turbo cache
+        if: ${{ always() && (github.event_name != 'pull_request' || steps.filter.outputs.code == 'true') }}
+        run: find .turbo/cache -type f -mtime +3 -delete 2>/dev/null || true
 
   update-status:
     name: Report automated update status
-    needs: verdict
+    needs: ci
     if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/automation/tree-sitter-updates' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -261,7 +184,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           HEAD: ${{ github.sha }}
-          RESULT: ${{ needs.verdict.result }}
+          RESULT: ${{ needs.ci.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           state=failure
