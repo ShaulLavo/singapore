@@ -31,6 +31,25 @@ It includes source calls, requested and delivered bytes, cache hits, cancellatio
 bytes, checkpoint retention, and CDP samples of main-renderer JavaScript heap. Timings include
 browser automation. They do not measure compositor paint or network throughput.
 
+## Demand and traversal measurements
+
+Chromium 156.0.8078.4 on the PC heavy runner, November 21, 2026. The measured commit was
+`0babd97af374d89600edcbca9cb6d1d32c2692bc`.
+
+| Operation                                           | Source calls | Requested bytes | Delivered bytes | Cache hits | Peak raw cache |     Retained checkpoints |
+| --------------------------------------------------- | -----------: | --------------: | --------------: | ---------: | -------------: | -----------------------: |
+| Open unknown 600 MiB source, then idle              |            1 |          65,536 |             675 |          0 |          675 B |                        1 |
+| Open, scroll both ways, copy, and revisit the start |            2 |         131,072 |          66,211 |          2 |       66,211 B |                        1 |
+| Open and jump to 90% using an index                 |            2 |         131,072 |         131,072 |          0 |        128 KiB | 1 discovered, 1 supplied |
+| Traverse 10 MiB explicitly, including open          |          160 |      10,485,760 |      10,485,750 |      3,271 |          8 MiB |                       40 |
+
+The unknown source showed its first content in 8.9 ms. Downward and upward rebases took 59.8
+and 34.8 ms, respectively, and kept a seven-pixel offset. Clipboard copy took 7.4 ms with no
+additional reads. Closing cancelled one pending read and left zero in-flight reads and cached
+bytes. The indexed jump took 26.7 ms and used one range beginning at byte 566,231,025. The
+separate full traversal took 340.4 ms. Sampled JavaScript heap peaks were 3.2 MiB for demand,
+1.8 MiB for the indexed jump, and 9.3 MiB for traversal.
+
 ## Historical baseline
 
 The September 28 E015 run measured bounded residency while the viewer still indexed the whole

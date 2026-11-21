@@ -159,7 +159,7 @@
       "file": "examples/stress/src/paged/proof.ts",
       "id": "examples/stress/src/paged/proof.ts:requestAnimationFrame:7a5908e8b6",
       "justification": "The proof samples disposed state after the aborted read releases its slot. The snapshot check excludes later sessions.",
-      "line": 157,
+      "line": 159,
       "snippet": "requestAnimationFrame(() => {"
     },
     {
