@@ -14,7 +14,12 @@ const WINDOW_ROWS = VISIBLE_ROWS + 3
 
 export type PagedViewportOptions = {
   readonly indexedLines?: boolean
-  readonly renderFragments?: (window: PagedWindow, textElements: readonly HTMLSpanElement[]) => void
+  readonly onWindowCleared?: () => void
+  readonly renderFragments?: (
+    window: PagedWindow,
+    textElements: readonly HTMLSpanElement[],
+    startedAt: number,
+  ) => void
 }
 
 export class PagedViewport {
@@ -24,7 +29,6 @@ export class PagedViewport {
   readonly #jump = document.createElement('input')
   readonly #byte = document.createElement('input')
   readonly #jumpControls = document.createElement('span')
-  readonly #byteControls = document.createElement('span')
   readonly #previous: HTMLButtonElement
   readonly #next: HTMLButtonElement
   readonly #end: HTMLButtonElement
@@ -60,10 +64,6 @@ export class PagedViewport {
       this.#jump,
       button('Go to line', () => this.showLine(Number(this.#jump.value) - 1)),
     )
-    this.#byteControls.append(
-      this.#byte,
-      button('Go to byte', () => this.showByte(Number(this.#byte.value))),
-    )
     const controls = document.createElement('div')
     controls.append(
       button('Home', () => this.first()),
@@ -71,7 +71,8 @@ export class PagedViewport {
       this.#next,
       this.#end,
       this.#jumpControls,
-      this.#byteControls,
+      this.#byte,
+      button('Go to byte', () => this.showByte(Number(this.#byte.value))),
     )
     this.#rows.addEventListener('scroll', () => void this.rebase())
     this.#rows.addEventListener('wheel', (event) => this.wheel(event), { passive: false })
@@ -213,6 +214,7 @@ export class PagedViewport {
     scrollTop: (window: PagedWindow) => number = () => 0,
   ) {
     const generation = ++this.#generation
+    const startedAt = performance.now()
     this.#status.textContent = 'Loading file range…'
     this.host.setAttribute('aria-busy', 'true')
     try {
@@ -220,9 +222,10 @@ export class PagedViewport {
       if (generation !== this.#generation) return
       if (window.kind === 'unavailable') {
         this.#status.textContent = availability(window)
+        this.updateControls()
         return
       }
-      this.render(window, scrollTop(window))
+      this.render(window, scrollTop(window), startedAt)
     } catch (error) {
       if (generation !== this.#generation) return
       this.#status.textContent =
@@ -230,13 +233,14 @@ export class PagedViewport {
       if (this.source.stats.state === 'stale') {
         this.#window = null
         this.#rows.replaceChildren()
+        this.options.onWindowCleared?.()
       }
     } finally {
       if (generation === this.#generation) this.host.setAttribute('aria-busy', 'false')
     }
   }
 
-  private render(window: PagedWindow, scrollTop: number) {
+  private render(window: PagedWindow, scrollTop: number, startedAt: number) {
     this.#window = window
     const rows = window.fragments.map(rowElement)
     this.#rows.replaceChildren(...rows.map(({ row }) => row))
@@ -245,6 +249,7 @@ export class PagedViewport {
     this.options.renderFragments?.(
       window,
       rows.map(({ text }) => text),
+      startedAt,
     )
     this.refreshMetadata()
   }
@@ -254,7 +259,6 @@ export class PagedViewport {
     this.#previous.disabled = !this.#window?.previous
     this.#next.disabled = !this.#window?.next
     this.#end.disabled = byteLength === undefined
-    this.#byteControls.hidden = byteLength === undefined
     this.#byte.max = byteLength === undefined ? '' : String(byteLength)
   }
 

@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { chromium, type Browser, type CDPSession, type Page, type Route } from '@playwright/test'
 import { build } from 'vite'
+import { runPagedSyntaxProof } from './paged-syntax-proof.ts'
+import { installPagedSyntaxReplyControl } from './paged-syntax-replies.ts'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const origin = 'https://paged.local'
@@ -15,13 +17,24 @@ const mime = new Map([
   ['.html', 'text/html'],
   ['.js', 'text/javascript'],
   ['.css', 'text/css'],
+  ['.wasm', 'application/wasm'],
 ])
 const pageBytes = 65_536
-type Mode = 'demand' | 'indexed' | 'traverse' | 'resident' | 'streamed'
+type Mode = 'demand' | 'indexed' | 'traverse' | 'resident' | 'streamed' | 'highlighted'
+type Scenario =
+  | { readonly mode: 'highlighted' }
+  | { readonly mode: Exclude<Mode, 'highlighted'>; readonly size: number }
 type Opened = Awaited<ReturnType<typeof __paged.open>>
 type Stats = Opened['stats']
 
-const availableModes: readonly Mode[] = ['demand', 'indexed', 'traverse', 'resident', 'streamed']
+const availableModes: readonly Mode[] = [
+  'demand',
+  'indexed',
+  'traverse',
+  'resident',
+  'streamed',
+  'highlighted',
+]
 const isMode = (value: string): value is Mode => availableModes.some((mode) => mode === value)
 const viewport = { width: 1200, height: 720 }
 const { values } = parseArgs({
@@ -59,15 +72,23 @@ try {
     root,
     configFile: false,
     logLevel: 'error',
-    build: { outDir: directory, rolldownOptions: { input: resolve(root, 'paged.html') } },
+    build: {
+      outDir: directory,
+      rolldownOptions: {
+        input: [resolve(root, 'paged.html'), resolve(root, 'paged-code.html')],
+      },
+    },
   })
   assert(!interrupted, 'Interrupted')
   browser = await chromium.launch({ headless: true, env: { ...process.env, TMPDIR: directory } })
   assert(!interrupted, 'Interrupted')
   const samples = []
   for (const size of sizes) {
-    for (const mode of modes) samples.push(await sample(browser, size, mode))
+    for (const mode of modes) {
+      if (mode !== 'highlighted') samples.push(await sample(browser, { mode, size }))
+    }
   }
+  if (modes.includes('highlighted')) samples.push(await sample(browser, { mode: 'highlighted' }))
   await writeFile(
     values.output,
     JSON.stringify(
@@ -105,7 +126,7 @@ async function heap(cdp: CDPSession) {
   return cdp.send('Runtime.getHeapUsage')
 }
 
-async function sample(browser: Browser, size: number, mode: Mode) {
+async function sample(browser: Browser, scenario: Scenario) {
   const context = await browser.newContext({
     viewport,
     permissions: ['clipboard-read', 'clipboard-write'],
@@ -114,7 +135,9 @@ async function sample(browser: Browser, size: number, mode: Mode) {
     await context.route(`${origin}/**`, asset)
     const page = await context.newPage()
     page.setDefaultTimeout(30_000)
-    await page.goto(`${origin}/paged.html`)
+    if (scenario.mode === 'highlighted') await page.addInitScript(installPagedSyntaxReplyControl)
+    const entry = scenario.mode === 'highlighted' ? 'paged-code.html?proof' : 'paged.html'
+    await page.goto(`${origin}/${entry}`)
     const cdp = await context.newCDPSession(page)
     const emptyHeap = await heap(cdp)
     let peakHeap = emptyHeap.usedSize
@@ -128,13 +151,13 @@ async function sample(browser: Browser, size: number, mode: Mode) {
         .catch(() => {})
     }, 100)
     try {
-      const scenario = await runScenario(page, size, mode)
+      const metrics = await runScenario(page, scenario)
       const liveHeap = await heap(cdp)
       peakHeap = Math.max(peakHeap, liveHeap.usedSize)
       await page.getByRole('button', { name: 'Close file' }).click()
       assert.equal(await page.locator('#view').textContent(), '')
       const disposedHeap = await heap(cdp)
-      const row = { mode, size, ...scenario, emptyHeap, liveHeap, peakHeap, disposedHeap }
+      const row = { ...scenario, ...metrics, emptyHeap, liveHeap, peakHeap, disposedHeap }
       console.log(JSON.stringify(row))
       return row
     } finally {
@@ -145,7 +168,9 @@ async function sample(browser: Browser, size: number, mode: Mode) {
   }
 }
 
-async function runScenario(page: Page, size: number, mode: Mode) {
+async function runScenario(page: Page, scenario: Scenario) {
+  if (scenario.mode === 'highlighted') return runPagedSyntaxProof(page)
+  const { mode, size } = scenario
   if (mode === 'resident' || mode === 'streamed') {
     const opened = await page.evaluate(({ size, mode }) => __paged.compare(mode, size), {
       size,

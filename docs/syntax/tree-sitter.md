@@ -85,6 +85,15 @@ Configure one highlighter per viewport and language or query generation. Each hi
 
 `prewarm` loads the grammar and query without any text. The slice path uses the patterns that fit its [predicate limits](../limitations.md#tree-sitter-slice-highlighting). It skips a pattern if any of its predicates fall outside those limits. The shipped JavaScript, TypeScript, TSX, Python, Rust, Java, PHP, Svelte and SQL queries have usable slice patterns. Some captures may be absent, such as SQL's distinction between numeric and string literals. If no usable patterns remain, a grammar is missing or analysis exceeds a limit, callers can keep displaying the original text. A slice answer describes only its submitted span. It never schedules a complete parse.
 
+The [paged TypeScript example](../../examples/stress/paged-code.html) colors the loaded fragments and the overscan rows they already include. It submits their exact text, caps the analysis input at 8,192 UTF-16 units, and paints clipped token ranges on the visible fragments. Go to byte works before the source size is known. A cold jump can display plain text while new colors are pending. A failed jump leaves the mounted text eligible for its original colors.
+
+Run the Chromium proof from the repository root after building the example dependencies. It reports request-to-color timing, worker phases, source bytes requested, cache hits, and retained token buffers.
+
+```sh
+bun run stress:build
+bun run --cwd examples/stress bench:paged --modes highlighted --output paged-syntax.json
+```
+
 ## Structural Selection
 
 Structural selection is syntax-driven and anchor-backed.
