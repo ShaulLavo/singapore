@@ -4,8 +4,12 @@ import { parseProjectedTree } from './projection'
 import { TREE_SITTER_BOOTSTRAP_UNITS } from './source'
 import {
   SLICE_CAPTURE_LIMIT,
+  SLICE_GRAMMAR_LIMIT,
   SLICE_PARSE_BUDGET_MS,
   SLICE_QUERY_BUDGET_MS,
+  SLICE_QUERY_PROGRESS_LIMIT,
+  SLICE_QUERY_SOURCE_LIMIT,
+  SLICE_QUERY_WORK_LIMIT,
   SLICE_TEXT_LIMIT,
 } from './sliceLimits'
 import {
@@ -84,17 +88,23 @@ import type {
   TreeSitterWorkerRetentionSnapshot,
   TreeSitterHighlightSliceRequest,
   TreeSitterHighlightSliceResult,
+  TreeSitterPrepareSliceLanguageRequest,
 } from './types'
 
-type Runtime = {
+type HighlightRuntime = {
   readonly descriptor: TreeSitterLanguageDescriptor
   readonly language: Language
-  readonly parser: Parser
   highlightQuery: Query | null
+}
+
+type Runtime = HighlightRuntime & {
+  readonly parser: Parser
   foldQuery: Query | null
   injectionQuery: Query | null
   mergeUnitQuery: Query | null
 }
+
+type SliceRuntime = HighlightRuntime & { readonly queryWeight: number }
 
 type LayerKind = 'root' | 'injection' | 'combined-injection'
 
@@ -212,12 +222,10 @@ const QUERY_BUDGET_MS = 20_000
 let parserInitPromise: Promise<void> | null = null
 let nextUse = 1
 const languageDescriptors = new Map<TreeSitterLanguageId, TreeSitterLanguageDescriptor>()
-const languageRegistrations = new Map<
-  TreeSitterLanguageId,
-  { readonly first: number; readonly last: number }
->()
 const languageDescriptorOrder: TreeSitterLanguageId[] = []
 const runtimePromises = new Map<TreeSitterLanguageId, Promise<Runtime>>()
+const sliceRuntimes = new Map<number, Promise<SliceRuntime>>()
+const sliceGrammars = new Map<string, Promise<Language>>()
 const documentCaches = new Map<string, DocumentCache>()
 const bootstrapDocuments = new Map<
   string,
@@ -266,27 +274,19 @@ const ensureParserRuntime = async (): Promise<void> => {
   return parserInitPromise
 }
 
-const registerLanguages = (
-  descriptors: readonly TreeSitterLanguageDescriptor[],
-  registration: number,
-): void => {
-  for (const descriptor of descriptors) registerLanguage(descriptor, registration)
+const registerLanguages = (descriptors: readonly TreeSitterLanguageDescriptor[]): void => {
+  for (const descriptor of descriptors) registerLanguage(descriptor)
 }
 
-const registerLanguage = (descriptor: TreeSitterLanguageDescriptor, registration: number): void => {
+const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
   const normalized = normalizeLanguageDescriptor(descriptor)
   const existing = languageDescriptors.get(normalized.id)
-  const unchanged = existing && languageDescriptorsEqual(existing, normalized)
-  const previous = languageRegistrations.get(normalized.id)
 
   languageDescriptors.set(normalized.id, normalized)
-  languageRegistrations.set(normalized.id, {
-    first: unchanged && previous ? previous.first : registration,
-    last: registration,
-  })
   moveLanguageToEnd(normalized.id)
 
-  if (!existing || unchanged) return
+  if (!existing) return
+  if (languageDescriptorsEqual(existing, normalized)) return
 
   disposeRuntimeForLanguage(normalized.id)
   disposeCachedSnapshotsForLanguage(normalized.id)
@@ -358,7 +358,7 @@ const ensureQuery = (runtime: Runtime, kind: 'highlight' | 'fold' | 'injection')
   return ensureInjectionQuery(runtime)
 }
 
-const ensureHighlightQuery = (runtime: Runtime): Query | null => {
+const ensureHighlightQuery = (runtime: HighlightRuntime): Query | null => {
   if (!runtime.descriptor.highlightQuerySource) return null
   if (runtime.descriptor.highlightQuerySource.trim().length === 0) return null
   if (runtime.highlightQuery) return runtime.highlightQuery
@@ -2214,12 +2214,12 @@ const queryOptions = (
 
 const collectCaptures = (
   tree: Tree | null,
-  runtime: Runtime,
+  runtime: HighlightRuntime,
   context: CancellationContext,
   range?: TreeSitterSyntaxRange,
   captureLimit?: number,
 ): TreeSitterCapture[] => {
-  const query = ensureQuery(runtime, 'highlight')
+  const query = ensureHighlightQuery(runtime)
   if (!query) return []
   const rootNode = tree?.rootNode
   if (!rootNode) return []
@@ -2246,15 +2246,14 @@ const collectCaptures = (
     return captures
   }
 
-  const options = queryOptions(context)
-  if (captureLimit !== undefined) options.matchLimit = 1024
+  const bounded = captureLimit === undefined ? null : limitSliceQuery(context)
   const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
-    query.captureRanges(rootNode, options),
+    query.captureRanges(rootNode, bounded?.options ?? queryOptions(context)),
   )
   assertNotCancelled(context)
   if (
     captureLimit !== undefined &&
-    (queryCaptures.length > captureLimit || query.didExceedMatchLimit())
+    (queryCaptures.length > captureLimit || bounded?.exceeded() || query.didExceedMatchLimit())
   )
     throw new SyntaxRequestCancelled()
   incrementCount(context, 'rawCaptures', queryCaptures.length)
@@ -2281,6 +2280,18 @@ const collectCaptures = (
 
   incrementCount(context, 'uniqueCaptures', captures.length)
   return captures
+}
+
+const limitSliceQuery = (context: CancellationContext) => {
+  let progressChecks = 0
+  const exceeded = () => progressChecks > SLICE_QUERY_PROGRESS_LIMIT
+  return {
+    exceeded,
+    options: {
+      matchLimit: 1024,
+      progressCallback: () => ++progressChecks > SLICE_QUERY_PROGRESS_LIMIT || isCancelled(context),
+    },
+  }
 }
 
 const collectFolds = (
@@ -2495,19 +2506,14 @@ const highlightSlice = async (
   request: TreeSitterHighlightSliceRequest,
 ): Promise<TreeSitterHighlightSliceResult> => {
   if (request.text.length > SLICE_TEXT_LIMIT) return { sliceStatus: 'over-budget' }
-  const { languageId, registration, cancellationBuffer, text } = request
-  const currentLanguage = () => {
-    const active = languageRegistrations.get(languageId)
-    return !!active && registration >= active.first && registration <= active.last
-  }
-  if (!currentLanguage()) return { sliceStatus: 'unavailable' }
-  if (!languageDescriptors.get(languageId)?.highlightQuerySource?.trim())
-    return { sliceStatus: 'unsupported-language' }
+  const { sliceLanguageId, cancellationBuffer, text } = request
+  const registration = sliceRuntimes.get(sliceLanguageId)
+  if (!registration) return { sliceStatus: 'unavailable' }
+  const currentLanguage = () => sliceRuntimes.get(sliceLanguageId) === registration
 
   const started = nowMs()
-  const runtime = await ensureRuntime(languageId)
+  const runtime = await registration
   if (!currentLanguage()) return { sliceStatus: 'unavailable' }
-  ensureHighlightQuery(runtime)
   const parse = {
     ...createCancellationContext(cancellationBuffer, SLICE_PARSE_BUDGET_MS),
     isStale: () => !currentLanguage(),
@@ -2518,6 +2524,8 @@ const highlightSlice = async (
       index < text.length ? text.slice(index, endIndex) : undefined
     tree = await parseTreeInput(runtime.language, input, parse, { phase: 'parseRoot' })
     assertNotCancelled(parse)
+    if (tree.rootNode.descendantCount * runtime.queryWeight > SLICE_QUERY_WORK_LIMIT)
+      return { sliceStatus: 'over-budget' }
     const query = {
       ...createCancellationContext(cancellationBuffer, SLICE_QUERY_BUDGET_MS),
       isStale: parse.isStale,
@@ -2542,6 +2550,51 @@ const highlightSlice = async (
   } finally {
     tree?.delete()
   }
+}
+
+const prepareSliceLanguage = async (request: TreeSitterPrepareSliceLanguageRequest) => {
+  const { sliceLanguageId, descriptor } = request
+  const runtime = loadSliceRuntime(descriptor)
+  sliceRuntimes.set(sliceLanguageId, runtime)
+  await runtime
+  return undefined
+}
+
+const loadSliceRuntime = async (
+  descriptor: TreeSitterLanguageDescriptor,
+): Promise<SliceRuntime> => {
+  const query = descriptor.highlightQuerySource
+  if (!query || query.length > SLICE_QUERY_SOURCE_LIMIT)
+    throw new Error('Invalid slice highlight query')
+  await ensureParserRuntime()
+  const language = await sliceGrammar(descriptor)
+  const highlightQuery = new Query(language, query)
+  const references = query.match(/@[\w.-]+/g)?.length ?? 0
+  const queryWeight = Math.max(highlightQuery.patternCount(), references)
+  return { descriptor, language, highlightQuery, queryWeight }
+}
+
+const sliceGrammar = (descriptor: TreeSitterLanguageDescriptor): Promise<Language> => {
+  const url = descriptor.wasmUrl
+  const existing = sliceGrammars.get(url)
+  if (existing) return existing
+  if (sliceGrammars.size >= SLICE_GRAMMAR_LIMIT) throw new Error('Slice grammar limit reached')
+
+  const resident = runtimePromises.get(descriptor.id)
+  const grammar =
+    resident && languageDescriptors.get(descriptor.id)?.wasmUrl === url
+      ? resident.then((runtime) =>
+          runtime.descriptor.wasmUrl === url ? runtime.language : Language.load(url),
+        )
+      : Language.load(url)
+  sliceGrammars.set(url, grammar)
+  return grammar
+}
+
+const disposeSliceLanguage = (sliceLanguageId: number): void => {
+  const runtime = sliceRuntimes.get(sliceLanguageId)
+  sliceRuntimes.delete(sliceLanguageId)
+  if (runtime) void runtime.then((loaded) => loaded.highlightQuery?.delete()).catch(() => undefined)
 }
 
 const flattenDocument = async (
@@ -3761,7 +3814,8 @@ const disposeAll = (): void => {
   markdownDocuments.clear()
   sourceReader.dispose()
   languageDescriptors.clear()
-  languageRegistrations.clear()
+  for (const sliceLanguageId of sliceRuntimes.keys()) disposeSliceLanguage(sliceLanguageId)
+  sliceGrammars.clear()
   languageDescriptorOrder.length = 0
   for (const promise of runtimePromises.values()) {
     void promise.then(disposeRuntime).catch(() => undefined)
@@ -3906,12 +3960,17 @@ const handleRequest = async (
   }
 
   if (payload.type === 'registerLanguages') {
-    registerLanguages(payload.languages, payload.registration)
+    registerLanguages(payload.languages)
     return undefined
   }
 
   if (payload.type === 'warmLanguages') return warmLanguages(payload.languageIds)
+  if (payload.type === 'prepareSliceLanguage') return prepareSliceLanguage(payload)
   if (payload.type === 'highlightSlice') return highlightSlice(payload)
+  if (payload.type === 'disposeSliceLanguage') {
+    disposeSliceLanguage(payload.sliceLanguageId)
+    return undefined
+  }
 
   if (payload.type === 'parse') return parseDocument(payload, source!)
   if (payload.type === 'edit') return editDocument(payload, source!)
@@ -4076,6 +4135,16 @@ const inspectSharedRetention = async (): Promise<TreeSitterWorkerRetentionSnapsh
     if (runtime.injectionQuery) queries.add(runtime.injectionQuery)
     if (runtime.mergeUnitQuery) queries.add(runtime.mergeUnitQuery)
   }
+  const slices = await Promise.allSettled(sliceRuntimes.values())
+  for (const slice of slices) {
+    if (slice.status !== 'fulfilled') continue
+    languages.add(slice.value.language)
+    if (slice.value.highlightQuery) queries.add(slice.value.highlightQuery)
+  }
+  const grammars = await Promise.allSettled(sliceGrammars.values())
+  for (const grammar of grammars) {
+    if (grammar.status === 'fulfilled') languages.add(grammar.value)
+  }
   const initialization = await Promise.allSettled(parserInitPromise ? [parserInitPromise] : [])
   const memoryBytes = initialization[0]?.status === 'fulfilled' ? heap().buffer.byteLength : null
   return {
@@ -4089,6 +4158,8 @@ const inspectSharedRetention = async (): Promise<TreeSitterWorkerRetentionSnapsh
     parserCount: parsers.size,
     languageCount: languages.size,
     queryCount: queries.size,
+    sliceLanguageCount: sliceRuntimes.size,
+    sliceGrammarCount: sliceGrammars.size,
     runtimes: Array.from(runtimes, (runtime) => ({
       languageId: runtime.descriptor.id,
       highlightQueryCount: Number(runtime.highlightQuery !== null),

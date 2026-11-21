@@ -219,7 +219,6 @@ type TreeSitterInitRequest = {
 type TreeSitterRegisterLanguagesRequest = {
   readonly type: 'registerLanguages'
   readonly languages: readonly TreeSitterLanguageDescriptor[]
-  readonly registration: number
 }
 
 type TreeSitterWarmLanguagesRequest = {
@@ -229,10 +228,20 @@ type TreeSitterWarmLanguagesRequest = {
 
 export type TreeSitterHighlightSliceRequest = {
   readonly type: 'highlightSlice'
-  readonly languageId: TreeSitterLanguageId
-  readonly registration: number
+  readonly sliceLanguageId: number
   readonly text: string
   readonly cancellationBuffer?: SharedArrayBuffer
+}
+
+export type TreeSitterPrepareSliceLanguageRequest = {
+  readonly type: 'prepareSliceLanguage'
+  readonly sliceLanguageId: number
+  readonly descriptor: TreeSitterLanguageDescriptor
+}
+
+type TreeSitterDisposeSliceLanguageRequest = {
+  readonly type: 'disposeSliceLanguage'
+  readonly sliceLanguageId: number
 }
 
 export type TreeSitterSliceTimings = {
@@ -344,7 +353,9 @@ export type TreeSitterWorkerRequestPayload =
   | TreeSitterInitRequest
   | TreeSitterRegisterLanguagesRequest
   | TreeSitterWarmLanguagesRequest
+  | TreeSitterPrepareSliceLanguageRequest
   | TreeSitterHighlightSliceRequest
+  | TreeSitterDisposeSliceLanguageRequest
   | TreeSitterParseRequest
   | TreeSitterEditRequest
   | TreeSitterRangeRequest
@@ -416,6 +427,8 @@ export type TreeSitterWorkerRetentionSnapshot = {
     readonly parserCount: number
     readonly languageCount: number
     readonly queryCount: number
+    readonly sliceLanguageCount: number
+    readonly sliceGrammarCount: number
     readonly runtimes: readonly {
       readonly languageId: TreeSitterLanguageId
       readonly highlightQueryCount: number

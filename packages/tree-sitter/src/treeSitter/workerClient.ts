@@ -43,6 +43,20 @@ type PendingRequest = {
   readonly reject: (error: Error) => void
 }
 
+type SliceLanguageEntry = {
+  readonly id: number
+  readonly descriptor: TreeSitterLanguageDescriptor
+  refs: number
+  worker: Worker | null
+  preparation: Promise<TreeSitterWorkerResult> | null
+}
+
+export type TreeSitterSliceLanguage = {
+  prepare(): Promise<boolean>
+  highlight(text: string, signal: AbortSignal): Promise<TreeSitterHighlightSliceResult | undefined>
+  dispose(): void
+}
+
 type TreeSitterParseDocumentRequest = Omit<
   TreeSitterParseRequest,
   'generation' | 'cancellationBuffer'
@@ -171,7 +185,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   private disposeTask: Promise<void> | null = null
   private nextRequestId = 1
   private nextGeneration = 1
-  private nextLanguageRegistration = 0
+  private nextSliceLanguageId = 0
   private workerGeneration = 0
   private lifecycle: TreeSitterWorkerLifecycleState = 'idle'
   private lastError: Error | null = null
@@ -186,9 +200,10 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   }
   private readonly registeredLanguages = new Map<
     TreeSitterLanguageId,
-    { readonly descriptor: TreeSitterLanguageDescriptor; readonly registration: number }
+    TreeSitterLanguageDescriptor
   >()
   private readonly warmedLanguages = new Set<TreeSitterLanguageId>()
+  private readonly sliceLanguages = new Set<SliceLanguageEntry>()
 
   public get generation(): number | null {
     return this.worker ? this.workerGeneration : null
@@ -219,12 +234,11 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const handle = await this.ensureWorkerReady()
     if (!handle) return
 
-    const registration = ++this.nextLanguageRegistration
-    await this.postRequest({ type: 'registerLanguages', languages: nextLanguages, registration })
+    await this.postRequest({ type: 'registerLanguages', languages: nextLanguages })
     if (this.worker !== handle) return
 
     for (const language of nextLanguages) {
-      this.registeredLanguages.set(language.id, { descriptor: language, registration })
+      this.registeredLanguages.set(language.id, language)
       // A changed registration drops the worker's compiled runtime for that id.
       this.warmedLanguages.delete(language.id)
     }
@@ -252,26 +266,75 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     await this.postRequest({ type: 'warmLanguages', languageIds })
   }
 
-  public highlightSlice(
-    descriptor: TreeSitterLanguageDescriptor,
-    text: string,
-    signal: AbortSignal,
-  ): Promise<TreeSitterHighlightSliceResult | undefined> {
-    return this.trackClientTask(this.finishHighlightSlice(descriptor, text, signal))
+  public retainSliceLanguage(descriptor: TreeSitterLanguageDescriptor): TreeSitterSliceLanguage {
+    const existing = Array.from(this.sliceLanguages).find((entry) =>
+      sameLanguageRegistration(entry.descriptor, descriptor),
+    )
+    const entry = existing ?? {
+      id: ++this.nextSliceLanguageId,
+      descriptor,
+      refs: 0,
+      worker: null,
+      preparation: null,
+    }
+    this.sliceLanguages.add(entry)
+    entry.refs++
+    return {
+      prepare: () => this.trackClientTask(this.prepareSliceLanguage(entry)),
+      highlight: (text, signal) => this.trackClientTask(this.highlightSlice(entry, text, signal)),
+      dispose: () => this.releaseSliceLanguage(entry),
+    }
   }
 
-  private async finishHighlightSlice(
-    descriptor: TreeSitterLanguageDescriptor,
+  private async prepareSliceLanguage(entry: SliceLanguageEntry): Promise<boolean> {
+    const handle = await this.ensureWorkerReady()
+    if (!handle || !entry.refs) return false
+    if (entry.worker !== handle) {
+      entry.worker = handle
+      entry.preparation = this.postRequest(
+        {
+          type: 'prepareSliceLanguage',
+          sliceLanguageId: entry.id,
+          descriptor: entry.descriptor,
+        },
+        false,
+      )
+    }
+    await entry.preparation
+    return this.worker === handle && entry.refs > 0
+  }
+
+  private releaseSliceLanguage(entry: SliceLanguageEntry): void {
+    if (--entry.refs !== 0) return
+    const preparation = entry.preparation
+    if (!preparation) {
+      this.discardSliceLanguage(entry)
+      return
+    }
+    // Let another view join the same in-progress grammar load before releasing the registration.
+    const discard = () => {
+      if (entry.refs === 0 && entry.preparation === preparation) this.discardSliceLanguage(entry)
+    }
+    void preparation.then(discard, discard)
+  }
+
+  private discardSliceLanguage(entry: SliceLanguageEntry): void {
+    this.sliceLanguages.delete(entry)
+    if (entry.worker && entry.worker === this.worker) {
+      const release = this.postRequest(
+        { type: 'disposeSliceLanguage', sliceLanguageId: entry.id },
+        false,
+      )
+      void this.trackClientTask(release).catch(() => undefined)
+    }
+  }
+
+  private async highlightSlice(
+    entry: SliceLanguageEntry,
     text: string,
     signal: AbortSignal,
   ): Promise<TreeSitterHighlightSliceResult | undefined> {
-    const handle = await this.ensureWorkerReady()
-    if (!handle || signal.aborted) return
-    await this.finishRegisterLanguages([descriptor])
-    if (this.worker !== handle || signal.aborted) return
-
-    const entry = this.registeredLanguages.get(descriptor.id)
-    if (!entry || !sameLanguageRegistration(entry.descriptor, descriptor)) return
+    if (!entry.worker || this.worker !== entry.worker || signal.aborted) return
     const cancellationBuffer = supportsSharedCancellation() ? new SharedArrayBuffer(4) : undefined
     const flag = cancellationBuffer ? new Int32Array(cancellationBuffer) : null
     const cancel = () => {
@@ -283,8 +346,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
       const result = await this.postRequest(
         {
           type: 'highlightSlice',
-          languageId: descriptor.id,
-          registration: entry.registration,
+          sliceLanguageId: entry.id,
           text,
           cancellationBuffer,
         },
@@ -779,10 +841,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   }
 
   private shouldRegisterLanguageWithWorker(language: TreeSitterLanguageDescriptor): boolean {
-    return !sameLanguageRegistration(
-      this.registeredLanguages.get(language.id)?.descriptor,
-      language,
-    )
+    return !sameLanguageRegistration(this.registeredLanguages.get(language.id), language)
   }
 
   private unregisteredLanguages(
@@ -869,6 +928,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     this.initPromise = null
     this.registeredLanguages.clear()
     this.warmedLanguages.clear()
+    if (lifecycle === 'disposed') this.sliceLanguages.clear()
     this.connection = null
     this.nextRegistration = 0
   }

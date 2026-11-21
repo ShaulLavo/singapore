@@ -2,13 +2,13 @@ import { EditorTokenStore } from '@singapore-editor/core/syntax'
 import {
   resolveTreeSitterLanguageContribution,
   type TreeSitterLanguageContribution,
-  type TreeSitterLanguageDescriptor,
 } from './treeSitter/registry'
-import { SLICE_TEXT_LIMIT } from './treeSitter/sliceLimits'
+import { SLICE_QUERY_SOURCE_LIMIT, SLICE_TEXT_LIMIT } from './treeSitter/sliceLimits'
 import type { TreeSitterSliceTimings } from './treeSitter/types'
 import {
   createTreeSitterWorkerOwner,
   treeSitterBackendForOwner,
+  type TreeSitterSliceLanguage,
   type TreeSitterWorkerOwner,
 } from './treeSitter/workerClient'
 
@@ -41,7 +41,10 @@ export type TreeSitterHighlightedSlice = {
   readonly endsAtSourceEnd: boolean
   /** UTF-16 offsets relative to the submitted text. */
   readonly tokens: EditorTokenStore
-  readonly timings: TreeSitterSliceTimings & { readonly roundTripMs: number }
+  readonly timings: TreeSitterSliceTimings & {
+    readonly preparationMs: number
+    readonly roundTripMs: number
+  }
 }
 
 export type TreeSitterSliceHighlightLimits = {
@@ -59,11 +62,15 @@ export type TreeSitterSliceHighlighterOptions = {
 }
 
 type SliceSource = Pick<TreeSitterHighlightSlice, 'sourceId' | 'revision'>
-type PlainReason = Extract<TreeSitterSliceHighlightResult, { kind: 'plain' }>['reason']
+type PlainSlice = Extract<TreeSitterSliceHighlightResult, { kind: 'plain' }>
+type PreparedLanguage =
+  | { readonly kind: 'ready'; readonly language: TreeSitterSliceLanguage }
+  | PlainSlice
 type CacheEntry = { readonly text: string; readonly result: TreeSitterHighlightedSlice }
 type HighlightJob = {
   readonly slice: TreeSitterHighlightSlice
   readonly key: string
+  readonly startedAt: number
   readonly controller: AbortController
   readonly promise: Promise<TreeSitterSliceHighlightResult>
   readonly resolve: (result: TreeSitterSliceHighlightResult) => void
@@ -89,7 +96,9 @@ export class TreeSitterSliceHighlighter {
   private readonly backend: ReturnType<typeof treeSitterBackendForOwner>
   private readonly limits: TreeSitterSliceHighlightLimits
   private readonly contribution: TreeSitterLanguageContribution | null
-  private descriptor: Promise<TreeSitterLanguageDescriptor> | null = null
+  private loadingLanguage: Promise<PreparedLanguage> | null = null
+  private retainedLanguage: TreeSitterSliceLanguage | null = null
+  private preparing = false
   private readonly cache = new Map<string, CacheEntry>()
   private source: SliceSource | null = null
   private active: HighlightJob | null = null
@@ -109,14 +118,7 @@ export class TreeSitterSliceHighlighter {
 
   /** Starts and warms the worker without supplying text. */
   async prewarm(): Promise<void> {
-    if (this.disposed) return
-    try {
-      const descriptor = await this.language()
-      if (!this.disposed && descriptor?.highlightQuerySource?.trim())
-        await this.backend.warmLanguages([descriptor])
-    } catch {
-      // The next highlight still reports an unavailable result if grammar loading fails.
-    }
+    await this.prepare()
   }
 
   /** Returns colors for this exact slice immediately if they are still cached. */
@@ -149,7 +151,14 @@ export class TreeSitterSliceHighlighter {
     const promise = new Promise<TreeSitterSliceHighlightResult>((done) => {
       resolve = done
     })
-    this.waiting = { slice: { ...slice }, key, promise, resolve, controller: new AbortController() }
+    this.waiting = {
+      slice: { ...slice },
+      key,
+      promise,
+      resolve,
+      startedAt: performance.now(),
+      controller: new AbortController(),
+    }
     this.startWaiting()
     return promise
   }
@@ -175,13 +184,35 @@ export class TreeSitterSliceHighlighter {
     this.cancelJobs('disposed')
     this.source = null
     this.clearCache()
+    this.retainedLanguage?.dispose()
+    this.retainedLanguage = null
+    this.loadingLanguage = null
     if (this.ownsWorker) await this.owner.dispose()
   }
 
-  private language(): Promise<TreeSitterLanguageDescriptor | null> {
-    if (!this.contribution) return Promise.resolve(null)
-    this.descriptor ??= resolveTreeSitterLanguageContribution(this.contribution)
-    return this.descriptor
+  private async prepare(): Promise<PreparedLanguage> {
+    if (this.disposed) return plain('disposed')
+    try {
+      this.loadingLanguage ??= this.loadLanguage()
+      const loaded = await this.loadingLanguage
+      if (loaded.kind === 'plain') return loaded
+      if (this.disposed) return plain('disposed')
+      return (await loaded.language.prepare()) ? loaded : plain('unavailable')
+    } catch {
+      return plain('unavailable')
+    }
+  }
+
+  private async loadLanguage(): Promise<PreparedLanguage> {
+    if (!this.contribution) return plain('unsupported-language')
+    const descriptor = await resolveTreeSitterLanguageContribution(this.contribution)
+    if (this.disposed) return plain('disposed')
+    const query = descriptor.highlightQuerySource
+    if (!query?.trim()) return plain('unsupported-language')
+    if (query.length > SLICE_QUERY_SOURCE_LIMIT) return plain('over-budget')
+    const language = this.backend.retainSliceLanguage(descriptor)
+    this.retainedLanguage = language
+    return { kind: 'ready', language }
   }
 
   private resetForSource(slice: TreeSitterHighlightSlice): boolean {
@@ -201,28 +232,39 @@ export class TreeSitterSliceHighlighter {
   }
 
   private startWaiting(): void {
-    const job = this.waiting
-    if (this.active || !job) return
-    this.active = job
-    this.waiting = null
-    void this.analyze(job).then((result) => {
-      this.active = null
-      if (!job.controller.signal.aborted) {
-        if (result.kind === 'highlighted') this.retain(job, result)
-        job.resolve(result)
-      }
-      this.startWaiting()
-    })
+    if (this.active || this.preparing || !this.waiting) return
+    this.preparing = true
+    void this.dispatchWaiting()
   }
 
-  private async analyze(job: HighlightJob): Promise<TreeSitterSliceHighlightResult> {
+  private async dispatchWaiting(): Promise<void> {
+    const prepared = await this.prepare()
+    this.preparing = false
+    const job = this.waiting
+    if (!job) return
+    this.waiting = null
+    if (prepared.kind === 'plain') {
+      job.resolve(prepared)
+      return
+    }
+    this.active = job
+    const result = await this.analyze(job, prepared.language)
+    this.active = null
+    if (!job.controller.signal.aborted) {
+      if (result.kind === 'highlighted') this.retain(job, result)
+      job.resolve(result)
+    }
+    this.startWaiting()
+  }
+
+  private async analyze(
+    job: HighlightJob,
+    language: TreeSitterSliceLanguage,
+  ): Promise<TreeSitterSliceHighlightResult> {
     const { signal } = job.controller
     const started = performance.now()
     try {
-      const descriptor = await this.language()
-      if (!descriptor?.highlightQuerySource?.trim()) return plain('unsupported-language')
-      if (signal.aborted) return plain('superseded')
-      const result = await this.backend.highlightSlice(descriptor, job.slice.text, signal)
+      const result = await language.highlight(job.slice.text, signal)
       if (signal.aborted) return plain('superseded')
       if (!result) return plain('unavailable')
       if (result.sliceStatus !== 'highlighted') return plain(result.sliceStatus)
@@ -231,7 +273,11 @@ export class TreeSitterSliceHighlighter {
         quality: job.slice.startsAtSourceStart ? 'known-start' : 'provisional',
         endsAtSourceEnd: job.slice.endsAtSourceEnd,
         tokens: EditorTokenStore.fromPacked(result.tokensPacked),
-        timings: { ...result.timings, roundTripMs: performance.now() - started },
+        timings: {
+          ...result.timings,
+          preparationMs: started - job.startedAt,
+          roundTripMs: performance.now() - started,
+        },
       }
     } catch {
       return plain('unavailable')
@@ -280,7 +326,7 @@ export class TreeSitterSliceHighlighter {
   }
 }
 
-function plain(reason: PlainReason): TreeSitterSliceHighlightResult {
+function plain(reason: PlainSlice['reason']): PlainSlice {
   return { kind: 'plain', reason }
 }
 
