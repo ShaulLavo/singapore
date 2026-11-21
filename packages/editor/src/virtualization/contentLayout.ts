@@ -10,7 +10,8 @@ export function revealContentRow(row: HTMLElement, requested: RevealBlock): void
     inline: 'nearest',
     behavior: reading.hasNonScrollingClip ? 'instant' : 'auto',
   })
-  if (reading.hasNonScrollingClip && !contentRowIsVisible(row)) alignToClippedViewport(row, block)
+  if (reading.hasNonScrollingClip && (block === 'center' || !contentRowIsVisible(row)))
+    alignToClippedViewport(row, block)
 }
 
 function contentRowIsVisible(row: HTMLElement, reading = contentReadingBounds(row)): boolean {
@@ -40,7 +41,7 @@ function alignToClippedViewport(row: HTMLElement, block: ScrollLogicalPosition):
 function rowAlignmentCorrection(row: HTMLElement, block: ScrollLogicalPosition): number {
   const bounds = row.getBoundingClientRect()
   const reading = contentReadingBounds(row)
-  if (reading.bottom <= reading.top) return 0
+  if (!reading.hasNonScrollingClip || reading.bottom <= reading.top) return 0
   const first = bounds.top - reading.top
   const last = bounds.bottom - reading.bottom
   if (block === 'center') return (first + last) / 2

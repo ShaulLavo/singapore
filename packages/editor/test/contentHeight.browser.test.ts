@@ -67,12 +67,13 @@ const row = (host: HTMLElement, index: number) =>
   host.querySelector<HTMLElement>(`[data-editor-virtual-row="${index}"]`)!
 
 it.each([
-  ['nearest', 80],
-  ['center', 40],
-] as const)('reveals a distant row with %s alignment inside a nested clip', async (block, top) => {
+  ['nearest', 100, 80],
+  ['center', 100, 40],
+  ['center', 140, 60],
+] as const)('reveals a row with %s in a %i px clip', async (block, height, top) => {
   const { editor, host, parent } = mount()
   const clip = document.createElement('div')
-  clip.style.cssText = 'height:100px;overflow:clip'
+  clip.style.cssText = `height:${height}px;overflow:clip`
   parent.before(clip)
   clip.append(parent)
   mounted[mounted.length - 1]!.parent = clip
