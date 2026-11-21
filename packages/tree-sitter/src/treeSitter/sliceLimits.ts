@@ -1,4 +1,8 @@
-export const SLICE_TEXT_LIMIT = 64 * 1024
+export const SLICE_TEXT_LIMIT = 16 * 1024
+export const SLICE_QUERY_SOURCE_LIMIT = 16 * 1024
+export const SLICE_QUERY_WORK_LIMIT = 64 * 1024
+export const SLICE_QUERY_PROGRESS_LIMIT = 128
+export const SLICE_GRAMMAR_LIMIT = 16
 export const SLICE_CAPTURE_LIMIT = 8 * 1024
 export const SLICE_PARSE_BUDGET_MS = 40
 export const SLICE_QUERY_BUDGET_MS = 25

@@ -75,7 +75,7 @@ Disposal and restart:
 - The next request on the same owner creates a new worker generation and runs `init` again.
 - Callers must reissue failed parse/query work. The owner does not replay failed requests.
 
-The read-only slice API uses this same owner and language runtime without a document source connection. Each request owns a bounded text string and an ephemeral parser and tree. A reply carries packed tokens, and the viewport highlighter can retain those tokens in its own bounded cache. Disposing a highlighter cancels its work and releases the cache. A caller-supplied worker owner stays alive for its other views.
+The read-only slice API uses this same worker and parser engine without a document source connection. Slice views share a registration while they use the same grammar and query. Slice registrations have their own lifetime and never replace a resident editor's language registration. Grammar preparation carries no text. Each analysis request owns a bounded text string and an ephemeral parser and tree. A reply carries packed tokens, and the viewport highlighter can retain those tokens in its own bounded cache. Disposing a highlighter cancels its work, releases its query registration and clears its cache. A caller-supplied worker owner stays alive for its other views and can reuse its loaded grammars.
 
 ## Minimap Worker
 

@@ -6,6 +6,7 @@ import {
 } from '../../tree-sitter-languages/src/index'
 import {
   createTreeSitterSliceHighlighter,
+  createTreeSitterLanguageRegistry,
   createTreeSitterWorkerOwner,
   resolveTreeSitterLanguageContribution,
   type TreeSitterHighlightedSlice,
@@ -15,11 +16,13 @@ import {
 } from '../src'
 import type { TreeSitterWorkerRequest } from '../src/treeSitter/types'
 import { treeSitterBackendForOwner } from '../src/treeSitter/workerClient'
+import { createTreeDocument, disposeTreeDocuments } from './factories/document'
 
 const highlighters = new Set<TreeSitterSliceHighlighter>()
 const owners = new Set<ReturnType<typeof createTreeSitterWorkerOwner>>()
 
 afterEach(async () => {
+  disposeTreeDocuments()
   await Promise.all(Array.from(highlighters, (highlighter) => highlighter.dispose()))
   await Promise.all(Array.from(owners, (owner) => owner.dispose()))
   highlighters.clear()
@@ -30,11 +33,7 @@ it('warms and highlights only the supplied slice with UTF-16 offsets over exact 
   const { workerOwner, requests } = recordWorker()
   const highlighter = createHighlighter({ workerOwner })
   await highlighter.prewarm()
-  expect(requests.map(({ payload }) => payload.type)).toEqual([
-    'init',
-    'registerLanguages',
-    'warmLanguages',
-  ])
+  expect(requests.map(({ payload }) => payload.type)).toEqual(['init', 'prepareSliceLanguage'])
 
   const text = '/* 🦊\r\n      note */\r\nconst name = `é${1}`;\r\nconst next = '
   const part = slice(text)
@@ -136,23 +135,97 @@ it('coalesces superseded work and ignores old revisions after a request reaches 
   expect(requests.filter(({ payload }) => payload.type === 'highlightSlice')).toHaveLength(2)
 })
 
-it('checks the worker registration before using a changed query for the same language id', async () => {
-  const { workerOwner, holdNextSlice } = recordWorker()
-  const highlighter = createHighlighter({ workerOwner })
-  await highlighter.prewarm()
-  const held = holdNextSlice()
-  const input = slice('const x = 1')
-  const beforeChange = highlighter.highlight(input)
-  const send = await held
+it('isolates a conflicting slice query from a live resident session on the same worker', async () => {
+  const { workerOwner } = recordWorker()
+  const text = 'const x = 1;\nconst y = 2;'
+  const registry = createTreeSitterLanguageRegistry()
+  registry.registerLanguage(TYPESCRIPT_TREE_SITTER_LANGUAGE)
+  const resident = createTreeDocument({
+    documentId: 'resident.ts',
+    languageId: 'typescript',
+    text,
+    languageResolver: registry,
+    backend: treeSitterBackendForOwner(workerOwner),
+  })
+  await resident.run()
+  const first = await resident.runtime.queryRange({ startIndex: 0, endIndex: 12 })
+  expect(first.captures.some((capture) => capture.captureName === 'keyword.declaration')).toBe(true)
+  const before = await workerOwner.inspectRetention()
+  expect(before?.treeCount).toBeGreaterThan(0)
+
   const descriptor = await resolveTreeSitterLanguageContribution(TYPESCRIPT_TREE_SITTER_LANGUAGE)
-  await treeSitterBackendForOwner(workerOwner).registerLanguages([
-    { ...descriptor, highlightQuerySource: '(identifier) @comment' },
+  const highlighter = createHighlighter({
+    workerOwner,
+    language: { ...descriptor, highlightQuerySource: '(identifier) @comment' },
+  })
+  await highlighter.prewarm()
+  const input = slice('const x = 1')
+  const colors = await highlighted(highlighter, input)
+  expect(colors.tokens.toTokens()).toEqual([
+    { start: 6, end: 7, style: styleForTreeSitterCapture('comment') },
   ])
+  expect(await workerOwner.inspectRetention()).toMatchObject({
+    treeCount: before?.treeCount,
+    shared: { sliceLanguageCount: 1 },
+  })
+  const second = await resident.runtime.queryRange({ startIndex: 13, endIndex: text.length })
+  expect(second.captures.some((capture) => capture.captureName === 'keyword.declaration')).toBe(
+    true,
+  )
+
+  await highlighter.dispose()
+  expect(await workerOwner.inspectRetention()).toMatchObject({
+    treeCount: before?.treeCount,
+    shared: { sliceLanguageCount: 0 },
+  })
+  await resident.edit([{ from: 6, to: 7, text: 'renamed' }])
+  const updated = await resident.runtime.queryRange({ startIndex: 0, endIndex: 18 })
+  expect(updated.captures.some((capture) => capture.captureName === 'keyword.declaration')).toBe(
+    true,
+  )
+})
+
+it('shares a pending grammar load without dispatching text from disposed views', async () => {
+  const { workerOwner, requests, holdNext } = recordWorker()
+  const held = holdNext('prepareSliceLanguage')
+  const first = createHighlighter({ workerOwner })
+  const firstResult = first.highlight(slice('const old = 1'))
+  const send = await held
+  await first.dispose()
+  expect(await firstResult).toEqual({ kind: 'plain', reason: 'disposed' })
+  for (let index = 0; index < 8; index++) {
+    const closed = createHighlighter({ workerOwner })
+    void closed.prewarm()
+    const work = closed.highlight(slice('const closed = 2'))
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    await closed.dispose()
+    expect(await work).toEqual({ kind: 'plain', reason: 'disposed' })
+    expect(closed.inspect()).toMatchObject({
+      inFlightTextUnits: 0,
+      queuedTextUnits: 0,
+      retainedTextUnits: 0,
+    })
+  }
+  const survivor = createHighlighter({ workerOwner })
+  const answer = survivor.highlight(slice('const survivor = 3'))
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  expect(first.inspect()).toMatchObject({
+    inFlightTextUnits: 0,
+    queuedTextUnits: 0,
+    retainedTextUnits: 0,
+  })
+  expect(requests.map(({ payload }) => payload.type)).toEqual(['init', 'prepareSliceLanguage'])
   send()
-  expect(await beforeChange).toEqual({ kind: 'plain', reason: 'unavailable' })
-  expect(highlighter.lookup(input)).toBeNull()
-  const original = await highlighted(highlighter, input)
-  expect(original.tokens.styleAt(0)).toEqual(styleForTreeSitterCapture('keyword.declaration'))
+  expect(await answer).toMatchObject({ kind: 'highlighted' })
+  expect(requests.map(({ payload }) => payload.type)).toEqual([
+    'init',
+    'prepareSliceLanguage',
+    'highlightSlice',
+  ])
+  await survivor.dispose()
+  expect(await workerOwner.inspectRetention()).toMatchObject({
+    shared: { sliceLanguageCount: 0, sliceGrammarCount: 1 },
+  })
 })
 
 it('evicts a long scroll by text and token limits and preserves a shared worker on disposal', async () => {
@@ -172,6 +245,11 @@ it('evicts a long scroll by text and token limits and preserves a shared worker 
     expect(stats.tokenBufferBytes).toBeLessThanOrEqual(108)
   }
   expect(highlighter.lookup(first)).toBeNull()
+  const otherView = createHighlighter({ workerOwner })
+  await highlighted(otherView, first)
+  expect(await workerOwner.inspectRetention()).toMatchObject({
+    shared: { sliceLanguageCount: 1, sliceGrammarCount: 1 },
+  })
   await highlighter.dispose()
   expect(highlighter.inspect()).toMatchObject({
     cacheEntries: 0,
@@ -180,10 +258,12 @@ it('evicts a long scroll by text and token limits and preserves a shared worker 
   })
   expect(await highlighter.highlight(first)).toEqual({ kind: 'plain', reason: 'disposed' })
   expect(workerOwner.inspect()).toMatchObject({ lifecycle: 'ready', workerGeneration: 1 })
-  const otherView = createHighlighter({ workerOwner })
-  await highlighted(otherView, first)
-  expect(workerOwner.inspect()).toMatchObject({ lifecycle: 'ready', workerGeneration: 1 })
-  expect(await workerOwner.inspectRetention()).toMatchObject({ treeCount: 0, snapshotCount: 0 })
+  await highlighted(otherView, slice('const second = 2'))
+  expect(await workerOwner.inspectRetention()).toMatchObject({
+    treeCount: 0,
+    snapshotCount: 0,
+    shared: { sliceLanguageCount: 1 },
+  })
 })
 
 it('releases queued work on disposal and gives plain text for missing grammar or exceeded bounds', async () => {
@@ -225,7 +305,7 @@ it('releases queued work on disposal and gives plain text for missing grammar or
     reason: 'over-budget',
   })
   const dense = createHighlighter({ workerOwner })
-  expect(await dense.highlight(slice('const a=1;'.repeat(5_000)))).toEqual({
+  expect(await dense.highlight(slice('const a=1;'.repeat(1_600)))).toEqual({
     kind: 'plain',
     reason: 'over-budget',
   })
@@ -269,7 +349,10 @@ async function highlighted(
 
 function recordWorker() {
   const requests: TreeSitterWorkerRequest[] = []
-  let receiveHeldSlice: ((send: () => void) => void) | null = null
+  let held: {
+    type: TreeSitterWorkerRequest['payload']['type']
+    resolve(send: () => void): void
+  } | null = null
   const workerOwner = createTreeSitterWorkerOwner({
     workerFactory: () => {
       const worker = new Worker(
@@ -279,24 +362,26 @@ function recordWorker() {
       const postMessage = worker.postMessage.bind(worker)
       worker.postMessage = (request: TreeSitterWorkerRequest): void => {
         requests.push(request)
-        if (request.payload.type !== 'highlightSlice' || !receiveHeldSlice) {
+        if (request.payload.type !== held?.type) {
           postMessage(request)
           return
         }
-        const resolve = receiveHeldSlice
-        receiveHeldSlice = null
+        const { resolve } = held
+        held = null
         resolve(() => postMessage(request))
       }
       return worker
     },
   })
   owners.add(workerOwner)
+  const holdNext = (type: TreeSitterWorkerRequest['payload']['type']) =>
+    new Promise<() => void>((resolve) => {
+      held = { type, resolve }
+    })
   return {
     workerOwner,
     requests,
-    holdNextSlice: () =>
-      new Promise<() => void>((resolve) => {
-        receiveHeldSlice = resolve
-      }),
+    holdNext,
+    holdNextSlice: () => holdNext('highlightSlice'),
   }
 }
