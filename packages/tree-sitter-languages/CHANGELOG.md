@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter-languages
 
+## 0.2.14
+
+### Patch Changes
+
+- Update packed Singapore dependency versions for this release.
+
 ## 0.2.13
 
 ### Patch Changes

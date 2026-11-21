@@ -1,5 +1,11 @@
 # @singapore-editor/lsp-plugin
 
+## 0.2.13
+
+### Patch Changes
+
+- Update packed Singapore dependency versions for this release.
+
 ## 0.2.12
 
 ### Patch Changes

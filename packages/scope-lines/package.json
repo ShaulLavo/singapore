@@ -1,6 +1,6 @@
 {
   "name": "@singapore-editor/scope-lines",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Indent guides, sticky headers, and bracket pair colors for the Singapore editor.",
   "keywords": [
     "browser",

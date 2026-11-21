@@ -1,5 +1,11 @@
 # @singapore-editor/markdown
 
+## 0.2.12
+
+### Patch Changes
+
+- Expose document headings for content-height editor layout.
+
 ## 0.2.11
 
 ### Patch Changes

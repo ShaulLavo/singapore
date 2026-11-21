@@ -1,6 +1,6 @@
 {
   "name": "@singapore-editor/highlighting",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Worker-based syntax highlighting for Singapore editors, diffs, and code snippets.",
   "keywords": [
     "browser",
