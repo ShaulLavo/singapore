@@ -419,26 +419,41 @@ test('a source that ignores abort cannot publish a superseded revision', async (
   expect(doc.stats.cancelledReads).toBe(1)
 })
 
-test('a superseded locator cannot block a new window or publish its late result', async () => {
+test('source reads bypass an abort-ignoring locator while further locators stay bounded', async () => {
   const { source, calls } = fixture(encode('first\nsecond\n'))
   const pending = deferred<null>()
   const started = deferred<AbortSignal>()
+  let locators = 0
   const index = indexed(source, {
-    coverage: [{ kind: 'line', start: 1, end: 2 }],
+    coverage: [{ kind: 'line', start: 1, end: 3 }],
     async locate(_target, signal) {
+      locators++
       started.resolve(signal)
       return pending.promise
     },
   })
-  const view = new PagedDocument(source, { ...small, index }).createView()
+  const doc = new PagedDocument(source, { ...small, index, maxInFlight: 1 })
+  const view = doc.createView()
   const rejected = expect(view.seekLine(1, 1)).rejects.toMatchObject({ name: 'AbortError' })
   const signal = await started.promise
   const fresh = view.first(1)
-  await rejected
-  expect(signal.aborted).toBe(true)
-  expect(raw(await fresh)).toBe('first\n')
-  pending.resolve(null)
-  expect(calls).toEqual([[0, 8]])
+  try {
+    await rejected
+    expect(signal.aborted).toBe(true)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(calls).toEqual([[0, 8]])
+    expect(raw(await fresh)).toBe('first\n')
+    const queued = expect(view.seekLine(2, 1)).rejects.toMatchObject({ name: 'AbortError' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(locators).toBe(1)
+    view.cancel()
+    await queued
+    expect(doc.stats.peakInFlight).toBe(1)
+  } finally {
+    pending.resolve(null)
+    await fresh
+    doc.dispose()
+  }
 })
 
 test('a resumed code point spends the next window’s byte budget on carried bytes', async () => {
@@ -547,4 +562,125 @@ test('global copy rejects a checkpoint with the wrong coordinates even when it f
     index: indexed(source, { checkpoints: [{ byteOffset: 3, line: 2, utf16Offset: 2 }] }),
   })
   await expect(doc.createView().copyRange(0, 4)).rejects.toThrow('contradicts an index checkpoint')
+})
+
+test('mapped gap copy checks line and UTF-16 coordinates inferred from the left cursor', async () => {
+  const { source, calls } = fixture(encode('aaaa\naa\nzz\naaaa'), Infinity, true)
+  const doc = new PagedDocument(source, {
+    ...small,
+    cacheBytes: 8,
+    index: indexed(source, { checkpoints: [{ byteOffset: 8, line: 3, utf16Offset: 7 }] }),
+  })
+  const view = doc.createView()
+  const first = await view.first(1)
+  const last = await view.seekByte(11, 1)
+  if (last.kind !== 'window') throw new Error('The byte was unavailable')
+  const before = calls.length
+  await expect(
+    view.copy(
+      { fragment: first.fragments[0]!, column: 4 },
+      { fragment: last.fragments[0]!, column: 1 },
+    ),
+  ).rejects.toThrow('contradicts an index checkpoint')
+  expect(calls.slice(before)).toEqual([[5, 8]])
+})
+
+test('tail checks mapped evidence from the buffered prefix before the last row', async () => {
+  const { source, calls } = fixture(encode('aa\nb'), Infinity, true)
+  const doc = new PagedDocument(source, {
+    ...small,
+    index: indexed(source, { checkpoints: [{ byteOffset: 3, line: 2, utf16Offset: 2 }] }),
+  })
+  await expect(doc.createView().end(1)).rejects.toThrow('contradicts an index checkpoint')
+  expect(calls).toEqual([[0, 4]])
+})
+
+test('copy aligns overlapping unmapped fragments using only their byte-start gap', async () => {
+  const { source, calls } = fixture(encode('abcdefghijklmnopqrstuvwxyz'), Infinity, true)
+  const view = new PagedDocument(source, {
+    ...small,
+    cacheBytes: 8,
+    maxWindowUnits: 8,
+  }).createView()
+  const left = await view.seekByte(5, 1)
+  const right = await view.seekByte(8, 1)
+  if (left.kind !== 'window' || right.kind !== 'window') throw new Error('The byte was unavailable')
+  expect(left.fragments[0]?.utf16Offset).toBeUndefined()
+  expect(right.fragments[0]?.utf16Offset).toBeUndefined()
+  const before = calls.length
+  expect(
+    await view.copy(
+      { fragment: right.fragments[0]!, column: 1 },
+      { fragment: left.fragments[0]!, column: 1 },
+    ),
+  ).toEqual({ kind: 'text', text: 'ghi' })
+  expect(calls.slice(before).every(([start, end]) => start >= 5 && end <= 8)).toBe(true)
+})
+
+test('a four-byte reverse budget preserves LF evidence before an emoji', async () => {
+  const { source, calls } = fixture(encode('\n🙂'), 1, true)
+  const view = new PagedDocument(source, {
+    ...small,
+    cacheBytes: 8,
+    maxReadBytes: 4,
+    maxReadRequests: 1,
+  }).createView()
+  let window = await view.end(1)
+  if (window.kind !== 'window') throw new Error('Tail was unavailable')
+  for (let attempt = 0; window.previous && window.stop === 'budget' && attempt < 7; attempt++) {
+    const before = calls.length
+    window = await view.previous(window.previous, 1)
+    expect(calls.length - before).toBeLessThanOrEqual(1)
+  }
+  expect(window.fragments[0]).toMatchObject({ text: '🙂', continuesBefore: false })
+})
+
+test('tail checks relative checkpoint coordinates when the buffered suffix cannot reach byte zero', async () => {
+  const { source, calls } = fixture(encode('01234567890123456789\naa\nbb\nend'), Infinity, true)
+  const index = indexed(source, {
+    checkpoints: [
+      { byteOffset: 24, line: 2, utf16Offset: 24 },
+      { byteOffset: 27, line: 4, utf16Offset: 26 },
+    ],
+  })
+  const doc = new PagedDocument(source, { ...small, index, maxWindowUnits: 8 })
+  await expect(doc.createView().end(1)).rejects.toThrow('contradicts an index checkpoint')
+  expect(calls[0]?.[0]).toBe(19)
+})
+
+test.each(['last', 'last!'])(
+  'tail uses buffered checkpoint evidence before rendering %s',
+  async (last) => {
+    const { source } = fixture(encode(`0123456789\nA\nB\n${last}`), Infinity, true)
+    const index = indexed(source, {
+      checkpoints: [
+        { byteOffset: 11, line: 1, utf16Offset: 11 },
+        { byteOffset: 13, line: 3, utf16Offset: 12 },
+      ],
+    })
+    const doc = new PagedDocument(source, { ...small, index, maxWindowUnits: 8 })
+
+    await expect(doc.createView().end(1)).rejects.toThrow('contradicts an index checkpoint')
+  },
+)
+
+test('gap copy checks the coordinates of the right cursor even if the left cursor is unmapped', async () => {
+  const { source } = fixture(encode('01234567890123456\nA\nBcd\nlastlast'), Infinity, true)
+  const index = indexed(source, {
+    checkpoints: [{ byteOffset: 20, line: 2, utf16Offset: 19 }],
+    totals: { lineCount: 4, utf16Length: 32 },
+  })
+  const view = new PagedDocument(source, { ...small, index, maxWindowUnits: 8 }).createView()
+  const right = await view.end(1)
+  const left = await view.seekByte(10, 1)
+  if (left.kind !== 'window' || right.kind !== 'window') throw new Error('Missing selection bounds')
+  expect(left.fragments[0]?.utf16Offset).toBeUndefined()
+  expect(right.fragments[0]?.utf16Offset).toBe(24)
+
+  await expect(
+    view.copy(
+      { fragment: left.fragments[0]!, column: 8 },
+      { fragment: right.fragments[0]!, column: 1 },
+    ),
+  ).rejects.toThrow('contradicts the cursor coordinates')
 })

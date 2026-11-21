@@ -32,7 +32,7 @@ export type Piece = {
 
 export const origin: Position = { byteOffset: 0, line: 0, utf16Offset: 0, lineStart: true }
 
-export function advance(pos: Position, bytes: number, units: number, newline: boolean): Position {
+function advance(pos: Position, bytes: number, units: number, newline: boolean): Position {
   return {
     byteOffset: pos.byteOffset + bytes,
     ...(pos.line === undefined ? {} : { line: pos.line + Number(newline) }),
@@ -40,6 +40,32 @@ export function advance(pos: Position, bytes: number, units: number, newline: bo
     lineStart: newline,
   }
 }
+
+export function advanceText(pos: Position, bytes: Uint8Array, text: string): Position {
+  if (!bytes.length) return { ...pos, carry: undefined }
+  return {
+    byteOffset: pos.byteOffset + bytes.length,
+    line: pos.line === undefined ? undefined : pos.line + text.split('\n').length - 1,
+    utf16Offset: pos.utf16Offset === undefined ? undefined : pos.utf16Offset + text.length,
+    lineStart: bytes.at(-1) === 10,
+  }
+}
+
+export function assertMatchingCoordinates(actual: Position, expected: Position) {
+  if (
+    (actual.line !== undefined && expected.line !== undefined && actual.line !== expected.line) ||
+    (actual.utf16Offset !== undefined &&
+      expected.utf16Offset !== undefined &&
+      actual.utf16Offset !== expected.utf16Offset)
+  )
+    throw new PagedSourceError('Read content contradicts the cursor coordinates')
+}
+
+type VerifyDecoded = (position: Position, bytes: Uint8Array) => Position | undefined
+
+export type ReverseProbe =
+  | { readonly kind: 'bytes'; readonly bytes: Uint8Array }
+  | { readonly kind: 'boundary'; readonly pieces: readonly Piece[] }
 
 export function positionBefore(target: number): Position {
   return target <= 3 ? origin : { byteOffset: target - 3, lineStart: false }
@@ -242,27 +268,34 @@ function yieldToHost() {
 
 export async function readText(
   reader: SourceReader,
-  start: number,
+  start: Position,
   boundary: number,
   signal: AbortSignal,
   budget: ReadBudget,
-  consume: (text: string, bytes: Uint8Array, end: number) => boolean,
+  consume: (text: string, end: Position) => boolean,
+  verify: VerifyDecoded,
 ) {
-  let pos: Position = { byteOffset: start, lineStart: start === 0 }
-  let yieldedAt = start
+  let pos = start
+  let yieldedAt = start.byteOffset
   while (true) {
     const block = await readBlock(reader, pos, budget, signal, boundary)
     reader.assertLive(signal)
     if (!block) return 'budget'
-    const at = pos.byteOffset + block.bytes.length
-    if (consume(decode(block.bytes), block.bytes, at)) return 'done'
-    if (block.terminal) return at === boundary ? 'done' : 'eof'
-    pos = { ...pos, byteOffset: at, carry: block.carry.slice() }
-    if (at - yieldedAt >= 65_536) {
+    const text = decode(block.bytes)
+    const next = verify(pos, block.bytes) ?? advanceText(pos, block.bytes, text)
+    if (consume(text, next)) return 'done'
+    if (block.terminal) return next.byteOffset === boundary ? 'done' : 'eof'
+    pos = { ...next, carry: block.carry.slice() }
+    if (next.byteOffset - yieldedAt >= 65_536) {
       await yieldToHost()
-      yieldedAt = at
+      yieldedAt = next.byteOffset
     }
   }
+}
+
+type PreviousScan = {
+  readonly pieces: readonly Piece[]
+  readonly reverseProbe?: ReverseProbe
 }
 
 export async function scanPrevious(
@@ -271,10 +304,14 @@ export async function scanPrevious(
   end: Position,
   rows: number,
   signal: AbortSignal,
-  reverseProbe?: Uint8Array,
+  verify: VerifyDecoded,
+  reverseProbe?: ReverseProbe,
   tail = false,
-) {
-  const budget = new ReadBudget(options, reverseProbe?.length)
+): Promise<PreviousScan> {
+  const carried = reverseProbe?.kind === 'bytes' ? reverseProbe.bytes : empty
+  const budget = new ReadBudget(options, carried.length)
+  if (reverseProbe?.kind === 'boundary')
+    return readPreviousBoundary(reader, budget, signal, reverseProbe.pieces)
   const span = Math.min(options.maxWindowUnits, options.maxReadBytes - 3, 65_536)
   const desired = Math.max(0, end.byteOffset - span)
   if (!reverseProbe) {
@@ -283,20 +320,33 @@ export async function scanPrevious(
     if (buffer) {
       const min = alignedOffset(buffer, desired - probe)
       if (min < buffer.length)
-        return { pieces: buildPrevious(buffer, min, end, rows, options, reader, tail) }
+        return { pieces: buildPrevious(buffer, min, end, rows, options, reader, tail, verify) }
     }
   }
   const size = Math.min(5, options.maxReadBytes, end.byteOffset)
-  const probe = await readReverseProbe(
-    reader,
-    end.byteOffset,
-    size,
-    budget,
-    signal,
-    reverseProbe ?? empty,
-  )
-  if (probe.length < size) return { pieces: [], reverseProbe: probe }
-  return { pieces: buildPrevious(probe, lastScalarStart(probe), end, rows, options, reader, tail) }
+  const probe = await readReverseProbe(reader, end.byteOffset, size, budget, signal, carried)
+  if (probe.length < size) return { pieces: [], reverseProbe: { kind: 'bytes', bytes: probe } }
+  const min = lastScalarStart(probe)
+  const pieces = buildPrevious(probe, min, end, rows, options, reader, tail, verify)
+  if (min === 0 && probe.length < end.byteOffset)
+    return readPreviousBoundary(reader, budget, signal, pieces)
+  return { pieces }
+}
+
+async function readPreviousBoundary(
+  reader: SourceReader,
+  budget: ReadBudget,
+  signal: AbortSignal,
+  pieces: readonly Piece[],
+): Promise<PreviousScan> {
+  const first = pieces[0]!
+  const at = first.start.byteOffset
+  const bytes = await reader.read(at - 1, at, budget, signal)
+  reader.assertLive(signal)
+  if (!bytes) return { pieces: [], reverseProbe: { kind: 'boundary', pieces } }
+  if (!bytes.length) throw new PagedSourceError('Read content ends before the cursor')
+  const withBoundary = { ...first, start: { ...first.start, lineStart: bytes[0] === 10 } }
+  return { pieces: [withBoundary].concat(pieces.slice(1)) }
 }
 
 async function readSuffix(
@@ -346,16 +396,17 @@ function buildPrevious(
   options: PagedOptions,
   reader: SourceReader,
   tail: boolean,
+  verify: VerifyDecoded,
 ) {
+  const mappedEnd = verifyPreviousBytes(buffer, min, end, verify)
   const trailing = tail && buffer.at(-1) === 10
   const before = rows - Number(trailing)
   const pieces = new Pieces(options.maxWindowUnits)
-  let through = end
+  let through = mappedEnd
   if (before) {
     const first = previousStart(buffer, min, before)
     const bytes = buffer.subarray(first)
-    const start = reversePosition(end, bytes, buffer[first - 1] === 10)
-    splitBlock(bytes, true, start.byteOffset)
+    const start = reversePosition(mappedEnd, bytes, buffer[first - 1] === 10)
     const result = consumeBlock(
       { bytes, carry: empty, terminal: true },
       start,
@@ -369,6 +420,24 @@ function buildPrevious(
   }
   if (trailing) pieces.finish({ ...through, lineStart: true }, '', false)
   return pieces.items
+}
+
+function verifyPreviousBytes(
+  buffer: Uint8Array,
+  min: number,
+  end: Position,
+  verify: VerifyDecoded,
+) {
+  if (end.byteOffset !== buffer.length) {
+    const firstBufferedLine = buffer.subarray(0, min).indexOf(10) + 1
+    const start = firstBufferedLine || min
+    const bytes = buffer.subarray(start)
+    return verify(reversePosition(end, bytes, buffer[start - 1] === 10), bytes) ?? end
+  }
+  splitBlock(buffer, true, 0)
+  const mappedEnd = verify(origin, buffer) ?? advanceText(origin, buffer, decode(buffer))
+  assertMatchingCoordinates(mappedEnd, end)
+  return mappedEnd
 }
 
 function previousStart(bytes: Uint8Array, min: number, rows: number) {

@@ -455,7 +455,7 @@
       "file": "packages/paged/src/window.ts",
       "id": "packages/paged/src/window.ts:setTimeout:79c0cb252b",
       "justification": "A task boundary lets input and cancellation run during cached decoding.",
-      "line": 240,
+      "line": 256,
       "snippet": "return new Promise<void>((resolve) => setTimeout(resolve, 0))"
     },
     {

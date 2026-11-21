@@ -9,7 +9,7 @@ import {
   type RangeSource,
 } from './types'
 import { decode } from './utf8'
-import { origin, type Position } from './window'
+import { advanceText, origin, type Position } from './window'
 
 export function mergeTotals(left: PagedTotals, right: PagedTotals): PagedTotals {
   const byteLength = mergeExact(left.byteLength, right.byteLength, 'byte length')
@@ -145,7 +145,7 @@ export class TrustedIndex {
     const checkpoints = target.kind === 'line' ? this.#checkpoints : this.#byOffset
     const locate = this.#locate
     const checkpoint = locate
-      ? await reader.run(signal, (active) => locate(target, active))
+      ? await reader.locate(signal, (active) => locate(target, active))
       : preceding(checkpoints, target)
     signal.throwIfAborted()
     if (!checkpoint) return undefined
@@ -171,24 +171,35 @@ export class TrustedIndex {
     }
   }
 
-  verifyDecoded(pos: Position, bytes: Uint8Array) {
-    if (!this.#checkpoints.length) return
-    let { line, utf16Offset } = pos
+  verifyDecoded(pos: Position, bytes: Uint8Array): Position | undefined {
+    if (!this.#checkpoints.length) return undefined
+    const checkpointAtStart = pos.lineStart ? this.#atByte.get(pos.byteOffset) : undefined
+    let mapped = checkpointAtStart ? this.mapCheckpoint(pos, checkpointAtStart) : pos
+    let start = 0
     const first = upperBound(
       this.#checkpoints,
       pos.byteOffset,
       (checkpoint) => checkpoint.byteOffset,
     )
-    let start = 0
     for (let index = first; index < this.#checkpoints.length; index++) {
       const checkpoint = this.#checkpoints[index]!
       const end = checkpoint.byteOffset - pos.byteOffset
       if (end > bytes.length) break
-      const text = decode(bytes.subarray(start, end))
-      line = line === undefined ? undefined : line + text.split('\n').length - 1
-      utf16Offset = utf16Offset === undefined ? undefined : utf16Offset + text.length
-      this.verify({ ...checkpoint, line, utf16Offset, lineStart: true })
+      const part = bytes.subarray(start, end)
+      mapped = this.mapCheckpoint(advanceText(mapped, part, decode(part)), checkpoint)
       start = end
+    }
+    if (!start && !checkpointAtStart) return undefined
+    const tail = bytes.subarray(start)
+    return advanceText(mapped, tail, decode(tail))
+  }
+
+  private mapCheckpoint(pos: Position, checkpoint: PagedCheckpoint): Position {
+    this.verify(pos)
+    return {
+      ...pos,
+      line: pos.line ?? checkpoint.line,
+      utf16Offset: pos.utf16Offset ?? checkpoint.utf16Offset,
     }
   }
 

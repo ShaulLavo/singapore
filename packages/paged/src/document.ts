@@ -18,6 +18,7 @@ import {
   type RangeSource,
 } from './types'
 import {
+  assertMatchingCoordinates,
   origin,
   positionBefore,
   readText,
@@ -26,6 +27,7 @@ import {
   type Goal,
   type Piece,
   type Position,
+  type ReverseProbe,
 } from './window'
 
 const maxByte = Number.MAX_SAFE_INTEGER
@@ -35,7 +37,7 @@ const outsideSource: PagedUnavailable = { kind: 'unavailable', reason: 'outside-
 type CursorState = {
   readonly pos: Position
   readonly goal?: Goal
-  readonly reverseProbe?: Uint8Array
+  readonly reverseProbe?: ReverseProbe
   readonly tail?: boolean
 }
 
@@ -230,6 +232,7 @@ export class PagedDocument {
       end,
       rows,
       signal,
+      this.verifyDecoded,
       state.reverseProbe,
       state.tail,
     )
@@ -366,9 +369,8 @@ export class PagedDocument {
       throw new PagedSourceError('Invalid selection endpoint')
     return {
       column,
-      start: fragment.start.byteOffset,
-      end: fragment.end.byteOffset,
-      utf16Offset: fragment.utf16Offset,
+      start: this.position(fragment.start).pos,
+      end: this.position(fragment.end).pos,
       text: fragment.text + fragment.lineBreak,
     }
   }
@@ -381,33 +383,27 @@ export class PagedDocument {
     this.#reader.assertLive(signal)
     const start = this.endpoint(first)
     const end = this.endpoint(second)
-    const [left, right] = start.start <= end.start ? [start, end] : [end, start]
-    if (left.start === right.start) {
+    const [left, right] =
+      start.start.byteOffset <= end.start.byteOffset ? [start, end] : [end, start]
+    if (left.start.byteOffset === right.start.byteOffset) {
       const text = left.text.length >= right.text.length ? left.text : right.text
       return this.copied(
         text.slice(Math.min(left.column, right.column), Math.max(left.column, right.column)),
       )
     }
-    if (left.end > right.start) return this.copyOverlap(left, right)
+    if (left.end.byteOffset > right.start.byteOffset) return this.copyOverlap(left, right, signal)
     const prefix = left.text.slice(left.column)
     const suffix = right.text.slice(0, right.column)
     let units = prefix.length + suffix.length
     if (units > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
-    if (left.end === right.start) return this.copied(prefix + suffix)
+    if (left.end.byteOffset === right.start.byteOffset) return this.copied(prefix + suffix)
     const parts = [prefix]
-    const result = await readText(
-      this.#reader,
-      left.end,
-      right.start,
-      signal,
-      new ReadBudget(this.#options),
-      (text) => {
-        units += text.length
-        if (units > this.#options.maxWindowUnits) return true
-        parts.push(text)
-        return false
-      },
-    )
+    const result = await this.readCopy(left.end, right.start, signal, (text) => {
+      units += text.length
+      if (units > this.#options.maxWindowUnits) return true
+      parts.push(text)
+      return false
+    })
     if (units > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
     if (result === 'budget') return { kind: 'limit', reason: 'budget' }
     if (result === 'eof') throw new PagedSourceError('Read content ends before the selection')
@@ -415,12 +411,22 @@ export class PagedDocument {
     return this.copied(parts.join(''))
   }
 
-  private copyOverlap(
+  private async copyOverlap(
     left: ReturnType<PagedDocument['endpoint']>,
     right: ReturnType<PagedDocument['endpoint']>,
-  ) {
-    if (left.utf16Offset === undefined || right.utf16Offset === undefined) return noMapping
-    const shift = right.utf16Offset - left.utf16Offset
+    signal: AbortSignal,
+  ): Promise<PagedCopyResult> {
+    let shift = 0
+    if (left.start.utf16Offset !== undefined && right.start.utf16Offset !== undefined) {
+      shift = right.start.utf16Offset - left.start.utf16Offset
+    } else {
+      const result = await this.readCopy(left.start, right.start, signal, (text) => {
+        shift += text.length
+        return false
+      })
+      if (result === 'budget') return { kind: 'limit', reason: 'budget' }
+      if (result === 'eof') throw new PagedSourceError('Read content ends before the selection')
+    }
     if (!natural(shift) || shift > left.text.length)
       throw new PagedSourceError('The selection endpoints contradict their shared text')
     const through = shift + right.column
@@ -430,6 +436,33 @@ export class PagedDocument {
       )
     return this.copied(
       left.text.slice(left.column) + right.text.slice(left.text.length - shift, right.column),
+    )
+  }
+
+  private readonly verifyDecoded = (start: Position, bytes: Uint8Array) => {
+    return this.#index?.verifyDecoded(start, bytes)
+  }
+
+  private readCopy(
+    start: Position,
+    boundary: number | Position,
+    signal: AbortSignal,
+    consume: (text: string, end: Position) => boolean,
+  ) {
+    const stop = typeof boundary === 'number' ? boundary : boundary.byteOffset
+    return readText(
+      this.#reader,
+      start,
+      stop,
+      signal,
+      new ReadBudget(this.#options, start.carry?.length),
+      (text, end) => {
+        this.checkMappedTotals(end)
+        if (typeof boundary !== 'number' && end.byteOffset === stop)
+          assertMatchingCoordinates(end, boundary)
+        return consume(text, end)
+      },
+      this.verifyDecoded,
     )
   }
 
@@ -455,27 +488,13 @@ export class PagedDocument {
     const parts: string[] = []
     let mapped: Position = pos
     let units = pos.utf16Offset
-    const result = await readText(
-      this.#reader,
-      pos.byteOffset,
-      maxByte,
-      signal,
-      new ReadBudget(this.#options),
-      (text, bytes, byteOffset) => {
-        this.#index?.verifyDecoded(mapped, bytes)
-        if (units + text.length > start)
-          parts.push(text.slice(Math.max(0, start - units), end - units))
-        units += text.length
-        mapped = {
-          byteOffset,
-          line: mapped.line === undefined ? undefined : mapped.line + text.split('\n').length - 1,
-          lineStart: bytes.at(-1) === 10,
-          utf16Offset: units,
-        }
-        this.checkMappedTotals(mapped)
-        return units >= end
-      },
-    )
+    const result = await this.readCopy(pos, maxByte, signal, (text, next) => {
+      if (units + text.length > start)
+        parts.push(text.slice(Math.max(0, start - units), end - units))
+      units += text.length
+      mapped = next
+      return units >= end
+    })
     this.#reader.assertLive(signal)
     this.learnTotals(mapped)
     if (result === 'budget') return { kind: 'limit', reason: 'budget' }

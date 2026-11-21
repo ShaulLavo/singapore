@@ -165,7 +165,7 @@ Each entry names its source and whether the limit is expected to change.
 
 ### Experimental paged viewer
 
-- Defaults. `PAGED_PROOF_OPTIONS` allows two views, two in-flight reads, 64 KiB pages, an 8 MiB cache, and 4,096 discovered checkpoints. One request reserves up to 1 MiB of input and 32 source calls. A window contains at most 128 fragments and 524,288 UTF-16 units, including line breaks. The same text limit applies to a copy.
+- Defaults. `PAGED_PROOF_OPTIONS` allows two views, two in-flight source reads and two in-flight index lookups, 64 KiB pages, an 8 MiB cache, and 4,096 discovered checkpoints. One request reserves up to 1 MiB of input and 32 source calls. A window contains at most 128 fragments and 524,288 UTF-16 units, including line breaks. The same text limit applies to a copy.
 - Source. [Paging options](../packages/paged/src/types.ts) and [contract](../packages/paged/docs/contract.md).
 - What you see. A window stops at a limit and returns a continuation. A giant line can continue in another window. A copy can return a limit outcome. Distant exact line and UTF-16 positions need an index or previously discovered mapping.
 - Why. Read and output limits keep work bounded even when a source has no known size or contains a long line.
