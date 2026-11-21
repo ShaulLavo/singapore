@@ -52,15 +52,26 @@ function coordinateOf(checkpoint: PagedCheckpoint, kind: PagedCoordinate['kind']
   return kind === 'line' ? checkpoint.line : checkpoint.utf16Offset
 }
 
-export function preceding(checkpoints: readonly PagedCheckpoint[], target: PagedCoordinate) {
+function upperBound(
+  checkpoints: readonly PagedCheckpoint[],
+  value: number,
+  key: (checkpoint: PagedCheckpoint) => number,
+) {
   let low = 0
   let high = checkpoints.length
   while (low < high) {
     const mid = low + Math.floor((high - low) / 2)
-    if (coordinateOf(checkpoints[mid]!, target.kind)! <= target.value) low = mid + 1
+    if (key(checkpoints[mid]!) <= value) low = mid + 1
     else high = mid
   }
-  return checkpoints[low - 1]
+  return low
+}
+
+function preceding(checkpoints: readonly PagedCheckpoint[], target: PagedCoordinate) {
+  return checkpoints[
+    upperBound(checkpoints, target.value, (checkpoint) => coordinateOf(checkpoint, target.kind)!) -
+      1
+  ]
 }
 
 export class TrustedIndex {
@@ -138,7 +149,17 @@ export class TrustedIndex {
     return { ...checkpoint, lineStart: true }
   }
 
-  verify(pos: Position) {
+  verify(pos: Position, previous: Position) {
+    if (pos.byteOffset - previous.byteOffset > 1 && this.#checkpoints.length) {
+      const crossed =
+        this.#checkpoints[
+          upperBound(this.#checkpoints, previous.byteOffset, (checkpoint) => checkpoint.byteOffset)
+        ]
+      if (crossed && crossed.byteOffset < pos.byteOffset)
+        throw new PagedSourceError(
+          'Read content passes an index checkpoint without a line boundary',
+        )
+    }
     const checkpoint = this.#atByte.get(pos.byteOffset)
     if (!checkpoint) return
     if (

@@ -348,3 +348,73 @@ test('cache hits do not probe the source, and explicit validation invalidates cu
   await expect(view.next(first.next!, 1)).rejects.toBeInstanceOf(PagedSourceInvalidatedError)
   expect(doc.stats).toMatchObject({ state: 'stale', cachedBytes: 0, indexCheckpoints: 0 })
 })
+
+test('previous resumes with bounded context when a source delivers one byte per request', async () => {
+  const { source, calls } = fixture(encode('one\n🙂second\nlast'), 1, true)
+  const view = new PagedDocument(source, {
+    ...small,
+    maxReadBytes: 4,
+    maxReadRequests: 1,
+    maxWindowUnits: 2,
+  }).createView()
+  let result = await view.seekByte(8, 1)
+  if (result.kind !== 'window') throw new Error('The seek was unavailable')
+  while (!result.fragments.length && result.next) result = await view.next(result.next, 1)
+  expect(result.previous?.byteOffset).toBe(8)
+  let before = await view.previous(result.previous!, 1)
+  for (let at = 0; before.stop === 'budget' && before.previous && at < 6; at++) {
+    const count = calls.length
+    before = await view.previous(before.previous, 1)
+    expect(calls.length - count).toBeLessThanOrEqual(1)
+  }
+  expect(raw(before)).toBe('🙂')
+  expect(before.fragments[0]).toMatchObject({ continuesBefore: false, continuesAfter: true })
+})
+
+test('tail includes the empty logical row after a final LF', async () => {
+  const { source } = fixture(encode('one\ntwo\n'), Infinity, true)
+  const view = new PagedDocument(source, small).createView()
+  expect(await view.end(2)).toMatchObject({
+    atEnd: true,
+    fragments: [
+      { text: 'two', lineBreak: '\n' },
+      { text: '', lineBreak: '' },
+    ],
+  })
+})
+
+test('a checkpoint inside a demanded logical row is an explicit contradiction', async () => {
+  const { source, calls } = fixture(encode('abc\ndef\n'))
+  const index = indexed(source, { checkpoints: [{ byteOffset: 2, line: 1, utf16Offset: 2 }] })
+  const view = new PagedDocument(source, { ...small, index }).createView()
+  await expect(view.first(1)).rejects.toThrow('without a line boundary')
+  expect(calls).toEqual([[0, 8]])
+})
+
+test('a source that ignores abort cannot publish a superseded revision', async () => {
+  const pending = deferred<RangeRead>()
+  const started = deferred<AbortSignal>()
+  const source: RangeSource = {
+    id: 'held',
+    revision: 'one',
+    async readBytes(start, _end, signal) {
+      if (start === 0) {
+        started.resolve(signal)
+        return pending.promise
+      }
+      return { revision: 'one', bytes: encode('abcd\n'), eof: false }
+    },
+  }
+  const doc = new PagedDocument(source, small)
+  const view = doc.createView()
+  const aborted = expect(view.first(1)).rejects.toMatchObject({ name: 'AbortError' })
+  const signal = await started.promise
+  const newer = view.seekByte(100, 1)
+  await aborted
+  expect(signal.aborted).toBe(true)
+  expect(await newer).toMatchObject({ fragments: [{ text: 'd', continuesBefore: true }] })
+  pending.resolve({ revision: 'old', bytes: encode('old\n'), eof: false })
+  await Promise.resolve()
+  expect(doc.stats.state).toBe('open')
+  expect(doc.stats.cancelledReads).toBe(1)
+})

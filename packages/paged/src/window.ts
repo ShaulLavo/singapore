@@ -1,6 +1,13 @@
 import { ReadBudget, type SourceReader } from './source'
 import { PagedSourceError, type PagedOptions, type PagedWindow } from './types'
-import { alignedOffset, clipBytes, completePrefix, decode, joinBytes } from './utf8'
+import {
+  alignedOffset,
+  clipBytes,
+  completePrefix,
+  decode,
+  joinBytes,
+  lastScalarStart,
+} from './utf8'
 
 const empty = new Uint8Array()
 const unbounded = Number.MAX_SAFE_INTEGER
@@ -113,6 +120,10 @@ class Pieces {
     this.#parts = []
   }
 
+  get full() {
+    return this.#units === this.maxUnits
+  }
+
   get hasText() {
     return this.#start !== undefined
   }
@@ -129,13 +140,11 @@ export type Scan = {
 function skipToward(pos: Position, bytes: Uint8Array, goal: Goal) {
   if (goal.kind === 'byte') {
     const cut = alignedOffset(bytes, goal.value - pos.byteOffset)
-    const prefix = bytes.subarray(0, cut)
-    const text = decode(prefix)
-    const lineFeeds = text.split('\n').length - 1
-    const through = advance(pos, cut, text.length, prefix.at(-1) === 10)
+    const lf = bytes.subarray(0, cut).indexOf(10)
+    const consumed = lf < 0 ? cut : lf + 1
     return {
-      pos: { ...through, ...(pos.line === undefined ? {} : { line: pos.line + lineFeeds }) },
-      consumed: cut,
+      pos: advance(pos, consumed, decode(bytes.subarray(0, consumed)).length, lf >= 0),
+      consumed,
     }
   }
   const newline = bytes.indexOf(10)
@@ -156,23 +165,23 @@ function consumeBlock(
   goal: Goal | undefined,
   pieces: Pieces,
   rows: number,
-  visit: (pos: Position) => void,
+  visit: (pos: Position, previous: Position) => void,
 ) {
   let pos = start
   let at = 0
   while (goal && at < block.bytes.length && !reached(pos, goal)) {
     const skipped = skipToward(pos, block.bytes.subarray(at), goal)
+    visit(skipped.pos, pos)
     pos = skipped.pos
     at += skipped.consumed
-    visit(pos)
   }
   if (goal && reached(pos, goal)) goal = undefined
   while (at < block.bytes.length) {
     const lf = block.bytes.indexOf(10, at)
     const result = pieces.append(pos, block.bytes.subarray(at, lf < 0 ? undefined : lf), lf >= 0)
     at += result.pos.byteOffset - pos.byteOffset
+    visit(result.pos, pos)
     pos = result.pos
-    visit(pos)
     if (result.stop) return { pos, goal, stop: 'text' as const }
     if (pieces.items.length === rows) return { pos, goal, stop: 'rows' as const }
   }
@@ -187,16 +196,15 @@ export async function scanWindow(
   rows: number,
   signal: AbortSignal,
   goal: Goal | undefined,
-  visit: (pos: Position) => void,
-  boundary = unbounded,
-  budget = new ReadBudget(options),
+  visit: (pos: Position, previous: Position) => void,
 ): Promise<Scan> {
+  const budget = new ReadBudget(options)
   const pieces = new Pieces(options.maxWindowUnits)
   let pos = start
   let stop: PagedWindow['stop'] = 'budget'
   let yieldedAt = start.byteOffset
   while (true) {
-    const block = await readBlock(reader, pos, budget, signal, boundary)
+    const block = await readBlock(reader, pos, budget, signal, unbounded)
     reader.assertLive(signal)
     if (!block) break
     const next = consumeBlock(block, pos, goal, pieces, rows, visit)
@@ -207,7 +215,11 @@ export async function scanWindow(
       break
     }
     if (block.terminal) {
-      stop = reader.eofAt(pos.byteOffset) ? 'eof' : 'boundary'
+      stop = 'eof'
+      break
+    }
+    if (pieces.full) {
+      stop = 'text'
       break
     }
     if (pos.byteOffset - yieldedAt >= 65_536) {
@@ -216,7 +228,7 @@ export async function scanWindow(
     }
   }
   const atEnd = stop === 'eof' || (reader.eofAt(pos.byteOffset) && !pos.carry?.length)
-  const trailingRow = atEnd && pos.lineStart && !goal && boundary === unbounded
+  const trailingRow = atEnd && pos.lineStart && !goal
   if (pieces.hasText) pieces.finish(pos, '', !atEnd)
   else if (trailingRow && pieces.items.length < rows) pieces.finish(pos, '', false)
   const pendingRow = trailingRow && stop === 'rows'
@@ -259,40 +271,100 @@ export async function scanPrevious(
   end: Position,
   rows: number,
   signal: AbortSignal,
-  retryAt?: number,
+  reverseProbe?: Uint8Array,
+  tail = false,
 ) {
-  const span = Math.min(options.maxWindowUnits, options.maxReadBytes - 3, 65_536)
-  const desired = retryAt ?? Math.max(0, end.byteOffset - span)
-  const probe = positionBefore(desired).byteOffset
-  const buffer = new Uint8Array(end.byteOffset - probe)
   const budget = new ReadBudget(options)
-  let filled = 0
-  while (filled < buffer.length) {
-    const bytes = await reader.read(probe + filled, end.byteOffset, budget, signal)
-    reader.assertLive(signal)
-    if (!bytes) {
-      const nextRetry = desired + Math.max(1, Math.floor((end.byteOffset - desired) / 2))
-      return { pieces: [], retryAt: Math.min(end.byteOffset, nextRetry) }
+  const span = Math.min(options.maxWindowUnits, options.maxReadBytes - 3, 65_536)
+  const desired = Math.max(0, end.byteOffset - span)
+  if (!reverseProbe) {
+    const probe = positionBefore(desired).byteOffset
+    const buffer = await readSuffix(reader, probe, end.byteOffset, budget, signal)
+    if (buffer) {
+      const min = alignedOffset(buffer, desired - probe)
+      if (min < buffer.length)
+        return { pieces: buildPrevious(buffer, min, end, rows, options, reader, tail) }
     }
-    if (!bytes.length) throw new PagedSourceError('Read content ends before the cursor')
-    buffer.set(bytes, filled)
-    filled += bytes.length
   }
-  const aligned = alignedOffset(buffer, desired - probe)
-  const first = previousStart(buffer, aligned, rows)
-  const tail = buffer.subarray(first)
-  const start = reversePosition(end, tail, buffer[first - 1] === 10)
-  const pieces = new Pieces(options.maxWindowUnits)
-  const result = consumeBlock(
-    { bytes: tail, carry: empty, terminal: true },
-    start,
-    undefined,
-    pieces,
-    rows,
-    () => {},
+  const probe = await readReverseProbe(
+    reader,
+    end.byteOffset,
+    budget,
+    signal,
+    reverseProbe ?? empty,
   )
-  if (pieces.hasText) pieces.finish(result.pos, '', !end.lineStart && !reader.eofAt(end.byteOffset))
-  return { pieces: pieces.items, retryAt: undefined }
+  if (probe.length < Math.min(5, end.byteOffset)) return { pieces: [], reverseProbe: probe }
+  return { pieces: buildPrevious(probe, lastScalarStart(probe), end, rows, options, reader, tail) }
+}
+
+async function readSuffix(
+  reader: SourceReader,
+  start: number,
+  end: number,
+  budget: ReadBudget,
+  signal: AbortSignal,
+) {
+  const buffer = new Uint8Array(end - start)
+  let at = 0
+  while (at < buffer.length) {
+    const bytes = await reader.read(start + at, end, budget, signal)
+    reader.assertLive(signal)
+    if (!bytes) return undefined
+    if (!bytes.length) throw new PagedSourceError('Read content ends before the cursor')
+    buffer.set(bytes, at)
+    at += bytes.length
+  }
+  return buffer
+}
+
+async function readReverseProbe(
+  reader: SourceReader,
+  end: number,
+  budget: ReadBudget,
+  signal: AbortSignal,
+  context: Uint8Array,
+) {
+  while (context.length < Math.min(5, end)) {
+    const at = end - context.length
+    const bytes = await reader.read(at - 1, at, budget, signal)
+    reader.assertLive(signal)
+    if (!bytes) break
+    if (!bytes.length) throw new PagedSourceError('Read content ends before the cursor')
+    context = joinBytes(bytes, context)
+  }
+  return context
+}
+
+function buildPrevious(
+  buffer: Uint8Array,
+  min: number,
+  end: Position,
+  rows: number,
+  options: PagedOptions,
+  reader: SourceReader,
+  tail: boolean,
+) {
+  const trailing = tail && buffer.at(-1) === 10
+  const before = rows - Number(trailing)
+  const pieces = new Pieces(options.maxWindowUnits)
+  if (before) {
+    const first = previousStart(buffer, min, before)
+    const bytes = buffer.subarray(first)
+    const start = reversePosition(end, bytes, buffer[first - 1] === 10)
+    splitBlock(bytes, true, start.byteOffset)
+    const result = consumeBlock(
+      { bytes, carry: empty, terminal: true },
+      start,
+      undefined,
+      pieces,
+      before,
+      () => {},
+    )
+    if (pieces.hasText)
+      pieces.finish(result.pos, '', !end.lineStart && !reader.eofAt(end.byteOffset))
+  }
+  if (trailing) pieces.finish({ ...end, lineStart: true }, '', false)
+  return pieces.items
 }
 
 function previousStart(bytes: Uint8Array, min: number, rows: number) {

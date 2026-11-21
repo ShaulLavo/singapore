@@ -1,3 +1,5 @@
+export { blobRangeSource, httpRangeSource, openHttpRangeSource } from './adapters'
+export type { HttpOpenOptions, HttpRangeOptions } from './adapters'
 export { PagedDocument, PagedDocumentView } from './document'
 export {
   PAGED_POSITION_POLICY,

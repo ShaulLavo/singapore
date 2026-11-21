@@ -117,6 +117,7 @@ export class SourceReader {
   }
 
   close(state: 'stale' | 'disposed') {
+    if (this.#state === state || this.#state === 'disposed') return
     this.#state = state
     this.#lifetime.abort()
     this.#cache.clear()
@@ -142,7 +143,7 @@ export class SourceReader {
     this.assertLive(signal)
     if (this.eofAt(start)) return empty
     let end = Math.min(
-      start + Math.min(this.options.pageBytes, budget.remaining),
+      start + Math.min(this.options.pageBytes, budget.remaining, 65_536),
       limit,
       this.#byteLength ?? this.#eofUpper ?? Number.MAX_SAFE_INTEGER,
     )
@@ -208,6 +209,8 @@ export class SourceReader {
     this.#requestedBytes += end - start
     try {
       const result = await this.source.readBytes(start, end, signal)
+      if (!(result.bytes instanceof Uint8Array) || typeof result.eof !== 'boolean')
+        throw new PagedSourceError('Invalid source response')
       this.#deliveredBytes += result.bytes.length
       this.assertLive(signal)
       this.checkRevision(result.revision)
@@ -223,8 +226,6 @@ export class SourceReader {
   }
 
   private accept(start: number, end: number, result: RangeRead) {
-    if (!(result.bytes instanceof Uint8Array) || typeof result.eof !== 'boolean')
-      throw new PagedSourceError('Invalid source response')
     const count = result.bytes.length
     if (count > end - start) throw new PagedSourceError('The source returned too many bytes')
     if (!count && !result.eof) throw new PagedSourceError('The source made no progress')

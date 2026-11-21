@@ -69,3 +69,13 @@ export function joinBytes(first: Uint8Array, second: Uint8Array) {
   joined.set(second, first.length)
   return joined
 }
+
+export function lastScalarStart(bytes: Uint8Array) {
+  let at = 0
+  let last = 0
+  while (at < bytes.length) {
+    last = at
+    at = scalar(bytes, at).end
+  }
+  return last
+}

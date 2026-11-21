@@ -1,6 +1,8 @@
+import { createError } from '@singapore-editor/core/logging/evlog'
 import { DiscoveredPrefix, mergeTotals, TrustedIndex } from './checkpoints'
 import { natural, ReadBudget, SourceReader } from './source'
 import {
+  createCursor,
   PAGED_PROOF_OPTIONS,
   PagedSourceError,
   type PagedCoordinate,
@@ -33,7 +35,8 @@ const outsideSource: PagedUnavailable = { kind: 'unavailable', reason: 'outside-
 type CursorState = {
   readonly pos: Position
   readonly goal?: Goal
-  readonly retryBefore?: number
+  readonly reverseProbe?: Uint8Array
+  readonly tail?: boolean
 }
 
 type OpenWindow = PagedWindow | PagedUnavailable
@@ -142,7 +145,7 @@ export class PagedDocument {
   }
 
   private cursor(state: CursorState) {
-    const cursor = Object.freeze({ byteOffset: state.pos.byteOffset }) as PagedCursor
+    const cursor = createCursor(state.pos.byteOffset)
     this.#cursors.set(cursor, state)
     return cursor
   }
@@ -194,8 +197,8 @@ export class PagedDocument {
     const { pos, goal } = state
     const extendsPrefix =
       pos.byteOffset <= this.#prefix.through.byteOffset && pos.utf16Offset !== undefined
-    const visit = (position: Position) => {
-      this.#index?.verify(position)
+    const visit = (position: Position, previous: Position) => {
+      this.#index?.verify(position, previous)
       this.checkMappedTotals(position)
       if (extendsPrefix) this.#prefix.add(position)
     }
@@ -219,10 +222,11 @@ export class PagedDocument {
       end,
       rows,
       signal,
-      state.retryBefore,
+      state.reverseProbe,
+      state.tail,
     )
-    if (previous.retryAt !== undefined) {
-      const retry = { pos: end, retryBefore: previous.retryAt }
+    if (previous.reverseProbe) {
+      const retry = { ...state, reverseProbe: previous.reverseProbe }
       return this.window([], retry, state, 'budget')
     }
     return this.beforeWindow(previous.pieces, state)
@@ -233,8 +237,8 @@ export class PagedDocument {
     return this.window(
       pieces,
       first?.byteOffset ? { pos: first } : null,
-      { pos: state.pos },
-      'boundary',
+      state.tail ? null : { pos: state.pos },
+      state.tail ? 'eof' : 'boundary',
     )
   }
 
@@ -275,14 +279,19 @@ export class PagedDocument {
     const offset = this.#reader.byteLength
     if (offset === undefined) return { kind: 'unavailable', reason: 'unknown-length' }
     if (!offset) return this.forward({ pos: origin }, rows, signal)
-    const previous = await this.backward(
-      { pos: { byteOffset: offset, lineStart: false } },
+    return this.backward(
+      {
+        pos: {
+          byteOffset: offset,
+          lineStart: false,
+          line: this.#totals.lineCount === undefined ? undefined : this.#totals.lineCount - 1,
+          utf16Offset: this.#totals.utf16Length,
+        },
+        tail: true,
+      },
       rows,
       signal,
     )
-    return previous.stop === 'budget'
-      ? previous
-      : { ...previous, next: null, atEnd: true, stop: 'eof' }
   }
 
   private async locate(target: PagedCoordinate, signal: AbortSignal) {
@@ -424,9 +433,11 @@ function validateOptions(options: PagedOptions) {
     options.maxReadBytes < 4 ||
     options.maxWindowUnits < 2
   )
-    throw new PagedSourceError(
-      'Paging requires two checkpoints, one cached page, and room for a UTF-8 code point',
-    )
+    throw createError({
+      code: 'PAGED_DOCUMENT_INVALID',
+      status: 422,
+      message: 'Paging requires two checkpoints, one cached page, and room for a UTF-8 code point',
+    })
 }
 
 function checkRows(rows: number, max: number) {
