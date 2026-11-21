@@ -142,11 +142,20 @@ function dispose() {
   const doc = documentSource
   viewport?.dispose()
   doc?.dispose()
-  if (doc) closed = doc.stats
+  if (doc) captureClosed(doc)
   viewport = undefined
   documentSource = undefined
   retained = undefined
   file.value = ''
+}
+
+function captureClosed(doc: PagedDocument) {
+  const snapshot = doc.stats
+  closed = snapshot
+  if (!snapshot.inFlight) return
+  requestAnimationFrame(() => {
+    if (closed === snapshot) closed = doc.stats
+  })
 }
 
 async function traverse() {

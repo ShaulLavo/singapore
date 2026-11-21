@@ -1,4 +1,4 @@
-import { mergeExact, natural } from './source'
+import { mergeExact, natural, type SourceReader } from './source'
 import {
   PAGED_POSITION_POLICY,
   PagedSourceError,
@@ -131,14 +131,20 @@ export class TrustedIndex {
     return this.#checkpoints.length
   }
 
-  async locate(target: PagedCoordinate, totals: PagedTotals, signal: AbortSignal) {
+  async locate(
+    target: PagedCoordinate,
+    totals: PagedTotals,
+    reader: SourceReader,
+    signal: AbortSignal,
+  ) {
     const covered = this.#coverage.some(
       ({ kind, start, end }) => kind === target.kind && target.value >= start && target.value < end,
     )
     if (!covered) return undefined
     const checkpoints = target.kind === 'line' ? this.#checkpoints : this.#byOffset
-    const checkpoint = this.#locate
-      ? await this.#locate(target, signal)
+    const locate = this.#locate
+    const checkpoint = locate
+      ? await reader.run(signal, (active) => locate(target, active))
       : preceding(checkpoints, target)
     signal.throwIfAborted()
     if (!checkpoint) return undefined

@@ -50,15 +50,15 @@ type ViewActions = {
   end(rows: number, signal: AbortSignal): Promise<OpenWindow>
   copy(start: PagedEndpoint, end: PagedEndpoint, signal: AbortSignal): Promise<PagedCopyResult>
   copyRange(start: number, end: number, signal: AbortSignal): Promise<PagedCopyResult>
+  assertLive(signal: AbortSignal): void
   release(): void
 }
 
 export class PagedDocument {
   readonly #reader: SourceReader
   readonly #options: PagedOptions
-  readonly #lifetime = new AbortController()
-  readonly #cursors = new WeakMap<PagedCursor, CursorState>()
-  readonly #fragments = new WeakSet<PagedFragment>()
+  #cursors = new WeakMap<PagedCursor, CursorState>()
+  #fragments = new WeakSet<PagedFragment>()
   #totals: PagedTotals
   #prefix: DiscoveredPrefix
   #index: TrustedIndex | undefined
@@ -106,7 +106,7 @@ export class PagedDocument {
     return Promise.resolve()
   }
 
-  validate(signal = this.#lifetime.signal) {
+  validate(signal?: AbortSignal) {
     return this.#reader.validate(signal)
   }
 
@@ -124,6 +124,7 @@ export class PagedDocument {
       end: (rows, signal) => this.tail(rows, signal),
       copy: (start, end, signal) => this.copy(start, end, signal),
       copyRange: (start, end, signal) => this.copyRange(start, end, signal),
+      assertLive: (signal) => this.#reader.assertLive(signal),
       release: () => {
         this.#views--
       },
@@ -135,7 +136,8 @@ export class PagedDocument {
   }
 
   private clear() {
-    this.#lifetime.abort()
+    this.#cursors = new WeakMap()
+    this.#fragments = new WeakSet()
     this.#index = undefined
     this.#totals = {}
     this.#prefix = new DiscoveredPrefix(
@@ -301,17 +303,13 @@ export class PagedDocument {
       (target.kind === 'line' ? discovered.line : discovered.utf16Offset) === target.value
     )
       return discovered
-    const combined = AbortSignal.any([signal, this.#lifetime.signal])
-    let trusted: Position | undefined
-    try {
-      trusted = await this.#index?.locate(
-        target,
-        { ...this.#totals, byteLength: this.#reader.byteLength },
-        combined,
-      )
-    } finally {
-      this.#reader.assertLive(signal)
-    }
+    const trusted = await this.#index?.locate(
+      target,
+      { ...this.#totals, byteLength: this.#reader.byteLength },
+      this.#reader,
+      signal,
+    )
+    this.#reader.assertLive(signal)
     return !trusted || (discovered && discovered.byteOffset > trusted.byteOffset)
       ? discovered
       : trusted
@@ -502,7 +500,7 @@ export class PagedDocumentView {
     const combined = signal ? AbortSignal.any([request.signal, signal]) : request.signal
     try {
       const result = await action(combined)
-      combined.throwIfAborted()
+      this.actions.assertLive(combined)
       return result
     } finally {
       if (this.#request === request) this.#request = undefined

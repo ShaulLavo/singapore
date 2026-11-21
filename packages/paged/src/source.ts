@@ -119,24 +119,38 @@ export class SourceReader {
   close(state: 'stale' | 'disposed') {
     if (this.#state === state || this.#state === 'disposed') return
     this.#state = state
+    this.#cancelledReads += this.#flights.size
+    this.#flights.clear()
     this.#lifetime.abort()
     this.#cache.clear()
     this.#cachedBytes = 0
     this.onClose()
   }
 
-  async validate(signal: AbortSignal) {
+  async validate(signal?: AbortSignal) {
     this.assertLive(signal)
     const validate = this.source.validate
     if (!validate) return false
-    const combined = AbortSignal.any([signal, this.#lifetime.signal])
-    const result = await observe(
-      this.schedule(combined, () => validate.call(this.source, combined)),
-      combined,
-    ).catch((error: unknown) => this.rethrow(error, signal))
-    this.assertLive(signal)
+    const result = await this.run(signal, (active) => validate.call(this.source, active))
     if (result.revision !== this.revision) this.rethrow(new PagedSourceInvalidatedError(), signal)
     return true
+  }
+
+  async run<T>(signal: AbortSignal | undefined, use: (active: AbortSignal) => Promise<T>) {
+    this.assertLive(signal)
+    const combined = signal
+      ? AbortSignal.any([signal, this.#lifetime.signal])
+      : this.#lifetime.signal
+    try {
+      const result = await observe(
+        this.schedule(combined, () => use(combined)),
+        combined,
+      )
+      this.assertLive(signal)
+      return result
+    } catch (error) {
+      return this.rethrow(error, signal)
+    }
   }
 
   async read(start: number, limit: number, budget: ReadBudget, signal: AbortSignal) {
@@ -273,7 +287,7 @@ export class SourceReader {
     if (revision !== this.revision) throw new PagedSourceInvalidatedError()
   }
 
-  private rethrow(error: unknown, signal: AbortSignal): never {
+  private rethrow(error: unknown, signal?: AbortSignal): never {
     this.assertLive(signal)
     if (error instanceof PagedSourceInvalidatedError) this.close('stale')
     throw error

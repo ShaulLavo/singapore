@@ -54,7 +54,7 @@ present.
 Decoding preserves the UTF-8 BOM and CRLF. It counts LF as the row boundary. Malformed UTF-8 uses
 replacement characters with positions in the original byte stream. The viewer rejects UTF-16 BOMs
 when it reads the start. Empty files and trailing LF each have an empty logical row. Fragment
-boundaries preserve valid surrogate pairs.
+boundaries preserve valid surrogate pairs. [Encoding Standard](https://encoding.spec.whatwg.org/#utf-8-decoder)
 
 ## Trusted indexes and totals
 
@@ -82,7 +82,7 @@ bounded slices. The host is responsible for stable identity and the snapshot's l
 `httpRangeSource(url, { id, etag })` sends `Range` and `If-Match` using a pinned strong ETag.
 Alternatively, give it `{ id, revision, immutable: true }` for a versioned immutable URL.
 `openHttpRangeSource(url, { id, signal })` establishes a strong ETag with one bounded opening read
-and reuses its bytes. Open the source before associating a trusted index with it.
+and reuses its bytes. Use the final range URL. Open the source before associating a trusted index with it.
 
 The HTTP adapter validates single-range `206` responses and reads at most the declared range.
 A `206` with total `*` can make short progress without revealing the file size. A valid `416` gives

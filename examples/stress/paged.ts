@@ -179,9 +179,10 @@ async function demand(page: Page, opened: Opened) {
   assert.equal(idle.sourceRequests, opened.stats.sourceRequests)
   const scroll = await scrollAndLearnLength(page, opened)
   const copy = await copySelection(page, opened)
+  const revisit = await revisitFirstPage(page, copy.stats)
   const cancellation = await closeDuringRead(page)
   assertBounds(copy.stats)
-  return { idle, scroll, copy, cancellation }
+  return { idle, scroll, copy, revisit, cancellation }
 }
 
 async function scrollAndLearnLength(page: Page, opened: Opened) {
@@ -225,17 +226,30 @@ async function copySelection(page: Page, opened: Opened) {
   return { ms, text, stats: after }
 }
 
+async function revisitFirstPage(page: Page, before: Stats) {
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page.locator('[data-fragment="0"][data-byte="0"]').waitFor()
+  const after = await stats(page)
+  assert.equal(after.sourceRequests, before.sourceRequests)
+  assert(after.cacheHits > before.cacheHits)
+  return after
+}
+
 async function closeDuringRead(page: Page) {
   await page.evaluate(() => __paged.holdReads())
   await page.getByRole('spinbutton', { name: 'Byte offset' }).fill(String(pageBytes + 4096))
   await page.getByRole('button', { name: 'Go to byte' }).click()
   await page.waitForFunction(() => __paged.stats()?.inFlight === 1)
   await page.getByRole('button', { name: 'Close file' }).click()
-  await page.waitForFunction(() => __paged.closed().cancelled === 1)
+  await page.waitForFunction(() => {
+    const closed = __paged.closed()
+    return closed.cancelled === 1 && closed.stats?.inFlight === 0
+  })
   const closed = await page.evaluate(() => __paged.closed())
   assert.equal(closed.stats?.state, 'disposed')
   assert.equal(closed.stats.cachedBytes, 0)
   assert.equal(closed.stats.checkpoints, 0)
+  assert.equal(closed.stats.cancelledReads, 1)
   return closed
 }
 

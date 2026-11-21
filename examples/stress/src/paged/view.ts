@@ -259,6 +259,7 @@ export class PagedViewport {
   }
 
   private copy(event: ClipboardEvent) {
+    if (this.source.stats.state !== 'open') return
     const selection = document.getSelection()
     const fragments = this.#window?.fragments
     if (

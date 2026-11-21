@@ -102,7 +102,7 @@ async function httpRead(
   const headers = new Headers({ Range: `bytes=${start}-${end - 1}` })
   if (options.pin && options.revision) headers.set('If-Match', options.revision)
   const request = options.fetch ?? globalThis.fetch
-  const response = await request(url, { headers, signal })
+  const response = await request(url, { headers, signal, redirect: 'error' })
   try {
     signal.throwIfAborted()
     if (response.status === 412) throw new PagedSourceInvalidatedError()

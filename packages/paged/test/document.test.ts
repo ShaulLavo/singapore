@@ -418,3 +418,25 @@ test('a source that ignores abort cannot publish a superseded revision', async (
   expect(doc.stats.state).toBe('open')
   expect(doc.stats.cancelledReads).toBe(1)
 })
+
+test('a superseded locator cannot block a new window or publish its late result', async () => {
+  const { source, calls } = fixture(encode('first\nsecond\n'))
+  const pending = deferred<null>()
+  const started = deferred<AbortSignal>()
+  const index = indexed(source, {
+    coverage: [{ kind: 'line', start: 1, end: 2 }],
+    async locate(_target, signal) {
+      started.resolve(signal)
+      return pending.promise
+    },
+  })
+  const view = new PagedDocument(source, { ...small, index }).createView()
+  const rejected = expect(view.seekLine(1, 1)).rejects.toMatchObject({ name: 'AbortError' })
+  const signal = await started.promise
+  const fresh = view.first(1)
+  await rejected
+  expect(signal.aborted).toBe(true)
+  expect(raw(await fresh)).toBe('first\n')
+  pending.resolve(null)
+  expect(calls).toEqual([[0, 8]])
+})
