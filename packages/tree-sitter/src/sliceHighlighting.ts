@@ -4,6 +4,7 @@ import {
   type TreeSitterLanguageContribution,
 } from './treeSitter/registry'
 import { SLICE_QUERY_SOURCE_LIMIT, SLICE_TEXT_LIMIT } from './treeSitter/sliceLimits'
+import { supportsSlicePredicates } from './treeSitter/sliceQueryPolicy'
 import type { TreeSitterSliceTimings } from './treeSitter/types'
 import {
   createTreeSitterWorkerOwner,
@@ -29,6 +30,7 @@ export type TreeSitterSliceHighlightResult =
       readonly kind: 'plain'
       readonly reason:
         | 'unsupported-language'
+        | 'unsupported-query'
         | 'unavailable'
         | 'over-budget'
         | 'superseded'
@@ -210,6 +212,7 @@ export class TreeSitterSliceHighlighter {
     const query = descriptor.highlightQuerySource
     if (!query?.trim()) return plain('unsupported-language')
     if (query.length > SLICE_QUERY_SOURCE_LIMIT) return plain('over-budget')
+    if (!supportsSlicePredicates(query)) return plain('unsupported-query')
     const language = this.backend.retainSliceLanguage(descriptor)
     this.retainedLanguage = language
     return { kind: 'ready', language }

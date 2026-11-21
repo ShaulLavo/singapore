@@ -289,7 +289,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   private async prepareSliceLanguage(entry: SliceLanguageEntry): Promise<boolean> {
     const handle = await this.ensureWorkerReady()
     if (!handle || !entry.refs) return false
-    if (entry.worker !== handle) {
+    if (entry.worker !== handle || !entry.preparation) {
       entry.worker = handle
       entry.preparation = this.postRequest(
         {
@@ -300,8 +300,15 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
         false,
       )
     }
-    await entry.preparation
-    return this.worker === handle && entry.refs > 0
+    const preparation = entry.preparation
+    try {
+      await preparation
+      return this.worker === handle && entry.refs > 0
+    } catch (error) {
+      if (entry.preparation === preparation) entry.preparation = null
+      if (!entry.refs) this.discardSliceLanguage(entry)
+      throw error
+    }
   }
 
   private releaseSliceLanguage(entry: SliceLanguageEntry): void {
@@ -319,7 +326,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   }
 
   private discardSliceLanguage(entry: SliceLanguageEntry): void {
-    this.sliceLanguages.delete(entry)
+    if (!this.sliceLanguages.delete(entry)) return
     if (entry.worker && entry.worker === this.worker) {
       const release = this.postRequest(
         { type: 'disposeSliceLanguage', sliceLanguageId: entry.id },
