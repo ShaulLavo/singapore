@@ -1,4 +1,4 @@
-import type { Binding, KeymapEntry, KeymapPlatform } from '@fregat/hotkeys'
+import type { Binding, KeymapEntry, KeymapPlatform } from '@shaulavo/hotkeys'
 
 export type EditorKeymapPack = Readonly<Record<KeymapPlatform, readonly Binding[]>>
 export type EditorKeymapOptions = {

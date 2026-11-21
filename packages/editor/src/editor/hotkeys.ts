@@ -7,7 +7,7 @@ import {
   type CommandHandler,
   type FocusNode,
   type KeyContextInit,
-} from '@fregat/hotkeys'
+} from '@shaulavo/hotkeys'
 import type { EditorAnyCommandId } from './commandCatalog'
 import type { EditorCommandContext } from './commands'
 import { editorKeymapBindings, type EditorKeymapOptions } from '../keymap/presets'

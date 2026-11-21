@@ -6,7 +6,7 @@ import { captureJumpLocation, JumpHistory, type JumpLocation, type JumpCause } f
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 import { encodePaintSnapshot } from './paintSnapshot'
 import { decodeSnapshot as decodePaintSnapshot, type DocumentPaintCapture } from './documentPaint'
-import { detectPlatform } from '@fregat/hotkeys'
+import { detectPlatform } from '@shaulavo/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
   registerDocumentSnapshotConstraint,

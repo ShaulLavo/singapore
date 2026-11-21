@@ -22,7 +22,7 @@ import type {
   EditorWrapBreak,
 } from '../virtualization/virtualizedTextViewTypes'
 import type { EditorKeymapOptions } from '../keymap/presets'
-import type { BrowserDispatcher, FocusNode } from '@fregat/hotkeys'
+import type { BrowserDispatcher, FocusNode } from '@shaulavo/hotkeys'
 import type { EditorKeymapMetadata } from './hotkeys'
 import type { EditorAutoClosingPair } from './languageConfiguration'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'

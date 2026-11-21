@@ -1,4 +1,4 @@
-import { detectPlatform } from '@fregat/hotkeys'
+import { detectPlatform } from '@shaulavo/hotkeys'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor/Editor'

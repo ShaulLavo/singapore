@@ -28,7 +28,7 @@ const servedDependencyRoots = uniqueItems(
 export default defineConfig({
   optimizeDeps: {
     include: [
-      '@singapore-editor/core > @fregat/hotkeys > @tanstack/store',
+      '@singapore-editor/core > @shaulavo/hotkeys > @tanstack/store',
       '@singapore-editor/core > diff',
       'tree-sitter-md',
       'web-tree-sitter',

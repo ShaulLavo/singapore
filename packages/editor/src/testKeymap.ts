@@ -1,4 +1,4 @@
-import { createBrowserDispatcher, type CommandHandler } from '@fregat/hotkeys'
+import { createBrowserDispatcher, type CommandHandler } from '@shaulavo/hotkeys'
 import { EDITOR_COMMANDS } from './editor/commandCatalog'
 import type { EditorAnyCommandId } from './editor/commandCatalog'
 import type { EditorCommandHandler } from './plugins'

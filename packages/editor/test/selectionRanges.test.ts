@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { detectPlatform } from '@fregat/hotkeys'
+import { detectPlatform } from '@shaulavo/hotkeys'
 
 import { Editor } from '../src/editor'
 import { defaultKeyBindings, commandCategory, keyboardEvent } from './factories/keymap'

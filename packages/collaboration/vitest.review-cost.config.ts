@@ -11,7 +11,7 @@ export default defineConfig({
       'web-tree-sitter',
       '@noble/hashes/sha2.js',
       '@noble/hashes/utils.js',
-      '@singapore-editor/core > @fregat/hotkeys > @tanstack/store',
+      '@singapore-editor/core > @shaulavo/hotkeys > @tanstack/store',
       '@singapore-editor/core > diff',
       '@singapore-editor/plugin-ui > remark-gfm',
       '@singapore-editor/plugin-ui > remark-parse',

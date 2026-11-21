@@ -11,7 +11,7 @@ import type {
 } from '../src/document/operations'
 import { defaultKeyBindings, keyboardEvent } from './factories/keymap'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { detectPlatform, parseHotkey, rawHotkeyToParsedHotkey } from '@fregat/hotkeys'
+import { detectPlatform, parseHotkey, rawHotkeyToParsedHotkey } from '@shaulavo/hotkeys'
 import { createEditorFindPlugin } from '../../find/src/index.ts'
 import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/src/index.ts'
 import {
