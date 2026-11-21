@@ -287,7 +287,12 @@ function stickyScrollHeader(
   const scopeRows: number[] = []
   let top = 0
   let bottom = 0
+  let innermostEndOffset = Number.POSITIVE_INFINITY
   for (const marker of stickyScrollCandidates(snapshot, geometry)) {
+    // Sibling folds can share a display row. Once a scope takes a slot, later scopes must
+    // start inside it until it scrolls out of that slot.
+    if (marker.startOffset >= innermostEndOffset) break
+
     // Scopes that open on one row — an arrow function and the object it returns — head the same row,
     // so the first of them to be accepted has already said everything the stack can say about it.
     if (scopeRows.at(-1) === marker.startRow) continue
@@ -303,8 +308,7 @@ function stickyScrollHeader(
     if (slotTop > scopeBottom - geometry.scrollTop) continue
 
     if (scopeRows.length === 0) top = headerRowTop
-    // Each scope accepted after the first is nested in the one before it, so the last one accepted is
-    // the first to end — and the stack travels with whichever ends first.
+    innermostEndOffset = marker.endOffset
     bottom = scopeBottom
     scopeRows.push(marker.startRow)
   }

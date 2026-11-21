@@ -35,6 +35,13 @@ Each entry names its source and whether the limit is expected to change.
 - Why. Browser element-height and sticky-translation ceilings would otherwise leave the end of a large document unreachable or incorrectly painted. Discovery waits until a large document needs it to avoid forced layout on ordinary opens.
 - Outlook. The mapping and probe already handle this cap. The browser's physical limit stays. Engine-specific details belong in [browser quirks](https://github.com/ShaulLavo/singapore/blob/main/docs/display/browser-quirks.md).
 
+### Sticky scope headers
+
+- Limit. The sticky stack uses at most **one third of the editor's visible height**, rounded down to whole rows. A caller can lower the limit with `maxLineCount`. A zero-row budget hides the stack.
+- Source. `stickyScrollHeader` in [stickyScroll.ts](../packages/scope-lines/src/stickyScroll.ts).
+- What you see. When scopes overflow, the stack keeps the innermost rows. With at least three slots, it also shows the outermost row and the number of hidden scopes.
+- Why. The stack leaves room to read the code in short editors.
+
 ### Visible paint snapshots
 
 - Limits. A visible-paint snapshot accepts at most **32 layers** and **8,192 rectangles in total**. Layer identifiers must contain **1 to 128 code units**, and rectangle color strings **1 to 256 code units**.

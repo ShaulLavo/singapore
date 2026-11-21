@@ -104,6 +104,38 @@ describe('createStickyScrollPlugin', () => {
     expect(stickyRoot(testContext)?.style.height).toBe('120px')
   })
 
+  it('holds an outgoing branch until a sibling on its last row can take over', () => {
+    const registration = registeredProvider(createStickyScrollPlugin({ maxLineCount: 2 }))
+    const starts = lineStarts()
+    const [outer, inner] = foldMarkers()
+    const foldMarkersSharingARow = [
+      { ...outer!, endRow: 6, endOffset: lineEnd(starts, 6) },
+      { ...inner!, endOffset: starts[4]! },
+      {
+        key: 'query:sibling',
+        startRow: 4,
+        endRow: 5,
+        startOffset: starts[4]! + 1,
+        endOffset: lineEnd(starts, 5),
+        collapsed: false,
+      },
+    ]
+    const testContext = context({ ...scrolledSnapshot(73), foldMarkers: foldMarkersSharingARow })
+    const contribution = registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toEqual([LINES[0], LINES[2]])
+    expect(stickyRoot(testContext)?.style.height).toBe('100px')
+
+    contribution?.update(
+      { ...scrolledSnapshot(81), foldMarkers: foldMarkersSharingARow },
+      'viewport',
+    )
+
+    expect(mirroredLines(testContext)).toEqual([LINES[0], LINES[4]])
+    expect(stickyRoot(testContext)?.style.height).toBe('120px')
+    contribution?.dispose()
+  })
+
   it('renders nothing while the scope headers are still on screen', () => {
     const registration = registeredProvider(createStickyScrollPlugin())
     const testContext = context(snapshot())
