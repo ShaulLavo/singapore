@@ -72,7 +72,13 @@ export class PagedDocument {
     })
     this.#prefix = new DiscoveredPrefix(options.checkpointLimit, options.checkpointStride)
     this.#index = index && new TrustedIndex(index, source, this.#totals, options.checkpointLimit)
-    this.#reader = new SourceReader(source, options, this.#totals.byteLength, () => this.clear())
+    this.#reader = new SourceReader(source, options, this.#totals.byteLength, {
+      close: () => this.clear(),
+      inspect: (start, bytes, upperBound) => {
+        this.checkExtent(upperBound)
+        this.#index?.verifyBytes(start, bytes, upperBound)
+      },
+    })
     this.#options = options
   }
 
@@ -199,8 +205,8 @@ export class PagedDocument {
     const { pos, goal } = state
     const extendsPrefix =
       pos.byteOffset <= this.#prefix.through.byteOffset && pos.utf16Offset !== undefined
-    const visit = (position: Position, previous: Position) => {
-      this.#index?.verify(position, previous)
+    const visit = (position: Position) => {
+      this.#index?.verify(position)
       this.checkMappedTotals(position)
       if (extendsPrefix) this.#prefix.add(position)
     }
@@ -227,10 +233,18 @@ export class PagedDocument {
       state.reverseProbe,
       state.tail,
     )
+    this.#reader.assertLive(signal)
     if (previous.reverseProbe) {
       const retry = { ...state, reverseProbe: previous.reverseProbe }
       return this.window([], retry, state, 'budget')
     }
+    for (const piece of previous.pieces) {
+      this.#index?.verify(piece.start)
+      this.#index?.verify(piece.end)
+      this.checkMappedTotals(piece.end)
+    }
+    const last = previous.pieces.at(-1)?.end
+    if (last && state.tail && previous.pieces[0]?.start.byteOffset === 0) this.learnTotals(last)
     return this.beforeWindow(previous.pieces, state)
   }
 
@@ -315,11 +329,20 @@ export class PagedDocument {
       : trusted
   }
 
+  private checkExtent(upperBound: number | undefined) {
+    if (upperBound === undefined) return
+    const { lineCount, utf16Length } = this.#totals
+    if ((lineCount ?? 1) - 1 > upperBound || (utf16Length ?? 0) > upperBound)
+      throw new PagedSourceError('The known byte range contradicts the supplied totals')
+  }
+
   private checkMappedTotals(pos: Position) {
     const { lineCount, utf16Length } = this.#totals
     if (
-      (lineCount !== undefined && pos.line !== undefined && pos.line >= lineCount) ||
-      (utf16Length !== undefined && pos.utf16Offset !== undefined && pos.utf16Offset > utf16Length)
+      (pos.line !== undefined &&
+        (!natural(pos.line) || (lineCount !== undefined && pos.line >= lineCount))) ||
+      (pos.utf16Offset !== undefined &&
+        (!natural(pos.utf16Offset) || (utf16Length !== undefined && pos.utf16Offset > utf16Length)))
     )
       throw new PagedSourceError('Read content contradicts the supplied totals')
   }
@@ -341,7 +364,13 @@ export class PagedDocument {
       column > fragment.text.length + fragment.lineBreak.length
     )
       throw new PagedSourceError('Invalid selection endpoint')
-    return { column, offset: fragment.start.byteOffset, text: fragment.text + fragment.lineBreak }
+    return {
+      column,
+      start: fragment.start.byteOffset,
+      end: fragment.end.byteOffset,
+      utf16Offset: fragment.utf16Offset,
+      text: fragment.text + fragment.lineBreak,
+    }
   }
 
   private async copy(
@@ -352,37 +381,62 @@ export class PagedDocument {
     this.#reader.assertLive(signal)
     const start = this.endpoint(first)
     const end = this.endpoint(second)
-    const [left, right] = start.offset <= end.offset ? [start, end] : [end, start]
-    if (left.offset === right.offset) {
+    const [left, right] = start.start <= end.start ? [start, end] : [end, start]
+    if (left.start === right.start) {
       const text = left.text.length >= right.text.length ? left.text : right.text
-      return {
-        kind: 'text',
-        text: text.slice(Math.min(left.column, right.column), Math.max(left.column, right.column)),
-      }
+      return this.copied(
+        text.slice(Math.min(left.column, right.column), Math.max(left.column, right.column)),
+      )
     }
-    const parts: string[] = []
-    let units = 0
+    if (left.end > right.start) return this.copyOverlap(left, right)
+    const prefix = left.text.slice(left.column)
+    const suffix = right.text.slice(0, right.column)
+    let units = prefix.length + suffix.length
+    if (units > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
+    if (left.end === right.start) return this.copied(prefix + suffix)
+    const parts = [prefix]
     const result = await readText(
       this.#reader,
-      left.offset,
-      right.offset,
+      left.end,
+      right.start,
       signal,
       new ReadBudget(this.#options),
       (text) => {
-        parts.push(text.slice(Math.max(0, left.column - units)))
         units += text.length
-        return units - left.column > this.#options.maxWindowUnits
+        if (units > this.#options.maxWindowUnits) return true
+        parts.push(text)
+        return false
       },
     )
-    if (units - left.column > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
+    if (units > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
     if (result === 'budget') return { kind: 'limit', reason: 'budget' }
     if (result === 'eof') throw new PagedSourceError('Read content ends before the selection')
-    const remaining = units - left.column + right.column
-    if (Math.abs(remaining) > this.#options.maxWindowUnits) return { kind: 'limit', reason: 'text' }
-    if (remaining < 0)
-      return { kind: 'text', text: left.text.slice(units + right.column, left.column) }
-    parts.push(right.text.slice(Math.max(0, left.column - units), right.column))
-    return { kind: 'text', text: parts.join('') }
+    parts.push(suffix)
+    return this.copied(parts.join(''))
+  }
+
+  private copyOverlap(
+    left: ReturnType<PagedDocument['endpoint']>,
+    right: ReturnType<PagedDocument['endpoint']>,
+  ) {
+    if (left.utf16Offset === undefined || right.utf16Offset === undefined) return noMapping
+    const shift = right.utf16Offset - left.utf16Offset
+    if (!natural(shift) || shift > left.text.length)
+      throw new PagedSourceError('The selection endpoints contradict their shared text')
+    const through = shift + right.column
+    if (through <= left.text.length)
+      return this.copied(
+        left.text.slice(Math.min(left.column, through), Math.max(left.column, through)),
+      )
+    return this.copied(
+      left.text.slice(left.column) + right.text.slice(left.text.length - shift, right.column),
+    )
+  }
+
+  private copied(text: string): PagedCopyResult {
+    return text.length > this.#options.maxWindowUnits
+      ? { kind: 'limit', reason: 'text' }
+      : { kind: 'text', text }
   }
 
   private async copyRange(
@@ -399,6 +453,7 @@ export class PagedDocument {
     const pos = await this.locate({ kind: 'utf16', value: start }, signal)
     if (pos?.utf16Offset === undefined) return noMapping
     const parts: string[] = []
+    let mapped: Position = pos
     let units = pos.utf16Offset
     const result = await readText(
       this.#reader,
@@ -406,13 +461,23 @@ export class PagedDocument {
       maxByte,
       signal,
       new ReadBudget(this.#options),
-      (text) => {
+      (text, bytes, byteOffset) => {
+        this.#index?.verifyDecoded(mapped, bytes)
         if (units + text.length > start)
           parts.push(text.slice(Math.max(0, start - units), end - units))
         units += text.length
+        mapped = {
+          byteOffset,
+          line: mapped.line === undefined ? undefined : mapped.line + text.split('\n').length - 1,
+          lineStart: bytes.at(-1) === 10,
+          utf16Offset: units,
+        }
+        this.checkMappedTotals(mapped)
         return units >= end
       },
     )
+    this.#reader.assertLive(signal)
+    this.learnTotals(mapped)
     if (result === 'budget') return { kind: 'limit', reason: 'budget' }
     if (units < end) return outsideSource
     return { kind: 'text', text: parts.join('') }

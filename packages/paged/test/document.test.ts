@@ -353,7 +353,7 @@ test('previous resumes with bounded context when a source delivers one byte per 
   const { source, calls } = fixture(encode('one\n🙂second\nlast'), 1, true)
   const view = new PagedDocument(source, {
     ...small,
-    maxReadBytes: 4,
+    maxReadBytes: 5,
     maxReadRequests: 1,
     maxWindowUnits: 2,
   }).createView()
@@ -439,4 +439,112 @@ test('a superseded locator cannot block a new window or publish its late result'
   expect(raw(await fresh)).toBe('first\n')
   pending.resolve(null)
   expect(calls).toEqual([[0, 8]])
+})
+
+test('a resumed code point spends the next window’s byte budget on carried bytes', async () => {
+  const { source, calls } = fixture(encode('🙂abc'), 3)
+  const view = new PagedDocument(source, {
+    ...small,
+    maxReadBytes: 4,
+    maxReadRequests: 1,
+  }).createView()
+  const first = await view.first(1)
+  expect(first.fragments).toEqual([])
+  expect(first.next?.byteOffset).toBe(0)
+  const resumed = await view.next(first.next!, 1)
+  expect(raw(resumed)).toBe('🙂')
+  expect(calls).toEqual([
+    [0, 4],
+    [3, 4],
+  ])
+  expect(raw(await view.next(resumed.next!, 1))).toBe('abc')
+})
+
+test('subtracts retained fragment text from the copy work even after their pages were evicted', async () => {
+  const { source, calls } = fixture(encode('abcdefghijkl\nZzzz\n0000'), Infinity, true)
+  const doc = new PagedDocument(source, {
+    ...small,
+    pageBytes: 4,
+    cacheBytes: 4,
+    maxReadBytes: 4,
+    maxWindowUnits: 16,
+  })
+  const view = doc.createView()
+  const first = await view.first(1)
+  const second = await view.next(first.next!, 1)
+  const third = await view.next(second.next!, 1)
+  const selected = await view.next(third.next!, 1)
+  await view.next(selected.next!, 1)
+  const before = calls.length
+  expect(
+    await view.copy(
+      {
+        fragment: third.fragments[0]!,
+        column: third.fragments[0]!.text.length - 1,
+      },
+      { fragment: selected.fragments[0]!, column: 1 },
+    ),
+  ).toEqual({ kind: 'text', text: 'l\n' })
+  expect(calls).toHaveLength(before)
+})
+
+test('a learned length cannot be published beside impossible trusted totals', async () => {
+  const { source } = fixture(encode('a\nb'))
+  const doc = new PagedDocument(source, { ...small, totals: { lineCount: 100 } })
+  await expect(doc.createView().first(1)).rejects.toThrow('contradict')
+  expect(doc.stats.totals).toMatchObject({ lineCount: 100, byteLength: undefined })
+  expect(doc.stats.cachedBytes).toBe(0)
+})
+
+test('global copy and tail reject a checkpoint inside the demanded bytes of a line', async () => {
+  const { source, calls } = fixture(encode('abc'), Infinity, true)
+  const doc = new PagedDocument(source, {
+    ...small,
+    index: indexed(source, { checkpoints: [{ byteOffset: 1, line: 1, utf16Offset: 1 }] }),
+  })
+  const view = doc.createView()
+  await expect(view.copyRange(0, 3)).rejects.toThrow('checkpoint without a line boundary')
+  await expect(view.end(1)).rejects.toThrow('checkpoint without a line boundary')
+  expect(calls).toEqual([
+    [0, 3],
+    [0, 3],
+  ])
+})
+
+test('an already computed local copy cannot publish after disposal', async () => {
+  const { source } = fixture(encode('abc'))
+  const doc = new PagedDocument(source, small)
+  const view = doc.createView()
+  const fragment = (await view.first(1)).fragments[0]!
+  const pending = view.copy({ fragment, column: 0 }, { fragment, column: 1 })
+  doc.dispose()
+  await expect(pending).rejects.toThrow('disposed')
+})
+
+test('an evicted multi-window selection reads only the gap between retained endpoints', async () => {
+  const { source, calls } = fixture(encode('abcd\nefgh\nxyz\n'), Infinity, true)
+  const view = new PagedDocument(source, { ...small, cacheBytes: 8 }).createView()
+  const first = await view.first(1)
+  const second = await view.next(first.next!, 1)
+  const third = await view.next(second.next!, 1)
+  const before = calls.length
+  expect(
+    await view.copy(
+      { fragment: first.fragments[0]!, column: 4 },
+      { fragment: third.fragments[0]!, column: 1 },
+    ),
+  ).toEqual({ kind: 'text', text: '\nefgh\nx' })
+  expect(calls.slice(before)).toEqual([
+    [5, 8],
+    [8, 10],
+  ])
+})
+
+test('global copy rejects a checkpoint with the wrong coordinates even when it follows a real LF', async () => {
+  const { source } = fixture(encode('aa\nb'))
+  const doc = new PagedDocument(source, {
+    ...small,
+    index: indexed(source, { checkpoints: [{ byteOffset: 3, line: 2, utf16Offset: 2 }] }),
+  })
+  await expect(doc.createView().copyRange(0, 4)).rejects.toThrow('contradicts an index checkpoint')
 })

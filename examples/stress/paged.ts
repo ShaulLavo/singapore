@@ -179,11 +179,12 @@ async function demand(page: Page, opened: Opened) {
   const idle = await stats(page)
   assert.equal(idle.sourceRequests, opened.stats.sourceRequests)
   const scroll = await scrollAndLearnLength(page, opened)
+  const scrollBack = await scrollUp(page, opened, scroll.stats)
   const copy = await copySelection(page, opened)
   const revisit = await revisitFirstPage(page, copy.stats)
   const cancellation = await closeDuringRead(page)
   assertBounds(copy.stats)
-  return { idle, scroll, copy, revisit, cancellation }
+  return { idle, scroll, scrollBack, copy, revisit, cancellation }
 }
 
 async function scrollAndLearnLength(page: Page, opened: Opened) {
@@ -206,6 +207,20 @@ async function scrollAndLearnLength(page: Page, opened: Opened) {
   assert.equal(after.totals.byteLength, opened.bytes)
   assert.equal(after.totals.lineCount, undefined)
   return { ms, anchor, stats: after }
+}
+
+async function scrollUp(page: Page, opened: Opened, before: Stats) {
+  const view = page.getByRole('region', { name: 'Read-only file range' })
+  await view.hover()
+  const start = performance.now()
+  await page.mouse.wheel(0, -20)
+  await page.locator(`[data-fragment="0"][data-byte="${opened.tileBytes}"]`).waitFor()
+  const ms = performance.now() - start
+  const intraRowPixels = await view.evaluate((region) => region.scrollTop)
+  assert.equal(intraRowPixels, 7)
+  const after = await stats(page)
+  assert.equal(after.sourceRequests, before.sourceRequests)
+  return { ms, anchor: { byte: opened.tileBytes, intraRowPixels }, stats: after }
 }
 
 async function copySelection(page: Page, opened: Opened) {

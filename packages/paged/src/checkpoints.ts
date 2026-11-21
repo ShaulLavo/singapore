@@ -8,6 +8,7 @@ import {
   type PagedTotals,
   type RangeSource,
 } from './types'
+import { decode } from './utf8'
 import { origin, type Position } from './window'
 
 export function mergeTotals(left: PagedTotals, right: PagedTotals): PagedTotals {
@@ -155,17 +156,43 @@ export class TrustedIndex {
     return { ...checkpoint, lineStart: true }
   }
 
-  verify(pos: Position, previous: Position) {
-    if (pos.byteOffset - previous.byteOffset > 1 && this.#checkpoints.length) {
-      const crossed =
-        this.#checkpoints[
-          upperBound(this.#checkpoints, previous.byteOffset, (checkpoint) => checkpoint.byteOffset)
-        ]
-      if (crossed && crossed.byteOffset < pos.byteOffset)
+  verifyBytes(start: number, bytes: Uint8Array, upperBoundBytes: number | undefined) {
+    if (!this.#checkpoints.length) return
+    if (upperBoundBytes !== undefined && this.#checkpoints.at(-1)!.byteOffset > upperBoundBytes)
+      throw new PagedSourceError('An index checkpoint contradicts the known end of the file')
+    const first = upperBound(this.#checkpoints, start, (checkpoint) => checkpoint.byteOffset)
+    for (let index = first; index < this.#checkpoints.length; index++) {
+      const offset = this.#checkpoints[index]!.byteOffset - start - 1
+      if (offset >= bytes.length) break
+      if (bytes[offset] !== 10)
         throw new PagedSourceError(
           'Read content passes an index checkpoint without a line boundary',
         )
     }
+  }
+
+  verifyDecoded(pos: Position, bytes: Uint8Array) {
+    if (!this.#checkpoints.length) return
+    let { line, utf16Offset } = pos
+    const first = upperBound(
+      this.#checkpoints,
+      pos.byteOffset,
+      (checkpoint) => checkpoint.byteOffset,
+    )
+    let start = 0
+    for (let index = first; index < this.#checkpoints.length; index++) {
+      const checkpoint = this.#checkpoints[index]!
+      const end = checkpoint.byteOffset - pos.byteOffset
+      if (end > bytes.length) break
+      const text = decode(bytes.subarray(start, end))
+      line = line === undefined ? undefined : line + text.split('\n').length - 1
+      utf16Offset = utf16Offset === undefined ? undefined : utf16Offset + text.length
+      this.verify({ ...checkpoint, line, utf16Offset, lineStart: true })
+      start = end
+    }
+  }
+
+  verify(pos: Position) {
     const checkpoint = this.#atByte.get(pos.byteOffset)
     if (!checkpoint) return
     if (

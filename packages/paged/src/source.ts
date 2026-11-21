@@ -23,8 +23,8 @@ export class ReadBudget {
   remaining: number
   requests: number
 
-  constructor(options: PagedOptions) {
-    this.remaining = options.maxReadBytes
+  constructor(options: PagedOptions, overlap = 0) {
+    this.remaining = options.maxReadBytes - overlap
     this.requests = options.maxReadRequests
   }
 }
@@ -47,6 +47,11 @@ function observe<T>(result: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 type Slot = { start(): void }
+
+type SourceEvents = {
+  close(): void
+  inspect(start: number, bytes: Uint8Array, upperBound: number | undefined): void
+}
 
 export class SourceReader {
   readonly #lifetime = new AbortController()
@@ -75,7 +80,7 @@ export class SourceReader {
     private readonly source: RangeSource,
     private readonly options: PagedOptions,
     byteLength: number | undefined,
-    private readonly onClose: () => void,
+    private readonly events: SourceEvents,
   ) {
     if (!source.id || !source.revision)
       throw new PagedSourceError('A source needs an id and revision')
@@ -124,7 +129,7 @@ export class SourceReader {
     this.#lifetime.abort()
     this.#cache.clear()
     this.#cachedBytes = 0
-    this.onClose()
+    this.events.close()
   }
 
   async validate(signal?: AbortSignal) {
@@ -132,6 +137,7 @@ export class SourceReader {
     const validate = this.source.validate
     if (!validate) return false
     const result = await this.run(signal, (active) => validate.call(this.source, active))
+    this.assertLive(signal)
     if (result.revision !== this.revision) this.rethrow(new PagedSourceInvalidatedError(), signal)
     return true
   }
@@ -258,6 +264,7 @@ export class SourceReader {
       (exact !== undefined && upper !== undefined && exact > upper)
     )
       throw new PagedSourceError('The source response contradicts the known end of the file')
+    this.events.inspect(start, result.bytes, knownEnd)
     this.#confirmedEnd = confirmedEnd
     this.#eofUpper = upper
     this.#byteLength = exact

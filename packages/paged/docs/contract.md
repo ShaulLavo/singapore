@@ -48,7 +48,9 @@ continuation until a later read establishes EOF or sees the next LF.
 Use `sourceId`, `revision`, `start.byteOffset`, and `end.byteOffset` to identify a fragment's byte
 interval across renders. Include `lineBreak` when passing fragment text to a parser. Highlight
 spans and selection columns count UTF-16 units in the fragment. A selection can reach one column
-past the text to include an owned LF. Global line and UTF-16 offsets are optional and exact when
+past the text to include an owned LF. Copy uses the retained endpoint text and reads only any
+gap between them. To copy between overlapping fragments from different windows, both fragments
+need exact global UTF-16 origins. Global line and UTF-16 offsets are optional and exact when
 present.
 
 Decoding preserves the UTF-8 BOM and CRLF. It counts LF as the row boundary. Malformed UTF-8 uses

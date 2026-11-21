@@ -1,3 +1,5 @@
+import { once } from 'node:events'
+import { createServer } from 'node:http'
 import { expect, test } from 'vitest'
 import {
   blobRangeSource,
@@ -217,4 +219,39 @@ test('an aborted HTTP read cancels a pending body', async () => {
   abort.abort()
   await rejected
   expect(cancelled).toBe(true)
+})
+
+test('a redirect cannot switch a bootstrapped source to a stranger with the same strong ETag', async () => {
+  let requests = 0
+  let redirected = 0
+  const server = createServer((request, response) => {
+    if (request.url === '/other') {
+      redirected++
+      response.writeHead(206, { ETag: etag, 'Content-Range': 'bytes 4-7/8' }).end('bad\n')
+      return
+    }
+    requests++
+    if (requests === 1) {
+      response.writeHead(206, { ETag: etag, 'Content-Range': 'bytes 0-3/*' }).end('one\n')
+      return
+    }
+    response.writeHead(302, { Location: '/other' }).end()
+  })
+  server.listen(0, '127.0.0.1')
+  try {
+    await once(server, 'listening')
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('No HTTP fixture address')
+    const source = await openHttpRangeSource(`http://127.0.0.1:${address.port}/latest`, {
+      id: 'local',
+      firstBytes: 4,
+    })
+    expect((await source.readBytes(0, 4, signal)).bytes.length).toBe(4)
+    await expect(source.readBytes(4, 8, signal)).rejects.toThrow()
+    expect(requests).toBe(2)
+    expect(redirected).toBe(0)
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
 })

@@ -74,15 +74,7 @@ export class PagedViewport {
       this.#byteControls,
     )
     this.#rows.addEventListener('scroll', () => void this.rebase())
-    this.#rows.addEventListener(
-      'wheel',
-      (event) => {
-        if (event.deltaY >= 0 || this.#rows.scrollTop > 0 || !this.#window?.previous) return
-        event.preventDefault()
-        void this.previous(3)
-      },
-      { passive: false },
-    )
+    this.#rows.addEventListener('wheel', (event) => this.wheel(event), { passive: false })
     this.#rows.addEventListener('keydown', (event) => this.pageKey(event))
     this.#rows.addEventListener('copy', (event) => this.copy(event))
     host.append(controls, this.#status, this.#rows)
@@ -140,18 +132,45 @@ export class PagedViewport {
     return cursor ? this.load(() => this.#view.next(cursor, WINDOW_ROWS)) : Promise.resolve()
   }
 
-  private previous(rows = WINDOW_ROWS) {
+  private wheel(event: WheelEvent) {
+    const mode = event.deltaMode
+    const scale =
+      mode === WheelEvent.DOM_DELTA_LINE
+        ? ROW_HEIGHT
+        : mode === WheelEvent.DOM_DELTA_PAGE
+          ? this.#rows.clientHeight
+          : 1
+    const displacement = this.#rows.scrollTop + event.deltaY * scale
+    if (displacement >= 0 || !this.#window?.previous) return
+    event.preventDefault()
+    void this.previous(displacement)
+  }
+
+  private previous(displacement?: number) {
     const current = this.#window
     const cursor = current?.previous
     if (!cursor) return Promise.resolve()
-    return this.load(async () => {
-      const previous = await this.#view.previous(cursor, rows)
-      if (rows === WINDOW_ROWS || !previous.fragments.length) return previous
-      const combined = previous.fragments.concat(current.fragments)
-      const fragments = fitWindow(combined)
-      const next = combined.length > fragments.length ? fragments.at(-1)!.end : current.next
-      return { ...previous, atEnd: !next, next, fragments }
-    })
+    const rows =
+      displacement === undefined
+        ? WINDOW_ROWS
+        : Math.min(WINDOW_ROWS, Math.ceil(-displacement / ROW_HEIGHT))
+    return this.load(
+      async () => {
+        const previous = await this.#view.previous(cursor, rows)
+        if (displacement === undefined) return previous
+        if (!previous.fragments.length)
+          return { ...current, previous: previous.previous, stop: previous.stop }
+        const combined = previous.fragments.concat(current.fragments)
+        const fragments = fitWindow(combined)
+        const next = combined.length > fragments.length ? fragments.at(-1)!.end : current.next
+        return { ...previous, atEnd: !next, next, fragments }
+      },
+      (window) => {
+        if (displacement === undefined) return 0
+        const prepend = window.fragments.indexOf(current.fragments[0]!)
+        return Math.max(0, prepend * ROW_HEIGHT + displacement)
+      },
+    )
   }
 
   private async rebase() {

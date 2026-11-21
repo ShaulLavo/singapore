@@ -15,7 +15,8 @@ bun run --cwd examples/stress bench:paged --sizes 10485760 --modes traverse --ou
 - **Demand.** Open without a byte length, line count, or index. The source returns a short first
   response and never signals EOF. Verify the initial rows, observe idle request counts, and scroll
   two rows plus seven pixels. The next read reports a byte length. The first visible byte and
-  its pixel offset stay fixed as the view makes room for the next rows. Copy a selected range
+  its pixel offset stay fixed as the view makes room for the next rows. Scroll up by one row
+  across the window boundary and verify the same pixel offset after prepending. Copy a selected range
   across two lines with Chromium's clipboard, then close while a user-requested range is pending.
   The virtual source rejects reads outside the allowed region.
 - **Indexed.** Use the line control to jump to 90% of a file with one supplied checkpoint. The
