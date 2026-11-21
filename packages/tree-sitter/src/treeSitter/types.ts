@@ -239,6 +239,10 @@ export type TreeSitterPrepareSliceLanguageRequest = {
   readonly descriptor: TreeSitterLanguageDescriptor
 }
 
+export type TreeSitterPrepareSliceLanguageResult = {
+  readonly slicePreparation: 'ready' | 'unsupported-query'
+}
+
 type TreeSitterDisposeSliceLanguageRequest = {
   readonly type: 'disposeSliceLanguage'
   readonly sliceLanguageId: number
@@ -378,6 +382,7 @@ export type TreeSitterWorkerResult =
   | TreeSitterProjectedMergeUnitsResult
   | TreeSitterReviewBatchResult
   | TreeSitterHighlightSliceResult
+  | TreeSitterPrepareSliceLanguageResult
   | { readonly retention: TreeSitterWorkerRetentionSnapshot }
   | undefined
 

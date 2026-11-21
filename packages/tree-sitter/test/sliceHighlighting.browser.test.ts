@@ -1,6 +1,7 @@
 import { styleForTreeSitterCapture } from '@singapore-editor/core/syntax'
 import { afterEach, expect, it } from 'vitest'
 import {
+  TREE_SITTER_LANGUAGE_CONTRIBUTIONS,
   TSX_TREE_SITTER_LANGUAGE,
   TYPESCRIPT_TREE_SITTER_LANGUAGE,
 } from '../../tree-sitter-languages/src/index'
@@ -114,7 +115,7 @@ it('rejects unbounded query predicates and caps reads during supported predicate
     kind: 'plain',
     reason: 'unsupported-query',
   })
-  expect(requests).toHaveLength(0)
+  expect(requests.map(({ payload }) => payload.type)).toEqual(['init', 'prepareSliceLanguage'])
 
   const bounded = createHighlighter({
     workerOwner,
@@ -131,6 +132,45 @@ it('rejects unbounded query predicates and caps reads during supported predicate
   const normal = await highlighted(bounded, slice('const value = 1'))
   expect(normal.tokens.length).toBe(1)
 })
+
+it('keeps bounded rules after a bare CR comment and skips the unsupported pattern', async () => {
+  const descriptor = await resolveTreeSitterLanguageContribution(TYPESCRIPT_TREE_SITTER_LANGUAGE)
+  const highlighter = createHighlighter({
+    language: {
+      ...descriptor,
+      highlightQuerySource:
+        '; An ordinary comment\r"\n((identifier) @variable (#match? @variable "^("))\n"const" @keyword',
+    },
+  })
+  const result = await highlighted(highlighter, slice('const answer = 42'))
+  expect(result.tokens.toTokens()).toEqual([
+    { start: 0, end: 5, style: styleForTreeSitterCapture('keyword') },
+  ])
+})
+
+it.each([
+  ['python', 'def greet():\n    return "hello"\n', 'def'],
+  ['rust', 'fn greet() -> i32 { 42 }', 'fn'],
+  ['java', 'class Example { public int answer() { return 42; } }', 'class'],
+  ['php', '<?php function greet() { return "hello"; }', 'function'],
+  ['svelte', '<span>Hello</span>', 'span'],
+  ['sql', 'SELECT id FROM users; -- comment', 'SELECT'],
+])(
+  'colors a simple %s slice using the supported rules of its shipped query',
+  async (id, text, keyword) => {
+    const language = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find(
+      (contribution) => contribution.id === id,
+    )
+    if (!language) throw new Error(`Missing shipped language ${id}`)
+    const result = await highlighted(createHighlighter({ language }), slice(text))
+    const keywordStart = text.indexOf(keyword)
+    expect(
+      result.tokens
+        .toTokens()
+        .some(({ start, end }) => start <= keywordStart && end >= keywordStart + keyword.length),
+    ).toBe(true)
+  },
+)
 
 it('retries the same grammar on the same owner after a transient 503', async () => {
   const workerOwner = createTreeSitterWorkerOwner({
