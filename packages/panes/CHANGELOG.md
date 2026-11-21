@@ -1,5 +1,11 @@
 # @singapore-editor/panes
 
+## 0.2.10
+
+### Patch Changes
+
+- Update the hotkeys dependency.
+
 ## 0.2.9
 
 No changes in this release.

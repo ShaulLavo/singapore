@@ -1,6 +1,6 @@
 {
   "name": "@singapore-editor/file-animation",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Text reveal animations for documents opened in the Singapore editor.",
   "keywords": [
     "animation",

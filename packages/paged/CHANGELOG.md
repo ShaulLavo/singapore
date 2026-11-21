@@ -1,5 +1,11 @@
 # @singapore-editor/paged
 
+## 0.2.12
+
+### Patch Changes
+
+- Read large UTF-8 files on demand through paged document sources.
+
 ## 0.2.11
 
 ### Patch Changes

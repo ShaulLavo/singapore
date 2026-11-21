@@ -1,5 +1,11 @@
 # @singapore-editor/core
 
+## 0.2.12
+
+### Patch Changes
+
+- Virtualize content-height editors and update the hotkeys dependency.
+
 ## 0.2.11
 
 ### Patch Changes

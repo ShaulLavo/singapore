@@ -1,5 +1,11 @@
 # @singapore-editor/scope-lines
 
+## 0.2.12
+
+### Patch Changes
+
+- Size sticky scope stacks to the viewport.
+
 ## 0.2.11
 
 ### Patch Changes

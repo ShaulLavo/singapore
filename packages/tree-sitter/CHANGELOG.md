@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter
 
+## 0.2.13
+
+### Patch Changes
+
+- Highlight bounded text slices with Tree-sitter.
+
 ## 0.2.12
 
 ### Patch Changes

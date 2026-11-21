@@ -1,5 +1,11 @@
 # @singapore-editor/gutters
 
+## 0.2.12
+
+### Patch Changes
+
+- Update packed Singapore dependency versions for this release.
+
 ## 0.2.11
 
 ### Patch Changes
