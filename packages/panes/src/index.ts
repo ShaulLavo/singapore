@@ -3,7 +3,7 @@ import {
   type BrowserDispatcher,
   type FocusNode,
   type Binding,
-} from '@fregat/hotkeys'
+} from '@shaulavo/hotkeys'
 import './style.css'
 
 export type ResizablePaneOrientation = 'horizontal' | 'vertical'

@@ -1,6 +1,6 @@
 # keymaps
 
-Editor uses `@fregat/hotkeys` for key parsing, predicates, chords, and browser event ownership. Command metadata lives in the Editor catalog; shortcuts live in explicit pack data.
+Editor uses `@shaulavo/hotkeys` for key parsing, predicates, chords, and browser event ownership. Command metadata lives in the Editor catalog; shortcuts live in explicit pack data.
 
 ## Standalone editors
 
@@ -33,7 +33,7 @@ The named packs are `vscodeNavigationPack`, `vscodeSelectionPack`, `vscodeEditin
 The host owns the window dispatcher and installs all bindings. A hosted Editor contributes a node, live context, and handlers without installing any binding listener or table.
 
 ```ts
-import { createBrowserDispatcher, detectPlatform } from '@fregat/hotkeys'
+import { createBrowserDispatcher, detectPlatform } from '@shaulavo/hotkeys'
 import { baseEditorKeymap, vscodeEditingPack } from '@singapore-editor/core/keymap'
 
 const platform = detectPlatform()
@@ -62,6 +62,6 @@ Find, replace, rename, tooltip, and rendered Markdown links have child nodes wit
 
 ## Chords and text input
 
-The dispatcher captures context once per stroke and resolves each chord prefix through the current focused path. A mismatch replays the current stroke; an ambiguous prefix waits for its continuation or timeout. Focus changes cancel pending state. Pack order and later row precedence are defined by `@fregat/hotkeys`.
+The dispatcher captures context once per stroke and resolves each chord prefix through the current focused path. A mismatch replays the current stroke; an ambiguous prefix waits for its continuation or timeout. Focus changes cancel pending state. Pack order and later row precedence are defined by `@shaulavo/hotkeys`.
 
 Text entry, composition, browser clipboard events, and completion commit characters stay in their native input paths. Enter and clipboard shortcuts invoke Editor commands through the dispatcher; the newline command uses the same indentation, pair, list, and multi-cursor edit pipeline as text input. Clipboard command rows allow trusted browser clipboard events to complete.

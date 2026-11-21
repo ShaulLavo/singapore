@@ -109,6 +109,7 @@
   },
   "publishConfig": {
     "access": "public",
+    "provenance": true,
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
@@ -136,7 +137,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@fregat/hotkeys": "catalog:",
+    "@shaulavo/hotkeys": "catalog:",
     "@shikijs/engine-oniguruma": "4.4.3",
     "@singapore-editor/textbuffer": "workspace:*",
     "diff": "^9.0.0",

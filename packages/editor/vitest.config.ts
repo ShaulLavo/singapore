@@ -65,7 +65,7 @@ export default defineConfig({
           ],
           include: [
             'evlog/client',
-            '@fregat/hotkeys',
+            '@shaulavo/hotkeys',
             'diff',
             '@shikijs/engine-oniguruma',
             '@shikijs/engine-oniguruma/wasm-inlined',

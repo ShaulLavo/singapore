@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { commands } from 'vitest/browser'
-import { detectPlatform } from '@fregat/hotkeys'
+import { detectPlatform } from '@shaulavo/hotkeys'
 import { Editor } from '../src/editor/Editor'
 import '../src/style.css'
 

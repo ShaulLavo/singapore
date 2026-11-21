@@ -5,24 +5,28 @@ import { fileURLToPath } from 'node:url'
 
 const PACKAGE_DIRS = [
   'packages/textbuffer',
-  'packages/editor',
-  'packages/file-animation',
-  'packages/markdown',
-  'packages/panes',
   'packages/lsp',
-  'packages/gutters',
+  'packages/panes',
+  'packages/collab',
+  'packages/editor',
+  'packages/plugin-ui',
+  'packages/collaboration',
+  'packages/diff',
+  'packages/file-animation',
   'packages/find',
-  'packages/react',
-  'packages/solid',
-  'packages/scope-lines',
+  'packages/gutters',
+  'packages/lsp-plugin',
+  'packages/markdown',
   'packages/minimap',
+  'packages/paged',
+  'packages/react',
+  'packages/scope-lines',
+  'packages/solid',
+  'packages/spellcheck',
   'packages/tree-sitter',
   'packages/tree-sitter-languages',
-  'packages/plugin-ui',
-  'packages/lsp-plugin',
+  'packages/highlighting',
   'packages/typescript-lsp',
-  'packages/diff',
-  'packages/spellcheck',
 ] as const
 
 interface PackageManifest {
@@ -33,16 +37,19 @@ interface PackageManifest {
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const args = new Set(Bun.argv.slice(2))
 const dryRun = args.has('--dry-run')
+const skipBuild = args.has('--skip-build')
 const tag = argValue('--tag') ?? 'latest'
 const access = argValue('--access') ?? 'public'
 const registry = argValue('--registry') ?? 'https://registry.npmjs.org/'
 const fromPackage = argValue('--from')
 
-if (!dryRun) {
+if (!dryRun && process.env.CI !== 'true') {
   await assertPublishPrerequisites()
 }
 
-await buildPackages()
+if (!skipBuild) {
+  await buildPackages()
+}
 
 let foundFromPackage = fromPackage === null
 for (const packageDir of PACKAGE_DIRS) {
@@ -118,6 +125,11 @@ async function publishTarball(tarballPath: string): Promise<void> {
     '--access',
     access,
   ]
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    command.push('--provenance')
+  } else if (dryRun) {
+    command.push('--provenance=false')
+  }
 
   await run(dryRun ? command.concat(['--dry-run']) : command)
 }
@@ -160,19 +172,10 @@ async function waitForPublishedPackage(manifest: PackageManifest): Promise<void>
   if (dryRun) return
 
   const packageSpec = specFor(manifest)
-  for (let attempt = 1; attempt <= 10; attempt += 1) {
-    if (await isPackageVisible(packageSpec)) return
-    if (await isPackageListedByAccess(manifest.name)) {
-      console.warn(`${packageSpec} is published, but npm view has not exposed it yet; continuing`)
-      return
-    }
-
-    await Bun.sleep(2000)
-  }
-
-  console.warn(
-    `${packageSpec} publish completed, but npm view did not expose it in time; continuing`,
-  )
+  if (await isPackageVisible(packageSpec)) return
+  await Bun.sleep(1000)
+  if (await isPackageVisible(packageSpec)) return
+  console.log(`${packageSpec} publish completed; continuing without waiting on CDN propagation`)
 }
 
 function specFor(manifest: PackageManifest): string {
@@ -190,31 +193,6 @@ async function isPackageVisible(packageSpec: string): Promise<boolean> {
 
 async function isPackagePublished(manifest: PackageManifest): Promise<boolean> {
   return isPackageVisible(specFor(manifest))
-}
-
-async function isPackageListedByAccess(packageName: string): Promise<boolean> {
-  const scope = scopeFor(packageName)
-  const result = await runCaptured([
-    'npm',
-    'access',
-    'list',
-    'packages',
-    `@${scope}`,
-    '--registry',
-    registry,
-    '--json',
-  ])
-  if (result.exitCode !== 0) return false
-
-  const packageAccess = JSON.parse(result.stdout) as Record<string, string>
-  return Object.hasOwn(packageAccess, packageName)
-}
-
-function scopeFor(packageName: string): string {
-  const match = /^@([^/]+)\//.exec(packageName)
-  if (match) return match[1]
-
-  throw new Error(`Expected ${packageName} to be a scoped package name`)
 }
 
 async function runCaptured(

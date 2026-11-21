@@ -3,7 +3,7 @@ import {
   detectPlatform,
   type KeymapPlatform,
   type KeymapEntry,
-} from '@fregat/hotkeys'
+} from '@shaulavo/hotkeys'
 import { baseEditorKeymap, defaultEditorPacks } from '../../src/keymap/presets'
 import { editorCommandDeclaration, isEditorCommandId } from '../../src/editor/commandCatalog'
 

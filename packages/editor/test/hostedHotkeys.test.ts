@@ -1,4 +1,4 @@
-import { createBrowserDispatcher, type BrowserDispatcher } from '@fregat/hotkeys'
+import { createBrowserDispatcher, type BrowserDispatcher } from '@shaulavo/hotkeys'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { Editor } from '../src/editor/Editor'
 import { baseEditorKeymap, markdownPack } from '../src/keymap/presets'
