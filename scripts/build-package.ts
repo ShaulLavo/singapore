@@ -293,6 +293,108 @@ function findLineHits(line: string, trimmed: readonly TrimmedReplacement[]): Lin
   return hits
 }
 
+type SourceMapCursor = {
+  prevOrigLine: number
+  prevOrigCol: number
+}
+
+function appendLineSegment(
+  segments: string[],
+  cursor: SourceMapCursor,
+  prevGenCol: number,
+  genCol: number,
+  origLine: number,
+  origCol: number,
+): number {
+  segments.push(
+    encodeVlq(genCol - prevGenCol) +
+      encodeVlq(0) +
+      encodeVlq(origLine - cursor.prevOrigLine) +
+      encodeVlq(origCol - cursor.prevOrigCol),
+  )
+  cursor.prevOrigLine = origLine
+  cursor.prevOrigCol = origCol
+  return genCol
+}
+
+function appendUnchangedSpan(
+  segments: string[],
+  cursor: SourceMapCursor,
+  prevGenCol: number,
+  genStart: number,
+  origLine: number,
+  origStart: number,
+  length: number,
+): number {
+  let genCol = prevGenCol
+  for (let offset = 0; offset < length; offset += 1) {
+    genCol = appendLineSegment(
+      segments,
+      cursor,
+      genCol,
+      genStart + offset,
+      origLine,
+      origStart + offset,
+    )
+  }
+  return genCol
+}
+
+function mapSourceLine(
+  line: string,
+  lineIndex: number,
+  trimmed: readonly TrimmedReplacement[],
+  mapCursor: SourceMapCursor,
+): { readonly output: string; readonly mapping: string } {
+  const hits = findLineHits(line, trimmed)
+  const segments: string[] = []
+  let prevGenCol = 0
+
+  if (hits.length === 0) {
+    appendUnchangedSpan(segments, mapCursor, prevGenCol, 0, lineIndex, 0, line.length)
+    return { output: line, mapping: segments.join(',') }
+  }
+
+  let built = ''
+  let sourceOffset = 0
+  for (const hit of hits) {
+    if (hit.start < sourceOffset) continue
+    prevGenCol = appendUnchangedSpan(
+      segments,
+      mapCursor,
+      prevGenCol,
+      built.length,
+      lineIndex,
+      sourceOffset,
+      hit.start - sourceOffset,
+    )
+    built += line.slice(sourceOffset, hit.start)
+    prevGenCol = appendLineSegment(
+      segments,
+      mapCursor,
+      prevGenCol,
+      built.length,
+      lineIndex,
+      hit.start,
+    )
+    built += hit.replacement
+    sourceOffset = hit.end
+  }
+  if (sourceOffset < line.length) {
+    appendUnchangedSpan(
+      segments,
+      mapCursor,
+      prevGenCol,
+      built.length,
+      lineIndex,
+      sourceOffset,
+      line.length - sourceOffset,
+    )
+    built += line.slice(sourceOffset)
+  }
+  return { output: built, mapping: segments.join(',') }
+}
+
 function replaceLinesWithSourceMap(
   code: string,
   sourceId: string,
@@ -311,60 +413,12 @@ function replaceLinesWithSourceMap(
   const originalLines = code.split('\n')
   const outputLines: string[] = []
   const mappingLines: string[] = []
-  let prevSource = 0
-  let prevOrigLine = 0
-  let prevOrigCol = 0
+  const mapCursor: SourceMapCursor = { prevOrigLine: 0, prevOrigCol: 0 }
 
   for (let lineIndex = 0; lineIndex < originalLines.length; lineIndex += 1) {
-    const line = originalLines[lineIndex]!
-    const hits = findLineHits(line, trimmed)
-
-    const segments: string[] = []
-    let prevGenCol = 0
-    const addSegment = (genCol: number, origCol: number): void => {
-      segments.push(
-        encodeVlq(genCol - prevGenCol) +
-          encodeVlq(0 - prevSource) +
-          encodeVlq(lineIndex - prevOrigLine) +
-          encodeVlq(origCol - prevOrigCol),
-      )
-      prevGenCol = genCol
-      prevSource = 0
-      prevOrigLine = lineIndex
-      prevOrigCol = origCol
-    }
-
-    const addUnchangedSpan = (genStart: number, origStart: number, length: number): void => {
-      for (let offset = 0; offset < length; offset += 1) {
-        addSegment(genStart + offset, origStart + offset)
-      }
-    }
-
-    if (hits.length === 0) {
-      outputLines.push(line)
-      addUnchangedSpan(0, 0, line.length)
-      mappingLines.push(segments.join(','))
-      continue
-    }
-
-    let built = ''
-    let cursor = 0
-    for (const hit of hits) {
-      if (hit.start < cursor) continue
-      if (hit.start > cursor) {
-        addUnchangedSpan(built.length, cursor, hit.start - cursor)
-        built += line.slice(cursor, hit.start)
-      }
-      addSegment(built.length, hit.start)
-      built += hit.replacement
-      cursor = hit.end
-    }
-    if (cursor < line.length) {
-      addUnchangedSpan(built.length, cursor, line.length - cursor)
-      built += line.slice(cursor)
-    }
-    outputLines.push(built)
-    mappingLines.push(segments.join(','))
+    const mapped = mapSourceLine(originalLines[lineIndex]!, lineIndex, trimmed, mapCursor)
+    outputLines.push(mapped.output)
+    mappingLines.push(mapped.mapping)
   }
 
   if (appendLine !== undefined) {
