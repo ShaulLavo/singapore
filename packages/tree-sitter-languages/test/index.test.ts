@@ -66,48 +66,74 @@ describe('Tree-sitter language contributions', () => {
     ]
     const context = pluginContext()
     const registerSyntaxProvider = vi.mocked(context.registerSyntaxProvider)
+    const activations: { dispose(): void }[] = []
 
-    for (const plugin of plugins) plugin.activate(context)
+    try {
+      for (const plugin of plugins) {
+        const result = plugin.activate(context)
+        if (!result) continue
+        if ('dispose' in result) activations.push(result)
+        else activations.push(...result)
+      }
 
-    expect(plugins.map((plugin) => plugin.name)).toEqual([
-      'tree-sitter-javascript',
-      'tree-sitter-typescript',
-      'tree-sitter-html',
-      'tree-sitter-css',
-      'tree-sitter-json',
-      'tree-sitter-markdown',
-    ])
-    expect(registerSyntaxProvider).toHaveBeenCalledTimes(1)
-    expect(registerSyntaxProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: expect.any(Object) }),
-    )
-    const provider = registerSyntaxProvider.mock.calls[0]?.[0]
-    if (!provider)
-      throw new TypeError('The language plugins must register one typed structural provider')
-    const analysis = createEditorDocumentAnalysis({
-      buffer: createEditorTextBuffer('const a = 1;'),
-      documentId: 'main.ts',
-    })
-    const lease = analysis.borrowStructural({
-      provider,
-      languageId: 'typescript',
-      includeHighlights: true,
-    })
-    expect(lease).not.toBeNull()
-    lease?.dispose()
-    analysis.dispose()
+      expect(plugins.map((plugin) => plugin.name)).toEqual([
+        'tree-sitter-javascript',
+        'tree-sitter-typescript',
+        'tree-sitter-html',
+        'tree-sitter-css',
+        'tree-sitter-json',
+        'tree-sitter-markdown',
+      ])
+      expect(registerSyntaxProvider).toHaveBeenCalledTimes(1)
+      expect(registerSyntaxProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: expect.any(Object) }),
+      )
+      const provider = registerSyntaxProvider.mock.calls[0]?.[0]
+      if (!provider)
+        throw new TypeError('The language plugins must register one typed structural provider')
+      const analysis = createEditorDocumentAnalysis({
+        buffer: createEditorTextBuffer('const a = 1;'),
+        documentId: 'main.ts',
+      })
+      const lease = analysis.borrowStructural({
+        provider,
+        languageId: 'typescript',
+        includeHighlights: true,
+      })
+      expect(lease).not.toBeNull()
+      lease?.dispose()
+      analysis.dispose()
+    } finally {
+      for (const handle of activations) handle.dispose()
+    }
   })
 
-  it.each([javaScript, typeScript, html])(
-    'registers bundled injection dependencies on the simple plugin path',
-    async (plugin) => {
+  it.each([
+    { id: 'javascript', plugin: () => javaScript() },
+    { id: 'typescript', plugin: () => typeScript() },
+    { id: 'tsx', plugin: () => typeScript({ tsx: true }) },
+    { id: 'html', plugin: () => html() },
+    { id: 'css', plugin: () => css() },
+    { id: 'json', plugin: () => json() },
+  ])(
+    'registers the exact manifest transitive injection closure for $id on the simple plugin path',
+    async ({ id, plugin }) => {
       const context = pluginContext()
       const handles = plugin().activate(context)
       const provider = vi.mocked(context.registerSyntaxProvider).mock
         .calls[0]![0] as TreeSitterSyntaxProvider
       try {
-        expect((await provider.resolveTreeSitterLanguage('jsdoc'))?.id).toBe('jsdoc')
-        expect((await provider.resolveTreeSitterLanguage('regex'))?.id).toBe('regex')
+        const expected = new Set(transitiveInjectionIds(id))
+        const resolved = await provider.resolveTreeSitterLanguage(id)
+        expect(resolved?.id).toBe(id)
+        expect(resolved?.injectionDependencies).toEqual(
+          requiredContribution(id).injectionDependencies,
+        )
+        for (const candidate of TREE_SITTER_LANGUAGE_CONTRIBUTIONS) {
+          const entry = await provider.resolveTreeSitterLanguage(candidate.id)
+          if (expected.has(candidate.id)) expect(entry?.id).toBe(candidate.id)
+          else expect(entry).toBeNull()
+        }
       } finally {
         for (const handle of Array.isArray(handles) ? handles : []) handle.dispose()
       }
@@ -140,6 +166,22 @@ describe('Tree-sitter language contributions', () => {
     expect(tsxTypescriptAssets.foldQuerySource).toContain('jsx_self_closing_element')
   })
 })
+
+function transitiveInjectionIds(rootId: string): readonly string[] {
+  const seen = new Set([rootId])
+  const queue = [rootId]
+  for (const current of queue) {
+    const contribution = requiredContribution(current)
+    for (const dependencyId of contribution.injectionDependencies ?? []) {
+      if (seen.has(dependencyId)) continue
+      if (!TREE_SITTER_LANGUAGE_CONTRIBUTIONS.some((candidate) => candidate.id === dependencyId))
+        continue
+      seen.add(dependencyId)
+      queue.push(dependencyId)
+    }
+  }
+  return queue
+}
 
 function requiredContribution(id: string): TreeSitterLanguageContribution {
   const contribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((candidate) => candidate.id === id)
