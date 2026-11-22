@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- Omit sourcemap `sourcesContent` in published builds and update packed Singapore dependency versions for this release.
+- Omit sourcemap `sourcesContent` in published builds.
 
 ## 0.0.5
 
