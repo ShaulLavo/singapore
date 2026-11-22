@@ -201,7 +201,7 @@
     },
     "packages/highlighting": {
       "name": "@singapore-editor/highlighting",
-      "version": "0.2.15",
+      "version": "0.2.16",
       "dependencies": {
         "@singapore-editor/diff": "workspace:*",
         "@singapore-editor/tree-sitter": "workspace:*",
@@ -443,7 +443,7 @@
     },
     "packages/tree-sitter": {
       "name": "@singapore-editor/tree-sitter",
-      "version": "0.2.14",
+      "version": "0.2.15",
       "dependencies": {
         "@singapore-editor/core": "workspace:*",
         "tree-sitter-md": "github:ShaulLavo/tree-sitter-md#f02e277a34375f326572b4ade2602f44ac769005",
@@ -467,7 +467,7 @@
     },
     "packages/tree-sitter-languages": {
       "name": "@singapore-editor/tree-sitter-languages",
-      "version": "0.2.15",
+      "version": "0.2.16",
       "dependencies": {
         "@singapore-editor/tree-sitter": "workspace:*",
         "@tree-sitter-grammars/tree-sitter-lua": "0.4.1",
