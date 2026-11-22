@@ -171,7 +171,19 @@ function emitBinaryAssets(): Plugin {
         name: path.basename(filePath),
         source,
       })
-      return `export default import.meta.ROLLUP_FILE_URL_${referenceId};\n`
+      if (!filePath.endsWith('.wasm')) {
+        return `export default import.meta.ROLLUP_FILE_URL_${referenceId};\n`
+      }
+      // In Node, `new URL(..., import.meta.url).href` produces a `file:` URL string that
+      // `web-tree-sitter`'s `Language.load(wasmUrl)` forwards to `fetch()` (which rejects `file:`).
+      // Converting `file:` URLs to filesystem paths under Node lets `Language.load()` read the
+      // emitted `.wasm` file via `fs.readFile` while keeping `http(s):` URLs intact in browsers.
+      return (
+        `const url = import.meta.ROLLUP_FILE_URL_${referenceId};\n` +
+        `export default typeof process !== 'undefined' && process.versions?.node && url.startsWith('file:')\n` +
+        `  ? decodeURIComponent(new URL(url).pathname).replace(/^\\/([A-Za-z]:\\/)/, '$1')\n` +
+        `  : url;\n`
+      )
     },
   }
 }
@@ -180,28 +192,138 @@ function emitBinaryAssets(): Plugin {
 // (which Vite otherwise resolves to `web-tree-sitter.js` itself and inlines a second 148 KB copy),
 // and `new URL("web-tree-sitter.wasm", import.meta.url)` which Vite library mode base64-inlines.
 function patchWebTreeSitterUrls(): Plugin {
+  const baseDirTarget = 'new URL(".", import.meta.url)'
+  const baseDirReplacement = 'new URL(/* @vite-ignore */ ".", import.meta.url)'
+  const wasmUrlTarget = 'new URL("web-tree-sitter.wasm", import.meta.url).href'
+  const wasmUrlReplacement = '__singaporeWebTreeSitterWasmUrl'
+  const wasmUrlImport =
+    'import __singaporeWebTreeSitterWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";'
+
   return {
     name: 'singapore-patch-web-tree-sitter-urls',
     enforce: 'pre',
     transform(code, id) {
       if (!id.includes('web-tree-sitter')) return null
-      let next = code
-      if (next.includes('new URL(".", import.meta.url)')) {
-        next = next.replaceAll(
-          'new URL(".", import.meta.url)',
-          'new URL(/* @vite-ignore */ ".", import.meta.url)',
-        )
+      const hasBaseDir = code.includes(baseDirTarget)
+      const hasWasmUrl = code.includes(wasmUrlTarget)
+      if (!hasBaseDir && !hasWasmUrl) return null
+
+      const replacements: (readonly [string, string])[] = []
+      if (hasBaseDir) replacements.push([baseDirTarget, baseDirReplacement])
+      if (hasWasmUrl) replacements.push([wasmUrlTarget, wasmUrlReplacement])
+      return replaceLinesWithSourceMap(
+        code,
+        id,
+        replacements,
+        hasWasmUrl ? wasmUrlImport : undefined,
+      )
+    },
+  }
+}
+
+function encodeVlq(value: number): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  let encoded = ''
+  let vlq = value < 0 ? (-value << 1) + 1 : value << 1
+  do {
+    let digit = vlq & 31
+    vlq >>>= 5
+    if (vlq > 0) digit |= 32
+    encoded += chars[digit]
+  } while (vlq > 0)
+  return encoded
+}
+
+function replaceLinesWithSourceMap(
+  code: string,
+  sourceId: string,
+  replacements: readonly (readonly [string, string])[],
+  appendLine?: string,
+): {
+  readonly code: string
+  readonly map: {
+    readonly version: 3
+    readonly sources: readonly string[]
+    readonly names: readonly string[]
+    readonly mappings: string
+  }
+} {
+  const originalLines = code.split('\n')
+  const outputLines: string[] = []
+  const mappingLines: string[] = []
+  let prevSource = 0
+  let prevOrigLine = 0
+  let prevOrigCol = 0
+
+  for (let lineIndex = 0; lineIndex < originalLines.length; lineIndex += 1) {
+    const line = originalLines[lineIndex]!
+    const hits: { readonly start: number; readonly end: number; readonly replacement: string }[] =
+      []
+    for (const [target, replacement] of replacements) {
+      let searchFrom = 0
+      while (searchFrom < line.length) {
+        const start = line.indexOf(target, searchFrom)
+        if (start === -1) break
+        hits.push({ start, end: start + target.length, replacement })
+        searchFrom = start + target.length
       }
-      if (next.includes('new URL("web-tree-sitter.wasm", import.meta.url).href')) {
-        next =
-          'import __singaporeWebTreeSitterWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";\n' +
-          next.replaceAll(
-            'new URL("web-tree-sitter.wasm", import.meta.url).href',
-            '__singaporeWebTreeSitterWasmUrl',
-          )
+    }
+    hits.sort((left, right) => left.start - right.start)
+
+    const segments: string[] = []
+    let prevGenCol = 0
+    const addSegment = (genCol: number, origCol: number): void => {
+      segments.push(
+        encodeVlq(genCol - prevGenCol) +
+          encodeVlq(0 - prevSource) +
+          encodeVlq(lineIndex - prevOrigLine) +
+          encodeVlq(origCol - prevOrigCol),
+      )
+      prevGenCol = genCol
+      prevSource = 0
+      prevOrigLine = lineIndex
+      prevOrigCol = origCol
+    }
+
+    if (hits.length === 0) {
+      outputLines.push(line)
+      if (line.length > 0) addSegment(0, 0)
+      mappingLines.push(segments.join(','))
+      continue
+    }
+
+    let built = ''
+    let cursor = 0
+    for (const hit of hits) {
+      if (hit.start < cursor) continue
+      if (hit.start > cursor) {
+        addSegment(built.length, cursor)
+        built += line.slice(cursor, hit.start)
       }
-      if (next === code) return null
-      return { code: next, map: null }
+      addSegment(built.length, hit.start)
+      built += hit.replacement
+      cursor = hit.end
+    }
+    if (cursor < line.length) {
+      addSegment(built.length, cursor)
+      built += line.slice(cursor)
+    }
+    outputLines.push(built)
+    mappingLines.push(segments.join(','))
+  }
+
+  if (appendLine !== undefined) {
+    outputLines.push(appendLine)
+    mappingLines.push('')
+  }
+
+  return {
+    code: outputLines.join('\n'),
+    map: {
+      version: 3,
+      sources: [sourceId],
+      names: [],
+      mappings: mappingLines.join(';'),
     },
   }
 }

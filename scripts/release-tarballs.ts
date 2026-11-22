@@ -245,10 +245,12 @@ async function testCleanConsumer(
       )}\n`,
     )
     await writeFile(path.join(consumer, 'smoke.mjs'), smokeScript(releasePackages, packages))
+    await writeFile(path.join(consumer, 'node-grammar-smoke.mjs'), nodeGrammarSmokeScript())
     await prepareBrowserConsumer(consumer)
     await run(['bun', 'install', '--no-progress'], consumer, signal)
     await run(['node', 'notices.mjs'], consumer, signal)
     await run(['bun', 'smoke.mjs'], consumer, signal)
+    await run(['node', 'node-grammar-smoke.mjs'], consumer, signal)
     await run(['bun', 'x', '--no-install', 'tsc', '-p', 'tsconfig.json'], consumer, signal)
     await run(
       ['bun', 'x', '--no-install', 'vite', 'build', '--configLoader', 'native'],
@@ -297,6 +299,24 @@ function smokeScript(
     `console.log(\`verified \${packages.length} package entry points\`)\n` +
     `// Keep the generated source tied to the complete release set.\n` +
     `if (packages.map((item) => item.name).join('\0') !== ${JSON.stringify(packageNames.join('\0'))}) throw new Error('Package set changed')\n`
+  )
+}
+
+function nodeGrammarSmokeScript(): string {
+  return (
+    `import { JAVASCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages'\n` +
+    `import { Language, Parser } from 'web-tree-sitter'\n\n` +
+    `await Parser.init()\n` +
+    `const assets = await JAVASCRIPT_TREE_SITTER_LANGUAGE.load()\n` +
+    `const language = await Language.load(assets.wasmUrl)\n` +
+    `const parser = new Parser().setLanguage(language)\n` +
+    `const tree = parser.parse('export const answer = 42;\\n')\n` +
+    `if (!tree || tree.rootNode.hasError) {\n` +
+    `  throw new Error('Node grammar smoke failed to parse JavaScript')\n` +
+    `}\n` +
+    `tree.delete()\n` +
+    `parser.delete()\n` +
+    `console.log('verified Node grammar loading')\n`
   )
 }
 
