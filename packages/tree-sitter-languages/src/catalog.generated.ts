@@ -572,6 +572,57 @@ export const regexContribution: TreeSitterLanguageContribution = {
     }
   },
 }
+export const javascriptInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
+  regexContribution,
+  jsdocContribution,
+]
+export const typescriptInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
+  regexContribution,
+  jsdocContribution,
+]
+export const tsxInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
+  regexContribution,
+  jsdocContribution,
+]
+export const htmlInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
+  javascriptContribution,
+  cssContribution,
+  regexContribution,
+  jsdocContribution,
+]
+export const cssInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const jsonInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const markdownInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const astroInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
+  typescriptContribution,
+  cssContribution,
+  regexContribution,
+  jsdocContribution,
+]
+export const pythonInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const shellscriptInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const rustInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const goInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const yamlInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const tomlInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const cInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const cppInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const csharpInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const javaInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const phpInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const luaInjectionDependencies: readonly TreeSitterLanguageContribution[] = [cContribution]
+export const svelteInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
+  typescriptContribution,
+  cssContribution,
+  regexContribution,
+  jsdocContribution,
+]
+export const sqlInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const mdxInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
+  markdownContribution,
+]
+export const jsdocInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const regexInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
 export const TREE_SITTER_LANGUAGE_CONTRIBUTIONS: readonly TreeSitterLanguageContribution[] = [
   javascriptContribution,
   typescriptContribution,

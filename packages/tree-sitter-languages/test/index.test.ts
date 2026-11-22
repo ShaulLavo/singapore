@@ -98,16 +98,24 @@ describe('Tree-sitter language contributions', () => {
     analysis.dispose()
   })
 
-  it.each([javaScript, typeScript, html])(
-    'registers bundled injection dependencies on the simple plugin path',
-    async (plugin) => {
+  it.each([
+    { id: 'javascript', plugin: () => javaScript() },
+    { id: 'typescript', plugin: () => typeScript() },
+    { id: 'tsx', plugin: () => typeScript({ tsx: true }) },
+    { id: 'html', plugin: () => html() },
+    { id: 'css', plugin: () => css() },
+    { id: 'json', plugin: () => json() },
+  ])(
+    'registers the manifest transitive injection closure for $id on the simple plugin path',
+    async ({ id, plugin }) => {
       const context = pluginContext()
       const handles = plugin().activate(context)
       const provider = vi.mocked(context.registerSyntaxProvider).mock
         .calls[0]![0] as TreeSitterSyntaxProvider
       try {
-        expect((await provider.resolveTreeSitterLanguage('jsdoc'))?.id).toBe('jsdoc')
-        expect((await provider.resolveTreeSitterLanguage('regex'))?.id).toBe('regex')
+        for (const expectedId of transitiveInjectionIds(id)) {
+          expect((await provider.resolveTreeSitterLanguage(expectedId))?.id).toBe(expectedId)
+        }
       } finally {
         for (const handle of Array.isArray(handles) ? handles : []) handle.dispose()
       }
@@ -140,6 +148,22 @@ describe('Tree-sitter language contributions', () => {
     expect(tsxTypescriptAssets.foldQuerySource).toContain('jsx_self_closing_element')
   })
 })
+
+function transitiveInjectionIds(rootId: string): readonly string[] {
+  const seen = new Set([rootId])
+  const queue = [rootId]
+  for (const current of queue) {
+    const contribution = requiredContribution(current)
+    for (const dependencyId of contribution.injectionDependencies ?? []) {
+      if (seen.has(dependencyId)) continue
+      if (!TREE_SITTER_LANGUAGE_CONTRIBUTIONS.some((candidate) => candidate.id === dependencyId))
+        continue
+      seen.add(dependencyId)
+      queue.push(dependencyId)
+    }
+  }
+  return queue
+}
 
 function requiredContribution(id: string): TreeSitterLanguageContribution {
   const contribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((candidate) => candidate.id === id)

@@ -11,13 +11,16 @@ import type {
 import {
   astroContribution,
   cssContribution,
+  cssInjectionDependencies,
   htmlContribution,
-  javascriptContribution,
-  jsdocContribution,
+  htmlInjectionDependencies,
+  javascriptInjectionDependencies,
   jsonContribution,
+  jsonInjectionDependencies,
   markdownContribution,
-  regexContribution,
   tsxContribution,
+  tsxInjectionDependencies,
+  typescriptInjectionDependencies,
 } from './catalog.generated'
 
 export type JavaScriptTreeSitterLanguageOptions = TreeSitterLanguagePluginOptions & {
@@ -45,7 +48,8 @@ export const ASTRO_TREE_SITTER_LANGUAGE = astroContribution
 export function javaScript(options: JavaScriptTreeSitterLanguageOptions = {}): EditorPlugin {
   const { jsx = false, ...pluginOptions } = options
   return createLanguagePlugin(
-    [createJavaScriptContribution(jsx), regexContribution, jsdocContribution],
+    createJavaScriptContribution(jsx),
+    javascriptInjectionDependencies,
     'tree-sitter-javascript',
     pluginOptions,
   )
@@ -54,7 +58,8 @@ export function javaScript(options: JavaScriptTreeSitterLanguageOptions = {}): E
 export function typeScript(options: TypeScriptTreeSitterLanguageOptions = {}): EditorPlugin {
   const { tsx = false, ...pluginOptions } = options
   return createLanguagePlugin(
-    [createTypeScriptContribution(tsx), regexContribution, jsdocContribution],
+    createTypeScriptContribution(tsx),
+    tsx ? tsxInjectionDependencies : typescriptInjectionDependencies,
     'tree-sitter-typescript',
     pluginOptions,
   )
@@ -62,24 +67,29 @@ export function typeScript(options: TypeScriptTreeSitterLanguageOptions = {}): E
 
 export function html(options?: TreeSitterLanguagePluginOptions): EditorPlugin {
   return createLanguagePlugin(
-    [
-      HTML_TREE_SITTER_LANGUAGE,
-      javascriptContribution,
-      CSS_TREE_SITTER_LANGUAGE,
-      regexContribution,
-      jsdocContribution,
-    ],
+    HTML_TREE_SITTER_LANGUAGE,
+    htmlInjectionDependencies,
     'tree-sitter-html',
     options,
   )
 }
 
 export function css(options?: TreeSitterLanguagePluginOptions): EditorPlugin {
-  return createLanguagePlugin([CSS_TREE_SITTER_LANGUAGE], 'tree-sitter-css', options)
+  return createLanguagePlugin(
+    CSS_TREE_SITTER_LANGUAGE,
+    cssInjectionDependencies,
+    'tree-sitter-css',
+    options,
+  )
 }
 
 export function json(options?: TreeSitterLanguagePluginOptions): EditorPlugin {
-  return createLanguagePlugin([JSON_TREE_SITTER_LANGUAGE], 'tree-sitter-json', options)
+  return createLanguagePlugin(
+    JSON_TREE_SITTER_LANGUAGE,
+    jsonInjectionDependencies,
+    'tree-sitter-json',
+    options,
+  )
 }
 
 export function markdown(options: TreeSitterLanguagePluginOptions = {}): EditorPlugin {
@@ -90,11 +100,12 @@ export function markdown(options: TreeSitterLanguagePluginOptions = {}): EditorP
 }
 
 function createLanguagePlugin(
-  contributions: readonly TreeSitterLanguageContribution[],
+  root: TreeSitterLanguageContribution,
+  dependencies: readonly TreeSitterLanguageContribution[],
   name: string,
   options: TreeSitterLanguagePluginOptions = {},
 ): EditorPlugin {
-  return createTreeSitterLanguagePlugin(contributions, {
+  return createTreeSitterLanguagePlugin([root].concat(dependencies), {
     ...options,
     name: options.name ?? name,
   })
