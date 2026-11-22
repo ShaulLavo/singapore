@@ -122,6 +122,22 @@ describe('virtualized text view layout', () => {
     expect(rowForOffset(view, 200_002)).toBe(100_000)
     expect(reads).not.toHaveBeenCalled()
   })
+
+  it('builds the wrap summary once when enabling word wrap', () => {
+    const view = new VirtualizedTextView(document.createElement('div'), {
+      rowHeight: 20,
+      textMetrics: { rowHeight: 20, characterWidth: 8 },
+    })
+    views.push(view)
+    const lines = Array.from({ length: 200 }, (_, index) => `line ${index} `.repeat(6))
+    view.setText(createDocumentTextSnapshot(createPieceTableSnapshot(lines.join('\n'))))
+    view.setScrollMetrics(0, 400, 320)
+
+    view.setWrapEnabled(true)
+
+    const projection = view['view'].model.projection
+    expect(projection.diagnostics.summaryLinesMeasured).toBe(lines.length)
+  })
 })
 
 function layoutView(text: string, wrapColumn: number | null = null): VirtualizedTextViewInternal {
@@ -132,7 +148,9 @@ function layoutView(text: string, wrapColumn: number | null = null): Virtualized
   views.push(view)
   view.setText(createDocumentTextSnapshot(createPieceTableSnapshot(text)))
   if (wrapColumn !== null) {
-    view.setScrollMetrics(0, 0, wrapColumn * 8)
+    // Wrapped views reserve one trailing column (`Math.floor(width / cw) - 1`), so a viewport
+    // width of `(wrapColumn + 1) * 8` produces an exact `wrapColumn` wrap width.
+    view.setScrollMetrics(0, 0, (wrapColumn + 1) * 8)
     view.setWrapEnabled(true)
   }
   return view['view']
