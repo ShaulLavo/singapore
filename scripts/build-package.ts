@@ -91,7 +91,7 @@ async function buildJavaScript(): Promise<void> {
     // Relative, so an emitted worker URL resolves from the module that constructs it.
     base: './',
     build: {
-      assetsInlineLimit: Number.MAX_SAFE_INTEGER,
+      assetsInlineLimit: 0,
       emptyOutDir: false,
       lib: {
         entry: entries,
@@ -108,6 +108,7 @@ async function buildJavaScript(): Promise<void> {
           entryFileNames: packageModuleFileName,
           preserveModules: true,
           preserveModulesRoot: sourceRoot,
+          sourcemapExcludeSources: true,
         },
       },
       sourcemap: true,
@@ -115,17 +116,94 @@ async function buildJavaScript(): Promise<void> {
     },
     configFile: false,
     logLevel: 'warn',
-    plugins: [externalizeCssImports(), canonicalModuleWorkers(workerReferences)],
+    plugins: [
+      externalizeCssImports(),
+      emitBinaryAssets(),
+      canonicalModuleWorkers(workerReferences),
+    ],
     publicDir: false,
     root: packageDir,
     worker: {
       format: 'es',
+      plugins: () => [patchWebTreeSitterUrls(), emitBinaryAssets()],
       rollupOptions: {
         external: [],
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'web-tree-sitter',
+                test: /[/\\]web-tree-sitter[/\\]/,
+              },
+            ],
+          },
+          sourcemapExcludeSources: true,
+        },
       },
     },
   })
   await assertWorkersAreCanonical(workerReferences)
+}
+
+// Vite library mode forces data-URI inlining regardless of `assetsInlineLimit`, inflating binary
+// payloads by ~33% raw (~45% gzip / ~54% Brotli) and preventing `WebAssembly.instantiateStreaming`.
+// Emitting binary `?url` assets as real files keeps `new URL(..., import.meta.url)` resolvable in
+// Node, Bun, browsers, and downstream Vite consumers without embedding host paths in dist.
+function emitBinaryAssets(): Plugin {
+  const suffix = '?singapore-binary-url'
+  const pattern = /\.(?:wasm|gz)\?url$/
+  return {
+    name: 'singapore-emit-binary-assets',
+    enforce: 'pre',
+    async resolveId(id, importer) {
+      if (!pattern.test(id)) return null
+      const bare = id.slice(0, -'?url'.length)
+      const resolved = await this.resolve(bare, importer, { skipSelf: true })
+      if (!resolved) return null
+      return `${resolved.id}${suffix}`
+    },
+    async load(id) {
+      if (!id.endsWith(suffix)) return null
+      const filePath = id.slice(0, -suffix.length)
+      const source = await readFile(filePath)
+      const referenceId = this.emitFile({
+        type: 'asset',
+        name: path.basename(filePath),
+        source,
+      })
+      return `export default import.meta.ROLLUP_FILE_URL_${referenceId};\n`
+    },
+  }
+}
+
+// `web-tree-sitter` calls `new URL(".", import.meta.url)` only to derive a base directory URL
+// (which Vite otherwise resolves to `web-tree-sitter.js` itself and inlines a second 148 KB copy),
+// and `new URL("web-tree-sitter.wasm", import.meta.url)` which Vite library mode base64-inlines.
+function patchWebTreeSitterUrls(): Plugin {
+  return {
+    name: 'singapore-patch-web-tree-sitter-urls',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('web-tree-sitter')) return null
+      let next = code
+      if (next.includes('new URL(".", import.meta.url)')) {
+        next = next.replaceAll(
+          'new URL(".", import.meta.url)',
+          'new URL(/* @vite-ignore */ ".", import.meta.url)',
+        )
+      }
+      if (next.includes('new URL("web-tree-sitter.wasm", import.meta.url).href')) {
+        next =
+          'import __singaporeWebTreeSitterWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";\n' +
+          next.replaceAll(
+            'new URL("web-tree-sitter.wasm", import.meta.url).href',
+            '__singaporeWebTreeSitterWasmUrl',
+          )
+      }
+      if (next === code) return null
+      return { code: next, map: null }
+    },
+  }
 }
 
 function packageModuleFileName(chunk: { readonly name: string }): string {
@@ -145,6 +223,7 @@ function externalDependency(id: string, importer?: string): boolean {
 function isSourceImport(id: string): boolean {
   if (id.startsWith('.')) return true
   if (id.startsWith('/')) return true
+  if (id.endsWith('.wasm') || id.endsWith('.gz')) return true
   return id.includes('?')
 }
 
