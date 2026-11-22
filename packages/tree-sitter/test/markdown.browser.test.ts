@@ -279,3 +279,173 @@ it('preserves Unicode Markdown worker results after measured shared-heap growth'
   expect(actual?.folds).toEqual(fresh?.folds)
   expect(actual?.injections).toEqual(fresh?.injections)
 })
+
+it('reuses untouched fences and nested injections across sequential edits without dangling prior sources', async () => {
+  const initialText = [
+    '# Fences',
+    '',
+    '```html',
+    '<section><script>const before = 1;</script></section>',
+    '```',
+    '',
+    '```html',
+    '<main><script>const middle = 2;</script></main>',
+    '```',
+    '',
+    '```html',
+    '<footer><script>const after = 3;</script></footer>',
+    '```',
+    '',
+  ].join('\n')
+  const document = sourceDocument(initialText)
+  await document.withRead((source) => client.parse({ ...identity, snapshotVersion: 1, source }))
+
+  let version = 1
+  for (let step = 0; step < 5; step += 1) {
+    const previous = document.delivery.current()!
+    const currentText = document.buffer.materializeFullText()
+    const target = currentText.indexOf('middle')
+    const edit = { from: target, to: target, text: `_${step}` }
+    document.view.applyEdits([edit])
+    const actual = await document.withRead((source) => {
+      const payload = createTreeSitterEditPayload({
+        ...identity,
+        previousSnapshotVersion: version,
+        snapshotVersion: version + 1,
+        previousRead: previous.text,
+        source,
+        edits: [edit],
+      })
+      if (!payload) throw new TypeError('Expected Markdown fence edit payload')
+      return client.edit(payload)
+    })
+    version += 1
+
+    const freshDocument = sourceDocument(document.buffer.materializeFullText())
+    const fresh = await freshDocument.withRead((source) =>
+      client.parse({
+        ...identity,
+        runtimeSessionId: `fences-fresh-${step}`,
+        snapshotVersion: version,
+        source,
+      }),
+    )
+    expect(actual?.records).toEqual(fresh?.records)
+    expect(actual?.captures).toEqual(fresh?.captures)
+    expect(actual?.folds).toEqual(fresh?.folds)
+    expect(actual?.injections).toEqual(fresh?.injections)
+    client.disposeDocument(`fences-fresh-${step}`)
+    freshDocument.dispose()
+  }
+
+  const finalRange = await client.queryRange({
+    ...identity,
+    snapshotVersion: version,
+    includeHighlights: true,
+    includeCaptures: true,
+    range: { startIndex: 0, endIndex: document.buffer.materializeFullText().length },
+  })
+  expect(finalRange?.captures.some((c) => c.languageId === 'javascript')).toBe(true)
+})
+
+it('drops nested injections inside an edited fence when a start-tag attribute disables the predicate', async () => {
+  const initialText = [
+    '```svelte',
+    '<style data-foo="nope    ">body { color: red; }</style>',
+    '```',
+    '',
+  ].join('\n')
+  const document = sourceDocument(initialText)
+  const initial = await document.withRead((source) =>
+    client.parse({ ...identity, snapshotVersion: 1, source }),
+  )
+  expect(initial?.injections.some((injection) => injection.languageId === 'css')).toBe(true)
+
+  const previous = document.delivery.current()!
+  const from = initialText.indexOf('nope    ')
+  const edit = { from, to: from + 'nope    '.length, text: 'lang=foo' }
+  document.view.applyEdits([edit])
+  const actual = await document.withRead((source) => {
+    const payload = createTreeSitterEditPayload({
+      ...identity,
+      previousSnapshotVersion: 1,
+      snapshotVersion: 2,
+      previousRead: previous.text,
+      source,
+      edits: [edit],
+    })
+    if (!payload) throw new TypeError('Expected Svelte fence edit payload')
+    return client.edit(payload)
+  })
+  const freshDocument = sourceDocument(document.buffer.materializeFullText())
+  const fresh = await freshDocument.withRead((source) =>
+    client.parse({
+      ...identity,
+      runtimeSessionId: 'svelte-predicate-fresh',
+      snapshotVersion: 2,
+      source,
+    }),
+  )
+  expect(actual?.injections).toEqual(fresh?.injections)
+  expect(actual?.captures).toEqual(fresh?.captures)
+  expect(actual?.injections.some((injection) => injection.languageId === 'css')).toBe(false)
+})
+
+it('invalidates untouched fence reuse when a new language claims an existing nested alias', async () => {
+  const initialText = [
+    '```javascript',
+    'const markup = html`<div>hello</div>`',
+    '```',
+    '',
+    'Trailing prose.',
+    '',
+  ].join('\n')
+  const document = sourceDocument(initialText)
+  const initial = await document.withRead((source) =>
+    client.parse({ ...identity, snapshotVersion: 1, source }),
+  )
+  expect(initial?.injections.some((injection) => injection.languageId === 'html')).toBe(true)
+
+  const htmlContribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find(
+    (contribution) => contribution.id === 'html',
+  )!
+  const htmlDescriptor = await resolveTreeSitterLanguageContribution(htmlContribution)
+  await client.registerLanguages([
+    {
+      ...htmlDescriptor,
+      id: 'html-override',
+      aliases: ['html'],
+    },
+  ])
+
+  const previous = document.delivery.current()!
+  const from = initialText.length
+  const edit = { from, to: from, text: 'More prose.\n' }
+  document.view.applyEdits([edit])
+  const actual = await document.withRead((source) => {
+    const payload = createTreeSitterEditPayload({
+      ...identity,
+      previousSnapshotVersion: 1,
+      snapshotVersion: 2,
+      previousRead: previous.text,
+      source,
+      edits: [edit],
+    })
+    if (!payload) throw new TypeError('Expected alias-change edit payload')
+    return client.edit(payload)
+  })
+  const freshDocument = sourceDocument(document.buffer.materializeFullText())
+  const fresh = await freshDocument.withRead((source) =>
+    client.parse({
+      ...identity,
+      runtimeSessionId: 'alias-change-fresh',
+      snapshotVersion: 2,
+      source,
+    }),
+  )
+  expect(actual?.injections).toEqual(fresh?.injections)
+  expect(actual?.captures).toEqual(fresh?.captures)
+  expect(actual?.injections.some((injection) => injection.languageId === 'html-override')).toBe(
+    true,
+  )
+})
