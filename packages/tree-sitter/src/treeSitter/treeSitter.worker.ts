@@ -494,6 +494,12 @@ const parseMarkdownFences = async (
   const degraded: TreeSitterDegradedState[] = []
   const reusableLayers = prepareReusableLayers(oldDocument, inputEdits)
   const reservedLayerIds = new Set(reusableLayers.map((layer) => layer.layer.id))
+  const canSkipUntouched =
+    oldDocument !== null &&
+    inputEdits.length > 0 &&
+    oldDocument.missingLanguages.length === 0 &&
+    oldDocument.degraded.length === 0
+  const editRanges = canSkipUntouched ? editedRanges(inputEdits, document.size) : []
   try {
     for (let offset = 0; offset < fences.length; offset += 4) {
       const name = readTreeSitterInputRange(
@@ -518,30 +524,46 @@ const parseMarkdownFences = async (
         depth: 1,
         ranges: [markdownRange(markdown, fences[offset]!, fences[offset + 1]!)],
       }
-      const layer = await parseMarkdownFence(
+      const reusable = takeReusableLayer(reusableLayers, plan)
+      if (
+        canSkipUntouched &&
+        reusable &&
+        canReuseMarkdownFence(reusable.layer, plan.ranges, reusableLayers, editRanges)
+      ) {
+        rebindReusedTreeSource(reusable.layer.tree, document.source, plan.ranges)
+        layers.push({ ...reusable.layer, ranges: plan.ranges })
+        carryMarkdownFenceDescendants(layers, reusable.layer.id, reusableLayers, document.source)
+        continue
+      }
+      const parsed = await parseMarkdownFence(
         plan,
         document.source,
-        reusableLayers,
+        reusable,
         reservedLayerIds,
         context,
+        canSkipUntouched ? editRanges : null,
       )
-      layers.push(layer)
-      await appendInjectionLayers(layers, layer, {
+      layers.push(parsed.layer)
+      const injectionContext: ParseInjectionContext = {
         readOnly: document.readOnly,
         documentId: '',
         snapshotVersion: document.snapshotVersion,
         languageId: 'markdown',
         source: document.source,
-        rootLayer: layer,
+        rootLayer: parsed.layer,
         context,
         oldDocument,
         inputEdits,
-        injectionRanges: null,
+        injectionRanges: parsed.injectionRanges,
         degraded,
         reusableLayers,
         missingLanguages,
         reservedLayerIds,
-      })
+      }
+      await appendInjectionLayers(layers, parsed.layer, injectionContext)
+      if (parsed.injectionRanges) {
+        await appendCarriedLayers(layers, injectionContext)
+      }
     }
     return { ...document, layers, degraded, missingLanguages: [...missingLanguages] }
   } catch (error) {
@@ -552,27 +574,120 @@ const parseMarkdownFences = async (
   }
 }
 
+type TreeWithTextCallback = Tree & {
+  textCallback?: (index: number, position?: unknown, endIndex?: number) => string | undefined
+}
+
+const canRebindTreeSource = (tree: Tree): boolean =>
+  typeof (tree as TreeWithTextCallback).textCallback === 'function'
+
+const rebindReusedTreeSource = (
+  tree: Tree,
+  source: TreeSitterPieceTableInput,
+  ranges: readonly TreeSitterRange[],
+): void => {
+  const handle = tree as TreeWithTextCallback
+  if (typeof handle.textCallback !== 'function') return
+  handle.textCallback = (index, _position, endIndex?: number) =>
+    readInjectedInput(source, ranges, index, endIndex)
+}
+
+const canReuseMarkdownFence = (
+  fence: ParsedLayer,
+  planRanges: readonly TreeSitterRange[],
+  reusableLayers: readonly ReusableLayer[],
+  editRanges: readonly TreeSitterSyntaxRange[],
+): boolean => {
+  if (!canRebindTreeSource(fence.tree)) return false
+  if (!rangesEqualWithPositions(fence.ranges, planRanges)) return false
+  if (rangeIntersectsChangedRanges(planRanges[0]!, editRanges)) return false
+  const descendantIds = new Set([fence.id])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const candidate of reusableLayers) {
+      if (candidate.state !== 'available') continue
+      if (!candidate.layer.parentId || !descendantIds.has(candidate.layer.parentId)) continue
+      if (descendantIds.has(candidate.layer.id)) continue
+      if (
+        !languageDescriptors.has(candidate.layer.languageId) ||
+        !canRebindTreeSource(candidate.layer.tree)
+      )
+        return false
+      descendantIds.add(candidate.layer.id)
+      grew = true
+    }
+  }
+  return true
+}
+
+const carryMarkdownFenceDescendants = (
+  layers: ParsedLayer[],
+  rootFenceId: string,
+  reusableLayers: readonly ReusableLayer[],
+  source: TreeSitterPieceTableInput,
+): void => {
+  const carriedIds = new Set([rootFenceId])
+  let progressed = true
+  while (progressed) {
+    progressed = false
+    for (const reusable of reusableLayers) {
+      if (reusable.state !== 'available') continue
+      if (!reusable.layer.parentId || !carriedIds.has(reusable.layer.parentId)) continue
+      if (!languageDescriptors.has(reusable.layer.languageId)) continue
+      rebindReusedTreeSource(reusable.layer.tree, source, reusable.layer.ranges)
+      reusable.state = 'consumed'
+      layers.push(reusable.layer)
+      carriedIds.add(reusable.layer.id)
+      progressed = true
+    }
+  }
+}
+
+const rangesEqualWithPositions = (
+  left: readonly TreeSitterRange[],
+  right: readonly TreeSitterRange[],
+): boolean =>
+  left.length === right.length &&
+  left.every((range, index) => {
+    const other = right[index]
+    return (
+      other !== undefined &&
+      range.startIndex === other.startIndex &&
+      range.endIndex === other.endIndex &&
+      range.startPosition.row === other.startPosition.row &&
+      range.startPosition.column === other.startPosition.column &&
+      range.endPosition.row === other.endPosition.row &&
+      range.endPosition.column === other.endPosition.column
+    )
+  })
+
 const parseMarkdownFence = async (
   plan: InjectionPlan,
   source: TreeSitterPieceTableInput,
-  reusableLayers: ReusableLayer[],
+  reusable: ReusableLayer | null,
   reservedIds: Set<string>,
   context: CancellationContext,
-): Promise<ParsedLayer> => {
+  editRanges: readonly TreeSitterSyntaxRange[] | null,
+): Promise<{
+  readonly layer: ParsedLayer
+  readonly injectionRanges: TreeSitterSyntaxRange[] | null
+}> => {
   const runtime = await ensureRuntime(plan.languageId)
-  const reusable = takeReusableLayer(reusableLayers, plan)
   const identity = reusable?.layer ?? reserveInjectionPlanIdentity(plan, reservedIds)
+  const oldTree = reusable?.layer.tree ?? null
   try {
-    const tree = parseInjectedSource(
-      runtime.parser,
-      source,
-      plan.ranges,
-      reusable?.layer.tree ?? null,
-      context,
-    )
-    return { ...plan, id: identity.id, key: identity.key, tree }
+    const tree = parseInjectedSource(runtime.parser, source, plan.ranges, oldTree, context)
+    let injectionRanges: TreeSitterSyntaxRange[] | null = null
+    if (oldTree && editRanges) {
+      injectionRanges = enclosingRanges(treeChangedRanges(oldTree, tree).concat(editRanges), [
+        oldTree,
+        tree,
+      ])
+    }
+    return { layer: { ...plan, id: identity.id, key: identity.key, tree }, injectionRanges }
   } finally {
-    reusable?.layer.tree.delete()
+    oldTree?.delete()
   }
 }
 
@@ -1580,11 +1695,31 @@ const appendReusableLayer = (
 ): void => {
   if (layer.kind === 'root') return
 
+  if (isStrictlyBeforeEdits(layer.ranges, inputEdits)) {
+    reusableLayers.push({
+      layer: { ...layer, tree: layer.tree.copy() },
+      state: 'available',
+    })
+    return
+  }
+
   const tree = editReusableTree(layer.tree, inputEdits)
   reusableLayers.push({
     layer: { ...layer, tree, ranges: tree.getIncludedRanges() },
     state: 'available',
   })
+}
+
+const isStrictlyBeforeEdits = (
+  ranges: readonly TreeSitterRange[],
+  edits: readonly TreeSitterEditRequest['inputEdits'][number][],
+): boolean => {
+  if (edits.length === 0 || ranges.length === 0) return false
+  let maxEnd = 0
+  for (const range of ranges) {
+    if (range.endIndex > maxEnd) maxEnd = range.endIndex
+  }
+  return edits.every((edit) => maxEnd < edit.startIndex)
 }
 
 const reservedLayerIds = (

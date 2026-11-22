@@ -279,3 +279,71 @@ it('preserves Unicode Markdown worker results after measured shared-heap growth'
   expect(actual?.folds).toEqual(fresh?.folds)
   expect(actual?.injections).toEqual(fresh?.injections)
 })
+
+it('reuses untouched fences and nested injections across sequential edits without dangling prior sources', async () => {
+  const initialText = [
+    '# Fences',
+    '',
+    '```html',
+    '<section><script>const before = 1;</script></section>',
+    '```',
+    '',
+    '```html',
+    '<main><script>const middle = 2;</script></main>',
+    '```',
+    '',
+    '```html',
+    '<footer><script>const after = 3;</script></footer>',
+    '```',
+    '',
+  ].join('\n')
+  const document = sourceDocument(initialText)
+  await document.withRead((source) => client.parse({ ...identity, snapshotVersion: 1, source }))
+
+  let version = 1
+  for (let step = 0; step < 5; step += 1) {
+    const previous = document.delivery.current()!
+    const currentText = document.buffer.materializeFullText()
+    const target = currentText.indexOf('middle')
+    const edit = { from: target, to: target, text: `_${step}` }
+    document.view.applyEdits([edit])
+    const actual = await document.withRead((source) => {
+      const payload = createTreeSitterEditPayload({
+        ...identity,
+        previousSnapshotVersion: version,
+        snapshotVersion: version + 1,
+        previousRead: previous.text,
+        source,
+        edits: [edit],
+      })
+      if (!payload) throw new TypeError('Expected Markdown fence edit payload')
+      return client.edit(payload)
+    })
+    version += 1
+
+    const freshDocument = sourceDocument(document.buffer.materializeFullText())
+    const fresh = await freshDocument.withRead((source) =>
+      client.parse({
+        ...identity,
+        runtimeSessionId: `fences-fresh-${step}`,
+        snapshotVersion: version,
+        source,
+      }),
+    )
+    expect(actual?.records).toEqual(fresh?.records)
+    expect(actual?.captures).toEqual(fresh?.captures)
+    expect(actual?.folds).toEqual(fresh?.folds)
+    expect(actual?.injections).toEqual(fresh?.injections)
+    client.disposeDocument(`fences-fresh-${step}`)
+    freshDocument.dispose()
+  }
+
+  const finalRange = await client.queryRange({
+    ...identity,
+    snapshotVersion: version,
+    includeHighlights: true,
+    includeCaptures: true,
+    range: { startIndex: 0, endIndex: document.buffer.materializeFullText().length },
+  })
+  expect(finalRange?.captures.some((c) => c.languageId === 'javascript')).toBe(true)
+})
