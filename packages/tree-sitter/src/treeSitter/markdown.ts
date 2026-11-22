@@ -1,4 +1,5 @@
 import { CAPTURES, init, Kind, MarkdownDocument } from 'tree-sitter-md'
+export { MarkdownDocument }
 import grammar from 'tree-sitter-md/tree-sitter-markdown.wasm?url'
 import chatGrammar from 'tree-sitter-md/tree-sitter-markdown-chat.wasm?url'
 import resolver from 'tree-sitter-md/tree-sitter-md.wasm?url'
