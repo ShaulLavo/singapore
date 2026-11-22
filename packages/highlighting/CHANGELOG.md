@@ -1,5 +1,11 @@
 # @singapore-editor/highlighting
 
+## 0.2.16
+
+### Patch Changes
+
+- Update packed Singapore dependency versions for this release.
+
 ## 0.2.15
 
 ### Patch Changes

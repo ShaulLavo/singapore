@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter
 
+## 0.2.15
+
+### Patch Changes
+
+- Use `process.getBuiltinModule("node:fs/promises")` in bundled worker runtimes so Bun and Node Worker hosts load emitted `.wasm` files without hitting Vite browser-external stubs.
+
 ## 0.2.14
 
 ### Patch Changes
