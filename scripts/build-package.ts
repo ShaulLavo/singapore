@@ -91,7 +91,7 @@ async function buildJavaScript(): Promise<void> {
     // Relative, so an emitted worker URL resolves from the module that constructs it.
     base: './',
     build: {
-      assetsInlineLimit: Number.MAX_SAFE_INTEGER,
+      assetsInlineLimit: 0,
       emptyOutDir: false,
       lib: {
         entry: entries,
@@ -108,6 +108,7 @@ async function buildJavaScript(): Promise<void> {
           entryFileNames: packageModuleFileName,
           preserveModules: true,
           preserveModulesRoot: sourceRoot,
+          sourcemapExcludeSources: true,
         },
       },
       sourcemap: true,
@@ -115,17 +116,325 @@ async function buildJavaScript(): Promise<void> {
     },
     configFile: false,
     logLevel: 'warn',
-    plugins: [externalizeCssImports(), canonicalModuleWorkers(workerReferences)],
+    plugins: [
+      externalizeCssImports(),
+      emitBinaryAssets(),
+      canonicalModuleWorkers(workerReferences),
+    ],
     publicDir: false,
     root: packageDir,
     worker: {
       format: 'es',
+      plugins: () => [patchWebTreeSitterUrls(), emitBinaryAssets()],
       rollupOptions: {
         external: [],
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'web-tree-sitter',
+                test: /[/\\]web-tree-sitter[/\\]/,
+              },
+            ],
+          },
+          sourcemapExcludeSources: true,
+        },
       },
     },
   })
   await assertWorkersAreCanonical(workerReferences)
+}
+
+// Vite library mode forces data-URI inlining regardless of `assetsInlineLimit`, inflating binary
+// payloads by ~33% raw (~45% gzip / ~54% Brotli) and preventing `WebAssembly.instantiateStreaming`.
+// Emitting binary `?url` assets as real files keeps `new URL(..., import.meta.url)` resolvable in
+// Node, Bun, browsers, and downstream Vite consumers without embedding host paths in dist.
+function emitBinaryAssets(): Plugin {
+  const suffix = '?singapore-binary-url'
+  const pattern = /\.(?:wasm|gz)\?url$/
+  return {
+    name: 'singapore-emit-binary-assets',
+    enforce: 'pre',
+    async resolveId(id, importer) {
+      if (!pattern.test(id)) return null
+      const bare = id.slice(0, -'?url'.length)
+      const resolved = await this.resolve(bare, importer, { skipSelf: true })
+      if (!resolved) return null
+      return `${resolved.id}${suffix}`
+    },
+    async load(id) {
+      if (!id.endsWith(suffix)) return null
+      const filePath = id.slice(0, -suffix.length)
+      const source = await readFile(filePath)
+      const referenceId = this.emitFile({
+        type: 'asset',
+        name: path.basename(filePath),
+        source,
+      })
+      if (!filePath.endsWith('.wasm')) {
+        return `export default import.meta.ROLLUP_FILE_URL_${referenceId};\n`
+      }
+      // In Node, `new URL(..., import.meta.url).href` produces a `file:` URL string that
+      // `web-tree-sitter`'s `Language.load(wasmUrl)` forwards to `fetch()` (which rejects `file:`).
+      // Converting `file:` URLs with Node's `fileURLToPath` lets `Language.load()` read the
+      // emitted `.wasm` file via `fs.readFile` (including Windows drive and UNC paths) while
+      // keeping `http(s):` streaming URLs untouched in browsers and bundled web workers.
+      return (
+        `const url = import.meta.ROLLUP_FILE_URL_${referenceId};\n` +
+        `export default typeof process !== 'undefined' && process.versions?.node && url.startsWith('file:')\n` +
+        `  ? (process.getBuiltinModule?.('node:url')?.fileURLToPath(url) ??\n` +
+        `    (() => {\n` +
+        `      const parsed = new URL(url);\n` +
+        `      const decoded = decodeURIComponent(parsed.pathname);\n` +
+        `      return parsed.hostname && parsed.hostname !== 'localhost'\n` +
+        `        ? \`\\\\\\\\\${parsed.hostname}\${decoded.replaceAll('/', '\\\\')}\`\n` +
+        `        : decoded.replace(/^\\/([A-Za-z]:\\/)/, '$1');\n` +
+        `    })())\n` +
+        `  : url;\n`
+      )
+    },
+  }
+}
+
+// `web-tree-sitter` calls `new URL(".", import.meta.url)` only to derive a base directory URL
+// (which Vite otherwise resolves to `web-tree-sitter.js` itself and inlines a second 148 KB copy),
+// and `new URL("web-tree-sitter.wasm", import.meta.url)` which Vite library mode base64-inlines.
+function patchWebTreeSitterUrls(): Plugin {
+  const baseDirTarget = 'new URL(".", import.meta.url)'
+  const baseDirReplacement = 'new URL(/* @vite-ignore */ ".", import.meta.url)'
+  const wasmUrlTarget = 'new URL("web-tree-sitter.wasm", import.meta.url).href'
+  const wasmUrlReplacement = '__singaporeWebTreeSitterWasmUrl'
+  const wasmUrlImport =
+    'import __singaporeWebTreeSitterWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";'
+
+  return {
+    name: 'singapore-patch-web-tree-sitter-urls',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('web-tree-sitter')) return null
+      const hasBaseDir = code.includes(baseDirTarget)
+      const hasWasmUrl = code.includes(wasmUrlTarget)
+      if (!hasBaseDir && !hasWasmUrl) return null
+
+      const replacements: (readonly [string, string])[] = []
+      if (hasBaseDir) replacements.push([baseDirTarget, baseDirReplacement])
+      if (hasWasmUrl) replacements.push([wasmUrlTarget, wasmUrlReplacement])
+      return replaceLinesWithSourceMap(
+        code,
+        id,
+        replacements,
+        hasWasmUrl ? wasmUrlImport : undefined,
+      )
+    },
+  }
+}
+
+function encodeVlq(value: number): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  let encoded = ''
+  let vlq = value < 0 ? (-value << 1) + 1 : value << 1
+  do {
+    let digit = vlq & 31
+    vlq >>>= 5
+    if (vlq > 0) digit |= 32
+    encoded += chars[digit]
+  } while (vlq > 0)
+  return encoded
+}
+
+type TrimmedReplacement = {
+  readonly target: string
+  readonly prefix: number
+  readonly suffix: number
+  readonly replacement: string
+}
+
+type LineHit = {
+  readonly start: number
+  readonly end: number
+  readonly replacement: string
+}
+
+function trimReplacement(target: string, replacement: string): TrimmedReplacement {
+  let prefix = 0
+  const minLength = Math.min(target.length, replacement.length)
+  while (prefix < minLength && target[prefix] === replacement[prefix]) prefix += 1
+  let suffix = 0
+  while (
+    suffix < minLength - prefix &&
+    target[target.length - 1 - suffix] === replacement[replacement.length - 1 - suffix]
+  ) {
+    suffix += 1
+  }
+  return {
+    target,
+    prefix,
+    suffix,
+    replacement: replacement.slice(prefix, replacement.length - suffix),
+  }
+}
+
+function findLineHits(line: string, trimmed: readonly TrimmedReplacement[]): LineHit[] {
+  const hits: LineHit[] = []
+  for (const item of trimmed) {
+    let searchFrom = 0
+    while (searchFrom < line.length) {
+      const start = line.indexOf(item.target, searchFrom)
+      if (start === -1) break
+      hits.push({
+        start: start + item.prefix,
+        end: start + item.target.length - item.suffix,
+        replacement: item.replacement,
+      })
+      searchFrom = start + item.target.length
+    }
+  }
+  hits.sort((left, right) => left.start - right.start)
+  return hits
+}
+
+type SourceMapCursor = {
+  prevOrigLine: number
+  prevOrigCol: number
+}
+
+function appendLineSegment(
+  segments: string[],
+  cursor: SourceMapCursor,
+  prevGenCol: number,
+  genCol: number,
+  origLine: number,
+  origCol: number,
+): number {
+  segments.push(
+    encodeVlq(genCol - prevGenCol) +
+      encodeVlq(0) +
+      encodeVlq(origLine - cursor.prevOrigLine) +
+      encodeVlq(origCol - cursor.prevOrigCol),
+  )
+  cursor.prevOrigLine = origLine
+  cursor.prevOrigCol = origCol
+  return genCol
+}
+
+function appendUnchangedSpan(
+  segments: string[],
+  cursor: SourceMapCursor,
+  prevGenCol: number,
+  genStart: number,
+  origLine: number,
+  origStart: number,
+  length: number,
+): number {
+  let genCol = prevGenCol
+  for (let offset = 0; offset < length; offset += 1) {
+    genCol = appendLineSegment(
+      segments,
+      cursor,
+      genCol,
+      genStart + offset,
+      origLine,
+      origStart + offset,
+    )
+  }
+  return genCol
+}
+
+function mapSourceLine(
+  line: string,
+  lineIndex: number,
+  trimmed: readonly TrimmedReplacement[],
+  mapCursor: SourceMapCursor,
+): { readonly output: string; readonly mapping: string } {
+  const hits = findLineHits(line, trimmed)
+  const segments: string[] = []
+  let prevGenCol = 0
+
+  if (hits.length === 0) {
+    appendUnchangedSpan(segments, mapCursor, prevGenCol, 0, lineIndex, 0, line.length)
+    return { output: line, mapping: segments.join(',') }
+  }
+
+  let built = ''
+  let sourceOffset = 0
+  for (const hit of hits) {
+    if (hit.start < sourceOffset) continue
+    prevGenCol = appendUnchangedSpan(
+      segments,
+      mapCursor,
+      prevGenCol,
+      built.length,
+      lineIndex,
+      sourceOffset,
+      hit.start - sourceOffset,
+    )
+    built += line.slice(sourceOffset, hit.start)
+    prevGenCol = appendLineSegment(
+      segments,
+      mapCursor,
+      prevGenCol,
+      built.length,
+      lineIndex,
+      hit.start,
+    )
+    built += hit.replacement
+    sourceOffset = hit.end
+  }
+  if (sourceOffset < line.length) {
+    appendUnchangedSpan(
+      segments,
+      mapCursor,
+      prevGenCol,
+      built.length,
+      lineIndex,
+      sourceOffset,
+      line.length - sourceOffset,
+    )
+    built += line.slice(sourceOffset)
+  }
+  return { output: built, mapping: segments.join(',') }
+}
+
+function replaceLinesWithSourceMap(
+  code: string,
+  sourceId: string,
+  replacements: readonly (readonly [string, string])[],
+  appendLine?: string,
+): {
+  readonly code: string
+  readonly map: {
+    readonly version: 3
+    readonly sources: readonly string[]
+    readonly names: readonly string[]
+    readonly mappings: string
+  }
+} {
+  const trimmed = replacements.map(([target, replacement]) => trimReplacement(target, replacement))
+  const originalLines = code.split('\n')
+  const outputLines: string[] = []
+  const mappingLines: string[] = []
+  const mapCursor: SourceMapCursor = { prevOrigLine: 0, prevOrigCol: 0 }
+
+  for (let lineIndex = 0; lineIndex < originalLines.length; lineIndex += 1) {
+    const mapped = mapSourceLine(originalLines[lineIndex]!, lineIndex, trimmed, mapCursor)
+    outputLines.push(mapped.output)
+    mappingLines.push(mapped.mapping)
+  }
+
+  if (appendLine !== undefined) {
+    outputLines.push(appendLine)
+    mappingLines.push('')
+  }
+
+  return {
+    code: outputLines.join('\n'),
+    map: {
+      version: 3,
+      sources: [sourceId],
+      names: [],
+      mappings: mappingLines.join(';'),
+    },
+  }
 }
 
 function packageModuleFileName(chunk: { readonly name: string }): string {
@@ -145,6 +454,7 @@ function externalDependency(id: string, importer?: string): boolean {
 function isSourceImport(id: string): boolean {
   if (id.startsWith('.')) return true
   if (id.startsWith('/')) return true
+  if (id.endsWith('.wasm') || id.endsWith('.gz')) return true
   return id.includes('?')
 }
 
