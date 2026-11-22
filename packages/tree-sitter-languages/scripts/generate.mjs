@@ -68,6 +68,8 @@ for (const [name, source] of Object.entries(manifest.sources)) {
 
 const contributionIdentifier = (id) => `${id.replaceAll(/[^a-zA-Z0-9]+/g, '_')}Contribution`
 const dependencyIdentifier = (id) => `${id.replaceAll(/[^a-zA-Z0-9]+/g, '_')}InjectionDependencies`
+const directDependencyIdsIdentifier = (id) =>
+  `${id.replaceAll(/[^a-zA-Z0-9]+/g, '_')}InjectionDependencyIds`
 const languagesById = new Map(manifest.languages.map((language) => [language.id, language]))
 
 function transitiveInjectionDependencies(id) {
@@ -115,7 +117,7 @@ const declarations = manifest.languages
 const dependencyDeclarations = manifest.languages
   .map((language) => {
     const dependencies = transitiveInjectionDependencies(language.id).map(contributionIdentifier)
-    return `export const ${dependencyIdentifier(language.id)}: readonly TreeSitterLanguageContribution[] = [${dependencies.join(', ')}]`
+    return `export const ${directDependencyIdsIdentifier(language.id)}: readonly string[] = ${quote(language.injectionDependencies)}\nexport const ${dependencyIdentifier(language.id)}: readonly TreeSitterLanguageContribution[] = [${dependencies.join(', ')}]`
   })
   .join('\n')
 const catalogList = manifest.languages

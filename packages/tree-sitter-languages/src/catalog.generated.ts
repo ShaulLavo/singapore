@@ -572,56 +572,81 @@ export const regexContribution: TreeSitterLanguageContribution = {
     }
   },
 }
+export const javascriptInjectionDependencyIds: readonly string[] = ['regex', 'jsdoc']
 export const javascriptInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
   regexContribution,
   jsdocContribution,
 ]
+export const typescriptInjectionDependencyIds: readonly string[] = ['regex', 'jsdoc']
 export const typescriptInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
   regexContribution,
   jsdocContribution,
 ]
+export const tsxInjectionDependencyIds: readonly string[] = ['regex', 'jsdoc']
 export const tsxInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
   regexContribution,
   jsdocContribution,
 ]
+export const htmlInjectionDependencyIds: readonly string[] = ['javascript', 'css']
 export const htmlInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
   javascriptContribution,
   cssContribution,
   regexContribution,
   jsdocContribution,
 ]
+export const cssInjectionDependencyIds: readonly string[] = []
 export const cssInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const jsonInjectionDependencyIds: readonly string[] = []
 export const jsonInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const markdownInjectionDependencyIds: readonly string[] = []
 export const markdownInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const astroInjectionDependencyIds: readonly string[] = ['typescript', 'css']
 export const astroInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
   typescriptContribution,
   cssContribution,
   regexContribution,
   jsdocContribution,
 ]
+export const pythonInjectionDependencyIds: readonly string[] = []
 export const pythonInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const shellscriptInjectionDependencyIds: readonly string[] = []
 export const shellscriptInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const rustInjectionDependencyIds: readonly string[] = []
 export const rustInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const goInjectionDependencyIds: readonly string[] = []
 export const goInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const yamlInjectionDependencyIds: readonly string[] = []
 export const yamlInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const tomlInjectionDependencyIds: readonly string[] = []
 export const tomlInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const cInjectionDependencyIds: readonly string[] = []
 export const cInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const cppInjectionDependencyIds: readonly string[] = []
 export const cppInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const csharpInjectionDependencyIds: readonly string[] = []
 export const csharpInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const javaInjectionDependencyIds: readonly string[] = []
 export const javaInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const phpInjectionDependencyIds: readonly string[] = ['phpdoc']
 export const phpInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const luaInjectionDependencyIds: readonly string[] = ['c']
 export const luaInjectionDependencies: readonly TreeSitterLanguageContribution[] = [cContribution]
+export const svelteInjectionDependencyIds: readonly string[] = ['typescript', 'css']
 export const svelteInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
   typescriptContribution,
   cssContribution,
   regexContribution,
   jsdocContribution,
 ]
+export const sqlInjectionDependencyIds: readonly string[] = []
 export const sqlInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const mdxInjectionDependencyIds: readonly string[] = ['markdown']
 export const mdxInjectionDependencies: readonly TreeSitterLanguageContribution[] = [
   markdownContribution,
 ]
+export const jsdocInjectionDependencyIds: readonly string[] = []
 export const jsdocInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
+export const regexInjectionDependencyIds: readonly string[] = []
 export const regexInjectionDependencies: readonly TreeSitterLanguageContribution[] = []
 export const TREE_SITTER_LANGUAGE_CONTRIBUTIONS: readonly TreeSitterLanguageContribution[] = [
   javascriptContribution,

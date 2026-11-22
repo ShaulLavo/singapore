@@ -15,12 +15,15 @@ import {
   htmlContribution,
   htmlInjectionDependencies,
   javascriptInjectionDependencies,
+  javascriptInjectionDependencyIds,
   jsonContribution,
   jsonInjectionDependencies,
   markdownContribution,
   tsxContribution,
   tsxInjectionDependencies,
+  tsxInjectionDependencyIds,
   typescriptInjectionDependencies,
+  typescriptInjectionDependencyIds,
 } from './catalog.generated'
 
 export type JavaScriptTreeSitterLanguageOptions = TreeSitterLanguagePluginOptions & {
@@ -116,7 +119,7 @@ function createJavaScriptContribution(jsx: boolean): TreeSitterLanguageContribut
     id: 'javascript',
     extensions: jsx ? ['.cjs', '.js', '.jsx', '.mjs'] : ['.cjs', '.js', '.mjs'],
     aliases: jsx ? ['javascript', 'js', 'jsx', 'node'] : ['javascript', 'js', 'node'],
-    injectionDependencies: ['regex', 'jsdoc'],
+    injectionDependencies: javascriptInjectionDependencyIds,
     load: () => loadJavaScriptAssets(jsx),
   }
 }
@@ -126,7 +129,7 @@ function createTypeScriptContribution(tsx: boolean): TreeSitterLanguageContribut
     id: tsx ? 'tsx' : 'typescript',
     extensions: tsx ? ['.tsx'] : ['.cts', '.mts', '.ts'],
     aliases: tsx ? ['tsx', 'typescriptreact'] : ['typescript', 'ts'],
-    injectionDependencies: ['regex', 'jsdoc'],
+    injectionDependencies: tsx ? tsxInjectionDependencyIds : typescriptInjectionDependencyIds,
     load: () => loadTypeScriptAssets(tsx),
   }
 }

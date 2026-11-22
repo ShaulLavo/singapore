@@ -66,36 +66,46 @@ describe('Tree-sitter language contributions', () => {
     ]
     const context = pluginContext()
     const registerSyntaxProvider = vi.mocked(context.registerSyntaxProvider)
+    const activations: { dispose(): void }[] = []
 
-    for (const plugin of plugins) plugin.activate(context)
+    try {
+      for (const plugin of plugins) {
+        const result = plugin.activate(context)
+        if (!result) continue
+        if ('dispose' in result) activations.push(result)
+        else activations.push(...result)
+      }
 
-    expect(plugins.map((plugin) => plugin.name)).toEqual([
-      'tree-sitter-javascript',
-      'tree-sitter-typescript',
-      'tree-sitter-html',
-      'tree-sitter-css',
-      'tree-sitter-json',
-      'tree-sitter-markdown',
-    ])
-    expect(registerSyntaxProvider).toHaveBeenCalledTimes(1)
-    expect(registerSyntaxProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: expect.any(Object) }),
-    )
-    const provider = registerSyntaxProvider.mock.calls[0]?.[0]
-    if (!provider)
-      throw new TypeError('The language plugins must register one typed structural provider')
-    const analysis = createEditorDocumentAnalysis({
-      buffer: createEditorTextBuffer('const a = 1;'),
-      documentId: 'main.ts',
-    })
-    const lease = analysis.borrowStructural({
-      provider,
-      languageId: 'typescript',
-      includeHighlights: true,
-    })
-    expect(lease).not.toBeNull()
-    lease?.dispose()
-    analysis.dispose()
+      expect(plugins.map((plugin) => plugin.name)).toEqual([
+        'tree-sitter-javascript',
+        'tree-sitter-typescript',
+        'tree-sitter-html',
+        'tree-sitter-css',
+        'tree-sitter-json',
+        'tree-sitter-markdown',
+      ])
+      expect(registerSyntaxProvider).toHaveBeenCalledTimes(1)
+      expect(registerSyntaxProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ operation: expect.any(Object) }),
+      )
+      const provider = registerSyntaxProvider.mock.calls[0]?.[0]
+      if (!provider)
+        throw new TypeError('The language plugins must register one typed structural provider')
+      const analysis = createEditorDocumentAnalysis({
+        buffer: createEditorTextBuffer('const a = 1;'),
+        documentId: 'main.ts',
+      })
+      const lease = analysis.borrowStructural({
+        provider,
+        languageId: 'typescript',
+        includeHighlights: true,
+      })
+      expect(lease).not.toBeNull()
+      lease?.dispose()
+      analysis.dispose()
+    } finally {
+      for (const handle of activations) handle.dispose()
+    }
   })
 
   it.each([
@@ -106,15 +116,23 @@ describe('Tree-sitter language contributions', () => {
     { id: 'css', plugin: () => css() },
     { id: 'json', plugin: () => json() },
   ])(
-    'registers the manifest transitive injection closure for $id on the simple plugin path',
+    'registers the exact manifest transitive injection closure for $id on the simple plugin path',
     async ({ id, plugin }) => {
       const context = pluginContext()
       const handles = plugin().activate(context)
       const provider = vi.mocked(context.registerSyntaxProvider).mock
         .calls[0]![0] as TreeSitterSyntaxProvider
       try {
-        for (const expectedId of transitiveInjectionIds(id)) {
-          expect((await provider.resolveTreeSitterLanguage(expectedId))?.id).toBe(expectedId)
+        const expected = new Set(transitiveInjectionIds(id))
+        const resolved = await provider.resolveTreeSitterLanguage(id)
+        expect(resolved?.id).toBe(id)
+        expect(resolved?.injectionDependencies).toEqual(
+          requiredContribution(id).injectionDependencies,
+        )
+        for (const candidate of TREE_SITTER_LANGUAGE_CONTRIBUTIONS) {
+          const entry = await provider.resolveTreeSitterLanguage(candidate.id)
+          if (expected.has(candidate.id)) expect(entry?.id).toBe(candidate.id)
+          else expect(entry).toBeNull()
         }
       } finally {
         for (const handle of Array.isArray(handles) ? handles : []) handle.dispose()
