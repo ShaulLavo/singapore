@@ -268,11 +268,26 @@ function replaceLinesWithSourceMap(
     const hits: { readonly start: number; readonly end: number; readonly replacement: string }[] =
       []
     for (const [target, replacement] of replacements) {
+      let prefix = 0
+      const minLength = Math.min(target.length, replacement.length)
+      while (prefix < minLength && target[prefix] === replacement[prefix]) prefix += 1
+      let suffix = 0
+      while (
+        suffix < minLength - prefix &&
+        target[target.length - 1 - suffix] === replacement[replacement.length - 1 - suffix]
+      ) {
+        suffix += 1
+      }
+      const middleReplacement = replacement.slice(prefix, replacement.length - suffix)
       let searchFrom = 0
       while (searchFrom < line.length) {
         const start = line.indexOf(target, searchFrom)
         if (start === -1) break
-        hits.push({ start, end: start + target.length, replacement })
+        hits.push({
+          start: start + prefix,
+          end: start + target.length - suffix,
+          replacement: middleReplacement,
+        })
         searchFrom = start + target.length
       }
     }
