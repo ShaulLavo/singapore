@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter
 
+## 0.2.14
+
+### Patch Changes
+
+- Reuse unchanged Markdown fence trees on incremental edits, emit binary `.wasm` worker assets, and omit sourcemap `sourcesContent`.
+
 ## 0.2.13
 
 ### Patch Changes

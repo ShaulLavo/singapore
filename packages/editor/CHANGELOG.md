@@ -1,5 +1,11 @@
 # @singapore-editor/core
 
+## 0.2.13
+
+### Patch Changes
+
+- Avoid duplicate full-document wrap rebuild on `setWrapEnabled(true)` and omit sourcemap `sourcesContent` in published builds.
+
 ## 0.2.12
 
 ### Patch Changes

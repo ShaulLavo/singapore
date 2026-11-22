@@ -1,5 +1,11 @@
 # @singapore-editor/react
 
+## 0.2.13
+
+### Patch Changes
+
+- Omit sourcemap `sourcesContent` in published builds and update packed Singapore dependency versions for this release.
+
 ## 0.2.12
 
 ### Patch Changes

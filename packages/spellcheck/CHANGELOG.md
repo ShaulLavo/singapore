@@ -1,5 +1,11 @@
 # @singapore-editor/spellcheck
 
+## 0.2.14
+
+### Patch Changes
+
+- Emit binary `.gz` dictionary assets and omit sourcemap `sourcesContent` in published builds.
+
 ## 0.2.13
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @singapore-editor/collaboration
 
+## 0.0.10
+
+### Patch Changes
+
+- Omit sourcemap `sourcesContent` in published builds and update packed Singapore dependency versions for this release.
+
 ## 0.0.9
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @singapore-editor/panes
 
+## 0.2.11
+
+### Patch Changes
+
+- Omit sourcemap `sourcesContent` in published builds.
+
 ## 0.2.10
 
 ### Patch Changes
