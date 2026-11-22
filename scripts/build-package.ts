@@ -176,12 +176,20 @@ function emitBinaryAssets(): Plugin {
       }
       // In Node, `new URL(..., import.meta.url).href` produces a `file:` URL string that
       // `web-tree-sitter`'s `Language.load(wasmUrl)` forwards to `fetch()` (which rejects `file:`).
-      // Converting `file:` URLs to filesystem paths under Node lets `Language.load()` read the
-      // emitted `.wasm` file via `fs.readFile` while keeping `http(s):` URLs intact in browsers.
+      // Converting `file:` URLs with Node's `fileURLToPath` lets `Language.load()` read the
+      // emitted `.wasm` file via `fs.readFile` (including Windows drive and UNC paths) while
+      // keeping `http(s):` streaming URLs untouched in browsers and bundled web workers.
       return (
         `const url = import.meta.ROLLUP_FILE_URL_${referenceId};\n` +
         `export default typeof process !== 'undefined' && process.versions?.node && url.startsWith('file:')\n` +
-        `  ? decodeURIComponent(new URL(url).pathname).replace(/^\\/([A-Za-z]:\\/)/, '$1')\n` +
+        `  ? (process.getBuiltinModule?.('node:url')?.fileURLToPath(url) ??\n` +
+        `    (() => {\n` +
+        `      const parsed = new URL(url);\n` +
+        `      const decoded = decodeURIComponent(parsed.pathname);\n` +
+        `      return parsed.hostname && parsed.hostname !== 'localhost'\n` +
+        `        ? \`\\\\\\\\\${parsed.hostname}\${decoded.replaceAll('/', '\\\\')}\`\n` +
+        `        : decoded.replace(/^\\/([A-Za-z]:\\/)/, '$1');\n` +
+        `    })())\n` +
         `  : url;\n`
       )
     },
@@ -285,9 +293,15 @@ function replaceLinesWithSourceMap(
       prevOrigCol = origCol
     }
 
+    const addUnchangedSpan = (genStart: number, origStart: number, length: number): void => {
+      for (let offset = 0; offset < length; offset += 1) {
+        addSegment(genStart + offset, origStart + offset)
+      }
+    }
+
     if (hits.length === 0) {
       outputLines.push(line)
-      if (line.length > 0) addSegment(0, 0)
+      addUnchangedSpan(0, 0, line.length)
       mappingLines.push(segments.join(','))
       continue
     }
@@ -297,7 +311,7 @@ function replaceLinesWithSourceMap(
     for (const hit of hits) {
       if (hit.start < cursor) continue
       if (hit.start > cursor) {
-        addSegment(built.length, cursor)
+        addUnchangedSpan(built.length, cursor, hit.start - cursor)
         built += line.slice(cursor, hit.start)
       }
       addSegment(built.length, hit.start)
@@ -305,7 +319,7 @@ function replaceLinesWithSourceMap(
       cursor = hit.end
     }
     if (cursor < line.length) {
-      addSegment(built.length, cursor)
+      addUnchangedSpan(built.length, cursor, line.length - cursor)
       built += line.slice(cursor)
     }
     outputLines.push(built)
