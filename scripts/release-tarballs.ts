@@ -246,11 +246,13 @@ async function testCleanConsumer(
     )
     await writeFile(path.join(consumer, 'smoke.mjs'), smokeScript(releasePackages, packages))
     await writeFile(path.join(consumer, 'node-grammar-smoke.mjs'), nodeGrammarSmokeScript())
+    await writeFile(path.join(consumer, 'bun-worker-smoke.mjs'), bunWorkerSmokeScript())
     await prepareBrowserConsumer(consumer)
     await run(['bun', 'install', '--no-progress'], consumer, signal)
     await run(['node', 'notices.mjs'], consumer, signal)
     await run(['bun', 'smoke.mjs'], consumer, signal)
     await run(['node', 'node-grammar-smoke.mjs'], consumer, signal)
+    await run(['bun', 'bun-worker-smoke.mjs'], consumer, signal)
     await run(['bun', 'x', '--no-install', 'tsc', '-p', 'tsconfig.json'], consumer, signal)
     await run(
       ['bun', 'x', '--no-install', 'vite', 'build', '--configLoader', 'native'],
@@ -317,6 +319,40 @@ function nodeGrammarSmokeScript(): string {
     `tree.delete()\n` +
     `parser.delete()\n` +
     `console.log('verified Node grammar loading')\n`
+  )
+}
+
+function bunWorkerSmokeScript(): string {
+  return (
+    `import { createEditorTextBuffer } from '@singapore-editor/core/document'\n` +
+    `import { createEditorDocumentAnalysis } from '@singapore-editor/core/editor'\n` +
+    `import { createTreeSitterSyntaxProvider, createTreeSitterWorkerOwner } from '@singapore-editor/tree-sitter'\n` +
+    `import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'\n\n` +
+    `const jsonContribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((entry) => entry.id === 'json')\n` +
+    `const mdContribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((entry) => entry.id === 'markdown')\n` +
+    `if (!jsonContribution || !mdContribution) throw new Error('Missing JSON or Markdown contribution')\n` +
+    `const worker = createTreeSitterWorkerOwner()\n` +
+    `const provider = createTreeSitterSyntaxProvider({ workerOwner: worker })\n` +
+    `provider.registerLanguage(jsonContribution)\n` +
+    `provider.registerLanguage(mdContribution)\n` +
+    `try {\n` +
+    `  for (const [id, text] of [['json', '{"answer": 42}'], ['markdown', '# Title\\n\\n**bold**\\n']]) {\n` +
+    `    const buffer = createEditorTextBuffer(text)\n` +
+    `    const analysis = createEditorDocumentAnalysis({ buffer, documentId: \`smoke.\${id}\` })\n` +
+    `    const lease = analysis.borrowStructural({ provider, languageId: id, syntaxMode: 'full' })\n` +
+    `    if (!lease) throw new Error(\`Missing syntax lease for \${id}\`)\n` +
+    `    try {\n` +
+    `      const result = await lease.refresh(buffer.getTextSnapshot())\n` +
+    `      if (result.captures.length === 0) throw new Error(\`No captures for \${id}\`)\n` +
+    `    } finally {\n` +
+    `      lease.dispose()\n` +
+    `      analysis.dispose()\n` +
+    `    }\n` +
+    `  }\n` +
+    `  console.log('verified Bun worker JSON and Markdown parsing')\n` +
+    `} finally {\n` +
+    `  await worker.dispose()\n` +
+    `}\n`
   )
 }
 

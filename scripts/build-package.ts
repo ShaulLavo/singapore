@@ -198,7 +198,10 @@ function emitBinaryAssets(): Plugin {
 
 // `web-tree-sitter` calls `new URL(".", import.meta.url)` only to derive a base directory URL
 // (which Vite otherwise resolves to `web-tree-sitter.js` itself and inlines a second 148 KB copy),
-// and `new URL("web-tree-sitter.wasm", import.meta.url)` which Vite library mode base64-inlines.
+// `new URL("web-tree-sitter.wasm", import.meta.url)` which Vite library mode base64-inlines, and
+// `await import("fs/promises")` (as does `tree-sitter-md` with `'node:fs/promises'`) which Vite
+// browser worker builds stub to an empty object, breaking Bun/Node Worker hosts when reading
+// emitted binary `.wasm` files from disk.
 function patchWebTreeSitterUrls(): Plugin {
   const baseDirTarget = 'new URL(".", import.meta.url)'
   const baseDirReplacement = 'new URL(/* @vite-ignore */ ".", import.meta.url)'
@@ -206,19 +209,25 @@ function patchWebTreeSitterUrls(): Plugin {
   const wasmUrlReplacement = '__singaporeWebTreeSitterWasmUrl'
   const wasmUrlImport =
     'import __singaporeWebTreeSitterWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";'
+  const fsPromisesTarget = 'await import("fs/promises")'
+  const nodeFsPromisesTarget = "await import('node:fs/promises')"
+  const builtinFsPromises = 'process.getBuiltinModule("node:fs/promises")'
 
   return {
     name: 'singapore-patch-web-tree-sitter-urls',
     enforce: 'pre',
     transform(code, id) {
-      if (!id.includes('web-tree-sitter')) return null
-      const hasBaseDir = code.includes(baseDirTarget)
-      const hasWasmUrl = code.includes(wasmUrlTarget)
-      if (!hasBaseDir && !hasWasmUrl) return null
-
+      if (!id.includes('web-tree-sitter') && !id.includes('tree-sitter-md')) return null
       const replacements: (readonly [string, string])[] = []
-      if (hasBaseDir) replacements.push([baseDirTarget, baseDirReplacement])
+      if (code.includes(baseDirTarget)) replacements.push([baseDirTarget, baseDirReplacement])
+      const hasWasmUrl = code.includes(wasmUrlTarget)
       if (hasWasmUrl) replacements.push([wasmUrlTarget, wasmUrlReplacement])
+      if (code.includes(fsPromisesTarget)) replacements.push([fsPromisesTarget, builtinFsPromises])
+      if (code.includes(nodeFsPromisesTarget)) {
+        replacements.push([nodeFsPromisesTarget, builtinFsPromises])
+      }
+      if (replacements.length === 0) return null
+
       return replaceLinesWithSourceMap(
         code,
         id,
