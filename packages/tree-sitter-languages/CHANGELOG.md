@@ -1,5 +1,11 @@
 # @singapore-editor/tree-sitter-languages
 
+## 0.2.15
+
+### Patch Changes
+
+- Decouple per-language plugins for tree-shaking, emit binary `.wasm` grammar assets, and omit sourcemap `sourcesContent`.
+
 ## 0.2.14
 
 ### Patch Changes

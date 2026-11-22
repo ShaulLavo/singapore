@@ -1,5 +1,11 @@
 # @singapore-editor/collab
 
+## 0.0.6
+
+### Patch Changes
+
+- Omit sourcemap `sourcesContent` in published builds and update packed Singapore dependency versions for this release.
+
 ## 0.0.5
 
 ### Patch Changes

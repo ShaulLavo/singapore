@@ -1,5 +1,11 @@
 # @singapore-editor/file-animation
 
+## 0.2.14
+
+### Patch Changes
+
+- Omit sourcemap `sourcesContent` in published builds and update packed Singapore dependency versions for this release.
+
 ## 0.2.13
 
 ### Patch Changes
