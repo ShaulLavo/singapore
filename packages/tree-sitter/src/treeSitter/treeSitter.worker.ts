@@ -135,6 +135,7 @@ type ParsedDocument = {
   projections?: Set<ProjectedDocument>
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
+  readonly languageRegistryVersion?: number
   readonly source: TreeSitterPieceTableInput
   readonly layers: readonly ParsedLayer[]
   readonly degraded: readonly TreeSitterDegradedState[]
@@ -229,6 +230,7 @@ let parserInitPromise: Promise<void> | null = null
 let nextUse = 1
 const languageDescriptors = new Map<TreeSitterLanguageId, TreeSitterLanguageDescriptor>()
 const languageDescriptorOrder: TreeSitterLanguageId[] = []
+let languageRegistryVersion = 0
 const runtimePromises = new Map<TreeSitterLanguageId, Promise<Runtime>>()
 const sliceRuntimes = new Map<number, Promise<SliceRuntime>>()
 const sliceGrammars = new Map<string, Promise<Language>>()
@@ -289,12 +291,18 @@ const registerLanguages = (descriptors: readonly TreeSitterLanguageDescriptor[])
 const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
   const normalized = normalizeLanguageDescriptor(descriptor)
   const existing = languageDescriptors.get(normalized.id)
+  const wasLast = languageDescriptorOrder[languageDescriptorOrder.length - 1] === normalized.id
 
   languageDescriptors.set(normalized.id, normalized)
   moveLanguageToEnd(normalized.id)
 
-  if (!existing) return
-  if (languageDescriptorsEqual(existing, normalized)) return
+  if (!existing) {
+    languageRegistryVersion += 1
+    return
+  }
+  const unchanged = languageDescriptorsEqual(existing, normalized)
+  if (!unchanged || !wasLast) languageRegistryVersion += 1
+  if (unchanged) return
 
   disposeRuntimeForLanguage(normalized.id)
   disposeCachedSnapshotsForLanguage(normalized.id)
@@ -494,9 +502,11 @@ const parseMarkdownFences = async (
   const degraded: TreeSitterDegradedState[] = []
   const reusableLayers = prepareReusableLayers(oldDocument, inputEdits)
   const reservedLayerIds = new Set(reusableLayers.map((layer) => layer.layer.id))
+  const registryVersion = languageRegistryVersion
   const canSkipUntouched =
     oldDocument !== null &&
     inputEdits.length > 0 &&
+    oldDocument.languageRegistryVersion === registryVersion &&
     oldDocument.missingLanguages.length === 0 &&
     oldDocument.degraded.length === 0
   const editRanges = canSkipUntouched ? editedRanges(inputEdits, document.size) : []
@@ -527,6 +537,7 @@ const parseMarkdownFences = async (
       const reusable = takeReusableLayer(reusableLayers, plan)
       if (
         canSkipUntouched &&
+        languageRegistryVersion === registryVersion &&
         reusable &&
         canReuseMarkdownFence(reusable.layer, plan.ranges, reusableLayers, editRanges)
       ) {
@@ -535,37 +546,38 @@ const parseMarkdownFences = async (
         carryMarkdownFenceDescendants(layers, reusable.layer.id, reusableLayers, document.source)
         continue
       }
-      const parsed = await parseMarkdownFence(
+      const layer = await parseMarkdownFence(
         plan,
         document.source,
         reusable,
         reservedLayerIds,
         context,
-        canSkipUntouched ? editRanges : null,
       )
-      layers.push(parsed.layer)
-      const injectionContext: ParseInjectionContext = {
+      layers.push(layer)
+      await appendInjectionLayers(layers, layer, {
         readOnly: document.readOnly,
         documentId: '',
         snapshotVersion: document.snapshotVersion,
         languageId: 'markdown',
         source: document.source,
-        rootLayer: parsed.layer,
+        rootLayer: layer,
         context,
         oldDocument,
         inputEdits,
-        injectionRanges: parsed.injectionRanges,
+        injectionRanges: null,
         degraded,
         reusableLayers,
         missingLanguages,
         reservedLayerIds,
-      }
-      await appendInjectionLayers(layers, parsed.layer, injectionContext)
-      if (parsed.injectionRanges) {
-        await appendCarriedLayers(layers, injectionContext)
-      }
+      })
     }
-    return { ...document, layers, degraded, missingLanguages: [...missingLanguages] }
+    return {
+      ...document,
+      languageRegistryVersion: registryVersion,
+      layers,
+      degraded,
+      missingLanguages: [...missingLanguages],
+    }
   } catch (error) {
     for (const layer of layers) disposeLayer(layer)
     throw error
@@ -668,24 +680,13 @@ const parseMarkdownFence = async (
   reusable: ReusableLayer | null,
   reservedIds: Set<string>,
   context: CancellationContext,
-  editRanges: readonly TreeSitterSyntaxRange[] | null,
-): Promise<{
-  readonly layer: ParsedLayer
-  readonly injectionRanges: TreeSitterSyntaxRange[] | null
-}> => {
-  const runtime = await ensureRuntime(plan.languageId)
-  const identity = reusable?.layer ?? reserveInjectionPlanIdentity(plan, reservedIds)
+): Promise<ParsedLayer> => {
   const oldTree = reusable?.layer.tree ?? null
   try {
+    const runtime = await ensureRuntime(plan.languageId)
+    const identity = reusable?.layer ?? reserveInjectionPlanIdentity(plan, reservedIds)
     const tree = parseInjectedSource(runtime.parser, source, plan.ranges, oldTree, context)
-    let injectionRanges: TreeSitterSyntaxRange[] | null = null
-    if (oldTree && editRanges) {
-      injectionRanges = enclosingRanges(treeChangedRanges(oldTree, tree).concat(editRanges), [
-        oldTree,
-        tree,
-      ])
-    }
-    return { layer: { ...plan, id: identity.id, key: identity.key, tree }, injectionRanges }
+    return { ...plan, id: identity.id, key: identity.key, tree }
   } finally {
     oldTree?.delete()
   }
@@ -4006,6 +4007,7 @@ const disposeAll = (): void => {
   for (const sliceLanguageId of sliceRuntimes.keys()) disposeSliceLanguage(sliceLanguageId)
   sliceGrammars.clear()
   languageDescriptorOrder.length = 0
+  languageRegistryVersion += 1
   for (const promise of runtimePromises.values()) {
     void promise.then(disposeRuntime).catch(() => undefined)
   }
