@@ -1290,7 +1290,8 @@ export class VirtualizedTextView {
 
   public setWrapEnabled(enabled: boolean): void {
     const view = this.view
-    if (!setWrapEnabledLayout(view, enabled, horizontalViewportColumns(view))) return
+    if (!setWrapEnabledLayout(view, enabled, horizontalViewportColumns(view, undefined, enabled)))
+      return
 
     resetContentWidthScan(view)
     clearRowGeometryCaches(view)

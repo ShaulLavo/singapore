@@ -2267,12 +2267,13 @@ function bufferColumnForEstimatedColumn(
 export function horizontalViewportColumns(
   view: VirtualizedTextViewInternal,
   viewportWidth = view.virtualizer.getSnapshot().viewportWidth,
+  wrapEnabled = view.wrapEnabled,
 ): number {
   if (viewportWidth === 0) return view.model.wrapColumn ?? 1
 
-  const inset = view.wrapEnabled ? gutterWidth(view) : visibleGutterWidth(view)
+  const inset = wrapEnabled ? gutterWidth(view) : visibleGutterWidth(view)
   const width = Math.max(0, viewportWidth - inset)
-  if (view.wrapEnabled) return Math.max(1, Math.floor(width / characterWidth(view)) - 1)
+  if (wrapEnabled) return Math.max(1, Math.floor(width / characterWidth(view)) - 1)
   return Math.max(1, Math.ceil(width / characterWidth(view)))
 }
 
