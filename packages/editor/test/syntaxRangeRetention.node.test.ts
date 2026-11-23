@@ -436,6 +436,69 @@ describe('syntax range contributor lifetime', () => {
     },
   )
 
+  it.each(['a mixed token store', 'a separate highlighter'] as const)(
+    'keeps the visible crossing fold on the first frame after an edit, with %s',
+    async (mode) => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(250))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'edit-first-frame' })
+      const ranges = vi.fn(async (range: EditorSyntaxRange) => ({
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        records: { languageId: 'typescript', data: new Uint32Array(16) },
+        tokens: EditorTokenStore.fromTokens([
+          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
+        ]),
+        folds: [
+          { startIndex: 40, endIndex: 400, startLine: 20, endLine: 199, type: 'scope' as const },
+        ],
+      }))
+      const provider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          queryRange: ranges,
+        })),
+      }
+      const highlighter = {
+        operation: createEditorHighlighterOperation(() => ({
+          analyze: async () => ({
+            tokens: EditorTokenStore.fromTokens([{ start: 0, end: 1, style: { color: 'h' } }]),
+          }),
+          dispose: () => undefined,
+        })),
+      }
+      const view = createView(
+        buffer,
+        analysis,
+        provider,
+        { startIndex: 40, endIndex: 60 },
+        mode === 'a separate highlighter' ? highlighter : undefined,
+      )
+      try {
+        if (mode === 'a mixed token store')
+          view.syntax.setTokens(
+            EditorTokenStore.fromTokens([{ start: 450, end: 451, style: { color: 'earlier' } }]),
+          )
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.folds()).toBe(1))
+        view.syntax.prefetchVisibleRange(1, { startIndex: 60, endIndex: 80 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(2))
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        // An edit at the end of the file, then a frame before any fresh answer.
+        const change = createEditorBufferSession(buffer).applyEdits([
+          { from: 500, to: 500, text: '!' },
+        ])
+        view.syntax.acceptChange(change)
+        view.publish()
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(view.folds()).toBe(1)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    },
+  )
+
   it('does not bring back a crossing fold that a fresh answer after an edit dropped', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'stale-fold' })

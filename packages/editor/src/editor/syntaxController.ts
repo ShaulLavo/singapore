@@ -2507,15 +2507,14 @@ const cachedSyntaxFoldsForRange = (
 ): readonly FoldRange[] | null => {
   if (syntaxRangeCoverage(range, coverageRanges) !== 'full') return null
 
-  // A fold is looked up by its own span, as retention keeps it (activeFoldContributors): the answer
-  // that reported a crossing fold last can have been queried for a range that is off screen now.
-  // An answer carried through an edit is trusted only where it was queried, since a fresh answer
-  // elsewhere may already have dropped its fold.
+  // Folds are looked up by the rule retention keeps them by (foldServesSyntaxRange): by a fold's
+  // own span, since the answer that reported a crossing fold last can have been queried for a
+  // range that is off screen now, except that an answer carried through an edit is trusted only
+  // where it was queried, since a fresh answer elsewhere may already have dropped its fold.
   const foldsByKey = new Map<string, FoldRange>()
   for (const cachedRange of cachedRanges) {
-    if (cachedRange.projected && !syntaxRangesIntersect(cachedRange.range, range)) continue
     for (const fold of cachedRange.folds) {
-      if (!foldIntersectsSyntaxRange(fold, range)) continue
+      if (!foldServesSyntaxRange(cachedRange, fold, range)) continue
       foldsByKey.set(foldRangeKey(fold), fold)
     }
   }
@@ -2530,6 +2529,18 @@ const syntaxRangesIntersect = (left: EditorSyntaxRange, right: EditorSyntaxRange
 
 const foldIntersectsSyntaxRange = (fold: FoldRange, range: EditorSyntaxRange): boolean =>
   fold.startIndex < range.endIndex && fold.endIndex > range.startIndex
+
+/**
+ * Whether a cached answer's fold may be shown for a range. Retention and lookup share this rule,
+ * so the answer kept for a fold is always one that can serve it.
+ */
+const foldServesSyntaxRange = (
+  cached: CachedSyntaxFoldRange,
+  fold: FoldRange,
+  range: EditorSyntaxRange,
+): boolean =>
+  foldIntersectsSyntaxRange(fold, range) &&
+  (!cached.projected || syntaxRangesIntersect(cached.range, range))
 
 const compareFoldRanges = (left: FoldRange, right: FoldRange): number =>
   left.startLine - right.startLine ||
@@ -2682,7 +2693,7 @@ function activeFoldContributors(
   const winners = new Map<string, CachedSyntaxFoldRange>()
   for (const contributor of contributors) {
     for (const fold of contributor.folds) {
-      if (ranges.some((range) => foldIntersectsSyntaxRange(fold, range)))
+      if (ranges.some((range) => foldServesSyntaxRange(contributor, fold, range)))
         winners.set(foldRangeKey(fold), contributor)
     }
   }
