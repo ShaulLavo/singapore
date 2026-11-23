@@ -1,9 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import '../src/style.css'
 import { createLineGutterContribution } from '../../gutters/src/index'
 import { createFoldMap } from '../src/foldMap'
 import { createPieceTableSnapshot } from '../src/public/document'
+import { loadSuspiciousCharacterData } from '../src/unicodeHighlight'
 import { VirtualizedTextView } from '../src/virtualization'
+
+// The zero-width marker below draws in the pass that mounts its row once the tables are in.
+beforeAll(() => loadSuspiciousCharacterData())
 
 describe('point queries', () => {
   let host: HTMLDivElement

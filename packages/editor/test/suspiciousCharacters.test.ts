@@ -1,13 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Editor } from '../src/editor/Editor'
 import { EDITOR_OPTION_DESCRIPTORS } from '../src/editor/optionDescriptors'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { suspiciousCharacterRanges } from '../src/suspiciousCharacterRanges'
 import {
   type EditorSuspiciousCharactersOptions,
+  loadSuspiciousCharacterData,
   normalizeSuspiciousCharactersOptions,
   type SuspiciousCharacterRange,
-  suspiciousCharacterRanges,
 } from '../src/unicodeHighlight'
 import { VirtualizedTextView } from '../src/virtualization'
 import { createVisibleEditor } from './factories/visibleEditor'
@@ -31,6 +32,10 @@ const TROJAN_SOURCE =
   `${POP_DIRECTIONAL_ISOLATE} ${FIRST_STRONG_ISOLATE}") {`
 
 const ON = normalizeSuspiciousCharactersOptions(undefined)
+
+// The views below draw their markers in the pass that mounts a row, which they only do once the
+// tables are in; the load itself is covered in suspiciousCharacterData.test.ts.
+beforeAll(() => loadSuspiciousCharacterData())
 
 const highlightsMap = new Map<string, unknown>()
 const mockRegistry = {

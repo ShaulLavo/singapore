@@ -20,7 +20,7 @@ export type {
   SuspiciousCharacterKind,
   SuspiciousCharacterRange,
 } from './unicodeHighlight'
-export { suspiciousCharacterRanges } from './unicodeHighlight'
+export { suspiciousCharacterRanges } from './suspiciousCharacterRanges'
 export {
   createMergeConflictPlugin,
   EDITOR_MERGE_CONFLICT_FEATURE,

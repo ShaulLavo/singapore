@@ -1,6 +1,5 @@
 import type { TextContent } from './textContent'
 import { clampTextOffset, type TextOffsetRange, wordRangeAtOffset } from './textRanges'
-import { CONFUSABLE_CODE_POINT_DATA, INVISIBLE_CODE_POINT_DATA } from './unicodeHighlightData'
 
 /**
  * Characters that read as something they are not.
@@ -58,6 +57,17 @@ type SuspiciousCharacterTables = {
   readonly invisible: ReadonlySet<number>
 }
 
+/** The code point tables, as `unicodeHighlightData` holds them. */
+export type SuspiciousCharacterData = {
+  readonly CONFUSABLE_CODE_POINT_DATA: string
+  readonly INVISIBLE_CODE_POINT_DATA: string
+}
+
+// The tables are most of what this check weighs, and a file of plain ASCII never reads them, so
+// the editor loads them the first time a row holds something else. `suspiciousCharacterRanges`
+// imports them directly instead, because a caller of it asked for the answer now.
+let tableData: SuspiciousCharacterData | null = null
+let tableLoad: Promise<void> | null = null
 let confusableBuckets: ReadonlyMap<string, readonly number[]> | null = null
 let invisibleCodePoints: ReadonlySet<number> | null = null
 // Resolving a locale list walks the whole common bucket, and a scan asks for the tables once per
@@ -99,24 +109,44 @@ export function suspiciousCharactersEnabled(options: ResolvedSuspiciousCharacter
   return options.ambiguous || options.invisible
 }
 
+export function provideSuspiciousCharacterData(data: SuspiciousCharacterData): void {
+  tableData ??= data
+}
+
+export function suspiciousCharacterDataLoaded(): boolean {
+  return tableData !== null
+}
+
+/** Settles once the tables are in; a failed load is forgotten, so the next row asks again. */
+export function loadSuspiciousCharacterData(): Promise<void> {
+  if (tableData) return Promise.resolve()
+  tableLoad ??= import('./unicodeHighlightData').then(provideSuspiciousCharacterData, (error) => {
+    tableLoad = null
+    throw error
+  })
+  return tableLoad
+}
+
 /**
- * Every suspicious character in `text`, or in the slice of it `range` names.
+ * Every suspicious character in `text`, or in the slice of it `range` names, once the tables are
+ * in: see `suspiciousCharacterRanges` for the public answer.
  *
  * The range exists because a row of a long line mounts only the columns on screen, and a column
  * that is not mounted has no geometry a marker could be drawn against. Word context is still read
  * from the whole text: the word a character sits in is what decides whether it is worth reporting,
  * and that word does not stop at the edge of the viewport.
  */
-export function suspiciousCharacterRanges(
+export function scanSuspiciousCharacters(
   text: TextContent,
   options: ResolvedSuspiciousCharactersOptions,
   range?: TextOffsetRange,
 ): readonly SuspiciousCharacterRange[] {
   if (!suspiciousCharactersEnabled(options)) return []
+  if (!tableData) throw new Error('The suspicious character tables are not loaded')
 
   const end = clampTextOffset(text, range ? range.end : text.length)
   const allowed = new Set(options.allowedCodePoints)
-  const tables = suspiciousCharacterTables(options.allowedLocales)
+  const tables = suspiciousCharacterTables(tableData, options.allowedLocales)
   const ranges: SuspiciousCharacterRange[] = []
   let index = codePointStartAt(text, clampTextOffset(text, range ? range.start : 0))
   while (index < end) {
@@ -221,14 +251,19 @@ function codePointStartAt(text: TextContent, index: number): number {
   return previous >= 0xd800 && previous <= 0xdbff ? index - 1 : index
 }
 
-function suspiciousCharacterTables(allowedLocales: readonly string[]): SuspiciousCharacterTables {
+function suspiciousCharacterTables(
+  data: SuspiciousCharacterData,
+  allowedLocales: readonly string[],
+): SuspiciousCharacterTables {
   const key = allowedLocales.join(',')
   const cached = tablesByLocaleKey.get(key)
   if (cached) return cached
 
   const tables: SuspiciousCharacterTables = {
-    confusable: confusableCodePoints(allowedLocales),
-    invisible: (invisibleCodePoints ??= new Set(JSON.parse(INVISIBLE_CODE_POINT_DATA) as number[])),
+    confusable: confusableCodePoints(data, allowedLocales),
+    invisible: (invisibleCodePoints ??= new Set(
+      JSON.parse(data.INVISIBLE_CODE_POINT_DATA) as number[],
+    )),
   }
   tablesByLocaleKey.set(key, tables)
   return tables
@@ -242,9 +277,12 @@ function suspiciousCharacterTables(allowedLocales: readonly string[]): Suspiciou
  * whatever either of them writes without a second thought. The common bucket joins on top because
  * nothing excuses a fullwidth Latin letter in source code.
  */
-function confusableCodePoints(allowedLocales: readonly string[]): ReadonlySet<number> {
+function confusableCodePoints(
+  data: SuspiciousCharacterData,
+  allowedLocales: readonly string[],
+): ReadonlySet<number> {
   const buckets = (confusableBuckets ??= new Map(
-    Object.entries(JSON.parse(CONFUSABLE_CODE_POINT_DATA) as Record<string, number[]>),
+    Object.entries(JSON.parse(data.CONFUSABLE_CODE_POINT_DATA) as Record<string, number[]>),
   ))
   const [first, ...rest] = allowedLocales.filter((locale) => buckets.has(locale))
   const codePoints = new Set(buckets.get(COMMON_BUCKET) ?? [])
