@@ -60,9 +60,11 @@ Each parse result is tied to a document snapshot/version. Consumers must be able
 
 ### Range requests while scrolling
 
-The editor asks for the shown rows' uncached text first, then for a look-ahead window beside it: up to 750,000 characters in the scroll direction and 50,000 behind. It asks only for the window's uncached part, and asks again on a side only once less than half of that side is cached next to the viewport, so a scroll asks for each stretch of text about once. Look-ahead answers stay cached while they lie inside the window; other answers stay only for shown text.
+The editor asks for the shown rows' uncached text first, then for a look-ahead window beside it: up to 750,000 characters in the scroll direction and 50,000 behind. It asks only for the window's uncached part, and asks again on a side only once less than half of that side is cached next to the viewport, so a scroll asks for each stretch of text about once. Look-ahead answers stay cached while they lie inside the window; the shared analysis cache keeps at most eight of them per view and none that another cached answer contains. Other answers stay only for shown text.
 
-A range query that every caller has left is never sent to the worker. One already running stays joinable for a caller that asks for the same range again, and asking for any other range cancels it. That stops the worker mid-query where shared cancellation flags are available (a cross-origin-isolated page), and otherwise drops it before it is sent or re-sent after the complete analysis.
+Cached pieces paint rows and supply their folds, but not brackets, injected languages or captures: a range answer counts bracket depth from its own start, so pieces cannot be joined. When the shown rows are painted from pieces, the editor asks for one answer covering the visible range and reports syntax as loading until it lands. Because that answer includes the visible range's margin, a scroll asks for it again only after moving past the margin.
+
+A range query that every caller has left is never sent to the worker. One already running stays joinable for 150 ms for a caller that asks for the same range again; after that, or as soon as any other range is asked for, it is cancelled. A look-ahead answer still on the way that falls outside the new window is cancelled before the new viewport is asked for. Cancelling stops the worker mid-query where shared cancellation flags are available (a cross-origin-isolated page), and otherwise drops the query before it is sent or re-sent after the complete analysis.
 
 Open implementation details:
 

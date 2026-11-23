@@ -1007,13 +1007,21 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
   }
 
+  /**
+   * Keeps the newest few answers inside the look-ahead window. An answer another cached answer
+   * contains adds nothing, so it is never kept for the window.
+   */
   private protectContained(
     windows: readonly EditorSyntaxRange[],
     protectedSlots: Set<ReadyRange>,
   ): void {
-    for (const cached of this.ranges.values()) {
-      if (windows.some((window) => rangeContains(window, cached.range))) protectedSlots.add(cached)
-    }
+    const cached = Array.from(this.ranges.values())
+    const inWindow = cached.filter(
+      (slot) =>
+        windows.some((window) => rangeContains(window, slot.range)) &&
+        !cached.some((other) => other !== slot && containsMore(other.range, slot.range)),
+    )
+    for (const slot of inWindow.slice(-LOOK_AHEAD_RETAINED_ANSWERS)) protectedSlots.add(slot)
   }
 
   private protectLookup(
@@ -1134,8 +1142,9 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   /**
    * One shared query per range. A caller that passes `signal` holds the query only until the
    * signal aborts. A query every caller has left is an orphan: it is never sent to the runtime,
-   * a running one stays joinable for a caller asking for the same range again, and asking for any
-   * other range cancels it, which stops the runtime's work where the runtime can stop.
+   * and a running one stays joinable briefly for a caller asking for the same range again. The
+   * handoff time passing, or a query for any other range, cancels it, which stops the runtime's
+   * work where the runtime can stop.
    */
   range(range: EditorSyntaxRange, signal?: AbortSignal): Promise<EditorSyntaxResult> {
     range = boundedRange(range, this.buffer.getTextSnapshot().length)
@@ -1151,7 +1160,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.compatibleQuery(query, point, range),
     )
     if (existing) {
-      holdRangeQuery(existing, signal)
+      holdRangeQuery(existing, signal, this.releaseOrphanLater)
       this.trimOptionalRanges()
       return existing.promise
     }
@@ -1193,7 +1202,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }),
     }
     this.queries.set(key, pending)
-    holdRangeQuery(pending, signal)
+    holdRangeQuery(pending, signal, this.releaseOrphanLater)
     this.trimOptionalRanges()
     this.retention.changed()
     void pending.promise
@@ -1210,6 +1219,19 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     for (const query of this.queries.values()) {
       if (rangeQueryIsOrphaned(query)) query.cancellation.abort(cancelled())
     }
+  }
+
+  /** Cancels an orphan once its handoff time has passed, unless a caller has joined it since. */
+  private readonly releaseOrphanLater = (query: PendingRangeQuery): void => {
+    if (this.signal.aborted) return
+    this.scheduler.schedule({
+      key: `${this.runtimeSessionId}:orphaned-range:${rangeKey(query.range)}`,
+      taskClass: 'background-derived',
+      delayMs: ORPHANED_QUERY_HANDOFF_MS,
+      run: () => {
+        if (rangeQueryIsOrphaned(query)) query.cancellation.abort(cancelled())
+      },
+    })
   }
 
   private compatibleQuery(
@@ -1779,11 +1801,29 @@ function cancelled(): DOMException {
   return new DOMException('Document analysis was superseded or released', 'AbortError')
 }
 
+/**
+ * How long a running query every caller has left stays joinable for a caller asking for the same
+ * range again, such as a request replaced by one for the same rows a frame later.
+ */
+const ORPHANED_QUERY_HANDOFF_MS = 150
+
+/** Look-ahead answers the shared cache keeps for a window beyond those shown text keeps. */
+const LOOK_AHEAD_RETAINED_ANSWERS = 8
+
+/** Whether `outer` contains `inner` and is not the same range. */
+function containsMore(outer: EditorSyntaxRange, inner: EditorSyntaxRange): boolean {
+  return rangeContains(outer, inner) && rangeKey(outer) !== rangeKey(inner)
+}
+
 function rangeQueryIsOrphaned(query: PendingRangeQuery): boolean {
   return query.holders === 0 && !query.pinned
 }
 
-function holdRangeQuery(query: PendingRangeQuery, signal: AbortSignal | undefined): void {
+function holdRangeQuery(
+  query: PendingRangeQuery,
+  signal: AbortSignal | undefined,
+  orphaned: (query: PendingRangeQuery) => void,
+): void {
   if (!signal) {
     query.pinned = true
     return
@@ -1792,6 +1832,7 @@ function holdRangeQuery(query: PendingRangeQuery, signal: AbortSignal | undefine
   query.holders += 1
   const release = () => {
     query.holders -= 1
+    if (rangeQueryIsOrphaned(query)) orphaned(query)
   }
   signal.addEventListener('abort', release, { once: true })
   const forget = () => signal.removeEventListener('abort', release)

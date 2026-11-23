@@ -1538,12 +1538,17 @@ describe('prepared editor documents', () => {
       },
     )
 
-    await vi.waitFor(() => expect(structuralSession.queryRange).toHaveBeenCalledTimes(2))
-    expect(structuralSession.queryRange).toHaveBeenLastCalledWith(
+    // The second ask is the visible text the adopted answer left uncovered. A later ask covering
+    // the shown rows whole brings their brackets, which the two pieces cannot pair.
+    await vi.waitFor(() =>
+      expect(vi.mocked(structuralSession.queryRange!).mock.calls.length).toBeGreaterThanOrEqual(2),
+    )
+    expect(structuralSession.queryRange).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({ endIndex: expect.any(Number) }),
       expect.any(AbortSignal),
     )
-    const uncoveredRange = vi.mocked(structuralSession.queryRange!).mock.calls.at(-1)?.[0]
+    const uncoveredRange = vi.mocked(structuralSession.queryRange!).mock.calls[1]?.[0]
     expect(uncoveredRange?.startIndex).toBe(5)
     expect(uncoveredRange?.endIndex).toBeGreaterThan(5)
     expect(structuralProviderOpenRuntime).toHaveBeenCalledOnce()

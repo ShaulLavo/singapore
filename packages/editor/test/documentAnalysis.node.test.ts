@@ -360,6 +360,67 @@ describe('active range retention', () => {
     },
   )
 
+  it('releases the provider work of a query every caller left without waiting for another query', async () => {
+    const buffer = createEditorTextBuffer('x'.repeat(100))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'abandoned-range' })
+    const parser = provider()
+    const gate = deferred<EditorSyntaxResult>()
+    parser.ranges.mockImplementationOnce(() => gate.promise)
+    const lease = analysis.borrowStructural({
+      provider: parser.provider,
+      languageId: 'typescript',
+    })!
+    const snapshot = buffer.getTextSnapshot()
+    setRetainedSyntaxDisplayDemand(
+      lease,
+      { kind: 'frame', snapshot, ranges: [{ startIndex: 0, endIndex: 10 }] },
+      [],
+    )
+    const abort = new AbortController()
+    const asked = lease.queryRange({ startIndex: 50, endIndex: 60 }, { signal: abort.signal })
+    const rejected = expect(asked).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(parser.ranges).toHaveBeenCalledTimes(1))
+    const providerSignal = (parser.ranges.mock.calls[0] as unknown[])[1] as AbortSignal
+    abort.abort()
+    await rejected
+    // Briefly joinable for a caller asking for the same range again, then released.
+    expect(providerSignal.aborted).toBe(false)
+    await vi.waitFor(() => expect(providerSignal.aborted).toBe(true), { timeout: 2_000 })
+    await vi.waitFor(() =>
+      expect(analysis.inspectRetention().entries[0]!.pendingRangeCount).toBe(0),
+    )
+    analysis.dispose()
+  })
+
+  it('keeps no look-ahead answer that another cached answer contains, and only a few others', async () => {
+    const buffer = createEditorTextBuffer('x'.repeat(10_000))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'look-ahead-bound' })
+    const parser = provider()
+    const lease = analysis.borrowStructural({
+      provider: parser.provider,
+      languageId: 'typescript',
+    })!
+    const snapshot = buffer.getTextSnapshot()
+    const frame = { startIndex: 0, endIndex: 10 }
+    const lookAhead = [{ startIndex: 1_000, endIndex: 9_000 }]
+    setRetainedSyntaxDisplayDemand(
+      lease,
+      { kind: 'frame', snapshot, ranges: [frame], lookAhead },
+      [],
+    )
+    await lease.queryRange(frame)
+    // Each answer contains every earlier one, as a growing look-ahead request's would.
+    for (let step = 1; step <= 100; step++)
+      await lease.queryRange({ startIndex: 2_000 - step * 10, endIndex: 2_000 + step * 10 })
+    const cached = () => analysis.inspectRetention().entries[0]!.cachedRangeCount
+    expect(cached()).toBe(2)
+    // Answers side by side are all useful, but the window keeps only a bounded number of them.
+    for (let step = 0; step < 40; step++)
+      await lease.queryRange({ startIndex: 4_000 + step * 100, endIndex: 4_050 + step * 100 })
+    expect(cached()).toBeLessThanOrEqual(10)
+    analysis.dispose()
+  })
+
   it.each(['unmanaged', 'unknown', 'foreign', 'stale', 'preparation'] as const)(
     'preserves %s protection',
     async (mode) => {

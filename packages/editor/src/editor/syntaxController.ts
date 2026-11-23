@@ -80,6 +80,8 @@ export type EditorSyntaxControllerOptions = {
   getLanguageId(): EditorSyntaxLanguageId | null
   getSession(): DocumentSession | null
   getVisibleSyntaxRange(): EditorSyntaxRange | null
+  /** The shown rows without the visible range's margin; the visible range when absent. */
+  getShownSyntaxRange?(): EditorSyntaxRange | null
   adoptTokens(tokens: EditorTokenStore): void
   clearSyntaxFolds(): void
   setSyntaxFolds(folds: readonly FoldRange[]): void
@@ -301,6 +303,8 @@ export class EditorSyntaxController {
   private pendingPrefetch: PendingSyntaxPrefetch | null = null
   /** Rows came into view while the visible answer was on the way; ask for them once it lands. */
   private visibleFollowUp = false
+  /** The text the brackets, injections and captures in effect were answered for. */
+  private scopeCoverage: EditorSyntaxRange | 'full' | null = null
   private lookAhead: SyntaxLookAhead | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   private warmGeneration = 0
@@ -433,7 +437,8 @@ export class EditorSyntaxController {
 
   get status(): EditorSyntaxStatus {
     if (this.syntaxStatus !== 'ready' && this.syntaxStatus !== 'degraded') return this.syntaxStatus
-    if (this.usesFallbackFolds || this.foldsCoverViewport()) return this.syntaxStatus
+    if (this.usesFallbackFolds) return this.syntaxStatus
+    if (this.foldsCoverViewport() && this.scopeCoversShownRows()) return this.syntaxStatus
     return 'loading'
   }
 
@@ -472,6 +477,24 @@ export class EditorSyntaxController {
     if (coverage.kind === 'full') return true
     const range = this.options.getVisibleSyntaxRange()
     return range !== null && syntaxRangeCoverage(range, [coverage.range]) === 'full'
+  }
+
+  /**
+   * Whether the brackets, injections and captures in effect come from one answer covering the shown
+   * rows. Cached pieces can paint the rows and supply their folds, but not these: a range answer
+   * counts bracket depth from its own start, so pieces cannot be joined.
+   */
+  private scopeCoversShownRows(): boolean {
+    if (!this.syntaxSession?.queryRange) return true
+    const coverage = this.scopeCoverage
+    if (coverage === 'full') return true
+    return coverage !== null && this.rangeCoversShownRows(coverage)
+  }
+
+  private rangeCoversShownRows(range: EditorSyntaxRange | null): boolean {
+    if (!range) return true
+    const shown = this.options.getShownSyntaxRange?.() ?? this.options.getVisibleSyntaxRange()
+    return shown === null || syntaxRangeCoverage(shown, [range]) === 'full'
   }
 
   get renderDataReady(): boolean {
@@ -934,6 +957,7 @@ export class EditorSyntaxController {
     this.pendingInitialHighlightReplacement = null
     this.pendingInitialHighlightThemeTerminal = null
     this.foldCoverage = null
+    this.scopeCoverage = null
     this.parsedSyntaxContentVersion = null
     this.projectSyntaxRangeCache(change)
     if (this.retainedHighlighter) {
@@ -947,7 +971,10 @@ export class EditorSyntaxController {
 
     const range = options.range ?? this.options.getVisibleSyntaxRange()
     if (!range) return
-    if (this.repaintCachedVisibleSyntaxRange(range)) return
+    if (this.repaintCachedVisibleSyntaxRange(range)) {
+      this.requestScopeFacts(documentVersion, range, options)
+      return
+    }
     if (!this.canQueryCurrentSyntaxRange()) return
 
     const uncoveredRange = firstUncoveredSyntaxRange(range, this.cachedSyntaxRanges)
@@ -992,6 +1019,7 @@ export class EditorSyntaxController {
     if (!this.canQueryCurrentSyntaxRange()) return false
     const snapshot = this.options.getSession()?.getTextSnapshot()
     if (!range || !snapshot) return false
+    this.retireLookAheadOutside(range)
     const active = this.activeLookAheadRequest(snapshot)
     this.lookAhead = { snapshot, window: range, request: active }
     const missing = lookAheadGap(
@@ -1023,6 +1051,47 @@ export class EditorSyntaxController {
       'prefetch',
     )
     return true
+  }
+
+  /**
+   * Asks for one answer covering the shown rows when cached pieces paint them but the brackets,
+   * injections and captures in effect were answered for other text. The answer covers the visible
+   * range's margin too, so a scroll asks again only once it has moved past that margin.
+   */
+  private requestScopeFacts(
+    documentVersion: number,
+    range: EditorSyntaxRange,
+    options: EditorSyntaxRefreshOptions,
+  ): void {
+    if (this.scopeCoversShownRows() || !this.canQueryCurrentSyntaxRange()) return
+    const pending = this.pendingVisibleRange
+    if (
+      this.rangeRequests.isActive() &&
+      pending?.documentVersion === documentVersion &&
+      pending.contentVersion === this.syntaxContentVersion &&
+      this.rangeCoversShownRows(pending.range)
+    )
+      return
+    this.visibleFollowUp = false
+    this.pendingVisibleRange = {
+      documentVersion,
+      contentVersion: this.syntaxContentVersion,
+      range,
+    }
+    this.scheduleSyntaxRangeRequest(this.rangeRequests, documentVersion, range, options, 'visible')
+  }
+
+  /**
+   * Cancels a look-ahead answer still on the way that lies outside the new look-ahead window, so a
+   * far jump's own request does not wait behind work for the place it left.
+   */
+  retireLookAheadOutside(window: EditorSyntaxRange | null): void {
+    const lookAhead = this.lookAhead
+    if (!lookAhead?.request || !this.prefetchRangeRequests.isActive()) return
+    if (window && syntaxRangesIntersect(lookAhead.request, window)) return
+    this.prefetchRangeRequests.cancel()
+    this.pendingPrefetch = null
+    this.lookAhead = { ...lookAhead, request: null }
   }
 
   /** Asks for the window's next uncached part, such as the other side of the viewport. */
@@ -1411,7 +1480,8 @@ export class EditorSyntaxController {
       return false
     }
 
-    this.rangeRequests.cancel()
+    // An answer on the way may be the one that brings brackets for these rows.
+    if (this.scopeCoversShownRows()) this.rangeRequests.cancel()
     this.applyCachedSyntaxFolds(range)
     this.options.adoptTokens(this.currentTokens)
     return true
@@ -1642,7 +1712,11 @@ export class EditorSyntaxController {
     // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
     // window that does not cover the viewport would pair brackets across the part it never parsed
     // and report the rest of the document as being in the host language.
-    const applyScopeFacts = this.shouldApplySyntaxFolds(loadResult)
+    const applyFolds = this.shouldApplySyntaxFolds(loadResult)
+    // Brackets and injections need an answer that covers the shown rows; the visible range's
+    // margin is only for folds, which cached pieces can supply. Gating these on the margin too
+    // would make every answer that lands a little behind a scroll miss it.
+    const applyScopeFacts = applyFolds || this.rangeCoversShownRows(loadResult.range)
     // Ahead of the tokens, because adopting them is the only notification this pass sends the view
     // contributions: a bracket list assigned after it is a parse late to everyone reading the
     // snapshot, and on a document nobody touches after opening it that means never.
@@ -1651,16 +1725,19 @@ export class EditorSyntaxController {
       : null
     if (applyScopeFacts) {
       this.rangeScopeOwner = contributor
+      this.scopeCoverage = loadResult.range ?? 'full'
       this.currentBrackets = result.brackets
       this.currentInjections = result.injections
+    }
+    if (applyFolds) {
       this.syntaxStatus = result.degraded ? 'degraded' : 'ready'
       this.foldCoverage = loadResult.range
         ? { kind: 'range', range: loadResult.range }
         : { kind: 'full' }
       this.options.setSyntaxFolds(result.folds)
-      this.options.setSyntaxCaptures?.(result.captures, result.records)
     }
-    if (!applyScopeFacts) {
+    if (applyScopeFacts) this.options.setSyntaxCaptures?.(result.captures, result.records)
+    if (!applyFolds) {
       const visibleRange = this.options.getVisibleSyntaxRange()
       if (visibleRange) this.applyCachedSyntaxFolds(visibleRange)
     }
@@ -1710,7 +1787,7 @@ export class EditorSyntaxController {
         status: this.status,
       },
     })
-    if (!this.usesFallbackFolds && !this.foldsCoverViewport()) {
+    if (!this.usesFallbackFolds && (!this.foldsCoverViewport() || !this.scopeCoversShownRows())) {
       this.refreshVisibleRange(documentVersion, { delayMs: 0 })
     }
     this.options.notifyChange(null)
@@ -1753,6 +1830,7 @@ export class EditorSyntaxController {
       this.cachedSyntaxRanges = []
       this.cachedSyntaxFoldRanges = []
       this.foldCoverage = null
+      this.scopeCoverage = null
     }
     this.markSyntaxDocumentCurrent(contentVersion)
   }
@@ -1914,6 +1992,7 @@ export class EditorSyntaxController {
     this.rangeCopyOwner = null
     this.rangeScopeOwner = null
     this.foldCoverage = null
+    this.scopeCoverage = null
     this.lookAhead = null
     this.cachedSyntaxRanges = []
     this.cachedSyntaxFoldRanges = []

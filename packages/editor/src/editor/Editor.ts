@@ -653,6 +653,7 @@ export class Editor {
       getLanguageId: () => this.languageId,
       getSession: () => this.session,
       getVisibleSyntaxRange: () => this.visibleSyntaxRange(),
+      getShownSyntaxRange: () => this.syntaxRangeAroundMountedRows(0, 0),
       adoptTokens: (tokens) => {
         this.view.adoptTokens(tokens)
         this.notifyViewContributions('tokens', null)
@@ -4584,11 +4585,15 @@ export class Editor {
     this.publishSyntaxDisplayDemand()
     this.updateSyntaxScrollTracking()
     const visibleRange = this.visibleSyntaxRange()
+    const lookAhead = this.visibleSyntaxPrefetchRange()
+    // Before the viewport's own request, so after a far jump the worker is not still busy with
+    // look-ahead text beside the old place when the new place is asked for.
+    this.syntax.retireLookAheadOutside(lookAhead)
     this.syntax.refreshVisibleRange(this.documentVersion, {
       delayMs: 0,
       range: visibleRange,
     })
-    this.syntax.prefetchVisibleRange(this.documentVersion, this.visibleSyntaxPrefetchRange(), {
+    this.syntax.prefetchVisibleRange(this.documentVersion, lookAhead, {
       delayMs: VISIBLE_SYNTAX_SCROLL_DELAY_MS,
     })
     this.syntax.warmSyntaxAroundRange(this.documentVersion, visibleRange, {

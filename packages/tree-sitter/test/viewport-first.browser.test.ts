@@ -508,6 +508,8 @@ it('asks the worker for little more than the scrolled text while scrolling durin
     const scrollTop = scroll.scrollTop
     const painted = paintedRows(scrolled.host, scroll)
     expect(painted.length).toBeGreaterThan(0)
+    const brackets = shownBrackets(editor)
+    expect(brackets.length).toBeGreaterThan(0)
     scrolled.dispose()
     const reference = scrollingEditor()
     settled = reference
@@ -517,6 +519,7 @@ it('asks the worker for little more than the scrolled text while scrolling durin
     expect(await frameOrTimeout(10_000)).toBe('frame')
     await expect.poll(() => reference.editor.getState().syntaxStatus, stuck).toBe('ready')
     await expect.poll(() => paintedRows(reference.host, reference.scroll), stuck).toEqual(painted)
+    expect(shownBrackets(reference.editor)).toEqual(brackets)
   } finally {
     TreeSitterWorkerClient.prototype.queryRange = queryRange
     scrolled.dispose()
@@ -568,12 +571,13 @@ async function workerIdle(asked: readonly EditorSyntaxRange[]): Promise<void> {
 }
 
 /**
- * Each painted syntax token on a shown row: its row offset, column, text and style. Editors number
- * their token styles independently, so styles are named by the order they first appear on screen.
+ * Each painted syntax token on a shown row: its row offset, column, text and the CSS declarations
+ * its highlight paints with. Editors name their highlights independently, so the declarations,
+ * not the names, are compared.
  */
 function paintedRows(host: HTMLElement, scroll: HTMLElement): string[] {
   const viewport = scroll.getBoundingClientRect()
-  const painted: { readonly at: readonly [number, number, string]; readonly style: string }[] = []
+  const painted: string[] = []
   for (const [name, highlight] of CSS.highlights) {
     if (!name.startsWith('editor-shared-token-')) continue
     for (const range of highlight) {
@@ -586,21 +590,39 @@ function paintedRows(host: HTMLElement, scroll: HTMLElement): string[] {
       const { startOffset, endOffset, endContainer } = range as AbstractRange
       const end = endContainer === node ? endOffset : undefined
       const text = (node.textContent ?? '').slice(startOffset, end)
-      painted.push({ at: [Math.round(box.top - viewport.top), startOffset, text], style: name })
+      const top = Math.round(box.top - viewport.top)
+      painted.push(`${top}|${startOffset}|${text}|${highlightDeclarations(name)}`)
     }
   }
-  painted.sort(
-    (left, right) =>
-      left.at[0] - right.at[0] ||
-      left.at[1] - right.at[1] ||
-      left.at[2].localeCompare(right.at[2]) ||
-      left.style.localeCompare(right.style),
+  return painted.sort()
+}
+
+/**
+ * The brackets on the shown rows, by position. Depths count from the start of the answer that
+ * supplied them, so two views that asked for different ranges can number them differently.
+ */
+function shownBrackets(editor: Editor): string[] {
+  const rows = editor['view'].getState().mountedRows
+  const start: number = rows[0]?.startOffset ?? 0
+  const end: number = rows.at(-1)?.endOffset ?? 0
+  return editor['syntax'].brackets
+    .filter((bracket: { index: number }) => bracket.index >= start && bracket.index < end)
+    .map((bracket: { index: number; char: string }) => `${bracket.index}${bracket.char}`)
+}
+
+/** The declarations of every `::highlight(name)` rule on the page. */
+function highlightDeclarations(name: string): string {
+  const sheets = Array.from(globalThis.document.styleSheets).concat(
+    globalThis.document.adoptedStyleSheets,
   )
-  const styles = new Map<string, number>()
-  return painted.map(({ at, style }) => {
-    if (!styles.has(style)) styles.set(style, styles.size)
-    return `${at.join('|')}|style-${styles.get(style)}`
-  })
+  const declarations: string[] = []
+  for (const sheet of sheets) {
+    for (const rule of Array.from(sheet.cssRules)) {
+      if (rule instanceof CSSStyleRule && rule.selectorText.includes(`::highlight(${name})`))
+        declarations.push(rule.style.cssText)
+    }
+  }
+  return declarations.length ? declarations.sort().join(' ') : `no rule for ${name}`
 }
 
 function generatedModule(lines: number): string {

@@ -974,6 +974,11 @@ function createView(
     getCurrentSessionDocumentId: () => 'retention.ts',
     getLanguageId: () => 'typescript',
     getVisibleSyntaxRange: () => range,
+    // As in the editor, the visible range carries a margin beyond the rows actually shown.
+    getShownSyntaxRange: () => ({
+      startIndex: range.startIndex,
+      endIndex: Math.min(range.endIndex, range.startIndex + 10),
+    }),
     adoptTokens: () => {
       adoptions++
       publish()

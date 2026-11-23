@@ -6692,6 +6692,106 @@ describe('Editor', () => {
       expect(currentPaint).toMatchObject({ startOffset: 10, endOffset: 15 })
     })
 
+    it('reports ready only with the brackets of rows painted from cached look-ahead answers', async () => {
+      const ranges: EditorSyntaxRange[] = []
+      const text = Array.from(
+        { length: 60000 },
+        (_value, index) => `const line${index} = f(${index});`,
+      ).join('\n')
+      // A range answer's bracket depths count from its own start, as Tree-sitter's range walk does.
+      const bracketsIn = (range: EditorSyntaxRange) => {
+        const brackets: { index: number; char: string; depth: number }[] = []
+        for (let index = range.startIndex; index < range.endIndex; index++) {
+          const char = text[index]
+          if (char === '(' || char === ')') brackets.push({ index, char, depth: 1 })
+        }
+        return brackets
+      }
+      editor.addPlugin(
+        createSyntaxPlugin(() =>
+          createMockSyntaxRuntime({
+            analyze: async () => createSyntaxResult([]),
+            queryRange: async (range) => {
+              ranges.push(range)
+              return { ...createSyntaxResult([]), brackets: bracketsIn(range) }
+            },
+          }),
+        ),
+      )
+      editor.setText(text, { languageId: 'typescript' })
+      await flushSyntaxDebounce()
+      // The second place lies inside the first place's look-ahead, so its rows paint from cache.
+      editor.setScrollPosition({ top: 120000, left: 0 })
+      await flushSyntaxUntilSettled(() => ranges.length)
+      editor.setScrollPosition({ top: 150000, left: 0 })
+      await flushSyntaxUntilSettled(() => ranges.length)
+
+      const rows = Reflect.get(editor, 'view').getState().mountedRows
+      const shown = { startIndex: rows[0].startOffset, endIndex: rows.at(-1).endOffset }
+      expect(shown.startIndex).toBeGreaterThan(140000)
+      expect(editor.getState().syntaxStatus).toBe('ready')
+      const brackets = syntaxControllerFrom(editor).brackets
+      expect(
+        brackets.filter(
+          (bracket) => bracket.index >= shown.startIndex && bracket.index < shown.endIndex,
+        ),
+      ).toEqual(bracketsIn(shown))
+    })
+
+    it('stops the old look-ahead before a far jump asks for its destination', async () => {
+      const asked: {
+        range: EditorSyntaxRange
+        signal?: AbortSignal
+        /** Which earlier asks were already cancelled when this one reached the provider. */
+        earlierAborted: boolean[]
+      }[] = []
+      // Answers for the shown rows arrive; larger asks (look-ahead, background tiles) are held.
+      let hold = false
+      editor.addPlugin(
+        createSyntaxPlugin(() =>
+          createMockSyntaxRuntime({
+            analyze: async () => createSyntaxResult([]),
+            queryRange: (range, signal) => {
+              const earlierAborted = asked.map((ask) => ask.signal?.aborted === true)
+              asked.push({ range, signal, earlierAborted })
+              if (!hold || range.endIndex - range.startIndex < 60000)
+                return Promise.resolve(createSyntaxResult([]))
+              return new Promise<EditorSyntaxResult>(() => undefined)
+            },
+          }),
+        ),
+      )
+      const text = Array.from(
+        { length: 60000 },
+        (_value, index) => `const line${index} = ${index};`,
+      ).join('\n')
+      editor.setText(text, { languageId: 'typescript' })
+      await flushSyntaxUntilSettled(() => asked.length)
+      hold = true
+      editor.setScrollPosition({ top: 600000, left: 0 })
+      const syntax = syntaxControllerFrom(editor)
+      const lookAheadAsked = () => {
+        const request: EditorSyntaxRange | null | undefined = Reflect.get(
+          syntax,
+          'lookAhead',
+        )?.request
+        return asked.findLastIndex(
+          ({ range }) =>
+            request?.startIndex === range.startIndex && request.endIndex === range.endIndex,
+        )
+      }
+      await vi.waitFor(() => expect(lookAheadAsked()).toBeGreaterThanOrEqual(0))
+      const lookAhead = lookAheadAsked()
+      expect(asked[lookAhead]!.signal?.aborted).toBe(false)
+      const before = asked.length
+      // Past the end of that look-ahead, which a fast scroll stretches to 750,000 characters.
+      editor.setScrollPosition({ top: 1420000, left: 0 })
+      await vi.waitFor(() => expect(asked.length).toBeGreaterThan(before))
+      const destination = asked[before]!
+      expect(destination.range.startIndex).toBeGreaterThan(asked[lookAhead]!.range.endIndex)
+      expect(destination.earlierAborted[lookAhead]).toBe(true)
+    })
+
     it('reuses ready syntax and copy across a fresh view after optional warming was retired', async () => {
       const ranges = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
         createSyntaxResult(
