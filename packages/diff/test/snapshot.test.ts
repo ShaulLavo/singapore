@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { Editor } from '@singapore-editor/core/editor'
-import { createPaintSnapshotPlugin } from '@singapore-editor/core/paint'
+import { createPaintSnapshotPlugin, Editor } from '@singapore-editor/core/editor'
 import { VirtualizedTextView } from '@singapore-editor/core/testing'
 import { createDiffEditorOptions, createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
 

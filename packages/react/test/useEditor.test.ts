@@ -7,7 +7,7 @@ import {
   type DocumentRead,
 } from '@singapore-editor/core/editor'
 import { waitForDocumentWork } from '@singapore-editor/core/internal/document-worker'
-import { createPaintSnapshotPlugin } from '@singapore-editor/core/paint'
+import { createPaintSnapshotPlugin } from '@singapore-editor/core/editor'
 import type { EditorInitialPaintEvent, EditorPlugin } from '@singapore-editor/core/extensions'
 import {
   createDocumentSession,

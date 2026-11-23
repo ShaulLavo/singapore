@@ -1,6 +1,4 @@
 export { decodeSnapshot as decodePaintSnapshot } from './editor/documentPaint'
-export { createPaintSnapshotPlugin } from './paintSnapshotPlugin'
-export { EDITOR_PAINT_SNAPSHOT_FEATURE_ID } from './editor/paintSnapshotSupport'
 export type {
   PaintSnapshot,
   SavedDocumentPaint,

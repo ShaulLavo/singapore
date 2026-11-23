@@ -1,11 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { Editor } from '../src/editor/Editor'
-import {
-  createPaintSnapshotPlugin,
-  decodePaintSnapshot,
-  installPaintSnapshotCopy,
-  mountPaintSnapshot,
-} from '../src/paint'
+import { decodePaintSnapshot, installPaintSnapshotCopy, mountPaintSnapshot } from '../src/paint'
+import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
 import { createLineGutterPlugin } from '../../gutters/src/lineGutter'
 import '../src/style.css'
 import '../../gutters/src/lineGutter.css'

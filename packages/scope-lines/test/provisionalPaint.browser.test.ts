@@ -3,7 +3,7 @@ import { afterEach, expect, test } from 'vitest'
 import { Editor, createEditorHighlighterOperation } from '@singapore-editor/core/editor'
 import { waitForDocumentWork } from '@singapore-editor/core/internal/document-worker'
 import type { EditorHighlightResult, EditorPlugin } from '@singapore-editor/core/extensions'
-import { createPaintSnapshotPlugin } from '@singapore-editor/core/paint'
+import { createPaintSnapshotPlugin } from '@singapore-editor/core/editor'
 import { createScopeLinesPlugin } from '../src/index'
 import '@singapore-editor/core/style.css'
 

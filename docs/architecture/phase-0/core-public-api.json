@@ -4642,6 +4642,12 @@
         },
         {
           "kind": "unknown",
+          "name": "createPaintSnapshotPlugin",
+          "source": "packages/editor/src/paintSnapshotPlugin.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "defaultEditorPacks",
           "source": "packages/editor/src/keymap/presets.ts",
           "via": "packages/editor/src/editor.ts"
@@ -4674,6 +4680,12 @@
           "kind": "unknown",
           "name": "EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID",
           "source": "packages/editor/src/occurrenceHighlightPlugin.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "EDITOR_PAINT_SNAPSHOT_FEATURE_ID",
+          "source": "packages/editor/src/editor/paintSnapshotSupport.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -6400,20 +6412,8 @@
         },
         {
           "kind": "unknown",
-          "name": "createPaintSnapshotPlugin",
-          "source": "packages/editor/src/paintSnapshotPlugin.ts",
-          "via": "packages/editor/src/paint.ts"
-        },
-        {
-          "kind": "unknown",
           "name": "decodePaintSnapshot",
           "source": "packages/editor/src/editor/documentPaint.ts",
-          "via": "packages/editor/src/paint.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "EDITOR_PAINT_SNAPSHOT_FEATURE_ID",
-          "source": "packages/editor/src/editor/paintSnapshotSupport.ts",
           "via": "packages/editor/src/paint.ts"
         },
         {

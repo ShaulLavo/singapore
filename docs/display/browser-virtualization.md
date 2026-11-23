@@ -36,7 +36,7 @@ coordinates in both modes. Browser find-in-page and print cover only mounted row
 
 `captureSnapshot({ scope: 'document' })` uses the same row renderer to capture missing rows in
 small batches. The live editor keeps its current mounted rows and scroll position. Saving and
-restoring paint needs `createPaintSnapshotPlugin()` from `@singapore-editor/core/paint`; without
+restoring paint needs `createPaintSnapshotPlugin()` from `@singapore-editor/core/editor`; without
 it, capture returns nothing and an offered snapshot is ignored.
 
 `scrollMode` and `setScrollMode` are deprecated for one release. In an editor, legacy `content`
