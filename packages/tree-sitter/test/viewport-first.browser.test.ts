@@ -336,9 +336,12 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await expect.poll(() => published, { timeout: 20_000 }).toBe(true)
     unsubscribe()
     await userEvent.keyboard('const value = 42; ')
+    const answersBeforeScroll = answers.length
     const scroll: HTMLElement = editor['view'].scrollElement
-    for (let step = 0; step < 40; step++) {
-      scroll.scrollTop += 600
+    // Uneven steps line the scroll up against range answers in many ways; the loop needed a few
+    // neighbouring answers on screen at once and never ended once it began.
+    for (let step = 0; step < 120; step++) {
+      scroll.scrollTop += [600, 400, 200][step % 3]!
       expect(await frameOrTimeout(10_000)).toBe('frame')
       expect(rangeRequests).toBeLessThan(rangeRequestCap)
       await new Promise((resolve) => setTimeout(resolve, 50))
@@ -346,6 +349,26 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(await frameOrTimeout(10_000)).toBe('frame')
     expect(rangeRequests).toBeLessThan(rangeRequestCap)
+    // The scroll reached text far below the middle, a complete answer asked for after the scroll
+    // began covers it, and that text is painted.
+    const reached: EditorSyntaxRange = syntax['options'].getVisibleSyntaxRange()
+    expect(reached.startIndex).toBeGreaterThan(middle + 20_000)
+    const covers = (range: EditorSyntaxRange) =>
+      range.startIndex <= reached.startIndex && reached.endIndex <= range.endIndex
+    await expect
+      .poll(() =>
+        answers
+          .slice(answersBeforeScroll)
+          .some((answer) => answer.kind === 'full' && covers(answer.range)),
+      )
+      .toBe(true)
+    const painted = syntax.tokens.toTokens()
+    expect(
+      painted.some(
+        (token: { readonly start: number }) =>
+          reached.startIndex <= token.start && token.start < reached.endIndex,
+      ),
+    ).toBe(true)
   } finally {
     editor.dispose()
     host.remove()

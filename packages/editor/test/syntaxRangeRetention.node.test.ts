@@ -358,6 +358,50 @@ describe('syntax range contributor lifetime', () => {
     },
   )
 
+  it('does not bring back a crossing fold that a fresh answer after an edit dropped', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'stale-fold' })
+    let edited = false
+    const ranges = vi.fn(async (range: EditorSyntaxRange) => ({
+      ...createEmptySyntaxResult({ requestedRanges: [range] }),
+      records: { languageId: 'typescript', data: new Uint32Array(16) },
+      tokens: EditorTokenStore.fromTokens([
+        { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
+      ]),
+      // Before the edit a fold spans [0,100); the edit removes it.
+      folds: edited
+        ? []
+        : [{ startIndex: 0, endIndex: 100, startLine: 0, endLine: 49, type: 'scope' as const }],
+    }))
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: ranges,
+      })),
+    }
+    const view = createView(buffer, analysis, provider, { startIndex: 60, endIndex: 80 })
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.folds()).toBe(1))
+      edited = true
+      const change = createEditorBufferSession(buffer).applyText('!')
+      view.syntax.acceptChange(change)
+      view.setRange({ startIndex: 10, endIndex: 40 })
+      view.syntax.refresh(1, change, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.folds()).toBe(0))
+      const calls = ranges.mock.calls.length
+      view.setRange({ startIndex: 12, endIndex: 42 })
+      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+      await vi.waitFor(() => expect(ranges.mock.calls.length).toBeGreaterThan(calls))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(view.folds()).toBe(0)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
   it('keeps an actual crossing fold contributor when its query lies outside the new frame', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'crossing' })

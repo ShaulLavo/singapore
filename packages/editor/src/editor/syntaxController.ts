@@ -155,6 +155,8 @@ type CachedSyntaxFoldRange = {
   readonly result: EditorSyntaxResult
   readonly snapshot: DocumentTextSnapshot
   readonly tokenRanges: readonly EditorSyntaxRange[]
+  /** Carried through an edit rather than answered for the current text. */
+  readonly projected?: boolean
 }
 
 type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
@@ -2380,6 +2382,7 @@ const projectCachedSyntaxFoldRanges = (
       range: nextRange,
       tokenRanges: projectCachedSyntaxRanges(range.tokenRanges, edit, documentLength),
       folds: projectFoldRangesThroughInsertion(range.folds, edit, documentLength),
+      projected: true,
     })
   }
   return projected
@@ -2501,8 +2504,11 @@ const cachedSyntaxFoldsForRange = (
 
   // A fold is looked up by its own span, as retention keeps it (activeFoldContributors): the answer
   // that reported a crossing fold last can have been queried for a range that is off screen now.
+  // An answer carried through an edit is trusted only where it was queried, since a fresh answer
+  // elsewhere may already have dropped its fold.
   const foldsByKey = new Map<string, FoldRange>()
   for (const cachedRange of cachedRanges) {
+    if (cachedRange.projected && !syntaxRangesIntersect(cachedRange.range, range)) continue
     for (const fold of cachedRange.folds) {
       if (!foldIntersectsSyntaxRange(fold, range)) continue
       foldsByKey.set(foldRangeKey(fold), fold)
