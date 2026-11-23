@@ -9,6 +9,7 @@ import { setHighlightRegistry } from '../src/public/testing'
 import { EditorTokenStore } from '../src/syntax/tokenStore'
 import { createError } from '../src/logging/evlog'
 import { decodePaintSnapshot } from '../src/editor/paintSnapshot'
+import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
 
 const RED_TOKENS = EditorTokenStore.fromTokens([{ start: 0, end: 5, style: { color: 'red' } }])
 
@@ -584,7 +585,11 @@ function mount(options: ConstructorParameters<typeof Editor>[1] = {}, viewportWi
   const host = document.createElement('div')
   document.body.append(host)
   hosts.push(host)
-  const editor = new Editor(host, { lineHeight: 20, ...options })
+  const editor = new Editor(host, {
+    lineHeight: 20,
+    ...options,
+    plugins: (options.plugins ?? []).concat([createPaintSnapshotPlugin()]),
+  })
   editors.push(editor)
   const view: unknown = Reflect.get(editor, 'view')
   if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, viewportWidth)

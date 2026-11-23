@@ -2,7 +2,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { format } from 'oxfmt'
-import { EDITOR_COMMANDS } from '../packages/editor/src/editor/commandCatalog'
+import { EDITOR_COMMANDS } from '../packages/editor/src/editor/commandText'
 
 const target = resolve(import.meta.dir, '../docs/commands.md')
 const check = process.argv.includes('--check')

@@ -35,7 +35,9 @@ when the editor leaves the screen. Plugin snapshots report the visible window in
 coordinates in both modes. Browser find-in-page and print cover only mounted rows.
 
 `captureSnapshot({ scope: 'document' })` uses the same row renderer to capture missing rows in
-small batches. The live editor keeps its current mounted rows and scroll position.
+small batches. The live editor keeps its current mounted rows and scroll position. Saving and
+restoring paint needs `createPaintSnapshotPlugin()` from `@singapore-editor/core/paint`; without
+it, capture returns nothing and an offered snapshot is ignored.
 
 `scrollMode` and `setScrollMode` are deprecated for one release. In an editor, legacy `content`
 maps to `height: 'content'`, and both `virtualized` and `static` map to `height: 'container'`.

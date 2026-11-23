@@ -1,6 +1,11 @@
 import { afterEach, expect, it } from 'vitest'
 import { Editor } from '../src/editor/Editor'
-import { decodePaintSnapshot, installPaintSnapshotCopy, mountPaintSnapshot } from '../src/paint'
+import {
+  createPaintSnapshotPlugin,
+  decodePaintSnapshot,
+  installPaintSnapshotCopy,
+  mountPaintSnapshot,
+} from '../src/paint'
 import { createLineGutterPlugin } from '../../gutters/src/lineGutter'
 import '../src/style.css'
 import '../../gutters/src/lineGutter.css'
@@ -39,7 +44,7 @@ function mountEditor(host: HTMLElement, text = TEXT) {
     fontFamily: 'monospace',
     fontSize: 14,
     lineHeight: 22,
-    plugins: [createLineGutterPlugin()],
+    plugins: [createLineGutterPlugin(), createPaintSnapshotPlugin()],
   })
   cleanups.push(() => editor.dispose())
   editor.setText(text)

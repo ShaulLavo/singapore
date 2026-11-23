@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { Editor } from '@singapore-editor/core/editor'
+import { createPaintSnapshotPlugin } from '@singapore-editor/core/paint'
 import { VirtualizedTextView } from '@singapore-editor/core/testing'
 import { createDiffEditorOptions, createDiffPlugin, createTextDiff, joinRenderLines } from '../src'
 
@@ -57,7 +58,10 @@ test.each(['old', 'new', 'stacked'] as const)(
 function mount(options: ConstructorParameters<typeof Editor>[1]) {
   const host = document.createElement('div')
   document.body.append(host)
-  const editor = new Editor(host, options)
+  const editor = new Editor(host, {
+    ...options,
+    plugins: (options?.plugins ?? []).concat([createPaintSnapshotPlugin()]),
+  })
   const view: unknown = Reflect.get(editor, 'view')
   if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 240, 640)
   editors.push(editor)

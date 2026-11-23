@@ -210,7 +210,8 @@ export type {
   EditorAnalysisRangeInterest,
 } from './editor/documentAnalysis'
 
-export { editorCommandMutates, editorCommandDeclaration } from './editor/commandCatalog'
+export { editorCommandMutates } from './editor/commandCatalog'
+export { editorCommandDeclaration } from './editor/commandText'
 
 export type { DocumentRead, DocumentRevision } from './editor/documentDelivery'
 export type { EditorStructuralOperation, EditorHighlighterOperation } from './document/operations'

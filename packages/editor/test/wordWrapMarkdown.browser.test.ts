@@ -7,7 +7,7 @@ import { createStringTextSnapshot } from '../src/documentTextSnapshot'
 import { Editor } from '../src/editor/Editor'
 import { glyphAdvancesFor, PROPORTIONAL_WRAP_MARGIN_PX } from '../src/virtualization/glyphAdvances'
 import { clearBrowserTextMetricsCache } from '../src/virtualization/browserMetrics'
-import { decodePaintSnapshot, mountPaintSnapshot } from '../src/paint'
+import { createPaintSnapshotPlugin, decodePaintSnapshot, mountPaintSnapshot } from '../src/paint'
 import quickStart from '../../../site/src/content/docs/docs/start-here/quick-start.md?raw'
 import codeMirror from '../../../site/src/content/docs/docs/start-here/codemirror.md?raw'
 import '../src/style.css'
@@ -233,6 +233,7 @@ async function checkStyledPreview(text: string, width: number, replay: boolean):
   document.body.append(container)
   container.dataset.styledWrapProof = ''
   const editor = new Editor(container, {
+    plugins: [createPaintSnapshotPlugin()],
     scrollMode: 'content',
     wordWrap: true,
     wordWrapBreak: 'word',
@@ -390,6 +391,7 @@ test.each(['theme', 'stylesheet', 'font'] as const)(
     document.body.append(container)
     const text = '# ' + 'WWWWW WWWWW '.repeat(10) + '\nlast'
     const editor = new Editor(container, {
+      plugins: [createPaintSnapshotPlugin()],
       scrollMode: 'content',
       wordWrap: true,
       wordWrapBreak: 'word',
@@ -493,6 +495,7 @@ test.each([
         ? '# ' + 'W'.repeat(27) + ' ' + 'W'.repeat(10) + '\nlast'
         : '# ' + 'WWWWW WWWWW '.repeat(10) + '\nlast'
     const editor = new Editor(container, {
+      plugins: [createPaintSnapshotPlugin()],
       scrollMode: 'content',
       wordWrap: true,
       wordWrapBreak: 'word',

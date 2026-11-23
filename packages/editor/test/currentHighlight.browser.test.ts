@@ -16,6 +16,7 @@ import {
 } from '../../tree-sitter/dist/index.js'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/dist/catalog.generated.js'
 import type { EditorInitialPaintEvent } from '../src/plugins'
+import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
 import { heldNativeWorkerReplies } from './factories/heldWorker'
 import '@singapore-editor/core/style.css'
 
@@ -110,6 +111,7 @@ test.for([false, true])(
       editor = new Editor(host, {
         onInitialPaint: (event) => paints.push(event),
         plugins: [
+          createPaintSnapshotPlugin(),
           {
             activate: (context) =>
               (!overlap ? [context.registerSyntaxProvider(structural)] : []).concat([

@@ -12,6 +12,7 @@ import { markdownInlineReplacements } from '../../markdown/src/replacements'
 import { decodePaintSnapshot, mountPaintSnapshot } from '../src/paint'
 import '../../markdown/src/style.css'
 import { VirtualizedTextView } from '../src/virtualization'
+import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
 import '../src/style.css'
 
 declare module 'vitest/browser' {
@@ -289,6 +290,7 @@ it.for(['light', 'dark'] as const)(
     document.body.append(host)
     const foreground = appearance === 'dark' ? '#ffffff' : '#000000'
     const editor = new Editor(host, {
+      plugins: [createPaintSnapshotPlugin()],
       scrollMode: 'content',
       cursorLineHighlight: { rowBackground: false, gutterNumber: false, gutterBackground: false },
       fontSize: 24,

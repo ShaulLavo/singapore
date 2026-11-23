@@ -3,6 +3,7 @@ import { afterEach, expect, test } from 'vitest'
 import { Editor, createEditorHighlighterOperation } from '@singapore-editor/core/editor'
 import { waitForDocumentWork } from '@singapore-editor/core/internal/document-worker'
 import type { EditorHighlightResult, EditorPlugin } from '@singapore-editor/core/extensions'
+import { createPaintSnapshotPlugin } from '@singapore-editor/core/paint'
 import { createScopeLinesPlugin } from '../src/index'
 import '@singapore-editor/core/style.css'
 
@@ -106,7 +107,7 @@ function mount(plugins: readonly EditorPlugin[], snapshot: string | null = null)
   const editor = new Editor(host, {
     lineHeight: 20,
     tabSize: 2,
-    plugins,
+    plugins: plugins.concat([createPaintSnapshotPlugin()]),
     documentKey: 'file-a',
     snapshot,
   })
