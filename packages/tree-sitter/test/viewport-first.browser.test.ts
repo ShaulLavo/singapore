@@ -157,6 +157,35 @@ it('keeps the whole lookahead when a line ends right after the visible range', a
   expect(inRange(preview)).toEqual(inRange(complete))
 }, 30_000)
 
+it('previews a jump near the end of the prefix when the prefix parses cleanly', async () => {
+  const line = 'const answer: number = 42;\n'
+  const doc = document(line.repeat(50_000))
+  await doc.run()
+  // Less than the full lookahead fits between this range and the end of the prefix.
+  const range = { startIndex: line.length * 2100, endIndex: line.length * 2110 }
+  expect(range.endIndex + 16_384).toBeGreaterThan(65_536)
+  const preview = await doc.runtime.queryRange(range)
+  expect(preview.projection.analysis?.kind).toBe('partial')
+  expect(preview.captures.length).toBeGreaterThan(0)
+  await expect
+    .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+    .toBe('full')
+  const complete = await doc.runtime.queryRange(range)
+  expect(preview.captures).toEqual(complete.captures)
+}, 30_000)
+
+it('waits for the complete tree near the end of the prefix when the prefix has an error', async () => {
+  const line = 'const answer: number = 42;\n'
+  const doc = document('const = ;\n' + line.repeat(50_000))
+  await doc.run()
+  // With the full lookahead parsed, an error that does not touch the range is no obstacle.
+  const early = { startIndex: line.length * 100, endIndex: line.length * 110 }
+  expect((await doc.runtime.queryRange(early)).projection.analysis?.kind).toBe('partial')
+  // Near the end of the prefix the lookahead is cut short, and any error waits.
+  const late = { startIndex: line.length * 2100, endIndex: line.length * 2110 }
+  expect((await doc.runtime.queryRange(late)).projection.analysis?.kind).toBe('full')
+}, 30_000)
+
 it('converges when text past the lookahead changes a visible token', async () => {
   const visible = 'function outer() {\n  const fn = (value'
   const text = visible + ', other)' + ' '.repeat(70_000) + '=> value;\n}'
@@ -296,11 +325,15 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     readonly request: number
   }[] = []
   let rangeRequests = 0
+  // While set, look-ahead answers are held too and every range the view asks for is listed.
+  let neighbours: string[] | null = null
   syntax.loadSyntaxRangeResult = (...args: Parameters<typeof loadRange>) => {
     const [range, source] = args as unknown as [EditorSyntaxRange, string]
     // Background warming is held: it can answer so much around the viewport that the scroll never
     // needs the range answers that looped.
     if (source === 'warm') return new Promise<never>(() => undefined)
+    if (neighbours && source === 'prefetch') return new Promise<never>(() => undefined)
+    if (neighbours && source === 'visible') neighbours.push(`${range.startIndex}-${range.endIndex}`)
     rangeRequests++
     const request = rangeRequests
     if (rangeRequests > rangeRequestCap) return new Promise<never>(() => undefined)
@@ -345,10 +378,35 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await expect.poll(() => published, stuck).toBe(true)
     unsubscribe()
     await userEvent.keyboard('const value = 42; ')
+    await expect.poll(() => editor.getState().syntaxStatus, stuck).toBe('ready')
     const requestsBeforeScroll = rangeRequests
     const scroll: HTMLElement = editor['view'].scrollElement
-    // Uneven steps line the scroll up against range answers in many ways; the loop needed a few
-    // neighbouring answers on screen at once and never ended once it began.
+    // First the loop's conditions on purpose. With look-ahead answers held, each step waits for
+    // the answer to the strip of text it brought into range, so the answers to the typed-in
+    // frame and to every strip lie side by side in range at once. Each is asked for once.
+    const asked: string[] = []
+    neighbours = asked
+    const answered = () => answers.filter((answer) => answer.request > requestsBeforeScroll).length
+    for (let step = 1; step <= 6; step++) {
+      scroll.scrollTop += 600
+      // A loop hits the request cap long before the wait runs out; stop on it at once.
+      await expect
+        .poll(
+          () =>
+            rangeRequests >= rangeRequestCap || (new Set(asked).size >= step && answered() >= step),
+          stuck,
+        )
+        .toBe(true)
+      expect(rangeRequests).toBeLessThan(rangeRequestCap)
+      expect(await frameOrTimeout(10_000)).toBe('frame')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(await frameOrTimeout(10_000)).toBe('frame')
+    neighbours = null
+    expect(asked).toEqual(Array.from(new Set(asked)))
+    expect(rangeRequests).toBeLessThan(rangeRequestCap)
+    // Then uneven steps, with look-ahead answers arriving, line the scroll up against range
+    // answers in many other ways.
     for (let step = 0; step < 120; step++) {
       scroll.scrollTop += [600, 400, 200][step % 3]!
       expect(await frameOrTimeout(10_000)).toBe('frame')

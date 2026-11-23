@@ -1522,15 +1522,32 @@ const BOOTSTRAP_LOOKAHEAD_UNITS = 16_384
 const BOOTSTRAP_LINE_END_SEARCH_UNITS = 4096
 
 const bootstrapPreviewEnd = (source: TreeSitterPieceTableInput, rangeEnd: number): number => {
-  const end = Math.min(source.length, rangeEnd + BOOTSTRAP_LOOKAHEAD_UNITS)
-  const limit = Math.min(
-    source.length,
-    TREE_SITTER_BOOTSTRAP_UNITS,
-    end + BOOTSTRAP_LINE_END_SEARCH_UNITS,
-  )
+  const prefixEnd = Math.min(source.length, TREE_SITTER_BOOTSTRAP_UNITS)
+  const end = Math.min(prefixEnd, rangeEnd + BOOTSTRAP_LOOKAHEAD_UNITS)
+  const limit = Math.min(prefixEnd, end + BOOTSTRAP_LINE_END_SEARCH_UNITS)
   if (limit <= end) return end
   const newline = readTreeSitterInputRange(source, end, limit).indexOf('\n')
   return newline === -1 ? end : end + newline + 1
+}
+
+/** Whether the preview may disagree with the complete tree inside `range`. */
+const bootstrapPreviewUnsettled = (
+  preview: BootstrapPreview,
+  range: TreeSitterSyntaxRange,
+  sourceLength: number,
+): boolean => {
+  // Cutting the source almost always leaves an error at the cut, past the requested range.
+  // Recovery that reinterprets earlier tokens wraps them in an ERROR node, so with the full
+  // lookahead parsed, only an error touching the range puts the range in doubt.
+  // Text past the cut can still change how a token in the range reads (an arrow's `=>` after a
+  // parameter list longer than the lookahead, a call's `(` after a long run of blank lines), as it
+  // could for an error-free prefix; the complete analysis replaces the preview when it lands.
+  const lookaheadEnd = Math.min(sourceLength, range.endIndex + BOOTSTRAP_LOOKAHEAD_UNITS)
+  if (preview.size >= lookaheadEnd)
+    return preview.layers.some((layer) => mergeRangeHasErrors(layer.tree.rootNode, range))
+  // Near the end of the prefix there is less lookahead than that, and recovery in a tree cut that
+  // close can reinterpret tokens before its error. Any error then waits for the complete tree.
+  return preview.layers.some((layer) => layer.tree.rootNode.hasError)
 }
 
 const queryBootstrapRange = async (
@@ -1540,8 +1557,7 @@ const queryBootstrapRange = async (
   const staged = bootstrapDocuments.get(request.runtimeSessionId)
   if (!staged || staged.request.snapshotVersion !== request.snapshotVersion) return undefined
   // A prefix preserves the grammar's entry state. Distant ranges wait for the complete tree.
-  if (request.range.endIndex + BOOTSTRAP_LOOKAHEAD_UNITS > TREE_SITTER_BOOTSTRAP_UNITS)
-    return undefined
+  if (request.range.endIndex > TREE_SITTER_BOOTSTRAP_UNITS) return undefined
   const runtime = await ensureRuntime(request.languageId)
   assertRuntimeSessionActive(request.runtimeSessionId)
   if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) return undefined
@@ -1559,14 +1575,7 @@ const queryBootstrapRange = async (
   const preview = staged.preview
   if (!preview) return undefined
   const range = normalizedSyntaxRange(request.range, staged.source.length)
-  // Cutting the source almost always leaves an error at the cut, past the requested range.
-  // Recovery that reinterprets earlier tokens wraps them in an ERROR node, so an error
-  // touching the range means the preview may disagree with the complete tree there.
-  // Text past the cut can still change how a token in the range reads (an arrow's `=>` after a
-  // parameter list longer than the lookahead, a call's `(` after a long run of blank lines), as it
-  // could for an error-free prefix; the complete analysis replaces the preview when it lands.
-  if (preview.layers.some((layer) => mergeRangeHasErrors(layer.tree.rootNode, range)))
-    return undefined
+  if (bootstrapPreviewUnsettled(preview, range, staged.source.length)) return undefined
   const result = await flattenDocumentRange(preview, context, {
     range,
     includeHighlights: request.includeHighlights,
