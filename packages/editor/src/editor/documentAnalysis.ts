@@ -60,6 +60,11 @@ export type EditorAnalysisDisplayDemand =
       readonly kind: 'frame' | 'preparation'
       readonly snapshot: DocumentTextSnapshot
       readonly ranges: readonly EditorSyntaxRange[]
+      /**
+       * Text kept ready beside the shown rows while scrolling. Answers that lie inside it stay
+       * cached, so a view showing the same place again finds them instead of asking again.
+       */
+      readonly lookAhead?: readonly EditorSyntaxRange[]
     }
 export type EditorAnalysisRangeInterest = { readonly signal?: AbortSignal }
 type AnalysisDisplayInspection = {
@@ -749,6 +754,11 @@ type PendingRangeQuery = {
   readonly point: DocumentSyncPoint
   readonly range: EditorSyntaxRange
   readonly promise: Promise<EditorSyntaxResult>
+  /** Aborted when the query is superseded after every caller has left. */
+  readonly cancellation: AbortController
+  /** Callers that can leave; a caller without a signal keeps the query for good. */
+  holders: number
+  pinned: boolean
   admission: 'cache' | 'return-only'
   work:
     | { readonly kind: 'queued'; readonly generation: number | null }
@@ -926,6 +936,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       if (!contributors || demand.kind === 'preparation')
         this.protectIntersecting(demand.ranges, protectedSlots)
       this.protectLookup(demand.ranges, protectedSlots)
+      if (demand.lookAhead) this.protectContained(demand.lookAhead, protectedSlots)
     }
     for (const waiter of this.queryWaiters.values()) {
       if (waiter.snapshot !== snapshot) continue
@@ -996,6 +1007,15 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
   }
 
+  private protectContained(
+    windows: readonly EditorSyntaxRange[],
+    protectedSlots: Set<ReadyRange>,
+  ): void {
+    for (const cached of this.ranges.values()) {
+      if (windows.some((window) => rangeContains(window, cached.range))) protectedSlots.add(cached)
+    }
+  }
+
   private protectLookup(
     ranges: readonly EditorSyntaxRange[],
     protectedSlots: Set<ReadyRange>,
@@ -1061,7 +1081,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.retention.changed()
     }
     signal.addEventListener('abort', release, { once: true })
-    const pending = interruptible(this.range(range), signal)
+    const pending = interruptible(this.range(range, signal), signal)
     this.retention.changed()
     return pending.finally(() => {
       release()
@@ -1111,7 +1131,13 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return { kind: 'pending', revision: state.revision }
   }
 
-  range(range: EditorSyntaxRange): Promise<EditorSyntaxResult> {
+  /**
+   * One shared query per range. A caller that passes `signal` holds the query only until the
+   * signal aborts. A query every caller has left is an orphan: it is never sent to the runtime,
+   * a running one stays joinable for a caller asking for the same range again, and asking for any
+   * other range cancels it, which stops the runtime's work where the runtime can stop.
+   */
+  range(range: EditorSyntaxRange, signal?: AbortSignal): Promise<EditorSyntaxResult> {
     range = boundedRange(range, this.buffer.getTextSnapshot().length)
     if (!this.structuralSession.queryRange) return this.current()
     const state = this.readRange(range)
@@ -1125,23 +1151,35 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.compatibleQuery(query, point, range),
     )
     if (existing) {
+      holdRangeQuery(existing, signal)
       this.trimOptionalRanges()
       return existing.promise
     }
+    this.cancelOrphanedQueries()
     let queried = false
+    const cancellation = new AbortController()
     const pending: PendingRangeQuery = {
       snapshot: this.buffer.getTextSnapshot(),
       point,
       range,
+      cancellation,
+      holders: 0,
+      pinned: false,
       admission: 'cache',
       work: { kind: 'queued', generation },
-      promise: this.query((signal) => {
-        pending.work = { kind: 'running', generation: this.generation }
-        const current = this.readRange(range)
-        if (current.kind === 'ready') return Promise.resolve(current.result)
-        queried = true
-        return this.structuralSession.queryRange?.(range, signal) ?? this.current()
-      }).then((result) => {
+      promise: interruptible(
+        this.query((interest) => {
+          if (cancellation.signal.aborted || rangeQueryIsOrphaned(pending))
+            return Promise.reject(cancelled())
+          pending.work = { kind: 'running', generation: this.generation }
+          const current = this.readRange(range)
+          if (current.kind === 'ready') return Promise.resolve(current.result)
+          queried = true
+          const querySignal = AbortSignal.any([interest, cancellation.signal])
+          return this.structuralSession.queryRange?.(range, querySignal) ?? this.current()
+        }),
+        cancellation.signal,
+      ).then((result) => {
         if (queried && syntaxResultCoversRange(result, range) && this.canAdmitRange(key, pending)) {
           this.resultOrigins.set(result, {
             snapshot: pending.snapshot,
@@ -1155,6 +1193,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }),
     }
     this.queries.set(key, pending)
+    holdRangeQuery(pending, signal)
     this.trimOptionalRanges()
     this.retention.changed()
     void pending.promise
@@ -1167,12 +1206,19 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return pending.promise
   }
 
+  private cancelOrphanedQueries(): void {
+    for (const query of this.queries.values()) {
+      if (rangeQueryIsOrphaned(query)) query.cancellation.abort(cancelled())
+    }
+  }
+
   private compatibleQuery(
     query: PendingRangeQuery,
     point: DocumentSyncPoint,
     range: EditorSyntaxRange,
   ): boolean {
     return (
+      !query.cancellation.signal.aborted &&
       query.point === point &&
       query.snapshot === this.buffer.getTextSnapshot() &&
       rangeKey(query.range) === rangeKey(range) &&
@@ -1731,6 +1777,25 @@ function leaseCancellation(
 
 function cancelled(): DOMException {
   return new DOMException('Document analysis was superseded or released', 'AbortError')
+}
+
+function rangeQueryIsOrphaned(query: PendingRangeQuery): boolean {
+  return query.holders === 0 && !query.pinned
+}
+
+function holdRangeQuery(query: PendingRangeQuery, signal: AbortSignal | undefined): void {
+  if (!signal) {
+    query.pinned = true
+    return
+  }
+  if (signal.aborted) return
+  query.holders += 1
+  const release = () => {
+    query.holders -= 1
+  }
+  signal.addEventListener('abort', release, { once: true })
+  const forget = () => signal.removeEventListener('abort', release)
+  void query.promise.then(forget, forget)
 }
 function rangeKey(range: EditorSyntaxRange): string {
   return `${range.startIndex}:${range.endIndex}`

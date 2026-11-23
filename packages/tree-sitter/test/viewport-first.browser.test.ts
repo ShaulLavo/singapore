@@ -460,6 +460,125 @@ it('keeps painting frames while scrolling a large file after its preview is repl
   }
 }, 120_000)
 
+it('asks the worker for little more than the scrolled text while scrolling during the preview', async () => {
+  // Every range the worker is asked for, including asks repeated after the complete analysis.
+  const asked: EditorSyntaxRange[] = []
+  const queryRange = TreeSitterWorkerClient.prototype.queryRange
+  TreeSitterWorkerClient.prototype.queryRange = function (
+    this: TreeSitterWorkerClient,
+    ...args: Parameters<typeof queryRange>
+  ) {
+    asked.push(args[0].range)
+    return queryRange.apply(this, args)
+  }
+  const scrolled = scrollingEditor()
+  let settled: ReturnType<typeof scrollingEditor> | null = null
+  try {
+    const { editor, scroll } = scrolled
+    const text = generatedModule(50_000)
+    editor.setText(text, { languageId: 'typescript' })
+    const stuck = { timeout: 30_000 }
+    await expect.poll(() => editor.getState().initialHighlightStatus, stuck).toBe('painted')
+    const askedBeforeScroll = asked.length
+    // Scroll at frame pace from the first paint, while the complete analysis is still running.
+    // The frame cap only catches a stuck page; it judges no speed.
+    let stepsDuringPreview = 0
+    for (let step = 0; step < 60; step++) {
+      if (analysisKind(editor) === 'partial') stepsDuringPreview++
+      scroll.scrollTop += 600
+      expect(await frameOrTimeout(10_000)).toBe('frame')
+    }
+    expect(stepsDuringPreview).toBeGreaterThan(0)
+    await expect.poll(() => analysisKind(editor), stuck).toBe('full')
+    await expect.poll(() => editor.getState().syntaxStatus, stuck).toBe('ready')
+    await expect.poll(() => paintedRows(scrolled.host, scroll).length, stuck).toBeGreaterThan(0)
+    await workerIdle(asked)
+
+    // The scroll moved about 1,800 lines, some 120,000 characters. Each look-ahead side is asked
+    // for once and topped up as the reader nears its end, so the worker is asked for a small
+    // multiple of that. Asking for the whole look-ahead window on every step asked for over ten
+    // million characters, and replayed the look-ahead asks queued during the preview.
+    const askedChars = asked
+      .slice(askedBeforeScroll)
+      .reduce((total, range) => total + range.endIndex - range.startIndex, 0)
+    expect(askedChars).toBeLessThan(1_500_000)
+
+    // The settled viewport is painted exactly as a view that waited for the complete analysis.
+    const scrollTop = scroll.scrollTop
+    const painted = paintedRows(scrolled.host, scroll)
+    expect(painted.length).toBeGreaterThan(0)
+    scrolled.dispose()
+    const reference = scrollingEditor()
+    settled = reference
+    reference.editor.setText(text, { languageId: 'typescript' })
+    await expect.poll(() => analysisKind(reference.editor), stuck).toBe('full')
+    reference.scroll.scrollTop = scrollTop
+    expect(await frameOrTimeout(10_000)).toBe('frame')
+    await expect.poll(() => reference.editor.getState().syntaxStatus, stuck).toBe('ready')
+    await expect.poll(() => paintedRows(reference.host, reference.scroll), stuck).toEqual(painted)
+  } finally {
+    TreeSitterWorkerClient.prototype.queryRange = queryRange
+    scrolled.dispose()
+    settled?.dispose()
+  }
+}, 120_000)
+
+function scrollingEditor() {
+  const host = globalThis.document.createElement('div')
+  host.style.cssText = 'width:1200px;height:800px;display:flex;flex-direction:column'
+  globalThis.document.body.append(host)
+  const editor = new Editor(host, {
+    plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],
+  })
+  let disposed = false
+  return {
+    host,
+    editor,
+    scroll: editor['view'].scrollElement as HTMLElement,
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      editor.dispose()
+      host.remove()
+    },
+  }
+}
+
+function analysisKind(editor: Editor): string | undefined {
+  return editor['syntax']['syntaxSession']?.getResult().projection.analysis?.kind
+}
+
+/** Waits until no range has been asked for over a quiet half second. */
+async function workerIdle(asked: readonly EditorSyntaxRange[]): Promise<void> {
+  let count = -1
+  while (count !== asked.length) {
+    count = asked.length
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
+/** Each painted syntax token on a shown row: its highlight, row offset, column and text. */
+function paintedRows(host: HTMLElement, scroll: HTMLElement): string[] {
+  const viewport = scroll.getBoundingClientRect()
+  const painted: string[] = []
+  for (const [name, highlight] of CSS.highlights) {
+    if (!name.startsWith('editor-shared-token-')) continue
+    for (const range of highlight) {
+      const node = (range as AbstractRange).startContainer
+      if (!host.contains(node)) continue
+      const element = node instanceof Element ? node : node.parentElement
+      if (!element) continue
+      const box = element.getBoundingClientRect()
+      if (box.height === 0 || box.bottom <= viewport.top || box.top >= viewport.bottom) continue
+      const { startOffset, endOffset, endContainer } = range as AbstractRange
+      const end = endContainer === node ? endOffset : undefined
+      const text = (node.textContent ?? '').slice(startOffset, end)
+      painted.push(`${name}|${Math.round(box.top - viewport.top)}|${startOffset}|${text}`)
+    }
+  }
+  return painted.sort()
+}
+
 function generatedModule(lines: number): string {
   const out: string[] = []
   for (let line = 0; line < lines; line++) out.push(generatedLine(line))

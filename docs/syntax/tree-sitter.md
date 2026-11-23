@@ -58,6 +58,12 @@ Each parse result is tied to a document snapshot/version. Consumers must be able
 5. Queries run for invalidated or visible ranges first.
 6. Query results are emitted as syntax decorations or structural ranges tagged with their base snapshot.
 
+### Range requests while scrolling
+
+The editor asks for the shown rows' uncached text first, then for a look-ahead window beside it: up to 750,000 characters in the scroll direction and 50,000 behind. It asks only for the window's uncached part, and asks again on a side only once less than half of that side is cached next to the viewport, so a scroll asks for each stretch of text about once. Look-ahead answers stay cached while they lie inside the window; other answers stay only for shown text.
+
+A range query that every caller has left is never sent to the worker. One already running stays joinable for a caller that asks for the same range again, and asking for any other range cancels it. That stops the worker mid-query where shared cancellation flags are available (a cross-origin-isolated page), and otherwise drops it before it is sent or re-sent after the complete analysis.
+
 Open implementation details:
 
 - exact Tree-sitter input adapter for piece-table reads

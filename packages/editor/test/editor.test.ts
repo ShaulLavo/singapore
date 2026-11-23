@@ -728,6 +728,15 @@ function hasLongSyntaxRange(ranges: readonly EditorSyntaxRange[]): boolean {
   return ranges.some((range) => rangeLength(range) > 200000)
 }
 
+function rangesCover(ranges: readonly EditorSyntaxRange[], target: EditorSyntaxRange): boolean {
+  let cursor = target.startIndex
+  for (const range of ranges.toSorted((left, right) => left.startIndex - right.startIndex)) {
+    if (range.startIndex > cursor) break
+    cursor = Math.max(cursor, range.endIndex)
+  }
+  return cursor >= target.endIndex
+}
+
 function selectionRanges(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('.editor-virtualized-selection-range')]
 }
@@ -6671,9 +6680,7 @@ describe('Editor', () => {
 
       expect(scrolledRanges.some((range) => range.startIndex > enclosingStart)).toBe(true)
       expect(
-        scrolledRanges.some(
-          (range) => range.startIndex <= enclosingStart && range.endIndex >= currentToken.end,
-        ),
+        rangesCover(scrolledRanges, { startIndex: enclosingStart, endIndex: currentToken.end }),
       ).toBe(true)
       expect(tokens).toEqual([enclosingToken, currentToken])
       expect(syntax.copyTokens.toTokens()).toEqual([enclosingToken, currentToken])
@@ -6750,10 +6757,11 @@ describe('Editor', () => {
         )
         await flushSyntaxUntilSettled(() => ranges.mock.calls.length)
         const ids = analysis.inspectRetention().entries.map((entry) => entry.runtimeSessionId)
+        // The viewport's answer and the look-ahead beside it stay; the warmed tile was retired.
         expect(
           analysis.inspectRetention().entries.find((entry) => entry.family === 'structural')
             ?.cachedRangeCount,
-        ).toBe(1)
+        ).toBe(2)
         const before = ranges.mock.calls.length
         ranges.mockImplementation(() => new Promise<EditorSyntaxResult>(() => undefined))
         attach()

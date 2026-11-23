@@ -4631,10 +4631,12 @@ export class Editor {
       this.syntax.setDisplayDemand({ kind: 'unknown' })
       return
     }
+    const lookAhead = this.visibleSyntaxPrefetchRange()
     this.syntax.setDisplayDemand({
       kind: 'frame',
       snapshot: session.buffer.getTextSnapshot(),
       ranges: [range],
+      lookAhead: lookAhead ? [lookAhead] : [],
     })
   }
 
@@ -4683,7 +4685,9 @@ export class Editor {
 
     const delta = scrollTop - previousScrollTop
     this.syntaxScrollDeltaPx = Math.abs(delta)
-    this.syntaxScrollDirection = syntaxScrollDirection(delta)
+    // A viewport change without movement (a resize, a repeated notification) keeps the direction,
+    // so the look-ahead window does not flip to both sides and ask for text behind the reader.
+    if (delta !== 0) this.syntaxScrollDirection = syntaxScrollDirection(delta)
   }
 
   private visibleSyntaxLeadChars(
