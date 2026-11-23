@@ -36,9 +36,84 @@ type KeymapRow = readonly [
   },
 ]
 
+type KeymapSource = NonNullable<Binding['source']>
+
+// The types below expand the rows the way `pack` does at runtime, so each published pack keeps the
+// literal type it had when it was written out in full: a consumer reading `command` or `context`
+// off a built-in binding gets the exact string, never `string | null` or `undefined`.
+
+/** `'mod+shift+K'` as `{ readonly key: 'K'; readonly mod: true; readonly shift: true }`. */
+type StrokeOf<
+  Spec extends string,
+  Modifiers extends string = never,
+> = Spec extends `${infer Modifier}+${infer Rest}`
+  ? StrokeOf<Rest, Modifiers | Modifier>
+  : { readonly [Field in 'key' | Modifiers]: Field extends 'key' ? Spec : true }
+
+type StrokesOf<Spec extends string> = Spec extends `${infer First} ${infer Rest}`
+  ? [StrokeOf<First>, ...StrokesOf<Rest>]
+  : [StrokeOf<Spec>]
+
+type KeysOf<Keys> = Keys extends string ? readonly [...StrokesOf<Keys>] : Keys
+
+type RowOptionsOf<Row extends KeymapRow> = Row extends readonly [unknown, unknown, infer Options]
+  ? Options
+  : object
+
+type RowOnPlatform<Options, Platform extends KeymapPlatform> = Options extends {
+  readonly on: infer Platforms extends string
+}
+  ? Platforms extends `${string}${Platform}${string}`
+    ? true
+    : false
+  : true
+
+type BindingOf<Row extends KeymapRow, Context extends string, Source extends KeymapSource> = {
+  readonly keys: KeysOf<Row[0]>
+  readonly command: Row[1]
+  readonly context: RowOptionsOf<Row> extends { readonly when: infer When extends string }
+    ? When
+    : Context
+  readonly source: Source
+} & (RowOptionsOf<Row> extends { readonly preventDefault: infer Prevent extends boolean }
+  ? { readonly preventDefault: Prevent }
+  : unknown)
+
+/** Built with an accumulator so the recursion stays in tail position on the longest packs. */
+type PlatformBindingsOf<
+  Rows extends readonly KeymapRow[],
+  Platform extends KeymapPlatform,
+  Context extends string,
+  Source extends KeymapSource,
+  Bindings extends readonly unknown[] = [],
+> = Rows extends readonly [infer Row extends KeymapRow, ...infer Rest extends readonly KeymapRow[]]
+  ? PlatformBindingsOf<
+      Rest,
+      Platform,
+      Context,
+      Source,
+      RowOnPlatform<RowOptionsOf<Row>, Platform> extends true
+        ? [...Bindings, FlatBinding<BindingOf<Row, Context, Source>>]
+        : Bindings
+    >
+  : readonly [...Bindings]
+
+type FlatBinding<Value> = { readonly [Field in keyof Value]: Value[Field] }
+
+type PackOf<
+  Rows extends readonly KeymapRow[],
+  Context extends string,
+  Source extends KeymapSource,
+> = {
+  readonly [Platform in KeymapPlatform]: PlatformBindingsOf<Rows, Platform, Context, Source>
+}
+
 const EDITOR = 'Editor && !EditorWidget'
 
-function when(condition: string): string {
+/*#__NO_SIDE_EFFECTS__*/
+function when<const Condition extends string>(
+  condition: Condition,
+): `${typeof EDITOR} && ${Condition}` {
   return `${EDITOR} && ${condition}`
 }
 
@@ -57,7 +132,7 @@ function chord(spec: string): KeyChord {
 function binding(
   [keys, command, options]: KeymapRow,
   context: string,
-  source: Binding['source'],
+  source: KeymapSource,
 ): Binding {
   const row: Binding = {
     keys: typeof keys === 'string' ? chord(keys) : keys,
@@ -70,23 +145,31 @@ function binding(
     : { ...row, preventDefault: options.preventDefault }
 }
 
-function pack(
-  context: string,
-  source: Binding['source'],
-  rows: readonly KeymapRow[],
-): EditorKeymapPack {
+/**
+ * Expands a pack's rows for each platform. Marked free of side effects so that a bundler drops a
+ * pack nothing reads, as it dropped the object literal this replaced.
+ */
+/*#__NO_SIDE_EFFECTS__*/
+function pack<
+  const Context extends string,
+  const Source extends KeymapSource,
+  const Rows extends readonly KeymapRow[],
+>(context: Context, source: Source, rows: Rows): PackOf<Rows, Context, Source> {
   const platformRows = (platform: KeymapPlatform) =>
     rows
-      .filter(([, , options]) => options?.on?.includes(platform) ?? true)
+      .filter(([, , options]: KeymapRow) => options?.on?.includes(platform) ?? true)
       .map((row) => binding(row, context, source))
-  return {
+  const expanded: EditorKeymapPack = {
     linux: platformRows('linux'),
     mac: platformRows('mac'),
     windows: platformRows('windows'),
   }
+  // The runtime expansion and `PackOf` follow the same rules; the type test over the built
+  // declarations and the pack snapshots hold them to each other.
+  return expanded as PackOf<Rows, Context, Source>
 }
 
-export const baseEditorKeymap: EditorKeymapPack = pack(EDITOR, 'default', [
+export const baseEditorKeymap = pack(EDITOR, 'default', [
   ['ctrl+End', 'cursorDocumentEnd', { on: 'linux windows' }],
   ['ctrl+Home', 'cursorDocumentStart', { on: 'linux windows' }],
   ['meta+ArrowDown', 'cursorDocumentEnd', { on: 'mac' }],
@@ -158,14 +241,14 @@ export const baseEditorKeymap: EditorKeymapPack = pack(EDITOR, 'default', [
   [['End'], 'tooltip.scrollEnd', { when: 'Editor > (TooltipBody && !TooltipControl)' }],
 ])
 
-export const vscodeNavigationPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeNavigationPack = pack(EDITOR, 'pack', [
   ['alt+ctrl+ArrowRight', 'cursorWordPartRight'],
   ['alt+ctrl+ArrowLeft', 'cursorWordPartLeft'],
   ['alt+Z', 'editor.action.toggleWordWrap'],
   ['mod+shift+\\', 'editor.action.jumpToBracket'],
 ])
 
-export const vscodeSelectionPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeSelectionPack = pack(EDITOR, 'pack', [
   ['mod+alt+shift+PageDown', 'cursorColumnSelectPageDown'],
   ['mod+alt+shift+PageUp', 'cursorColumnSelectPageUp'],
   ['mod+ArrowDown', 'cursorColumnSelectDown', { on: 'linux' }],
@@ -184,7 +267,7 @@ export const vscodeSelectionPack: EditorKeymapPack = pack(EDITOR, 'pack', [
   ['mod+ctrl+shift+ArrowRight', 'editor.action.smartSelect.expand', { on: 'mac' }],
 ])
 
-export const vscodeEditingPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeEditingPack = pack(EDITOR, 'pack', [
   ['mod+shift+U', 'cursorRedo'],
   ['mod+U', 'cursorUndo'],
   ['alt+ArrowRight', 'jumpForward', { on: 'linux windows', preventDefault: true }],
@@ -198,7 +281,7 @@ export const vscodeEditingPack: EditorKeymapPack = pack(EDITOR, 'pack', [
   ['ctrl+shift+M', 'editor.action.toggleTabFocusMode', { on: 'mac' }],
 ])
 
-export const vscodeAdvancedEditingPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeAdvancedEditingPack = pack(EDITOR, 'pack', [
   ['mod+alt+shift+I', 'editor.action.reindentlines'],
   ['alt+shift+I', 'editor.action.reindentselectedlines'],
   ['mod+[', 'editor.action.outdentLines'],
@@ -221,7 +304,7 @@ export const vscodeAdvancedEditingPack: EditorKeymapPack = pack(EDITOR, 'pack', 
   ['mod+K mod+C', 'editor.action.commentLine'],
 ])
 
-export const vscodeMultiCursorPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeMultiCursorPack = pack(EDITOR, 'pack', [
   ['Escape', 'clearSecondarySelections', { when: when('!findVisible') }],
   ['mod+F2', 'editor.action.changeAll'],
   ['mod+shift+L', 'editor.action.selectHighlights'],
@@ -235,7 +318,7 @@ export const vscodeMultiCursorPack: EditorKeymapPack = pack(EDITOR, 'pack', [
   ['mod+D', 'addNextOccurrence'],
 ])
 
-export const vscodeFindPack: EditorKeymapPack = pack(when('findVisible'), 'pack', [
+export const vscodeFindPack = pack(when('findVisible'), 'pack', [
   ['alt+P', 'togglePreserveCase'],
   ['alt+L', 'toggleFindInSelection'],
   ['alt+R', 'toggleFindRegex'],
@@ -249,7 +332,7 @@ export const vscodeFindPack: EditorKeymapPack = pack(when('findVisible'), 'pack'
   ['Escape', 'closeFind'],
 ])
 
-export const vscodeFoldingPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeFoldingPack = pack(EDITOR, 'pack', [
   ['mod+K mod+,', 'editor.createFoldingRangeFromSelection', { when: when('hasSelection') }],
   ['mod+K mod+7', 'editor.foldLevel7'],
   ['mod+K mod+6', 'editor.foldLevel6'],
@@ -269,7 +352,7 @@ export const vscodeFoldingPack: EditorKeymapPack = pack(EDITOR, 'pack', [
   ['mod+alt+[', 'editor.fold', { on: 'mac' }],
 ])
 
-export const vscodeLspNavigationPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeLspNavigationPack = pack(EDITOR, 'pack', [
   ['F12', 'editor.action.goToDefinition'],
   ['shift+F8', 'editor.action.marker.prev'],
   ['F8', 'editor.action.marker.next'],
@@ -280,14 +363,14 @@ export const vscodeLspNavigationPack: EditorKeymapPack = pack(EDITOR, 'pack', [
   ['mod+K mod+I', 'editor.action.showHover'],
 ])
 
-export const vscodeLspEditingPack: EditorKeymapPack = pack(EDITOR, 'pack', [
+export const vscodeLspEditingPack = pack(EDITOR, 'pack', [
   ['F2', 'editor.action.rename'],
   ['alt+shift+.', 'editor.action.autoFix', { on: 'linux windows' }],
   ['mod+alt+.', 'editor.action.autoFix', { on: 'mac' }],
   ['alt+shift+F', 'editor.action.formatDocument'],
 ])
 
-export const vscodeInlineSuggestPack: EditorKeymapPack = pack(
+export const vscodeInlineSuggestPack = pack(
   when('!tabFocusMode && inlineSuggestionVisible'),
   'pack',
   [
@@ -300,7 +383,7 @@ export const vscodeInlineSuggestPack: EditorKeymapPack = pack(
   ],
 )
 
-export const suggestPack: EditorKeymapPack = pack(when('suggestWidgetVisible'), 'pack', [
+export const suggestPack = pack(when('suggestWidgetVisible'), 'pack', [
   [
     'ArrowUp',
     'showPrevParameterHint',
@@ -324,7 +407,7 @@ export const suggestPack: EditorKeymapPack = pack(when('suggestWidgetVisible'), 
   ['ctrl+Space', 'editor.action.triggerSuggest', { when: EDITOR }],
 ])
 
-export const markdownPack: EditorKeymapPack = pack(when('markdown'), 'pack', [
+export const markdownPack = pack(when('markdown'), 'pack', [
   ['ctrl+shift+K', 'markdown.link', { on: 'linux windows' }],
   ['ctrl+I', 'markdown.italic', { on: 'linux windows' }],
   ['ctrl+B', 'markdown.bold', { on: 'linux windows' }],
@@ -351,7 +434,7 @@ export const markdownPack: EditorKeymapPack = pack(when('markdown'), 'pack', [
   ],
 ])
 
-export const readonlyDiffPack: EditorKeymapPack = pack(when('mode == diff'), 'pack', [
+export const readonlyDiffPack = pack(when('mode == diff'), 'pack', [
   ['ctrl+End', 'cursorDocumentEnd', { on: 'linux windows' }],
   ['ctrl+Home', 'cursorDocumentStart', { on: 'linux windows' }],
   ['meta+ArrowDown', 'cursorDocumentEnd', { on: 'mac' }],
