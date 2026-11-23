@@ -52,11 +52,8 @@ export {
   createEditorConsoleLoggingPlugin,
   createEditorLoggingPlugin,
 } from './logging'
-export {
-  createMergeConflictDocumentText,
-  parseMergeConflicts,
-  resolveMergeConflict,
-} from './mergeConflicts'
+export { createMergeConflictDocumentText } from './mergeConflictDocument'
+export { parseMergeConflicts, resolveMergeConflict } from './mergeConflicts'
 export type { EditorSetSelectionOptions } from './editor/selectionReveal'
 export type {
   EditorChangeHandler,
@@ -115,8 +112,8 @@ export type {
   EditorMergeConflictFeature,
   EditorMergeConflictPluginOptions,
 } from './mergeConflictPlugin'
+export type { CreateMergeConflictDocumentTextOptions } from './mergeConflictDocument'
 export type {
-  CreateMergeConflictDocumentTextOptions,
   MergeConflictRegion,
   MergeConflictResolution,
   MergeConflictResolutionResult,
