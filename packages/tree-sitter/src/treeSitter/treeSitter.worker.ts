@@ -1512,6 +1512,20 @@ const parseBootstrapPreview = (
   }
 }
 
+// Source parsed past the requested range, so that constructs which are still open at its end
+// (parameter lists, generics, JSX) see the text that settles them. 16K units costs about 3 ms.
+const BOOTSTRAP_LOOKAHEAD_UNITS = 16_384
+
+// The cut lands on a line end when the lookahead has one. A cut inside a string or comment can make
+// recovery wrap everything before it in one ERROR node; a cut between lines leaves a MISSING
+// delimiter at the cut.
+const bootstrapPreviewEnd = (source: TreeSitterPieceTableInput, rangeEnd: number): number => {
+  const end = Math.min(source.length, rangeEnd + BOOTSTRAP_LOOKAHEAD_UNITS)
+  if (end === source.length) return end
+  const newline = readTreeSitterInputRange(source, rangeEnd, end).lastIndexOf('\n')
+  return newline === -1 ? end : rangeEnd + newline + 1
+}
+
 const queryBootstrapRange = async (
   request: TreeSitterRangeRequest,
   context: CancellationContext,
@@ -1519,15 +1533,12 @@ const queryBootstrapRange = async (
   const staged = bootstrapDocuments.get(request.runtimeSessionId)
   if (!staged || staged.request.snapshotVersion !== request.snapshotVersion) return undefined
   // A prefix preserves the grammar's entry state. Distant ranges wait for the complete tree.
-  if (request.range.endIndex > TREE_SITTER_BOOTSTRAP_UNITS) return undefined
+  if (request.range.endIndex + BOOTSTRAP_LOOKAHEAD_UNITS > TREE_SITTER_BOOTSTRAP_UNITS)
+    return undefined
   const runtime = await ensureRuntime(request.languageId)
   assertRuntimeSessionActive(request.runtimeSessionId)
   if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) return undefined
-  const end = Math.min(
-    staged.source.length,
-    TREE_SITTER_BOOTSTRAP_UNITS,
-    request.range.endIndex + 4096,
-  )
+  const end = bootstrapPreviewEnd(staged.source, request.range.endIndex)
   if (!staged.preview || staged.preview.size < end) {
     const preview = parseBootstrapPreview(request, staged.source, runtime, end, context)
     if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) {
@@ -1544,6 +1555,9 @@ const queryBootstrapRange = async (
   // Cutting the source almost always leaves an error at the cut, past the requested range.
   // Recovery that reinterprets earlier tokens wraps them in an ERROR node, so an error
   // touching the range means the preview may disagree with the complete tree there.
+  // Text past the cut can still change how a token in the range reads (an arrow's `=>` after a
+  // parameter list longer than the lookahead, a call's `(` after a long run of blank lines), as it
+  // could for an error-free prefix; the complete analysis replaces the preview when it lands.
   if (preview.layers.some((layer) => mergeRangeHasErrors(layer.tree.rootNode, range)))
     return undefined
   const result = await flattenDocumentRange(preview, context, {

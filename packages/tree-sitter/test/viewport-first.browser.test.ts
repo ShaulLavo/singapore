@@ -107,6 +107,34 @@ it.each([
   30_000,
 )
 
+it('previews a parameter list that its arrow settles beyond the visible range', async () => {
+  const visible = 'function outer() {\n  const fn = (value'
+  const parameters = ',\n    parameter: number'.repeat(400)
+  const text = visible + parameters + ') => value\n' + 'const a = 1;\n'.repeat(10_000) + '}\n'
+  expect(parameters.length).toBeGreaterThan(4096)
+  const doc = document(text)
+  await doc.run()
+  const range = { startIndex: 0, endIndex: visible.length }
+  const preview = await doc.runtime.queryRange(range)
+  expect(preview.projection.analysis?.kind).toBe('partial')
+  await expect
+    .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+    .toBe('full')
+  const complete = await doc.runtime.queryRange(range)
+  const inRange = (result: typeof preview) =>
+    result.captures.filter((capture) => capture.startIndex < range.endIndex)
+  expect(inRange(preview)).toEqual(inRange(complete))
+}, 30_000)
+
+it('converges when text past the lookahead changes a visible token', async () => {
+  const visible = 'function outer() {\n  const fn = (value'
+  const text = visible + ', other)' + ' '.repeat(70_000) + '=> value;\n}'
+  const doc = document(text)
+  await doc.run()
+  await doc.runtime.queryRange({ startIndex: 0, endIndex: visible.length })
+  await expectBaselineTokens(doc, text, 'typescript', { startIndex: 0, endIndex: visible.length })
+}, 30_000)
+
 it('never treats a preview tree as complete context after a jump', async () => {
   const doc = document('/*' + 'comment\n'.repeat(12_000) + '*/\nconst answer = 42;\n')
   await doc.run()
@@ -240,7 +268,7 @@ it('paints function declarations provisionally without a statement-kind whitelis
   const range = { startIndex: 0, endIndex: prefix.length }
   const initial = await doc.runtime.queryRange(range)
   expect(initial.projection.analysis?.kind).toBe('partial')
-  expect(initial.projection.analysis?.coveredRange.endIndex).toBe(prefix.length + 4096)
+  expect(initial.projection.analysis?.coveredRange.endIndex).toBe(prefix.length + 16_384)
   expect(initial.folds).toEqual([])
   expect(initial.errors).toEqual([])
   expect(initial.brackets).toEqual([])
