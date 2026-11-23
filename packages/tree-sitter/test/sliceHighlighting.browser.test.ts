@@ -424,12 +424,10 @@ it('releases queued work on disposal and gives plain text for missing grammar or
 })
 
 // The worker cancels slice work on wall-clock budgets, so a slow or cold machine would answer
-// 'over-budget' for work these tests expect to be colored. Workers made here run a clock at a
-// fiftieth of real speed, so a 40 ms budget allows two seconds: the budgets stay in force but a
-// slow runner cannot trip them. The bounds that are not about time (text, predicate and capture
-// limits) are unchanged, and the tests of those still get 'over-budget' without relying on speed.
-const CLOCK_SCALE = 0.02
-
+// 'over-budget' for work these tests expect to be colored. Workers made here have a frozen clock,
+// so the time budgets never expire and a hung request is left to the test timeout. The bounds
+// that are not about time (text, predicate, query-work and capture limits) run unchanged, and the
+// tests of those get 'over-budget' from the limit itself without relying on speed.
 function createClockedWorkerOwner(): ReturnType<typeof createTreeSitterWorkerOwner> {
   const owner = createTreeSitterWorkerOwner({ workerFactory: () => createClockedWorker() })
   owners.add(owner)
@@ -437,9 +435,8 @@ function createClockedWorkerOwner(): ReturnType<typeof createTreeSitterWorkerOwn
 }
 
 function createClockedWorker(): Worker {
-  return new Worker(new URL('./fixtures/scaledClock.worker.ts', import.meta.url), {
+  return new Worker(new URL('./fixtures/frozenClock.worker.ts', import.meta.url), {
     type: 'module',
-    name: String(CLOCK_SCALE),
   })
 }
 
