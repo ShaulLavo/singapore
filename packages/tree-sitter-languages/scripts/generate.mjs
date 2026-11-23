@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, readdir, rm } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -172,6 +172,13 @@ for (const [file, content] of outputs) {
   }
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, content)
+}
+// A language removed from the manifest must not leave its module behind.
+const languageDirectory = resolve(root, 'src/languages')
+for (const name of await readdir(languageDirectory)) {
+  if (!name.endsWith('.generated.ts') || outputs.has(`src/languages/${name}`)) continue
+  assert(!check, `Obsolete generated file: src/languages/${name}`)
+  await rm(resolve(languageDirectory, name))
 }
 console.log(`${check ? 'Checked' : 'Generated'} ${manifest.languages.length} lazy languages`)
 

@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { expect, it } from 'vitest'
 import { build, type Rollup } from 'vite'
 
-const source = fileURLToPath(new URL('../src/', import.meta.url))
+// The built package is what apps bundle; the test task builds it first.
+const dist = fileURLToPath(new URL('../dist/', import.meta.url))
 
 // Vite emits a grammar's .wasm when it loads the module that references it, even when tree-shaking
 // drops the code, so an app that only highlights TypeScript must not load other languages' modules.
@@ -10,7 +12,7 @@ async function emittedGrammars(entry: string): Promise<string[]> {
   const output = (await build({
     configFile: false,
     logLevel: 'silent',
-    root: source,
+    root: dist,
     build: {
       write: false,
       rollupOptions: {
@@ -35,17 +37,29 @@ async function emittedGrammars(entry: string): Promise<string[]> {
 
 it('emits only the grammars a typeScript() app can load', async () => {
   const grammars = await emittedGrammars(
-    `import { typeScript } from '${source}index.ts'\nconsole.log(typeScript())`,
+    `import { typeScript } from '${dist}index.js'\nconsole.log(typeScript())`,
   )
-  expect(grammars).toContain('typescript')
-  for (const unrelated of ['sql', 'c_sharp', 'cpp', 'rust', 'python', 'php', 'bash', 'mdx'])
-    expect(grammars).not.toContain(unrelated)
+  // The root entry's own exports name these languages; none of the others may appear.
+  expect(grammars).toEqual([
+    'astro',
+    'css',
+    'html',
+    'javascript',
+    'jsdoc',
+    'json',
+    'markdown',
+    'regex',
+    'tsx',
+    'typescript',
+  ])
 }, 60_000)
 
 it('emits every grammar for the catalog', async () => {
   const grammars = await emittedGrammars(
-    `import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '${source}catalog.generated.ts'\nconsole.log(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)`,
+    `import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '${dist}catalog.generated.js'\nconsole.log(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)`,
   )
-  expect(grammars).toContain('sql')
-  expect(grammars).toContain('typescript')
+  const manifest = JSON.parse(
+    readFileSync(new URL('../languages.json', import.meta.url), 'utf8'),
+  ) as { languages: readonly unknown[] }
+  expect(grammars).toHaveLength(manifest.languages.length)
 }, 60_000)
