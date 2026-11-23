@@ -2691,18 +2691,13 @@ function activeFoldContributors(
   ranges: readonly EditorSyntaxRange[],
 ): readonly CachedSyntaxFoldRange[] {
   const winners = new Map<string, CachedSyntaxFoldRange>()
-  // Answers carried through an edit serve a fold only where they were queried, so a newer one
-  // cannot stand in for an older one if the view narrows: every one that serves the demand stays.
-  const kept = new Set<CachedSyntaxFoldRange>()
   for (const contributor of contributors) {
     for (const fold of contributor.folds) {
-      if (!ranges.some((range) => foldServesSyntaxRange(contributor, fold, range))) continue
-      if (contributor.projected) kept.add(contributor)
-      else winners.set(foldRangeKey(fold), contributor)
+      if (ranges.some((range) => foldServesSyntaxRange(contributor, fold, range)))
+        winners.set(foldRangeKey(fold), contributor)
     }
   }
-  for (const contributor of winners.values()) kept.add(contributor)
-  return Array.from(kept)
+  return [...new Set(winners.values())]
 }
 function compactSyntaxRangeTokens(
   store: EditorTokenStore,
