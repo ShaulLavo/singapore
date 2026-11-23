@@ -1,4 +1,4 @@
-import { diffWordsWithSpace } from 'diff'
+import { diffWordsWithSpace } from 'diff/lib/diff/word.js'
 import type { DiffHunkLine, DiffInlineRange } from './types'
 
 type MutableDiffHunkLine = DiffHunkLine & {

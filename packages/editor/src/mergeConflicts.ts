@@ -1,4 +1,6 @@
-import { structuredPatch } from 'diff'
+// Subpath imports: Rolldown keeps every differ that the package index re-exports, because it
+// ignores the sideEffects flag in jsdiff's nested libesm/package.json.
+import { structuredPatch } from 'diff/lib/patch/create.js'
 
 import type { TextReadSnapshot } from './documentTextSnapshot'
 import type { TextEdit } from './tokens'

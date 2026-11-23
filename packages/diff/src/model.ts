@@ -1,4 +1,6 @@
-import { parsePatch, structuredPatch } from 'diff'
+// Subpath imports keep jsdiff's unused differs out of bundles (see core's mergeConflicts.ts).
+import { parsePatch } from 'diff/lib/patch/parse.js'
+import { structuredPatch } from 'diff/lib/patch/create.js'
 import { annotateInlineChanges } from './inline'
 import {
   editorLineText,
