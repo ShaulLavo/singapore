@@ -41,10 +41,18 @@ const SKIN_TONE_LAST = 0x1f3ff
 const BOUNDARY_WINDOW = 8
 export const MAX_BOUNDARY_WINDOW = 4096
 
-const graphemeSegmenter = createGraphemeSegmenter()
+// Created on first use: constructing a grapheme segmenter loads ICU break data, about 10 ms of
+// startup in Chromium, and plain ASCII text never needs one.
+let graphemeSegmenter: GraphemeSegmenter | null | undefined
+
+function segmenter(): GraphemeSegmenter | null {
+  if (graphemeSegmenter === undefined) graphemeSegmenter = createGraphemeSegmenter()
+  return graphemeSegmenter
+}
 
 export function segmentGraphemes(text: string): readonly TextSegment[] {
-  if (graphemeSegmenter) return Array.from(graphemeSegmenter.segment(text))
+  const segments = segmenter()
+  if (segments) return Array.from(segments.segment(text))
   return fallbackTextSegments(text)
 }
 
@@ -184,17 +192,19 @@ function endsWithDependentModifier(text: TextContent, start: number, end: number
  * and caret motion repeats at the key-repeat rate.
  */
 function lastSegmentIndex(text: string): number {
-  if (!graphemeSegmenter) return lastFallbackSegmentIndex(text)
+  const segments = segmenter()
+  if (!segments) return lastFallbackSegmentIndex(text)
 
   let index = 0
-  for (const segment of graphemeSegmenter.segment(text)) index = segment.index
+  for (const segment of segments.segment(text)) index = segment.index
   return index
 }
 
 function firstSegmentLength(text: string): number {
-  if (!graphemeSegmenter) return fallbackSegmentEnd(text, 0)
+  const segments = segmenter()
+  if (!segments) return fallbackSegmentEnd(text, 0)
 
-  const [first] = graphemeSegmenter.segment(text)
+  const [first] = segments.segment(text)
   return first ? first.segment.length : text.length
 }
 
