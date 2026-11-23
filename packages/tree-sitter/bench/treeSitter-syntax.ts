@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 
 import {
   createEditorTextBuffer,

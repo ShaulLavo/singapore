@@ -1,8 +1,8 @@
 import * as highlighting from '@singapore-editor/highlighting'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import {
   JAVASCRIPT_TREE_SITTER_LANGUAGE,
   TYPESCRIPT_TREE_SITTER_LANGUAGE,
-  TREE_SITTER_LANGUAGE_CONTRIBUTIONS,
   javaScript,
   typeScript,
 } from '@singapore-editor/tree-sitter-languages'

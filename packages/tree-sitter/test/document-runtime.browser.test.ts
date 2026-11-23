@@ -7,7 +7,7 @@ import {
 } from '@singapore-editor/core/shiki'
 import typescript from '@shikijs/langs/typescript'
 import githubDark from '@shikijs/themes/github-dark'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import { createTreeSitterSyntaxProvider, createTreeSitterWorkerOwner } from '../src/index'
 
 it('shares ordinary source across real configurations, composes edits and undo, and retires the last scope', async () => {

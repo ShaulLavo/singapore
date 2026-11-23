@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { beforeAll, expect, it } from 'vitest'
 import { Language, Parser, Query } from 'web-tree-sitter'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/catalog.generated'
 import { MDX_FIXTURE } from './fixtures/mdx'
 
 beforeAll(() => Parser.init())

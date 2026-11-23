@@ -19,7 +19,7 @@ import {
   createTreeSitterReviewSyntax,
   resolveTreeSitterLanguageContribution,
 } from '@singapore-editor/tree-sitter'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 
 const form = document.querySelector<HTMLFormElement>('#configuration')!
 const signaling = document.querySelector<HTMLInputElement>('#signaling')!

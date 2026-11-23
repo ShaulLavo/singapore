@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { Editor } from '@singapore-editor/core/editor'
 import { EDITOR_SNIPPET_TOKENS_FEATURE } from '@singapore-editor/core/extensions'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import { createTreeSitterLanguagePlugin } from '../src'
 
 const cleanups: (() => void)[] = []

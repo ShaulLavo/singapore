@@ -21,7 +21,7 @@ import { markdownInlineReplacements } from '../../markdown/src/replacements'
 import { NATIVE_FIXTURES } from '../../tree-sitter-languages/test/fixtures/native'
 import { MDX_CATEGORIES, MDX_FIXTURE } from '../../tree-sitter-languages/test/fixtures/mdx'
 import { SQL_CATEGORIES, SQL_FIXTURE } from '../../tree-sitter-languages/test/fixtures/sql'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 
 const browserTest = it.skipIf(typeof Worker === 'undefined')
 

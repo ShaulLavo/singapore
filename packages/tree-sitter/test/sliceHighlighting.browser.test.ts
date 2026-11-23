@@ -1,7 +1,7 @@
 import { styleForTreeSitterCapture } from '@singapore-editor/core/syntax'
 import { afterEach, expect, it } from 'vitest'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import {
-  TREE_SITTER_LANGUAGE_CONTRIBUTIONS,
   TSX_TREE_SITTER_LANGUAGE,
   TYPESCRIPT_TREE_SITTER_LANGUAGE,
 } from '../../tree-sitter-languages/src/index'

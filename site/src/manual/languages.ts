@@ -1,5 +1,5 @@
 import type { TreeSitterLanguageContribution } from '@singapore-editor/tree-sitter'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 
 /** Highlighted fence languages; other labels use readable plain-text snapshots. */
 const FENCE_LANGUAGE_IDS = ['typescript', 'tsx', 'javascript', 'json', 'shellscript'] as const

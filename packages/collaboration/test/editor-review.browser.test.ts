@@ -5,7 +5,7 @@ import {
   createTreeSitterReviewSyntax,
   resolveTreeSitterLanguageContribution,
 } from '@singapore-editor/tree-sitter'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import { EditorRoom } from './editor-fixture'
 import { createCollaborationPlugin } from '../src/plugin'
 import type { MergeReviewSyntax } from '../src/merge-review'

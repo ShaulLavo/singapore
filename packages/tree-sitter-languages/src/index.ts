@@ -8,23 +8,26 @@ import type {
   TreeSitterLanguagePluginOptions,
 } from '@singapore-editor/tree-sitter'
 
+// Each language is its own module, so a plugin that names one language never loads another's
+// grammar: Vite emits a grammar file whenever its module is loaded, even if the code is unused.
+import { astroContribution } from './languages/astro.generated'
+import { cssContribution, cssInjectionDependencies } from './languages/css.generated'
+import { htmlContribution, htmlInjectionDependencies } from './languages/html.generated'
 import {
-  astroContribution,
-  cssContribution,
-  cssInjectionDependencies,
-  htmlContribution,
-  htmlInjectionDependencies,
   javascriptInjectionDependencies,
   javascriptInjectionDependencyIds,
-  jsonContribution,
-  jsonInjectionDependencies,
-  markdownContribution,
+} from './languages/javascript.generated'
+import { jsonContribution, jsonInjectionDependencies } from './languages/json.generated'
+import { markdownContribution } from './languages/markdown.generated'
+import {
   tsxContribution,
   tsxInjectionDependencies,
   tsxInjectionDependencyIds,
+} from './languages/tsx.generated'
+import {
   typescriptInjectionDependencies,
   typescriptInjectionDependencyIds,
-} from './catalog.generated'
+} from './languages/typescript.generated'
 
 export type JavaScriptTreeSitterLanguageOptions = TreeSitterLanguagePluginOptions & {
   readonly jsx?: boolean
@@ -38,7 +41,6 @@ export const JAVASCRIPT_TREE_SITTER_LANGUAGE = /*#__PURE__*/ createJavaScriptCon
 
 export const TYPESCRIPT_TREE_SITTER_LANGUAGE = /*#__PURE__*/ createTypeScriptContribution(false)
 
-export { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from './catalog.generated'
 export { TREE_SITTER_LANGUAGE_METADATA } from './metadata'
 
 export const TSX_TREE_SITTER_LANGUAGE = tsxContribution

@@ -5,10 +5,8 @@ import { createEditorFindPlugin } from '@singapore-editor/find'
 import { createMinimapPlugin } from '@singapore-editor/minimap'
 import { createInputProductTree } from '../input-product-tree.mjs'
 import { minimapRenderAccepted } from '../input-worker-proof.mjs'
-import {
-  TREE_SITTER_LANGUAGE_CONTRIBUTIONS,
-  typeScript,
-} from '@singapore-editor/tree-sitter-languages'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
+import { typeScript } from '@singapore-editor/tree-sitter-languages'
 import typescript from '@shikijs/langs/typescript'
 import githubDark from '@shikijs/themes/github-dark'
 import { inputConsumerConfiguration } from '../input-configurations.mjs'

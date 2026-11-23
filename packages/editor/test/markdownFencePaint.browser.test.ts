@@ -10,7 +10,7 @@ import {
   createTreeSitterLanguagePlugin,
   type TreeSitterLanguageContribution,
 } from '../../tree-sitter/src/index'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import { createMarkdownPreviewPlugin } from '../../markdown/src/index'
 import '../src/style.css'
 import '../../markdown/src/style.css'

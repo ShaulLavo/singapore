@@ -18,8 +18,16 @@ const generated = new Set([
   'packages/tree-sitter-languages/src/metadata.ts',
 ])
 
+const generatedLanguageModule =
+  /^packages\/tree-sitter-languages\/src\/languages\/[^/]+\.generated\.ts$/
+
 function allowedFile(file) {
-  return manifests.has(file) || generated.has(file) || /^packages\/[^/]+\/package.json$/.test(file)
+  return (
+    manifests.has(file) ||
+    generated.has(file) ||
+    generatedLanguageModule.test(file) ||
+    /^packages\/[^/]+\/package.json$/.test(file)
+  )
 }
 
 function nativePull(pull, repository) {

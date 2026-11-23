@@ -327,7 +327,7 @@ function bunWorkerSmokeScript(): string {
     `import { createEditorTextBuffer } from '@singapore-editor/core/document'\n` +
     `import { createEditorDocumentAnalysis } from '@singapore-editor/core/editor'\n` +
     `import { createTreeSitterSyntaxProvider, createTreeSitterWorkerOwner } from '@singapore-editor/tree-sitter'\n` +
-    `import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'\n\n` +
+    `import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'\n\n` +
     `const jsonContribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((entry) => entry.id === 'json')\n` +
     `const mdContribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((entry) => entry.id === 'markdown')\n` +
     `if (!jsonContribution || !mdContribution) throw new Error('Missing JSON or Markdown contribution')\n` +

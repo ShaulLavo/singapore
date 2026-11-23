@@ -10,7 +10,7 @@ import {
   readPieceTableTextRange,
 } from '@singapore-editor/textbuffer'
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import type { TreeSitterMergeUnit } from '@singapore-editor/tree-sitter'
 import {
   enclosingMergeUnit,

@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { Language, Parser, Query, TextBuffer, heap } from 'web-tree-sitter'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
 import { resolveTreeSitterLanguageContribution } from '../src'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 
 it('decodes captures allocated above the signed Wasm address boundary', async () => {
   await Parser.init({ locateFile: () => parserWasmUrl })
