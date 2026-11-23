@@ -49,11 +49,19 @@ The main thread may render syntax results, but it must not synchronously parse o
 
 Each parse result is tied to a document snapshot/version. Consumers must be able to reject syntax results whose base snapshot is older than the visible document state.
 
+### Start-up
+
+Everything on the way to a document's first colors starts as early as its inputs are known:
+
+- A syntax plugin starts its provider's worker when an editor activates it, which is before the editor builds its view. The worker script and the parser runtime load while that view is built.
+- A syntax session resolves its language when it is created, and registers it with the worker without waiting for the parser runtime. The worker starts downloading and compiling a grammar when it is registered, so on a cold worker the grammar and the runtime download together. Both are compiled while they stream, which lets a browser reuse the compiled code from its HTTP cache.
+- A key typed before the first colors is not debounced. The debounce protects colors that are on screen, and there are none yet.
+
 ### Long requests
 
 A page without cross-origin isolation has no shared memory, so it cannot interrupt a running worker. The worker therefore never runs long without returning to its message loop:
 
-- A range query against a parsed document runs in slices of about 8,192 units and yields between slices once 8 ms have passed. A request queued behind it (a newly opened document, rows just scrolled into view) waits for one slice. The answer is the same as one query over the whole range: a node that crosses a slice boundary is reported by the slice that contains its start, and brackets and errors come from one walk over the whole range that pauses and resumes. A query whose document was closed or edited meanwhile stops at its next slice. If its snapshot was replaced by another parse of the same text, it starts over on the replacement.
+- A range query against a parsed document runs in slices of about 8,192 units and yields between slices once 8 ms have passed. A request queued behind it (a newly opened document, rows just scrolled into view) waits for one slice. The answer is the same as one query over the whole range: a node that crosses a slice boundary is reported by the slice that contains its start, and brackets and errors come from one walk over the whole range that pauses and resumes. A query whose document was closed or edited meanwhile stops at its next slice. If its snapshot was replaced by a parse of the same text (see [Injections](#injections)), it starts over on the replacement.
 - A slice never ends inside a token. A boundary that falls in one moves to the token's end, so a token longer than many slices (a minified line's string, a huge identifier) is matched, and its predicates are read, once and not once per slice.
 - Folds are listed in one order however the range was sliced: by lines, then by offsets, then by node type and language.
 - A close is announced to the worker at once, ahead of the session's unfinished requests, and the close itself follows when they have settled. Without shared memory the announcement is the only way a running query learns its document is gone.
@@ -92,6 +100,8 @@ Highlight output should be represented as dense decorations with offsets or line
 A range-mode editor asks for the text it shows, one range at a time, and keeps the answers in `EditorSyntaxController`. The frame trim keeps every answer that is the newest one for some shown text, whoever painted the tokens (range answers, a separate highlighter, or a host). The view asks again for shown text without an answer, so dropping one of these would make it ask on every frame.
 
 Answers carried through an edit only stand in for the new parse. Its first answer replaces them, and what they covered is asked for again when it is shown.
+
+A document with no colors yet is asked for the rows on screen first, and for the visible range (those rows plus the text kept ready around them) right after. The first answer paints tokens only; folds, brackets and injected spans come with the answer that covers the visible range, as before. The extra request is skipped when the rows on screen are within 4,096 characters of the visible range.
 
 The trim removes tokens only while the painted store is made of range answers alone. After an edit, a newer analysis, or tokens installed by a host, it removes none.
 
@@ -147,6 +157,8 @@ Fold ranges should cross into the display transform layer as anchor-backed range
 Language injections are part of the syntax system, not a separate tokenizer path.
 
 Injected parse trees must retain parent snapshot identity and produce highlights/decorations in buffer coordinates so rendering and selection stay unified.
+
+Injected grammars load on demand: the worker names the ones a document's injections need and has not got. A range-mode session does not hold its first answer for them. The document is colored by its own grammar at once, the injected grammars load behind that, and the document is parsed again (its tree is reused, the injected layers are added) and published as a new result, which the editor asks about like any other new analysis. This happens once per grammar and worker; later documents find the grammar registered. A full-mode session, whose caller gets one answer, still waits for them. A caller that asks a range-mode session for ranges itself, instead of listening for results, awaits `injectedLanguagesLoaded()` before it expects injected colors.
 
 ## Acceptance Criteria
 

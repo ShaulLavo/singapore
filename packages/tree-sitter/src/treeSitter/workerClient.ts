@@ -221,6 +221,16 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     }
   }
 
+  /**
+   * Creates the worker and starts loading the parser runtime without waiting for either, so both
+   * are under way while the caller builds its view. A failure is reported by the first request.
+   */
+  public start(): void {
+    if (this.startWorker() && this.initPromise) {
+      void this.trackClientTask(this.initPromise).catch(() => undefined)
+    }
+  }
+
   public registerLanguages(languages: readonly TreeSitterLanguageDescriptor[]): Promise<void> {
     return this.trackClientTask(this.finishRegisterLanguages(languages))
   }
@@ -231,7 +241,9 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const nextLanguages = this.unregisteredLanguages(languages)
     if (nextLanguages.length === 0) return
 
-    const handle = await this.ensureWorkerReady()
+    // Not held back until the parser runtime has loaded: the worker starts downloading a grammar
+    // when it is registered, and on a cold worker that overlaps the runtime's own download.
+    const handle = this.startWorker()
     if (!handle) return
 
     await this.postRequest({ type: 'registerLanguages', languages: nextLanguages })
@@ -700,15 +712,23 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return handle
   }
 
-  private async ensureWorkerReady(): Promise<Worker | null> {
+  /** The worker with its parser runtime load posted; requests sent now queue behind that load. */
+  private startWorker(): Worker | null {
     const handle = this.getWorker()
-    if (!handle) return null
+    if (!handle || this.initPromise) return handle
 
-    if (!this.initPromise) {
-      this.initPromise = this.postRequest({ type: 'init' }).then(() => {
-        if (this.worker === handle) this.lifecycle = 'ready'
-      })
-    }
+    this.initPromise = this.postRequest({ type: 'init' }).then(() => {
+      if (this.worker === handle) this.lifecycle = 'ready'
+    })
+    // Reported to whoever waits in `ensureWorkerReady`; a caller that only started the worker
+    // learns of a failed load from its own request.
+    void this.initPromise.catch(() => undefined)
+    return handle
+  }
+
+  private async ensureWorkerReady(): Promise<Worker | null> {
+    const handle = this.startWorker()
+    if (!handle) return null
 
     await this.initPromise
     if (this.lifecycle === 'disposing' || this.lifecycle === 'disposed') return null
@@ -762,7 +782,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     signal?: AbortSignal,
   ): Promise<TreeSitterWorkerResult> {
     return this.postRequest(
-      this.withCancellation(this.cancelPreviousDocumentRequests(payload.runtimeSessionId), payload),
+      this.withCancellation(this.cancelPreviousDocumentRequests(payload), payload),
       false,
       signal,
     )
@@ -779,10 +799,15 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     )
   }
 
-  private cancelPreviousDocumentRequests(runtimeSessionId: string): Int32Array | null {
+  private cancelPreviousDocumentRequests(
+    next: TreeSitterParseDocumentRequest | TreeSitterEditDocumentRequest,
+  ): Int32Array | null {
     const cancellationFlag = this.createCancellationFlag()
     for (const pending of this.pendingRequests.values()) {
-      if (pending.runtimeSessionId !== runtimeSessionId) continue
+      if (pending.runtimeSessionId !== next.runtimeSessionId) continue
+      // A parse of the same text again (to add injected grammars that have just loaded) leaves a
+      // range query of that text valid, and the first colors on screen come from it.
+      if (isRangeQueryOfSnapshot(pending.payload, next.snapshotVersion)) continue
       if (pending.cancellationFlag) Atomics.store(pending.cancellationFlag, 0, 1)
     }
 
@@ -1047,6 +1072,11 @@ const runtimeSessionIdForPayload = (payload: TreeSitterWorkerRequestPayload): st
   if ('runtimeSessionId' in payload) return payload.runtimeSessionId
   return null
 }
+
+const isRangeQueryOfSnapshot = (
+  payload: TreeSitterWorkerRequestPayload,
+  snapshotVersion: number,
+): boolean => payload.type === 'queryRange' && payload.snapshotVersion === snapshotVersion
 
 const cancellationFlagForPayload = (payload: TreeSitterWorkerRequestPayload): Int32Array | null => {
   if (!('cancellationBuffer' in payload)) return null

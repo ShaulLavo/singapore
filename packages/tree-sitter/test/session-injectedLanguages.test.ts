@@ -4,9 +4,10 @@ import {
   disposeTreeDocuments,
 } from './factories/document'
 import { readAll } from '../../editor/test/factories/snapshotText'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEditorTextBuffer } from '@singapore-editor/core/document'
 import { createEditorDocumentAnalysis } from '@singapore-editor/core/editor'
+import type { EditorSyntaxResult } from '@singapore-editor/core/syntax'
 import { RecordingWorker } from './factories/worker'
 
 import {
@@ -181,16 +182,115 @@ it('shares a delayed language load with the newer document version', async () =>
       },
     },
   })
+  const published: EditorSyntaxResult[] = []
+  session.runtime.subscribeResults((_read, result) => published.push(result))
   const first = session.run()
   await requestedPromise
   const second = session.edit([{ from: 0, to: 0, text: 'x' }])
   release(descriptor('astro'))
-  const [, latest] = await Promise.all([first, second])
+  const [, answered] = await Promise.all([first, second])
+  await vi.waitFor(() => expect(registered).toEqual([['container'], ['astro']]))
+  await flushPromises()
+  // The grammar arrives either before the newer version is parsed, whose answer then has it, or
+  // after, and is then published as that version's next result.
+  const latest = published.at(-1) ?? answered
   expect(loads).toBe(1)
   expect(session.runtime.getResult()).toBe(latest)
   expect(latest.projection.snapshot.length).toBe(session.buffer.getTextSnapshot().length)
-  expect(registered).toEqual([['container'], ['astro']])
   session.dispose()
+})
+
+describe('the first answer and injected grammars', () => {
+  const injectingBackend = (registered: string[][], parses: number[]): TreeSitterBackend => ({
+    ...recordingBackend(registered),
+    parse: async (payload) => {
+      parses.push(payload.snapshotVersion)
+      return {
+        documentId: payload.documentId,
+        languageId: payload.languageId,
+        snapshotVersion: payload.snapshotVersion,
+        status: 'parsed',
+        changedRanges: [],
+        missingLanguages: registered.some((ids) => ids.includes('astro')) ? [] : ['astro'],
+        timings: [],
+      }
+    },
+  })
+
+  const delayedAstro = () => {
+    let release!: () => void
+    const delayed = new Promise<TreeSitterLanguageDescriptor>((resolve) => {
+      release = () => resolve(descriptor('astro'))
+    })
+    return {
+      release,
+      resolver: {
+        resolveTreeSitterLanguage: async (id: string) =>
+          id === 'astro' ? delayed : descriptor(id),
+      },
+    }
+  }
+
+  it('answers from the document grammar while an injected grammar is still loading', async () => {
+    const registered: string[][] = []
+    const parses: number[] = []
+    const astro = delayedAstro()
+    const session = createTreeDocument({
+      documentId: 'injected',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```',
+      backend: injectingBackend(registered, parses),
+      syntaxMode: 'range',
+      languageResolver: astro.resolver,
+    })
+    const published: EditorSyntaxResult[] = []
+    session.runtime.subscribeResults((_read, result) => published.push(result))
+
+    // The injected grammar has not arrived, and the document's first answer does not wait for it.
+    const first = await session.run()
+    expect(parses).toEqual([1])
+    expect(registered).toEqual([['container']])
+    expect(published).toEqual([])
+
+    astro.release()
+    await session.runtime.injectedLanguagesLoaded()
+
+    // The same text is parsed again with the grammar registered, and published as a new result.
+    expect(published).toHaveLength(1)
+    expect(registered).toEqual([['container'], ['astro']])
+    expect(parses).toEqual([1, 1])
+    expect(published[0]).not.toBe(first)
+    expect(session.runtime.getResult()).toBe(published[0])
+    session.dispose()
+  })
+
+  it('waits for injected grammars when the caller is given one complete answer', async () => {
+    const registered: string[][] = []
+    const parses: number[] = []
+    const astro = delayedAstro()
+    const session = createTreeDocument({
+      documentId: 'complete',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```',
+      backend: injectingBackend(registered, parses),
+      syntaxMode: 'full',
+      languageResolver: astro.resolver,
+    })
+    let answered = false
+    const run = session.run().then(() => {
+      answered = true
+    })
+    await vi.waitFor(() => expect(parses).toEqual([1]))
+    await flushPromises()
+    expect(answered).toBe(false)
+
+    astro.release()
+    await run
+
+    expect(registered).toEqual([['container'], ['astro']])
+    expect(parses).toEqual([1, 1])
+    session.dispose()
+  })
 })
 
 describe('provider warm-up', () => {

@@ -80,6 +80,8 @@ export type EditorSyntaxControllerOptions = {
   getLanguageId(): EditorSyntaxLanguageId | null
   getSession(): DocumentSession | null
   getVisibleSyntaxRange(): EditorSyntaxRange | null
+  /** Just the rows on screen, without the text kept ready around them for scrolling. */
+  getMountedSyntaxRange?(): EditorSyntaxRange | null
   adoptTokens(tokens: EditorTokenStore): void
   clearSyntaxFolds(): void
   setSyntaxFolds(folds: readonly FoldRange[]): void
@@ -129,9 +131,18 @@ type EditorSyntaxLoadResult = {
   readonly skipApply?: boolean
   readonly suppressWarm?: boolean
   readonly updatesDocument?: boolean
+  /** The rows on screen, asked for ahead of the visible range that is already on its way. */
+  readonly firstRows?: boolean
 }
 
 type EditorSyntaxLoadSource = 'full' | 'visible' | 'prefetch' | 'warm'
+
+/**
+ * A document with no colors yet is asked for the rows on screen before the full visible range,
+ * when that leaves at least this much text for the second request. A smaller difference is not
+ * worth a second answer.
+ */
+const FIRST_ROWS_MIN_SAVED_CHARS = 4_096
 
 type PendingSyntaxPrefetch = {
   readonly contentVersion: number
@@ -461,6 +472,14 @@ export class EditorSyntaxController {
 
   get initialHighlightStatus(): EditorInitialHighlightStatus {
     return this.initialHighlightState
+  }
+
+  /**
+   * The document has a syntax or highlighter session and none of its results has landed yet, so no
+   * colors are on screen for an edit to leave stale.
+   */
+  get awaitingFirstHighlight(): boolean {
+    return this.lastInitialHighlightTerminalStatus === null
   }
 
   get copyTokens(): EditorTokenStore {
@@ -1382,7 +1401,7 @@ export class EditorSyntaxController {
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: syntaxWorkTags(documentVersion, contentVersion, 'full'),
       run: traceEditorPerformanceTask('editor.syntax.structural.request', () =>
-        this.loadSyntaxResult(contentVersion),
+        this.loadSyntaxResult(contentVersion, documentVersion, configurationGeneration),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) =>
         this.applySyntaxResult(result, documentVersion, startedAt, configurationGeneration),
@@ -1426,15 +1445,59 @@ export class EditorSyntaxController {
     })
   }
 
-  private loadSyntaxResult(contentVersion: number): Promise<EditorSyntaxLoadResult> {
+  private loadSyntaxResult(
+    contentVersion: number,
+    documentVersion: number,
+    configurationGeneration: number,
+  ): Promise<EditorSyntaxLoadResult> {
     if (!this.syntaxSession) return Promise.reject(new Error('No syntax session'))
     return this.loadSyntaxBaseResult().then((result) => {
       if (this.syntaxSession?.queryRange && this.canProviderQuerySyntaxRange()) {
-        return this.loadCurrentSyntaxRangeResult({ contentVersion, updatesDocument: true })
+        return this.paintFirstRows(contentVersion, documentVersion, configurationGeneration).then(
+          () => this.loadCurrentSyntaxRangeResult({ contentVersion, updatesDocument: true }),
+        )
       }
 
       return { contentVersion, range: null, result, source: 'full', updatesDocument: true }
     })
+  }
+
+  /**
+   * The first colors of a document: asks for only the rows on screen and paints them. The visible
+   * range, which also covers the text around those rows and carries folds and brackets, is asked
+   * for right after, as it always was. A failure here is left to that request to report.
+   */
+  private async paintFirstRows(
+    contentVersion: number,
+    documentVersion: number,
+    configurationGeneration: number,
+  ): Promise<void> {
+    const range = this.firstRowsRange()
+    if (!range) return
+
+    const firstRows = await this.loadSyntaxRangeResult(range, 'visible', {
+      contentVersion,
+      updatesDocument: true,
+    }).catch(() => null)
+    if (!firstRows) return
+
+    this.applySyntaxResult(
+      { ...firstRows, firstRows: true, suppressWarm: true },
+      documentVersion,
+      nowMs(),
+      configurationGeneration,
+    )
+  }
+
+  private firstRowsRange(): EditorSyntaxRange | null {
+    if (!this.awaitingFirstHighlight || this.highlighterSession) return null
+
+    const rows = this.options.getMountedSyntaxRange?.()
+    const visible = this.options.getVisibleSyntaxRange()
+    if (!rows || !visible) return null
+
+    const saved = visible.endIndex - visible.startIndex - (rows.endIndex - rows.startIndex)
+    return saved >= FIRST_ROWS_MIN_SAVED_CHARS ? rows : null
   }
 
   private loadSyntaxBaseResult(): Promise<EditorSyntaxResult> {
@@ -1631,7 +1694,8 @@ export class EditorSyntaxController {
         status: this.status,
       },
     })
-    if (!this.usesFallbackFolds && !this.foldsCoverViewport()) {
+    // After the first rows, the request for the visible range around them is already under way.
+    if (!loadResult.firstRows && !this.usesFallbackFolds && !this.foldsCoverViewport()) {
       this.refreshVisibleRange(documentVersion, { delayMs: 0 })
     }
     this.options.notifyChange(null)

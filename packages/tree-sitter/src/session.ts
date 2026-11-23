@@ -89,6 +89,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     readonly controller: AbortController
     readonly promise: Promise<void>
   } | null = null
+  /** Loads grammars the first parse found injected, after that parse has answered. */
+  private injectedLanguages: {
+    readonly controller: AbortController
+    readonly promise: Promise<void>
+  } | null = null
   private readonly resultListeners = new Set<
     (read: DocumentRead, result: EditorSyntaxResult) => void
   >()
@@ -111,6 +116,9 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     this.backend = options.backend ?? new TreeSitterWorkerClient()
     this.onFirstParse = options.onFirstParse
     this.result = this.createEmptyResult({ length: this.initialLength, snapshotVersion: 0 })
+    // The editor schedules the first analysis after it has built the document's view. The
+    // grammar's queries and its download start now, so they load while that view is built.
+    if (this.languageResolver) void this.ensureLanguageRegistered().catch(() => undefined)
   }
 
   public get foldingSupport(): EditorSyntaxFoldingSupport {
@@ -150,7 +158,10 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     source: DocumentWorkerReadReference,
     signal?: AbortSignal,
   ): Promise<EditorSyntaxResult> {
-    if (this.analysedRead !== read) this.background?.controller.abort()
+    if (this.analysedRead !== read) {
+      this.background?.controller.abort()
+      this.injectedLanguages?.controller.abort()
+    }
     const changed = this.analysedRead
       ? this.source.changesBetween(this.analysedRead.revision, read.revision)
       : null
@@ -192,6 +203,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
   ): Promise<EditorSyntaxResult> {
     this.background?.controller.abort()
     this.background = null
+    this.injectedLanguages?.controller.abort()
     const snapshotVersion = ++this.snapshotVersion
     const parsePayload = {
       documentId: this.documentId,
@@ -208,6 +220,17 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
         : { ...parsePayload, resultMode: 'full' },
       signal,
     )
+    if (this.syntaxMode === 'range' && result?.missingLanguages?.length) {
+      // The document's own grammar can color the text now. Injected grammars (a regex, a
+      // documentation comment) download behind it and their colors arrive as a new result.
+      signal?.throwIfAborted()
+      const next = this.updateFromTreeSitterResult(result, snapshotVersion, read)
+      if (!this.disposed && this.isCurrentSnapshotVersion(snapshotVersion)) {
+        this.startInjectedLanguages(read, snapshotVersion, result.missingLanguages)
+        this.notifyFirstParse()
+      }
+      return next
+    }
     for (let depth = 0; depth < 8 && result?.missingLanguages?.length; depth += 1) {
       if (
         !(await waitForDocumentWork(
@@ -325,6 +348,92 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       result = await this.backend.parse(payload, signal)
     }
     return result
+  }
+
+  private startInjectedLanguages(
+    read: DocumentRead,
+    version: number,
+    missingLanguages: readonly string[],
+  ): void {
+    this.injectedLanguages?.controller.abort()
+    const controller = new AbortController()
+    const promise = this.loadInjectedLanguages(read, version, missingLanguages, controller.signal)
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || this.disposed || !this.isCurrentSnapshotVersion(version))
+          return
+        // The document stays colored by its own grammar; the failure is reported with it.
+        this.result = {
+          ...this.result,
+          degraded: {
+            kind: 'optional-phase-failed',
+            phase: 'load injected languages',
+            message: String(error),
+          },
+        }
+        this.notifyResults(read, this.result)
+      })
+      .finally(() => {
+        if (this.injectedLanguages?.controller === controller) this.injectedLanguages = null
+      })
+    this.injectedLanguages = { controller, promise }
+  }
+
+  /**
+   * Resolves when the grammars the last parse found injected have loaded and their result is
+   * published, or at once when none are loading. A caller that asks for a range itself, instead
+   * of listening for results, waits for this before it expects injected colors.
+   */
+  public async injectedLanguagesLoaded(): Promise<void> {
+    while (this.injectedLanguages) await this.injectedLanguages.promise
+  }
+
+  /**
+   * Registers the grammars the document's injections asked for and parses again, which reuses the
+   * document's tree and adds the injected layers. Each answer is published as a new result.
+   */
+  private async loadInjectedLanguages(
+    read: DocumentRead,
+    version: number,
+    missingLanguages: readonly string[],
+    signal: AbortSignal,
+  ): Promise<void> {
+    let missing = missingLanguages
+    for (let depth = 0; depth < 8 && missing.length > 0; depth += 1) {
+      if (!(await this.registerMissingLanguages(missing, version))) return
+      if (signal.aborted || this.disposed || !this.isCurrentSnapshotVersion(version)) return
+      const result = await this.parseWithInjectedLanguages(read, version, signal)
+      if (signal.aborted || this.disposed || !this.isCurrentSnapshotVersion(version)) return
+      if (!result || result.analysis?.kind === 'cancelled') return
+      this.notifyResults(read, this.updateFromTreeSitterResult(result, version, read))
+      missing = result.missingLanguages ?? []
+    }
+  }
+
+  private async parseWithInjectedLanguages(
+    read: DocumentRead,
+    version: number,
+    signal: AbortSignal,
+  ): Promise<TreeSitterParseAckResult | TreeSitterParseResult | undefined> {
+    // The first parse released its pinned read when it answered.
+    const prepared = await this.source.prepareReader(this.backend.sourceEndpoint, read, signal)
+    if (!prepared) return undefined
+    try {
+      return await this.backend.parse(
+        {
+          documentId: this.documentId,
+          runtimeSessionId: this.runtimeSessionId,
+          snapshotVersion: version,
+          languageId: this.languageId,
+          includeHighlights: this.includeHighlights,
+          includeCaptures: this.includeCaptures,
+          source: prepared.reference,
+          resultMode: 'parseOnly',
+        },
+        signal,
+      )
+    } finally {
+      await prepared.dispose()
+    }
   }
 
   private notifyResults(read: DocumentRead, result: EditorSyntaxResult): void {
@@ -457,6 +566,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     if (this.disposed) return
 
     this.background?.controller.abort()
+    this.injectedLanguages?.controller.abort()
     this.resultListeners.clear()
     this.disposed = true
     this.backend.disposeDocument(this.runtimeSessionId)
@@ -569,21 +679,28 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     languageIds: readonly string[],
     version: number,
   ): Promise<boolean> {
-    let loaded = false
-    for (const id of new Set(languageIds)) {
+    if (this.disposed || !this.isCurrentSnapshotVersion(version)) return false
+    // Their assets load together and they are registered in one message: registered one by one,
+    // each waited for the worker to answer the one before, behind whatever it was running.
+    const pending = Array.from(new Set(languageIds), (id) => this.requestedLanguage(id))
+    const descriptors: TreeSitterLanguageDescriptor[] = []
+    for (const language of pending) {
+      const resolved = await language
       if (this.disposed || !this.isCurrentSnapshotVersion(version)) return false
-      let pending = this.pendingLanguages.get(id)
-      if (!pending) {
-        pending = this.resolveRequestedLanguage(id)
-        this.pendingLanguages.set(id, pending)
-      }
-      const descriptors = await pending
-      if (this.disposed || !this.isCurrentSnapshotVersion(version)) return false
-      if (descriptors.length === 0) continue
-      await this.backend.registerLanguages(descriptors)
-      loaded = true
+      for (const descriptor of resolved) descriptors.push(descriptor)
     }
-    return loaded
+    if (descriptors.length === 0) return false
+    await this.backend.registerLanguages(descriptors)
+    return true
+  }
+
+  private requestedLanguage(id: string): Promise<readonly TreeSitterLanguageDescriptor[]> {
+    const pending = this.pendingLanguages.get(id) ?? this.resolveRequestedLanguage(id)
+    this.pendingLanguages.set(id, pending)
+    // Awaited in order by the caller; a later one that fails after an earlier one threw is still
+    // handled.
+    void pending.catch(() => undefined)
+    return pending
   }
 
   private async resolveRequestedLanguage(

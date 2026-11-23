@@ -149,9 +149,7 @@ browserTest.each(['full', 'range'] as const)(
       text,
     })
     try {
-      let result = await session.run()
-      if (syntaxMode === 'range')
-        result = await session.runtime.queryRange({ startIndex: 0, endIndex: text.length })
+      const result = await settledResult(session, syntaxMode, await session.run(), text.length)
       expect(result.degraded).toBeNull()
       expect(new Set(loads)).toEqual(new Set(['typescript', 'jsdoc', 'regex']))
       expect(result.captures.some((capture) => capture.languageId === 'jsdoc')).toBe(true)
@@ -181,9 +179,7 @@ browserTest.each(['full', 'range'] as const)(
     const options = { languageId: 'typescript', languageResolver, backend, syntaxMode }
     const session = createTreeDocument({ ...options, documentId: 'many-injections.ts', text })
     try {
-      let result = await session.run()
-      if (syntaxMode === 'range')
-        result = await session.runtime.queryRange({ startIndex: 0, endIndex: text.length })
+      const result = await settledResult(session, syntaxMode, await session.run(), text.length)
       expect(result.degraded).toBeNull()
       expect(result.injections).toHaveLength(300)
       const tokens = tokenValues(result)
@@ -197,10 +193,7 @@ browserTest.each(['full', 'range'] as const)(
       }
       const change = document.applyEdits([{ from: 4, to: 10, text: '@returns' }])
       const updated = await session.edit(change.edits)
-      const actual =
-        syntaxMode === 'full'
-          ? updated
-          : await session.runtime.queryRange({ startIndex: 0, endIndex: change.snapshot.length })
+      const actual = await settledResult(session, syntaxMode, updated, change.snapshot.length)
       expect(actual.degraded).toBeNull()
       expect(actual.injections).toHaveLength(300)
       await assertFreshSyntax(options, change.snapshot, actual, change.snapshot.length)
@@ -263,9 +256,7 @@ browserTest.each(['full', 'range'] as const)(
       text: readAll(createDocumentTextSnapshot(snapshot)),
     })
     try {
-      let result = await session.run()
-      if (syntaxMode === 'range')
-        result = await session.runtime.queryRange({ startIndex: 0, endIndex: snapshot.length })
+      const result = await settledResult(session, syntaxMode, await session.run(), snapshot.length)
       expect(result.degraded).toBeNull()
       expect(new Set(loads)).toEqual(new Set(['markdown', 'css', 'astro', 'typescript']))
       expect(loads.length).toBe(new Set(loads).size)
@@ -417,11 +408,7 @@ browserTest.each(['full', 'range'] as const)(
       text: readAll(createDocumentTextSnapshot(document.getSnapshot())),
     })
     try {
-      const initial = await session.run()
-      const result =
-        syntaxMode === 'full'
-          ? initial
-          : await session.runtime.queryRange({ startIndex: 0, endIndex: text.length })
+      const result = await settledResult(session, syntaxMode, await session.run(), text.length)
       expect(result.degraded).toBeNull()
       expect(new Set(loads)).toEqual(new Set(['markdown', 'sql']))
       assertPaint(result, text, SQL_CATEGORIES)
@@ -440,10 +427,7 @@ browserTest.each(['full', 'range'] as const)(
         const change = document.applyEdits([{ from, to: from + before!.length, text: after! }])
         text = text.slice(0, from) + after! + text.slice(from + before!.length)
         const updated = await session.edit(change.edits)
-        const actual =
-          syntaxMode === 'full'
-            ? updated
-            : await session.runtime.queryRange({ startIndex: 0, endIndex: text.length })
+        const actual = await settledResult(session, syntaxMode, updated, text.length)
         await assertFreshSyntax(options, change.snapshot, actual, text.length)
       }
       expect(loads.length).toBe(new Set(loads).size)
@@ -476,11 +460,7 @@ browserTest.each([
       text: readAll(createDocumentTextSnapshot(document.getSnapshot())),
     })
     try {
-      const initial = await session.run()
-      const result =
-        syntaxMode === 'full'
-          ? initial
-          : await session.runtime.queryRange({ startIndex: 0, endIndex: text.length })
+      const result = await settledResult(session, syntaxMode, await session.run(), text.length)
       expect(result.degraded).toBeNull()
       expect(new Set(loads)).toEqual(new Set([languageId, 'mdx', 'sql']))
       assertPaint(result, text, MDX_CATEGORIES)
@@ -512,10 +492,7 @@ browserTest.each([
         const change = document.applyEdits([{ from, to: from + before!.length, text: after! }])
         text = text.slice(0, from) + after! + text.slice(from + before!.length)
         const updated = await session.edit(change.edits)
-        const actual =
-          syntaxMode === 'full'
-            ? updated
-            : await session.runtime.queryRange({ startIndex: 0, endIndex: text.length })
+        const actual = await settledResult(session, syntaxMode, updated, text.length)
         await assertFreshSyntax(options, change.snapshot, actual, text.length)
       }
       expect(loads.length).toBe(new Set(loads).size)
@@ -525,6 +502,22 @@ browserTest.each([
     }
   },
 )
+
+/**
+ * The whole document's result. A range-mode session answers before injected grammars have
+ * loaded and publishes their colors as a later result, so a caller that asks for a range itself
+ * waits for them first.
+ */
+async function settledResult(
+  document: { readonly runtime: TreeSitterSyntaxSession },
+  syntaxMode: 'full' | 'range' | undefined,
+  analysed: EditorSyntaxResult,
+  length: number,
+): Promise<EditorSyntaxResult> {
+  if (syntaxMode !== 'range') return analysed
+  await document.runtime.injectedLanguagesLoaded()
+  return document.runtime.queryRange({ startIndex: 0, endIndex: length })
+}
 
 function assertPaint(
   result: EditorSyntaxResult,
@@ -554,11 +547,7 @@ async function assertFreshSyntax(
     text: readAll(createDocumentTextSnapshot(snapshot)),
   })
   try {
-    const initial = await fresh.run()
-    const expected =
-      options.syntaxMode === 'full'
-        ? initial
-        : await fresh.runtime.queryRange({ startIndex: 0, endIndex: length })
+    const expected = await settledResult(fresh, options.syntaxMode, await fresh.run(), length)
     expect(actual.captures).toEqual(expected.captures)
     expect(tokenValues(actual)).toEqual(tokenValues(expected))
     expect(actual.injections).toEqual(expected.injections)
