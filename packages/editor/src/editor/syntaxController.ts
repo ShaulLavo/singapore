@@ -306,6 +306,8 @@ export class EditorSyntaxController {
   /** The text the brackets, injections and captures in effect were answered for. */
   private scopeCoverage: EditorSyntaxRange | 'full' | null = null
   private lookAhead: SyntaxLookAhead | null = null
+  /** The look-ahead window for either scroll direction, from the last viewport change. */
+  private lookAheadReach: EditorSyntaxRange | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   private warmGeneration = 0
 
@@ -1019,7 +1021,6 @@ export class EditorSyntaxController {
     if (!this.canQueryCurrentSyntaxRange()) return false
     const snapshot = this.options.getSession()?.getTextSnapshot()
     if (!range || !snapshot) return false
-    this.retireLookAheadOutside(range)
     const active = this.activeLookAheadRequest(snapshot)
     this.lookAhead = { snapshot, window: range, request: active }
     const missing = lookAheadGap(
@@ -1040,7 +1041,7 @@ export class EditorSyntaxController {
     // The answer on the way is still inside the window. Replacing it would throw that work away for
     // a range a few rows longer, or, when the scroll turns back and forth, for the other side and
     // then back again with neither ever landing. The rest is asked for after it lands.
-    if (active && syntaxRangesIntersect(active, range)) return true
+    if (active && syntaxRangesIntersect(active, this.lookAheadReach ?? range)) return true
 
     this.lookAhead = { snapshot, window: range, request: missing }
     this.scheduleSyntaxRangeRequest(
@@ -1082,13 +1083,15 @@ export class EditorSyntaxController {
   }
 
   /**
-   * Cancels a look-ahead answer still on the way that lies outside the new look-ahead window, so a
-   * far jump's own request does not wait behind work for the place it left.
+   * Records how far look-ahead work stays useful around the shown rows (the window for either
+   * scroll direction) and cancels a look-ahead answer still on the way outside it, so a far jump's
+   * own request does not wait behind work for the place it left. Turning around keeps it.
    */
-  retireLookAheadOutside(window: EditorSyntaxRange | null): void {
+  retireLookAheadOutside(reach: EditorSyntaxRange | null): void {
+    this.lookAheadReach = reach
     const lookAhead = this.lookAhead
     if (!lookAhead?.request || !this.prefetchRangeRequests.isActive()) return
-    if (window && syntaxRangesIntersect(lookAhead.request, window)) return
+    if (reach && syntaxRangesIntersect(lookAhead.request, reach)) return
     this.prefetchRangeRequests.cancel()
     this.pendingPrefetch = null
     this.lookAhead = { ...lookAhead, request: null }

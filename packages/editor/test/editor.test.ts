@@ -6768,7 +6768,7 @@ describe('Editor', () => {
       editor.setText(text, { languageId: 'typescript' })
       await flushSyntaxUntilSettled(() => asked.length)
       hold = true
-      editor.setScrollPosition({ top: 600000, left: 0 })
+      editor.setScrollPosition({ top: 1200000, left: 0 })
       const syntax = syntaxControllerFrom(editor)
       const lookAheadAsked = () => {
         const request: EditorSyntaxRange | null | undefined = Reflect.get(
@@ -6783,12 +6783,17 @@ describe('Editor', () => {
       await vi.waitFor(() => expect(lookAheadAsked()).toBeGreaterThanOrEqual(0))
       const lookAhead = lookAheadAsked()
       expect(asked[lookAhead]!.signal?.aborted).toBe(false)
+      // Turning around keeps it: the reader may come straight back.
+      editor.setScrollPosition({ top: 1199400, left: 0 })
+      await flushSyntaxDebounce()
+      expect(asked[lookAhead]!.signal?.aborted).toBe(false)
       const before = asked.length
-      // Past the end of that look-ahead, which a fast scroll stretches to 750,000 characters.
-      editor.setScrollPosition({ top: 1420000, left: 0 })
+      // A jump far behind it, beyond where a look-ahead for either direction would reach.
+      editor.setScrollPosition({ top: 600000, left: 0 })
       await vi.waitFor(() => expect(asked.length).toBeGreaterThan(before))
       const destination = asked[before]!
-      expect(destination.range.startIndex).toBeGreaterThan(asked[lookAhead]!.range.endIndex)
+      const old = asked[lookAhead]!.range
+      expect(destination.range.endIndex).toBeLessThan(old.startIndex)
       expect(destination.earlierAborted[lookAhead]).toBe(true)
     })
 

@@ -64,7 +64,7 @@ The editor asks for the shown rows' uncached text first, then for a look-ahead w
 
 Cached pieces paint rows and supply their folds, but not brackets, injected languages or captures: a range answer counts bracket depth from its own start, so pieces cannot be joined. When the shown rows are painted from pieces, the editor asks for one answer covering the visible range and reports syntax as loading until it lands. Because that answer includes the visible range's margin, a scroll asks for it again only after moving past the margin.
 
-A range query that every caller has left is never sent to the worker. One already running stays joinable for 150 ms for a caller that asks for the same range again; after that, or as soon as any other range is asked for, it is cancelled. A look-ahead answer still on the way that falls outside the new window is cancelled before the new viewport is asked for. Cancelling stops the worker mid-query where shared cancellation flags are available (a cross-origin-isolated page), and otherwise drops the query before it is sent or re-sent after the complete analysis.
+A range query that every caller has left is never sent to the worker. One already running stays joinable for 150 ms for a caller that asks for the same range again; after that, or as soon as any other range is asked for, it is cancelled. A look-ahead answer still on the way that falls outside the look-ahead window for either scroll direction is cancelled before the new viewport is asked for; turning around keeps it. Cancelling stops the worker mid-query where shared cancellation flags are available (a cross-origin-isolated page), and otherwise drops the query before it is sent or re-sent after the complete analysis.
 
 Open implementation details:
 

@@ -4588,7 +4588,7 @@ export class Editor {
     const lookAhead = this.visibleSyntaxPrefetchRange()
     // Before the viewport's own request, so after a far jump the worker is not still busy with
     // look-ahead text beside the old place when the new place is asked for.
-    this.syntax.retireLookAheadOutside(lookAhead)
+    this.syntax.retireLookAheadOutside(this.syntaxLookAheadReach(lookAhead))
     this.syntax.refreshVisibleRange(this.documentVersion, {
       delayMs: 0,
       range: visibleRange,
@@ -4657,6 +4657,22 @@ export class Editor {
     const after = this.syntaxScrollDirection >= 0 ? lead : VISIBLE_SYNTAX_TRAILING_CHARS
 
     return this.syntaxRangeAroundMountedRows(before, after)
+  }
+
+  /**
+   * The look-ahead window for either scroll direction. Look-ahead work inside it stays useful when
+   * the reader turns around, so only work outside it, beside a place jumped away from, is retired.
+   */
+  private syntaxLookAheadReach(window: EditorSyntaxRange | null): EditorSyntaxRange | null {
+    const around = this.syntaxRangeAroundMountedRows(
+      VISIBLE_SYNTAX_LEAD_CHARS,
+      VISIBLE_SYNTAX_LEAD_CHARS,
+    )
+    if (!around || !window) return around ?? window
+    return {
+      startIndex: Math.min(around.startIndex, window.startIndex),
+      endIndex: Math.max(around.endIndex, window.endIndex),
+    }
   }
 
   private syntaxRangeAroundMountedRows(before: number, after: number): EditorSyntaxRange | null {
