@@ -1530,6 +1530,70 @@ const bootstrapPreviewEnd = (source: TreeSitterPieceTableInput, rangeEnd: number
   return newline === -1 ? end : end + newline + 1
 }
 
+// The lookahead to fall back on near the end of the prefix, where the full one does not fit. The
+// prefix limit can fall inside a comment or string that a cut this close to the range stops short of.
+const BOOTSTRAP_SHORT_LOOKAHEAD_UNITS = 4096
+
+/** Where to cut the prefix for a range that ends at `rangeEnd`, most lookahead first. */
+const bootstrapPreviewEnds = (
+  source: TreeSitterPieceTableInput,
+  rangeEnd: number,
+): readonly number[] => {
+  const prefixEnd = Math.min(source.length, TREE_SITTER_BOOTSTRAP_UNITS)
+  const end = bootstrapPreviewEnd(source, rangeEnd)
+  if (rangeEnd + BOOTSTRAP_LOOKAHEAD_UNITS <= prefixEnd) return [end]
+  const shortEnd = Math.min(prefixEnd, rangeEnd + BOOTSTRAP_SHORT_LOOKAHEAD_UNITS)
+  return shortEnd < end ? [end, shortEnd] : [end]
+}
+
+type StagedBootstrap = NonNullable<ReturnType<typeof bootstrapDocuments.get>>
+
+/**
+ * The staged preview cut at `end`: one already parsed that far or further, or exactly that far
+ * when `exact` is set. Null when the document was replaced during the parse.
+ */
+const stageBootstrapPreview = (
+  staged: StagedBootstrap,
+  request: TreeSitterRangeRequest,
+  runtime: Runtime,
+  cut: { readonly end: number; readonly exact: boolean },
+  context: CancellationContext,
+): BootstrapPreview | null => {
+  const cached = staged.preview
+  if (cached && (cut.exact ? cached.size === cut.end : cached.size >= cut.end)) return cached
+  const preview = parseBootstrapPreview(request, staged.source, runtime, cut.end, context)
+  if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) {
+    disposeCachedSnapshot(preview)
+    return null
+  }
+  if (cached) disposeCachedSnapshot(cached)
+  staged.preview = preview
+  return preview
+}
+
+/**
+ * A preview that agrees with the complete tree inside `range`, or null to wait for that tree.
+ * Near the end of the prefix a second, shorter cut is tried before waiting.
+ */
+const settledBootstrapPreview = (
+  staged: StagedBootstrap,
+  request: TreeSitterRangeRequest,
+  runtime: Runtime,
+  range: TreeSitterSyntaxRange,
+  context: CancellationContext,
+): BootstrapPreview | null => {
+  const [end, shortEnd] = bootstrapPreviewEnds(staged.source, request.range.endIndex)
+  if (end === undefined) return null
+  const preview = stageBootstrapPreview(staged, request, runtime, { end, exact: false }, context)
+  if (!preview) return null
+  if (!bootstrapPreviewUnsettled(preview, range, staged.source.length)) return preview
+  if (shortEnd === undefined) return null
+  const cut = { end: shortEnd, exact: true }
+  const short = stageBootstrapPreview(staged, request, runtime, cut, context)
+  if (!short || bootstrapPreviewUnsettled(short, range, staged.source.length)) return null
+  return short
+}
+
 /** Whether the preview may disagree with the complete tree inside `range`. */
 const bootstrapPreviewUnsettled = (
   preview: BootstrapPreview,
@@ -1561,21 +1625,9 @@ const queryBootstrapRange = async (
   const runtime = await ensureRuntime(request.languageId)
   assertRuntimeSessionActive(request.runtimeSessionId)
   if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) return undefined
-  const end = bootstrapPreviewEnd(staged.source, request.range.endIndex)
-  if (!staged.preview || staged.preview.size < end) {
-    const preview = parseBootstrapPreview(request, staged.source, runtime, end, context)
-    if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) {
-      disposeCachedSnapshot(preview)
-      return undefined
-    }
-    if (staged.preview) disposeCachedSnapshot(staged.preview)
-    staged.preview = preview
-  }
-
-  const preview = staged.preview
-  if (!preview) return undefined
   const range = normalizedSyntaxRange(request.range, staged.source.length)
-  if (bootstrapPreviewUnsettled(preview, range, staged.source.length)) return undefined
+  const preview = settledBootstrapPreview(staged, request, runtime, range, context)
+  if (!preview) return undefined
   const result = await flattenDocumentRange(preview, context, {
     range,
     includeHighlights: request.includeHighlights,
