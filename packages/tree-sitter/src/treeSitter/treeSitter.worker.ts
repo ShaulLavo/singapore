@@ -1386,7 +1386,7 @@ const disposeBootstrap = (runtimeSessionId: string): void => {
   bootstrapDocuments.delete(runtimeSessionId)
 }
 
-// Slices yield through a posted message: nested setTimeout(0) is clamped to 4 ms after five levels,
+// Slices yield through a posted message: nested zero-delay timeouts are clamped to 4 ms after five levels,
 // which left the worker idle a third of the time between 8 ms parse slices. A message is still a
 // macrotask, so requests and cancellations queued meanwhile run between slices.
 const pendingYields: (() => void)[] = []
