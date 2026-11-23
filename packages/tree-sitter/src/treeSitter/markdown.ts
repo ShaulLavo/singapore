@@ -6,6 +6,9 @@ import { Language, type Node, type Range } from 'web-tree-sitter'
 import type { TextEdit } from '@singapore-editor/core/document'
 import type { FoldRange, TreeSitterCapture, TreeSitterSyntaxRange } from './types'
 
+// The worker imports this module on its first Markdown document; the class comes with it.
+export { MarkdownDocument }
+
 let initialization: Promise<void> | undefined
 export const initializeMarkdown = (): Promise<void> => {
   initialization ??= Language.load(grammar)
