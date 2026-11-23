@@ -138,6 +138,26 @@ describe('EditorTokenStore patches', () => {
       { start: 19, end: 20, style: name },
     ])
   })
+
+  // The failure is a store that grows on every repeated answer: a provider that answers a small
+  // range with its whole slice must not duplicate the tokens kept outside the range.
+  it('keeps only the answer tokens that reach into the range', () => {
+    const answer = EditorTokenStore.fromTokens([
+      { start: 0, end: 5, style: keyword },
+      { start: 6, end: 7, style: name },
+      { start: 13, end: 18, style: keyword },
+      { start: 19, end: 20, style: name },
+    ])
+    let merged = twoLines()
+    for (let repeat = 0; repeat < 3; repeat += 1) merged = merged.replaceOffsetRange(6, 12, answer)
+
+    expect(merged.toTokens()).toEqual([
+      { start: 0, end: 5, style: keyword },
+      { start: 6, end: 7, style: name },
+      { start: 13, end: 18, style: keyword },
+      { start: 19, end: 20, style: name },
+    ])
+  })
 })
 
 describe('EditorTokenStore provenance and comparison', () => {

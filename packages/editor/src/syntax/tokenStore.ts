@@ -299,7 +299,17 @@ export class EditorTokenStore {
   ): EditorTokenStore {
     const last = this.firstStartingAtOrAfter(endOffset)
     const first = this.firstEndingAfter(startOffset, last)
-    return this.insertPacked(first, last, tokens.toPacked(), 0)
+    // Only the answer's tokens that reach into the range replace anything. A provider can answer
+    // with a wider slice; inserting its tokens outside the range would duplicate the ones kept
+    // there, and a store that grows on every repeated answer re-sorts more each time.
+    const insertedLast = tokens.firstStartingAtOrAfter(endOffset)
+    const insertedFirst = tokens.firstEndingAfter(startOffset, insertedLast)
+    return this.insertPacked(
+      first,
+      last,
+      slicePacked(tokens.toPacked(), insertedFirst, insertedLast),
+      0,
+    )
   }
 
   private insertPacked(
@@ -693,6 +703,16 @@ function isSortedByStart(starts: Uint32Array): boolean {
     if (starts[index]! < starts[index - 1]!) return false
   }
   return true
+}
+
+function slicePacked(packed: PackedEditorTokens, from: number, to: number): PackedEditorTokens {
+  if (from === 0 && to === packed.starts.length) return packed
+  return {
+    ...packed,
+    starts: packed.starts.slice(from, to),
+    ends: packed.ends.slice(from, to),
+    styleIds: packed.styleIds.slice(from, to),
+  }
 }
 
 // Stable, so tokens that share a start keep the order their producer gave them.
