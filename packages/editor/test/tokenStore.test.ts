@@ -158,6 +158,45 @@ describe('EditorTokenStore patches', () => {
       { start: 19, end: 20, style: name },
     ])
   })
+
+  // The failure is a nested token before the range counted twice: the answer's enclosing token
+  // pulls it into the answer's search window although it ends before the range.
+  it('inserts a nested answer token only when it reaches into the range', () => {
+    const existing = EditorTokenStore.fromTokens([
+      { start: 2, end: 3, style: name },
+      { start: 6, end: 7, style: name },
+    ])
+    const answer = EditorTokenStore.fromTokens([
+      { start: 0, end: 10, style: keyword },
+      { start: 2, end: 3, style: name },
+      { start: 6, end: 7, style: name },
+    ])
+
+    expect(existing.replaceOffsetRange(5, 8, answer).toTokens()).toEqual([
+      { start: 0, end: 10, style: keyword },
+      { start: 2, end: 3, style: name },
+      { start: 6, end: 7, style: name },
+    ])
+  })
+
+  // The failure is the same token lost the other way: an enclosing existing token pulls it into
+  // the removal window, and an answer that never reaches back to it cannot restore it.
+  it('keeps a nested existing token that ends before the range', () => {
+    const existing = EditorTokenStore.fromTokens([
+      { start: 0, end: 10, style: keyword },
+      { start: 2, end: 3, style: name },
+      { start: 6, end: 7, style: name },
+    ])
+    const answer = EditorTokenStore.fromTokens([
+      { start: 2, end: 3, style: name },
+      { start: 6, end: 7, style: name },
+    ])
+
+    expect(existing.replaceOffsetRange(5, 8, answer).toTokens()).toEqual([
+      { start: 2, end: 3, style: name },
+      { start: 6, end: 7, style: name },
+    ])
+  })
 })
 
 describe('EditorTokenStore provenance and comparison', () => {
