@@ -20,7 +20,6 @@ import {
   enclosingMergeUnit,
   touchingMergeUnits,
   lineMergeUnit,
-  mergeRangeHasErrors,
 } from './mergeUnits'
 import type { EditorSyntaxAnalysis } from '@singapore-editor/core/syntax'
 import {
@@ -1386,22 +1385,7 @@ const disposeBootstrap = (runtimeSessionId: string): void => {
   bootstrapDocuments.delete(runtimeSessionId)
 }
 
-// Slices yield through a posted message: nested zero-delay timeouts are clamped to 4 ms after five levels,
-// which left the worker idle a third of the time between 8 ms parse slices. A message is still a
-// macrotask, so requests and cancellations queued meanwhile run between slices.
-const pendingYields: (() => void)[] = []
-let yieldChannel: MessageChannel | null = null
-const yieldWorker = (): Promise<void> =>
-  new Promise((resolve) => {
-    if (!yieldChannel) {
-      yieldChannel = new MessageChannel()
-      yieldChannel.port1.onmessage = () => pendingYields.shift()?.()
-      // Node keeps a port with a listener alive; the worker's lifetime is its owner's decision.
-      ;(yieldChannel.port1 as { unref?: () => void }).unref?.()
-    }
-    pendingYields.push(resolve)
-    yieldChannel.port2.postMessage(null)
-  })
+const yieldWorker = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 const parseCompleteRoot = async (
   runtime: Runtime,
@@ -1512,27 +1496,6 @@ const parseBootstrapPreview = (
   }
 }
 
-// Source parsed past the requested range, so that constructs which are still open at its end
-// (parameter lists, generics, JSX) see the text that settles them. 16K units costs about 3 ms.
-const BOOTSTRAP_LOOKAHEAD_UNITS = 16_384
-
-// After the full lookahead, the cut moves on to the next line end when one is near. A cut inside a
-// string or comment can make recovery wrap everything before it in one ERROR node; a cut between
-// lines leaves a MISSING delimiter at the cut.
-const BOOTSTRAP_LINE_END_SEARCH_UNITS = 4096
-
-const bootstrapPreviewEnd = (source: TreeSitterPieceTableInput, rangeEnd: number): number => {
-  const end = Math.min(source.length, rangeEnd + BOOTSTRAP_LOOKAHEAD_UNITS)
-  const limit = Math.min(
-    source.length,
-    TREE_SITTER_BOOTSTRAP_UNITS,
-    end + BOOTSTRAP_LINE_END_SEARCH_UNITS,
-  )
-  if (limit <= end) return end
-  const newline = readTreeSitterInputRange(source, end, limit).indexOf('\n')
-  return newline === -1 ? end : end + newline + 1
-}
-
 const queryBootstrapRange = async (
   request: TreeSitterRangeRequest,
   context: CancellationContext,
@@ -1540,12 +1503,15 @@ const queryBootstrapRange = async (
   const staged = bootstrapDocuments.get(request.runtimeSessionId)
   if (!staged || staged.request.snapshotVersion !== request.snapshotVersion) return undefined
   // A prefix preserves the grammar's entry state. Distant ranges wait for the complete tree.
-  if (request.range.endIndex + BOOTSTRAP_LOOKAHEAD_UNITS > TREE_SITTER_BOOTSTRAP_UNITS)
-    return undefined
+  if (request.range.endIndex > TREE_SITTER_BOOTSTRAP_UNITS) return undefined
   const runtime = await ensureRuntime(request.languageId)
   assertRuntimeSessionActive(request.runtimeSessionId)
   if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) return undefined
-  const end = bootstrapPreviewEnd(staged.source, request.range.endIndex)
+  const end = Math.min(
+    staged.source.length,
+    TREE_SITTER_BOOTSTRAP_UNITS,
+    request.range.endIndex + 4096,
+  )
   if (!staged.preview || staged.preview.size < end) {
     const preview = parseBootstrapPreview(request, staged.source, runtime, end, context)
     if (bootstrapDocuments.get(request.runtimeSessionId) !== staged) {
@@ -1558,15 +1524,9 @@ const queryBootstrapRange = async (
 
   const preview = staged.preview
   if (!preview) return undefined
+  // Recovery in a truncated tree can reinterpret tokens before the error's range.
+  if (preview.layers.some((layer) => layer.tree.rootNode.hasError)) return undefined
   const range = normalizedSyntaxRange(request.range, staged.source.length)
-  // Cutting the source almost always leaves an error at the cut, past the requested range.
-  // Recovery that reinterprets earlier tokens wraps them in an ERROR node, so an error
-  // touching the range means the preview may disagree with the complete tree there.
-  // Text past the cut can still change how a token in the range reads (an arrow's `=>` after a
-  // parameter list longer than the lookahead, a call's `(` after a long run of blank lines), as it
-  // could for an error-free prefix; the complete analysis replaces the preview when it lands.
-  if (preview.layers.some((layer) => mergeRangeHasErrors(layer.tree.rootNode, range)))
-    return undefined
   const result = await flattenDocumentRange(preview, context, {
     range,
     includeHighlights: request.includeHighlights,
