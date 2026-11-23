@@ -126,6 +126,32 @@ it('previews a parameter list that its arrow settles beyond the visible range', 
   expect(inRange(preview)).toEqual(inRange(complete))
 }, 30_000)
 
+it('keeps the whole lookahead when a line ends right after the visible range', async () => {
+  const visible = 'function outer() {\n  const fn = (value'
+  const text =
+    visible +
+    ', other)\n' +
+    ' '.repeat(10_000) +
+    '=> value;\n' +
+    'const a = 1;\n'.repeat(10_000) +
+    '}\n'
+  const doc = document(text)
+  await doc.run()
+  const range = { startIndex: 0, endIndex: visible.length }
+  const preview = await doc.runtime.queryRange(range)
+  expect(preview.projection.analysis?.kind).toBe('partial')
+  expect(preview.projection.analysis?.coveredRange.endIndex).toBeGreaterThanOrEqual(
+    visible.length + 16_384,
+  )
+  await expect
+    .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+    .toBe('full')
+  const complete = await doc.runtime.queryRange(range)
+  const inRange = (result: typeof preview) =>
+    result.captures.filter((capture) => capture.startIndex < range.endIndex)
+  expect(inRange(preview)).toEqual(inRange(complete))
+}, 30_000)
+
 it('converges when text past the lookahead changes a visible token', async () => {
   const visible = 'function outer() {\n  const fn = (value'
   const text = visible + ', other)' + ' '.repeat(70_000) + '=> value;\n}'

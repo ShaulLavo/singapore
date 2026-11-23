@@ -1516,14 +1516,21 @@ const parseBootstrapPreview = (
 // (parameter lists, generics, JSX) see the text that settles them. 16K units costs about 3 ms.
 const BOOTSTRAP_LOOKAHEAD_UNITS = 16_384
 
-// The cut lands on a line end when the lookahead has one. A cut inside a string or comment can make
-// recovery wrap everything before it in one ERROR node; a cut between lines leaves a MISSING
-// delimiter at the cut.
+// After the full lookahead, the cut moves on to the next line end when one is near. A cut inside a
+// string or comment can make recovery wrap everything before it in one ERROR node; a cut between
+// lines leaves a MISSING delimiter at the cut.
+const BOOTSTRAP_LINE_END_SEARCH_UNITS = 4096
+
 const bootstrapPreviewEnd = (source: TreeSitterPieceTableInput, rangeEnd: number): number => {
   const end = Math.min(source.length, rangeEnd + BOOTSTRAP_LOOKAHEAD_UNITS)
-  if (end === source.length) return end
-  const newline = readTreeSitterInputRange(source, rangeEnd, end).lastIndexOf('\n')
-  return newline === -1 ? end : rangeEnd + newline + 1
+  const limit = Math.min(
+    source.length,
+    TREE_SITTER_BOOTSTRAP_UNITS,
+    end + BOOTSTRAP_LINE_END_SEARCH_UNITS,
+  )
+  if (limit <= end) return end
+  const newline = readTreeSitterInputRange(source, end, limit).indexOf('\n')
+  return newline === -1 ? end : end + newline + 1
 }
 
 const queryBootstrapRange = async (
