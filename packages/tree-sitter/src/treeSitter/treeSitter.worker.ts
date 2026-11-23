@@ -1071,16 +1071,19 @@ const editDocument = async (
     assertRuntimeSessionActive(request.runtimeSessionId)
     replaceCachedDocument(request.runtimeSessionId, parsedDocument)
     if (request.resultMode === 'parseOnly') {
-      return parseAckResult(
-        request,
-        changedRanges,
-        phaseTimings(context).concat([
-          { name: 'treeSitter.edit', durationMs: editMs },
-          { name: 'treeSitter.parse', durationMs: parseMs },
-        ]),
-        degraded,
-        parsedDocument.missingLanguages,
-      )
+      return {
+        ...parseAckResult(
+          request,
+          changedRanges,
+          phaseTimings(context).concat([
+            { name: 'treeSitter.edit', durationMs: editMs },
+            { name: 'treeSitter.parse', durationMs: parseMs },
+          ]),
+          degraded,
+          parsedDocument.missingLanguages,
+        ),
+        statistics: editStatistics(context),
+      }
     }
 
     const queryStart = nowMs()
@@ -1099,7 +1102,6 @@ const editDocument = async (
       documentId: request.documentId,
       snapshotVersion: request.snapshotVersion,
       languageId: request.languageId,
-      statistics: resultStatistics(parsedDocument, result, context),
       missingLanguages: parsedDocument.missingLanguages,
       captures: result.captures,
       folds: result.folds,
@@ -1110,6 +1112,10 @@ const editDocument = async (
       tokens: result.tokens,
       tokensPacked: result.tokensPacked,
       records: result.records,
+      statistics: {
+        ...resultStatistics(parsedDocument, result, context),
+        ...editStatistics(context),
+      },
       timings: phaseTimings(context).concat([
         { name: 'treeSitter.edit', durationMs: editMs },
         { name: 'treeSitter.parse', durationMs: parseMs },
@@ -1295,6 +1301,11 @@ const resultStatistics = (
     (result.tokensPacked?.styleIds.byteLength ?? 0),
   rangeStart: range?.startIndex ?? 0,
   rangeEnd: range?.endIndex ?? document.size,
+})
+
+/** How much of the document an edit scanned for injections, in UTF-16 units. */
+const editStatistics = (context: CancellationContext): Readonly<Record<string, number>> => ({
+  injectionScanUnits: context.counts?.get('injectionScanUnits') ?? 0,
 })
 
 const measurePhase = <T>(context: CancellationContext, name: string, run: () => T): T => {
@@ -1961,6 +1972,8 @@ const recordLayerChanges = (
 // Changed ranges miss structure that moved without its first node changing: deleting a fence's
 // opening leaves the heading it becomes as the only change, and the fence's content turns into a
 // paragraph unreported. Each range grows to the smallest named node holding it in either tree.
+// When that node is the root, the range grows to the root's children it touches instead: a range
+// across two top-level statements would otherwise rescan the whole document for injections.
 const enclosingRanges = (
   ranges: readonly TreeSitterSyntaxRange[],
   trees: readonly Tree[],
@@ -1968,13 +1981,23 @@ const enclosingRanges = (
   ranges.map((range) => {
     let { startIndex, endIndex } = range
     for (const tree of trees) {
-      const node = tree.rootNode.namedDescendantForIndex(range.startIndex, range.endIndex)
-      if (!node) continue
-      startIndex = Math.min(startIndex, node.startIndex)
-      endIndex = Math.max(endIndex, node.endIndex)
+      const span = enclosingSpan(tree.rootNode, range)
+      if (!span) continue
+      startIndex = Math.min(startIndex, span.startIndex)
+      endIndex = Math.max(endIndex, span.endIndex)
     }
     return { startIndex, endIndex }
   })
+
+const enclosingSpan = (root: Node, range: TreeSitterSyntaxRange): TreeSitterSyntaxRange | null => {
+  const node = root.namedDescendantForIndex(range.startIndex, range.endIndex)
+  if (!node) return null
+  if (node.id !== root.id) return node
+  const first = root.firstChildForIndex(range.startIndex)
+  if (!first) return null
+  const last = root.firstChildForIndex(Math.max(range.startIndex, range.endIndex - 1)) ?? first
+  return { startIndex: first.startIndex, endIndex: Math.max(range.endIndex, last.endIndex) }
+}
 
 /** Each edit's inserted text in the final document, widened by one unit to catch adjacency. */
 const editedRanges = (
@@ -2320,6 +2343,7 @@ const findInjectionSpan = async (
   for (let startIndex = span.startIndex; startIndex < span.endIndex; startIndex += 262_144) {
     assertNotCancelled(context)
     const range = { startIndex, endIndex: Math.min(span.endIndex, startIndex + 262_144) }
+    incrementCount(context, 'injectionScanUnits', range.endIndex - range.startIndex)
     const matches = measurePhase(context, 'injectionDiscovery', () =>
       query.matches(parent.tree.rootNode, queryOptions(context, range)),
     )

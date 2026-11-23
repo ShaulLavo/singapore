@@ -1139,6 +1139,9 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
         pending.work = { kind: 'running', generation: this.generation }
         const current = this.readRange(range)
         if (current.kind === 'ready') return Promise.resolve(current.result)
+        // Asked for before an edit, it would answer text that no longer exists, and its answer is
+        // never admitted. Querying it anyway puts it ahead of the new text's visible range.
+        if (point !== this.buffer.getDocumentSyncPoint()) return Promise.reject(cancelled())
         queried = true
         return this.structuralSession.queryRange?.(range, signal) ?? this.current()
       }).then((result) => {
