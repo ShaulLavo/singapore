@@ -13,7 +13,7 @@ import {
   createTreeSitterSyntaxProvider,
   createTreeSitterWorkerOwner,
 } from '../../tree-sitter/dist/index.js'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/dist/index.js'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/dist/catalog.generated.js'
 import type { EditorHighlighterProvider } from '../src/syntax/highlighter'
 import type { EditorInitialPaintEvent } from '../src/plugins'
 import type { EditorPerformanceDiagnostic } from '../src/editor/performanceDiagnostics'

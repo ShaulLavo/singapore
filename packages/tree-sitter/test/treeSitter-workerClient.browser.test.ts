@@ -12,7 +12,7 @@ import {
 import { readAll } from '../../editor/test/factories/snapshotText'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import documentSessionSource from '../../editor/src/documentSession.ts?raw'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index.ts'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 
 import {
   applyBatchToPieceTable,

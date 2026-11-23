@@ -16,7 +16,7 @@ import {
 } from '../../markdown/src/headings'
 import type { EditorPlugin } from '../src/plugins'
 import { createTreeSitterLanguagePlugin } from '../../tree-sitter/src/index'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import '../src/style.css'
 import '../../gutters/src/lineGutter.css'
 import '../../markdown/src/style.css'

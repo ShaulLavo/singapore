@@ -6,7 +6,7 @@ import {
   createTreeSitterReviewSyntax,
   resolveTreeSitterLanguageContribution,
 } from '@singapore-editor/tree-sitter'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import { TreeSitterWorkerClient } from '../../tree-sitter/src/treeSitter/workerClient'
 import { lineMergeUnit } from '../../tree-sitter/src/treeSitter/mergeUnits'
 import { createDocumentTextSnapshot } from '@singapore-editor/core/document'

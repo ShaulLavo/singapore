@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { beforeAll, expect, it } from 'vitest'
 import { Language, Parser, Query } from 'web-tree-sitter'
 import { styleForTreeSitterCapture } from '@singapore-editor/core/syntax'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/catalog.generated'
 import { NATIVE_FIXTURES } from './fixtures/native'
 import { TREE_SITTER_LANGUAGE_METADATA } from '../src/metadata'
 

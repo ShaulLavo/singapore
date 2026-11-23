@@ -33,7 +33,7 @@ Tree-sitter and native Markdown parsing need Chromium 144, Firefox 145, Safari 2
 ## API highlights
 
 - `typeScript()` installs TypeScript syntax.
-- `TREE_SITTER_LANGUAGE_CONTRIBUTIONS` contains the bundled language set.
+- `TREE_SITTER_LANGUAGE_CONTRIBUTIONS`, from `@singapore-editor/tree-sitter-languages/catalog`, contains the bundled language set.
 - The `/metadata` entry lists language IDs and file extensions.
 
 [Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/tree-sitter-languages/overview/)

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import { Kind } from 'tree-sitter-md'
 import { createEditorTextBuffer, createEditorBufferSession } from '../../editor/src/documentSession'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import { resolveTreeSitterLanguageContribution } from '../src'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { DocumentDelivery, type DocumentRead } from '../../editor/src/editor/documentDelivery'

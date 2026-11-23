@@ -8,9 +8,9 @@ import type {
   TreeSitterLanguageContribution,
   TreeSitterSyntaxProvider,
 } from '@singapore-editor/tree-sitter'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/catalog.generated'
 import {
   JAVASCRIPT_TREE_SITTER_LANGUAGE,
-  TREE_SITTER_LANGUAGE_CONTRIBUTIONS,
   TYPESCRIPT_TREE_SITTER_LANGUAGE,
   css,
   html,

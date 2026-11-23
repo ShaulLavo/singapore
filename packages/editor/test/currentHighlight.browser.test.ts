@@ -14,7 +14,7 @@ import {
   createTreeSitterSyntaxProvider,
   createTreeSitterWorkerOwner,
 } from '../../tree-sitter/dist/index.js'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/dist/index.js'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/dist/catalog.generated.js'
 import type { EditorInitialPaintEvent } from '../src/plugins'
 import { heldNativeWorkerReplies } from './factories/heldWorker'
 import '@singapore-editor/core/style.css'

@@ -33,6 +33,11 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./catalog": {
+      "types": "./dist/catalog.generated.d.ts",
+      "import": "./dist/catalog.generated.js",
+      "default": "./dist/catalog.generated.js"
+    },
     "./metadata": {
       "types": "./dist/metadata.d.ts",
       "import": "./dist/metadata.js",

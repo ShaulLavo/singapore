@@ -6,7 +6,7 @@ import {
   createTreeSitterSyntaxProvider,
   createTreeSitterSyntaxPlugin,
 } from '@singapore-editor/tree-sitter'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/dist/index.js'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/dist/catalog.generated.js'
 
 function hasPaintedSyntax(host: HTMLElement): boolean {
   return Array.from(CSS.highlights.values()).some((group) =>

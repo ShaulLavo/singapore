@@ -26,7 +26,7 @@ import {
   type TreeSitterWorkerOwner,
   type TreeSitterSyntaxProvider,
 } from '@singapore-editor/tree-sitter'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import { TREE_SITTER_LANGUAGE_METADATA } from '@singapore-editor/tree-sitter-languages/metadata'
 
 import { bundledThemes } from 'shiki/themes'

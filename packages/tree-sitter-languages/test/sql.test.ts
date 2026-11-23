@@ -5,7 +5,7 @@ import {
   styleForTreeSitterCapture,
   treeSitterCapturesToEditorTokens,
 } from '@singapore-editor/core/syntax'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/catalog.generated'
 import { SQL_CATEGORIES, SQL_FIXTURE } from './fixtures/sql'
 
 beforeAll(() => Parser.init())

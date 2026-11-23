@@ -7,7 +7,7 @@ import { defineStructuralOperation } from '@singapore-editor/core/internal/docum
 import { TreeSitterSyntaxSession } from '../src/session'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
-import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
+import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import { mountedColors, tokenColors } from './factories/viewportPaint'
 
 it('keeps provisional paint after a budget cancellation and retries retained range queries', async () => {
