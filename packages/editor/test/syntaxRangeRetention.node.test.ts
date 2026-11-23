@@ -322,7 +322,7 @@ describe('syntax range contributor lifetime', () => {
       const edit = { from: 5, to: 5, text }
       const change = createEditorBufferSession(buffer).applyEdits([edit])
       view.syntax.acceptChange(change)
-      view.syntax.setProjectedTokens(projectTokensThroughEdit(view.syntax.tokens, edit, previous))
+      view.syntax.setTokens(projectTokensThroughEdit(view.syntax.tokens, edit, previous), false)
       view.syntax.refresh(1, change, { delayMs: 0 })
       await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(2))
       for (const endIndex of [40, 60, 80]) {
@@ -489,32 +489,6 @@ describe('syntax range contributor lifetime', () => {
     }
   })
 
-  it('removes the tokens a replaced analysis left behind once they scroll away', async () => {
-    const buffer = createEditorTextBuffer('x\n'.repeat(250))
-    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'left-behind' })
-    const answers = rangeAnswers('shared')
-    const replaced = replaceableAnalysis(answers.query)
-    const view = createView(buffer, analysis, replaced.provider, firstFrame)
-    try {
-      view.syntax.refresh(1, null, { delayMs: 0 })
-      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
-      await replaced.analyzed()
-      // The view jumps away before the new analysis is asked anything, so the first frame's tokens
-      // have no answer behind them and nothing shows them.
-      replaced.publishComplete()
-      expect(view.syntax.tokens.toTokens()).toEqual([rangeToken(0)])
-      view.setRange({ startIndex: 200, endIndex: 220 })
-      expect(view.syntax.tokens.length).toBe(0)
-      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toEqual([rangeToken(200)]))
-      view.setRange(firstFrame)
-      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
-      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(0)))
-    } finally {
-      view.dispose()
-      analysis.dispose()
-    }
-  })
-
   it.each([
     ['a single-line edit', '!'],
     ['a multi-line edit', '!\n'],
@@ -539,7 +513,7 @@ describe('syntax range contributor lifetime', () => {
     }
   })
 
-  it('leaves a store installed in place of an edit projection to its host', async () => {
+  it('keeps a host store installed in place of an edit projection', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'host-store' })
     const answers = rangeAnswers('shared')
@@ -554,8 +528,7 @@ describe('syntax range contributor lifetime', () => {
       view.syntax.refresh(1, change, { delayMs: 0 })
       await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(0)))
       await moveFrame(view, [20, 40, 60])
-      // The first frame's answer is gone with its tokens; the host's token was never the ranges'.
-      expect(view.syntax.tokens.toTokens()).not.toContainEqual(rangeToken(0))
+      // The store was never the range answers', so dropping their answers removes nothing of it.
       expect(view.syntax.tokens.toTokens()).toContainEqual(hostToken)
     } finally {
       view.dispose()
@@ -667,40 +640,6 @@ describe('syntax range contributor lifetime', () => {
       await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
     } finally {
       gate.resolve()
-      view.dispose()
-      analysis.dispose()
-    }
-  })
-
-  it('keeps a long token painted while it is shown and removes it afterwards', async () => {
-    const buffer = createEditorTextBuffer('x\n'.repeat(50_000))
-    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'long-token' })
-    // Every answer the token reaches into returns it whole, as a long comment's would.
-    const token = { ...rangeToken(10), end: 80_000 }
-    const query = vi.fn(async (range: EditorSyntaxRange) => ({
-      ...createEmptySyntaxResult({ requestedRanges: [range] }),
-      tokens: EditorTokenStore.fromTokens([token]),
-    }))
-    const replaced = replaceableAnalysis(query)
-    const view = createView(buffer, analysis, replaced.provider, firstFrame)
-    try {
-      view.syntax.refresh(1, null, { delayMs: 0 })
-      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toEqual([token]))
-      await replaced.analyzed()
-      // The first frame's tokens lose their answer and scroll away, but the token written for
-      // that frame also paints the frame the view jumps to.
-      replaced.publishComplete()
-      const far = { startIndex: 40_000, endIndex: 60_000 }
-      view.setRange(far)
-      expect(view.syntax.tokens.toTokens()).toEqual([token])
-      await vi.waitFor(() => expect(query).toHaveBeenCalledWith(far, expect.anything()))
-      // Past the token's end, with that frame answered, nothing shows or covers it any more.
-      const past = { startIndex: 90_000, endIndex: 90_020 }
-      view.setRange(past)
-      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
-      await vi.waitFor(() => expect(query).toHaveBeenCalledWith(past, expect.anything()))
-      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toEqual([]))
-    } finally {
       view.dispose()
       analysis.dispose()
     }
@@ -967,7 +906,7 @@ function typeText(view: SyntaxView, buffer: EditorTextBuffer, edit: TextEdit) {
   const previous = buffer.getTextSnapshot()
   const change = createEditorBufferSession(buffer).applyEdits([edit])
   view.syntax.acceptChange(change)
-  view.syntax.setProjectedTokens(projectTokensThroughEdit(view.syntax.tokens, edit, previous))
+  view.syntax.setTokens(projectTokensThroughEdit(view.syntax.tokens, edit, previous), false)
   return change
 }
 

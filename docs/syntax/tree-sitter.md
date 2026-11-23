@@ -75,16 +75,13 @@ Tree-sitter highlight queries are the long-term source of syntax highlighting.
 
 Highlight output should be represented as dense decorations with offsets or line-scoped ranges. It must not allocate an anchor per token. The renderer may continue using the CSS Highlight API, but the source of ranges should be Tree-sitter query output.
 
-### Range answers and the painted tokens
+### Range answers
 
-A range-mode editor asks for the text it shows, one range at a time, and keeps the answers in `EditorSyntaxController`. Two rules keep that from asking twice or losing colors.
+A range-mode editor asks for the text it shows, one range at a time, and keeps the answers in `EditorSyntaxController`. The frame trim keeps every answer that is the newest one for some shown text, whoever painted the tokens (range answers, a separate highlighter, or a host). The view asks again for shown text without an answer, so dropping one of these would make it ask on every frame.
 
-- **An answer stays while it is shown.** The frame trim keeps every answer that is the newest one for some shown text, whoever painted the tokens (range answers, a separate highlighter, or a host). The view asks again for shown text without an answer, so dropping one of these would make it ask on every frame. Answers carried through an edit only stand in for the new parse: its first answer replaces them, and what they covered is asked for again when it is shown.
-- **The controller removes only the tokens range answers wrote.** It tracks the ranges of the painted store those answers filled (`rangeTokenRanges`). An answer adds its range, an edit moves the ranges with the text, and tokens installed from elsewhere (`setTokens`, a highlighter result, a new document) empty the list. The trim removes a range's tokens once no kept answer covers it and none of it is shown. Tokens outside the list are never removed; a later answer writes over them only inside its own range.
+Answers carried through an edit only stand in for the new parse. Its first answer replaces them, and what they covered is asked for again when it is shown.
 
-After a newer analysis or an edit the cache cannot follow, the old tokens stay painted with no answers behind them. New answers write over them range by range, and the trim removes what scrolls away unanswered.
-
-A token can reach past the range it was written for. The trim keeps a token while it reaches a kept range. A token of a removed range that still paints shown text keeps one character of that range in the list, so it stays painted and is removed once it is shown no more. A session that cannot answer ranges prepares its whole-document result, whose tokens are not in the list. One case leaves a token the trim cannot find again: [range colors orphaned by an edit](../limitations.md#range-colors-orphaned-by-an-edit).
+The trim removes tokens only while the painted store is made of range answers alone. After an edit, a newer analysis, or tokens installed by a host, it removes none.
 
 ### Read-only slices
 

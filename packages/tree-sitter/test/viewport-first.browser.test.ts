@@ -313,8 +313,8 @@ it('keeps painting frames while scrolling a large file after its preview is repl
   try {
     editor.setText(generatedModule(50_000), { languageId: 'typescript' })
     // The loop began after the complete analysis replaced the painted preview, and after typing:
-    // both leave painted tokens with no answers behind them, and the frame trim then kept only two
-    // of the range answers on screen, so three neighbours displaced each other without end.
+    // both leave a token store the range answers no longer own, and the frame trim then kept only
+    // two of the range answers on screen, so three neighbours displaced each other without end.
     let published = false
     const unsubscribe = syntax['retainedSyntax'].onDidProduceSyntax(() => {
       published = true
@@ -377,10 +377,6 @@ it('keeps painting frames while scrolling a large file after its preview is repl
       )
       .toBe(true)
     await expect.poll(() => visibleSyntaxHighlights(host, scroll), stuck).toBeGreaterThan(0)
-    // The preview's colors at the top of the file had no answer behind them once the complete
-    // analysis published. They stayed while shown and are gone now that the view has left.
-    const previewEnd = answers[0]!.range.endIndex
-    await expect.poll(() => syntax.tokens.firstStartingAtOrAfter(previewEnd), stuck).toBe(0)
   } finally {
     editor.dispose()
     host.remove()
