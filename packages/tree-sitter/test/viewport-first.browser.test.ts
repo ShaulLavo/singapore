@@ -319,7 +319,10 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     const unsubscribe = syntax['retainedSyntax'].onDidProduceSyntax(() => {
       published = true
     })
-    await expect.poll(() => editor.getState().initialHighlightStatus).toBe('painted')
+    // Waits here only catch a stuck page. The middle's answer needs the complete parse, which
+    // takes seconds on a slow machine.
+    const stuck = { timeout: 30_000 }
+    await expect.poll(() => editor.getState().initialHighlightStatus, stuck).toBe('painted')
     expect(answers[0]?.kind).toBe('partial')
     const middle = Math.floor(editor.getState().length / 2)
     editor.setSelection(middle, middle, { reveal: true })
@@ -328,16 +331,18 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     // scroll, as the freeze's reproduction did. The steps are spaced like a person scrolling. The
     // frame cap only catches a stuck page; it judges no speed.
     await expect
-      .poll(() =>
-        answers.some(
-          (answer) =>
-            answer.source === 'visible' &&
-            answer.range.startIndex <= middle &&
-            middle < answer.range.endIndex,
-        ),
+      .poll(
+        () =>
+          answers.some(
+            (answer) =>
+              answer.source === 'visible' &&
+              answer.range.startIndex <= middle &&
+              middle < answer.range.endIndex,
+          ),
+        stuck,
       )
       .toBe(true)
-    await expect.poll(() => published, { timeout: 20_000 }).toBe(true)
+    await expect.poll(() => published, stuck).toBe(true)
     unsubscribe()
     await userEvent.keyboard('const value = 42; ')
     // The typed-through colors are still the range answers', so the frame trim can remove them.
@@ -362,18 +367,22 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     const covers = (range: EditorSyntaxRange) =>
       range.startIndex <= reached.startIndex && reached.endIndex <= range.endIndex
     await expect
-      .poll(() =>
-        answers.some(
-          (answer) =>
-            answer.request > requestsBeforeScroll && answer.kind === 'full' && covers(answer.range),
-        ),
+      .poll(
+        () =>
+          answers.some(
+            (answer) =>
+              answer.request > requestsBeforeScroll &&
+              answer.kind === 'full' &&
+              covers(answer.range),
+          ),
+        stuck,
       )
       .toBe(true)
-    await expect.poll(() => visibleSyntaxHighlights(host, scroll)).toBeGreaterThan(0)
+    await expect.poll(() => visibleSyntaxHighlights(host, scroll), stuck).toBeGreaterThan(0)
     // The preview's colors at the top of the file had no answer behind them once the complete
     // analysis published. They stayed while shown and are gone now that the view has left.
     const previewEnd = answers[0]!.range.endIndex
-    await expect.poll(() => syntax.tokens.firstStartingAtOrAfter(previewEnd)).toBe(0)
+    await expect.poll(() => syntax.tokens.firstStartingAtOrAfter(previewEnd), stuck).toBe(0)
   } finally {
     editor.dispose()
     host.remove()
