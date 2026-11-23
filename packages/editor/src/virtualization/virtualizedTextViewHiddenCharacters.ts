@@ -5,12 +5,14 @@ import { measureWhitespaceDotGlyph, type WhitespaceDotGlyph } from './browserMet
 import { setStyleValue } from './virtualizedTextViewHelpers'
 import { rangeSegments, unitRectForOffset } from './virtualizedTextViewGeometry'
 import {
+  loadSuspiciousCharacterData,
   normalizeSuspiciousCharactersOptions,
   type ResolvedSuspiciousCharactersOptions,
   sameSuspiciousCharactersOptions,
+  scanSuspiciousCharacters,
+  suspiciousCharacterDataLoaded,
   type SuspiciousCharacterKind,
   type SuspiciousCharacterRange,
-  suspiciousCharacterRanges,
   suspiciousCharactersEnabled,
 } from '../unicodeHighlight'
 import type {
@@ -154,6 +156,34 @@ export function setSuspiciousCharacters(
   renderHiddenCharacters(view)
 
   return true
+}
+
+const viewsAwaitingSuspiciousCharacterData = new WeakSet<VirtualizedTextViewInternal>()
+
+/**
+ * The code point tables load on the first row that is not plain ASCII, so that row draws without
+ * its suspicious-character markers for the moment the load takes. Bumping the revision once they
+ * arrive is what makes every mounted row rebuild its markers rather than keep the ones it drew.
+ */
+function redrawWhenSuspiciousCharacterDataLoads(view: VirtualizedTextViewInternal): void {
+  if (viewsAwaitingSuspiciousCharacterData.has(view)) return
+  viewsAwaitingSuspiciousCharacterData.add(view)
+  loadSuspiciousCharacterData().then(
+    () => {
+      viewsAwaitingSuspiciousCharacterData.delete(view)
+      if (view.disposed) return
+      suspiciousRevision += 1
+      view.suspiciousCharacters = {
+        options: view.suspiciousCharacters.options,
+        revision: suspiciousRevision,
+      }
+      renderHiddenCharacters(view)
+    },
+    (error: unknown) => {
+      viewsAwaitingSuspiciousCharacterData.delete(view)
+      globalThis.reportError(error)
+    },
+  )
 }
 
 /**
@@ -346,6 +376,10 @@ function appendSuspiciousCharacterMarkers(
 ): void {
   const { options } = pass.suspicious
   if (!suspiciousCharactersEnabled(options) || isSimpleRowText(row)) return
+  if (!suspiciousCharacterDataLoaded()) {
+    redrawWhenSuspiciousCharacterDataLoads(view)
+    return
+  }
 
   const line = suspiciousCharacterScanLine(view, row)
   // A code point the seam runs through belongs to the window before it, which reported it already:
@@ -353,7 +387,7 @@ function appendSuspiciousCharacterMarkers(
   let reportedThrough = -1
   for (const chunk of row.chunks) {
     const mounted = { start: line.start + chunk.localStart, end: line.start + chunk.localEnd }
-    for (const range of suspiciousCharacterRanges(line.text, options, mounted)) {
+    for (const range of scanSuspiciousCharacters(line.text, options, mounted)) {
       if (range.start < reportedThrough) continue
 
       reportedThrough = range.end

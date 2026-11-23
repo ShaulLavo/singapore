@@ -41,17 +41,8 @@ import {
 } from '@singapore-editor/core/syntax'
 import type { PackedEditorTokens } from '@singapore-editor/core/syntax'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
-import { MarkdownDocument } from 'tree-sitter-md'
-import {
-  initializeMarkdown,
-  editMarkdown,
-  markdownCaptures,
-  markdownRecords,
-  markdownDefinitions,
-  markdownFolds,
-  markdownRange,
-  markdownMdxSource,
-} from './markdown'
+import type { MarkdownDocument } from 'tree-sitter-md'
+import type * as MarkdownSupportModule from './markdown'
 import type { TreeSitterLanguageDescriptor } from './registry'
 import {
   createTreeSitterInput,
@@ -322,11 +313,28 @@ const warmLanguages = async (languageIds: readonly TreeSitterLanguageId[]): Prom
   return undefined
 }
 
+type MarkdownSupport = typeof MarkdownSupportModule
+let markdownSupport: MarkdownSupport | undefined
+
+// Markdown support, tree-sitter-md's document model and the code around it, is about a twelfth of
+// this worker and only Markdown and MDX documents use it, so it loads with the first of them.
+const loadMarkdown = async (): Promise<MarkdownSupport> => {
+  const support = (markdownSupport ??= await import('./markdown'))
+  await support.initializeMarkdown()
+  return support
+}
+
+/** For code that reads a Markdown document, which only exists once `loadMarkdown` has settled. */
+const loadedMarkdown = (): MarkdownSupport => {
+  if (!markdownSupport) throw new Error('Markdown support was used before it loaded')
+  return markdownSupport
+}
+
 // A failure stays in `runtimePromises`, so the language's first document reports it.
 const warmLanguage = async (languageId: TreeSitterLanguageId): Promise<void> => {
   if (languageId === 'markdown' || languageId === 'mdx') {
     await ensureParserRuntime()
-    await initializeMarkdown()
+    await loadMarkdown()
     if (languageId === 'markdown') return
   }
   const runtime = await ensureRuntime(languageId)
@@ -417,7 +425,7 @@ const parseMarkdownDocument = async (
 ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> => {
   assertNotCancelled(context)
   await ensureParserRuntime()
-  await initializeMarkdown()
+  const support = await loadMarkdown()
   assertRuntimeSessionActive(request.runtimeSessionId)
   assertNotCancelled(context)
   const prior = markdownDocuments.get(request.runtimeSessionId)
@@ -430,11 +438,11 @@ const parseMarkdownDocument = async (
         )
       : null
   if (prior && prior.snapshotVersion > request.snapshotVersion) return undefined
-  const document = prior?.document ?? new MarkdownDocument({ frontmatter: true })
+  const document = prior?.document ?? new support.MarkdownDocument({ frontmatter: true })
   const start = nowMs()
   if (prior?.snapshotVersion !== request.snapshotVersion) {
     if (request.type === 'edit' && prior?.snapshotVersion === request.previousSnapshotVersion) {
-      editMarkdown(document, request.edits)
+      support.editMarkdown(document, request.edits)
     } else document.setText(readTreeSitterInputRange(source, 0, source.length))
   }
   markdownDocuments.set(request.runtimeSessionId, {
@@ -533,7 +541,7 @@ const parseMarkdownFences = async (
         parentLanguageId: 'markdown',
         languageId,
         depth: 1,
-        ranges: [markdownRange(markdown, fences[offset]!, fences[offset + 1]!)],
+        ranges: [loadedMarkdown().markdownRange(markdown, fences[offset]!, fences[offset + 1]!)],
       }
       const reusable = takeReusableLayer(reusableLayers, plan)
       if (
@@ -699,11 +707,14 @@ const prepareMdxMarkdown = async (
   root: ParsedLayer,
 ): Promise<MarkdownDocument | undefined> => {
   if (request.languageId !== 'mdx') return undefined
-  await initializeMarkdown()
+  const support = await loadMarkdown()
   const document =
-    markdownDocuments.get(request.runtimeSessionId)?.document ?? new MarkdownDocument()
+    markdownDocuments.get(request.runtimeSessionId)?.document ?? new support.MarkdownDocument()
   document.setText(
-    markdownMdxSource(readTreeSitterInputRange(source, 0, source.length), root.tree.rootNode),
+    support.markdownMdxSource(
+      readTreeSitterInputRange(source, 0, source.length),
+      root.tree.rootNode,
+    ),
   )
   markdownDocuments.set(request.runtimeSessionId, {
     document,
@@ -719,19 +730,20 @@ const appendMarkdownResult = (
 ): void => {
   if (!document.markdown) return
   const markdown = document.markdown
+  const support = loadedMarkdown()
   result.records = {
     languageId: 'markdown',
-    data: markdownRecords(markdown, range, (links) => {
+    data: support.markdownRecords(markdown, range, (links) => {
       const hasReference = links.some(
         (link) =>
           readTreeSitterInputRange(document.source, link.endIndex - 1, link.endIndex) === ']',
       )
       if (!hasReference) return new Uint32Array()
-      return (document.markdownDefinitions ??= markdownDefinitions(markdown, document.size))
+      return (document.markdownDefinitions ??= support.markdownDefinitions(markdown, document.size))
     }),
   }
-  appendItems(result.captures, markdownCaptures(document.markdown, range))
-  appendItems(result.folds, markdownFolds(document.markdown, range))
+  appendItems(result.captures, support.markdownCaptures(markdown, range))
+  appendItems(result.folds, support.markdownFolds(markdown, range))
 }
 
 const markdownSelection = (
@@ -3535,9 +3547,9 @@ const parseProjectedDocument = async (
   options: ParseParsedDocumentOptions,
 ): Promise<ParsedDocument> => {
   if (options.languageId !== 'markdown') return parseParsedDocument(options)
-  await initializeMarkdown()
+  const support = await loadMarkdown()
   // Native Markdown takes a string; the projection owns this separate document and its fences.
-  const markdown = new MarkdownDocument({ frontmatter: true })
+  const markdown = new support.MarkdownDocument({ frontmatter: true })
   const source = options.source.retain()
   try {
     markdown.setText(readTreeSitterInputRange(source, 0, source.length))
@@ -3998,12 +4010,12 @@ const appendInjectedMarkdown = async (
   requested?: TreeSitterSyntaxRange,
 ): Promise<void> => {
   if (layer.kind === 'root' || layer.languageId !== 'mdx') return
-  await initializeMarkdown()
+  const support = await loadMarkdown()
   let scope = injectedMarkdown.get(layer.tree)
   if (!scope) {
     const root = layer.tree.rootNode
-    const document = new MarkdownDocument()
-    document.setText(markdownMdxSource(root.text, root, root.startIndex))
+    const document = new support.MarkdownDocument()
+    document.setText(support.markdownMdxSource(root.text, root, root.startIndex))
     scope = { document, offset: root.startIndex, row: root.startPosition.row }
     injectedMarkdown.set(layer.tree, scope)
   }
@@ -4014,12 +4026,12 @@ const appendInjectedMarkdown = async (
       Math.min(layer.tree.rootNode.endIndex, requested?.endIndex ?? layer.tree.rootNode.endIndex) -
       offset,
   }
-  const captures = markdownCaptures(document, range).map((capture) => ({
+  const captures = support.markdownCaptures(document, range).map((capture) => ({
     ...capture,
     startIndex: capture.startIndex + offset,
     endIndex: capture.endIndex + offset,
   }))
-  const folds = markdownFolds(document, range).map((fold) => ({
+  const folds = support.markdownFolds(document, range).map((fold) => ({
     ...fold,
     startIndex: fold.startIndex + offset,
     endIndex: fold.endIndex + offset,
