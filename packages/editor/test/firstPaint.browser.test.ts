@@ -24,7 +24,7 @@ import {
   type TreeSitterSyntaxProvider,
   resolveTreeSitterLanguageContribution,
 } from '../../tree-sitter/src/index'
-import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '../../tree-sitter-languages/src/index'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '../../tree-sitter-languages/src/typescript'
 import '../src/style.css'
 
 declare module 'vitest/browser' {

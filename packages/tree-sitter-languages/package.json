@@ -42,6 +42,41 @@
       "types": "./dist/metadata.d.ts",
       "import": "./dist/metadata.js",
       "default": "./dist/metadata.js"
+    },
+    "./css": {
+      "types": "./dist/css.d.ts",
+      "import": "./dist/css.js",
+      "default": "./dist/css.js"
+    },
+    "./html": {
+      "types": "./dist/html.d.ts",
+      "import": "./dist/html.js",
+      "default": "./dist/html.js"
+    },
+    "./javascript": {
+      "types": "./dist/javascript.d.ts",
+      "import": "./dist/javascript.js",
+      "default": "./dist/javascript.js"
+    },
+    "./json": {
+      "types": "./dist/json.d.ts",
+      "import": "./dist/json.js",
+      "default": "./dist/json.js"
+    },
+    "./markdown": {
+      "types": "./dist/markdown.d.ts",
+      "import": "./dist/markdown.js",
+      "default": "./dist/markdown.js"
+    },
+    "./tsx": {
+      "types": "./dist/tsx.d.ts",
+      "import": "./dist/tsx.js",
+      "default": "./dist/tsx.js"
+    },
+    "./typescript": {
+      "types": "./dist/typescript.d.ts",
+      "import": "./dist/typescript.js",
+      "default": "./dist/typescript.js"
     }
   },
   "publishConfig": {

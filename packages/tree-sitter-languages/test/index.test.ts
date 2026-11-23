@@ -9,16 +9,13 @@ import type {
   TreeSitterSyntaxProvider,
 } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../src/catalog.generated'
-import {
-  JAVASCRIPT_TREE_SITTER_LANGUAGE,
-  TYPESCRIPT_TREE_SITTER_LANGUAGE,
-  css,
-  html,
-  javaScript,
-  json,
-  markdown,
-  typeScript,
-} from '../src'
+import { css } from '../src/css'
+import { html } from '../src/html'
+import { JAVASCRIPT_TREE_SITTER_LANGUAGE, javaScript } from '../src/javascript'
+import { json } from '../src/json'
+import { markdown } from '../src/markdown'
+import { tsx } from '../src/tsx'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE, typeScript } from '../src/typescript'
 import { createTestPluginContext } from '@singapore-editor/core/testing'
 
 describe('Tree-sitter language contributions', () => {
@@ -57,8 +54,9 @@ describe('Tree-sitter language contributions', () => {
 
   it('exports one configurable plugin per language', () => {
     const plugins = [
-      javaScript({ jsx: true }),
-      typeScript({ replace: true, tsx: true }),
+      javaScript(),
+      typeScript({ replace: true }),
+      tsx(),
       html(),
       css(),
       json(),
@@ -79,6 +77,7 @@ describe('Tree-sitter language contributions', () => {
       expect(plugins.map((plugin) => plugin.name)).toEqual([
         'tree-sitter-javascript',
         'tree-sitter-typescript',
+        'tree-sitter-tsx',
         'tree-sitter-html',
         'tree-sitter-css',
         'tree-sitter-json',
@@ -111,7 +110,7 @@ describe('Tree-sitter language contributions', () => {
   it.each([
     { id: 'javascript', plugin: () => javaScript() },
     { id: 'typescript', plugin: () => typeScript() },
-    { id: 'tsx', plugin: () => typeScript({ tsx: true }) },
+    { id: 'tsx', plugin: () => tsx() },
     { id: 'html', plugin: () => html() },
     { id: 'css', plugin: () => css() },
     { id: 'json', plugin: () => json() },
@@ -140,30 +139,30 @@ describe('Tree-sitter language contributions', () => {
     },
   )
 
-  it('loads the same merge-unit queries on the simple and catalog paths', async () => {
-    for (const contribution of [JAVASCRIPT_TREE_SITTER_LANGUAGE, TYPESCRIPT_TREE_SITTER_LANGUAGE]) {
-      const assets = await loadAssets(contribution)
-      const catalogAssets = await loadAssets(requiredContribution(contribution.id))
-      expect(assets.mergeUnitQuerySource).toBeTruthy()
-      expect(assets.mergeUnitQuerySource).toBe(catalogAssets.mergeUnitQuerySource)
-    }
+  it('uses the catalog contribution on the simple plugin path', () => {
+    expect(JAVASCRIPT_TREE_SITTER_LANGUAGE).toBe(requiredContribution('javascript'))
+    expect(TYPESCRIPT_TREE_SITTER_LANGUAGE).toBe(requiredContribution('typescript'))
   })
 
-  it('loads JSX folds only for JSX-capable JavaScript and TypeScript assets', async () => {
-    const [javascriptAssets, typescriptAssets, jsxJavascriptAssets, tsxTypescriptAssets] =
-      await Promise.all([
-        loadAssets(JAVASCRIPT_TREE_SITTER_LANGUAGE),
-        loadAssets(TYPESCRIPT_TREE_SITTER_LANGUAGE),
-        loadAssets(requiredContribution('javascript')),
-        loadAssets(requiredContribution('tsx')),
-      ])
+  it('loads JSX folds for JavaScript and TSX but not TypeScript', async () => {
+    const [javascriptAssets, typescriptAssets, tsxAssets] = await Promise.all([
+      loadAssets(JAVASCRIPT_TREE_SITTER_LANGUAGE),
+      loadAssets(TYPESCRIPT_TREE_SITTER_LANGUAGE),
+      loadAssets(requiredContribution('tsx')),
+    ])
 
-    expect(javascriptAssets.foldQuerySource).not.toContain('jsx_element')
+    expect(javascriptAssets.mergeUnitQuerySource).toBeTruthy()
+    expect(typescriptAssets.mergeUnitQuerySource).toBeTruthy()
     expect(typescriptAssets.foldQuerySource).not.toContain('jsx_element')
-    expect(jsxJavascriptAssets.foldQuerySource).toContain('jsx_element')
-    expect(jsxJavascriptAssets.foldQuerySource).toContain('jsx_self_closing_element')
-    expect(tsxTypescriptAssets.foldQuerySource).toContain('jsx_element')
-    expect(tsxTypescriptAssets.foldQuerySource).toContain('jsx_self_closing_element')
+    expect(javascriptAssets.foldQuerySource).toContain('jsx_element')
+    expect(javascriptAssets.foldQuerySource).toContain('jsx_self_closing_element')
+    expect(tsxAssets.foldQuerySource).toContain('jsx_element')
+    expect(tsxAssets.foldQuerySource).toContain('jsx_self_closing_element')
+  })
+
+  it('gives Markdown the resolver and math grammars its worker support loads', async () => {
+    const assets = await loadAssets(requiredContribution('markdown'))
+    expect(Object.keys(assets.extraWasmUrls ?? {}).toSorted()).toEqual(['math', 'resolver'])
   })
 })
 

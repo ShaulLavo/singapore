@@ -156,6 +156,10 @@
       "filenames": [],
       "aliases": ["md", "gfm"],
       "wasm": "tree-sitter-md/tree-sitter-markdown.wasm",
+      "extraWasm": {
+        "resolver": "tree-sitter-md/tree-sitter-md.wasm",
+        "math": "tree-sitter-md/tree-sitter-markdown-math.wasm"
+      },
       "queries": {
         "highlights": [],
         "folds": [],

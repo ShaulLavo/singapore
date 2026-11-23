@@ -306,7 +306,7 @@ function smokeScript(
 
 function nodeGrammarSmokeScript(): string {
   return (
-    `import { JAVASCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages'\n` +
+    `import { JAVASCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages/javascript'\n` +
     `import { Language, Parser } from 'web-tree-sitter'\n\n` +
     `await Parser.init()\n` +
     `const assets = await JAVASCRIPT_TREE_SITTER_LANGUAGE.load()\n` +

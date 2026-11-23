@@ -21,7 +21,7 @@ it.each(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)(
     const language = await Language.load(await readFile(path))
     const assets = await contribution.load!()
     for (const [kind, source] of Object.entries(assets)) {
-      if (kind === 'wasmUrl' || !source) continue
+      if (typeof source !== 'string' || kind === 'wasmUrl' || !source) continue
       admitQuery(language, kind, source, contribution.id)
     }
   },

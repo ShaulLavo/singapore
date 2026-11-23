@@ -4,7 +4,8 @@ import { beforeAll, expect, it } from 'vitest'
 import { Language, Parser, Query } from 'web-tree-sitter'
 import { createPieceTableSnapshot } from '../../editor/src/public/document'
 import { bufferPointToFoldPoint, createFoldMap } from '../../editor/src/foldMap'
-import { JAVASCRIPT_TREE_SITTER_LANGUAGE, TYPESCRIPT_TREE_SITTER_LANGUAGE } from '../src'
+import { JAVASCRIPT_TREE_SITTER_LANGUAGE } from '../src/javascript'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '../src/typescript'
 
 const require = createRequire(import.meta.url)
 const text = readFileSync(new URL('./fixtures/eslint.config.txt', import.meta.url), 'utf8')

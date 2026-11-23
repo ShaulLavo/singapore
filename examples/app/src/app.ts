@@ -13,14 +13,13 @@ import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapore-edito
 import { createMinimapPlugin } from '@singapore-editor/minimap'
 import { createScopeLinesPlugin, createStickyScrollPlugin } from '@singapore-editor/scope-lines'
 import { createSpellcheckPlugin, SpellcheckService } from '@singapore-editor/spellcheck'
-import {
-  css,
-  html,
-  javaScript,
-  json,
-  markdown,
-  typeScript,
-} from '@singapore-editor/tree-sitter-languages'
+import { css } from '@singapore-editor/tree-sitter-languages/css'
+import { html } from '@singapore-editor/tree-sitter-languages/html'
+import { javaScript } from '@singapore-editor/tree-sitter-languages/javascript'
+import { json } from '@singapore-editor/tree-sitter-languages/json'
+import { markdown } from '@singapore-editor/tree-sitter-languages/markdown'
+import { tsx } from '@singapore-editor/tree-sitter-languages/tsx'
+import { typeScript } from '@singapore-editor/tree-sitter-languages/typescript'
 import {
   createTypeScriptLspPlugin,
   type TypeScriptLspDiagnosticSummary,
@@ -91,9 +90,9 @@ export function mountApp(): void {
   })
   const liveDiff = createDiffPlugin({ mode: 'overlay' })
   const languagePlugins: readonly EditorPlugin[] = [
-    javaScript({ jsx: true }),
+    javaScript(),
     typeScript(),
-    typeScript({ tsx: true }),
+    tsx(),
     html(),
     css(),
     json(),
