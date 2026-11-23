@@ -155,8 +155,6 @@ type CachedSyntaxFoldRange = {
   readonly result: EditorSyntaxResult
   readonly snapshot: DocumentTextSnapshot
   readonly tokenRanges: readonly EditorSyntaxRange[]
-  /** Carried through an edit rather than answered for the current text. */
-  readonly projected?: boolean
 }
 
 type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
@@ -260,6 +258,16 @@ export class EditorSyntaxController {
   private currentTokens = EditorTokenStore.empty()
   private rangeTokenOwner: {
     readonly store: EditorTokenStore
+    readonly snapshot: DocumentTextSnapshot
+  } | null = null
+  /**
+   * Set when a newer analysis replaced range answers whose tokens are still painted. The next
+   * answer covering the viewport starts the range tokens again instead of merging into them.
+   */
+  private restartRangeTokens = false
+  /** A range-owned store whose projection through the current edit the editor adopts next. */
+  private projectedRangeTokens: {
+    readonly from: EditorTokenStore
     readonly snapshot: DocumentTextSnapshot
   } | null = null
   private rangeCopyOwner: {
@@ -369,17 +377,9 @@ export class EditorSyntaxController {
       (coverage, cached) => appendCachedSyntaxRange(coverage, cached.range),
       [],
     )
-    // A store the ranges do not own is never compacted, so an on-screen answer dropped here leaves
-    // its tokens painted, and its on-screen folds are the ones a newer answer won (a contributor
-    // that still wins a fold is retained). Its coverage therefore stays true on screen. Dropping
-    // that coverage made the view ask for the range again, and the new answer then displaced its
-    // neighbour: scrolling during a partial analysis requested the same ranges without end.
     const coverage = rangeOwned
       ? completeRanges
-      : intersectSyntaxRanges(
-          this.cachedSyntaxRanges,
-          ranges.reduce(appendCachedSyntaxRange, completeRanges),
-        )
+      : intersectSyntaxRanges(this.cachedSyntaxRanges, completeRanges)
     const discardedOffDemand = oldCache.filter(
       (cached) => !retained.has(cached) && !syntaxRangeListsIntersect([cached.range], ranges),
     )
@@ -510,7 +510,11 @@ export class EditorSyntaxController {
   }
 
   setTokens(tokens: EditorTokenStore, current = true, copyTokens = tokens): void {
+    const projection = this.projectedRangeTokens
+    this.projectedRangeTokens = null
     if (this.rangeTokenOwner?.store !== tokens) this.rangeTokenOwner = null
+    if (projection?.from === this.currentTokens && tokens !== this.currentTokens)
+      this.rangeTokenOwner = { store: tokens, snapshot: projection.snapshot }
     if (!current || this.rangeCopyOwner?.store !== copyTokens) this.rangeCopyOwner = null
     if (!current && tokens !== this.currentTokens)
       this.acceptedCopyTokens = EditorTokenStore.empty()
@@ -528,6 +532,7 @@ export class EditorSyntaxController {
   }
 
   setExternalTokens(tokens: EditorTokenStore): void {
+    this.restartRangeTokens = false
     if (!this.highlighterSession) {
       this.setTokens(tokens)
       return
@@ -545,6 +550,7 @@ export class EditorSyntaxController {
     const structuralTokens = prepared?.highlighter ? undefined : structuralResult?.tokens
     const tokens = highlighterResult?.tokens ?? toEditorTokenStore(structuralTokens ?? [])
 
+    this.restartRangeTokens = false
     this.currentTokens = tokens
     const structural = prepared?.structural
     const read = structural?.session.read(structural.range)
@@ -921,7 +927,15 @@ export class EditorSyntaxController {
     this.pendingInitialHighlightThemeTerminal = null
     this.foldCoverage = null
     this.parsedSyntaxContentVersion = null
-    this.projectSyntaxRangeCache(change)
+    const rangeOwned =
+      !this.highlighterSession && this.rangeTokenOwner?.store === this.currentTokens
+    const from = this.currentTokens
+    const projected = this.projectSyntaxRangeCache(change)
+    // The editor adopts these tokens projected through the edit. They are still the ranges' own:
+    // losing that made the cache trim push neighbouring answers out and ask for them again
+    // without end. When the cache could not follow the edit, the next answer starts over instead.
+    if (rangeOwned && projected) this.projectedRangeTokens = { from, snapshot: change.textSnapshot }
+    if (rangeOwned && !projected) this.restartRangeTokens = true
     if (this.retainedHighlighter) {
       this.refreshHighlightTokens(this.options.getDocumentVersion(), change, { delayMs: 0 })
     }
@@ -1048,7 +1062,14 @@ export class EditorSyntaxController {
       this.warmRangeRequests.cancel()
       this.pendingPrefetch = null
       this.pendingWarm = null
+      // The painted tokens are range answers from the analysis just replaced (with an early
+      // preview, from before the complete parse). Merging the next answers into them would leave
+      // a store the ranges do not own, whose cache trim then pushed neighbouring answers out and
+      // asked for them again without end.
+      const rangeOwned =
+        !this.highlighterSession && this.rangeTokenOwner?.store === this.currentTokens
       this.clearSyntaxRangeCache()
+      this.restartRangeTokens = rangeOwned
       this.parsedSyntaxContentVersion = null
       this.refreshStructuralSyntax(this.options.getDocumentVersion(), null, { delayMs: 0 })
     })
@@ -1563,7 +1584,15 @@ export class EditorSyntaxController {
     const result = loadResult.result
     if (loadResult.updatesDocument) this.markSyntaxDocumentCurrent(loadResult.contentVersion)
     const snapshot = this.options.getSession()?.getTextSnapshot()
+    // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
+    // window that does not cover the viewport would pair brackets across the part it never parsed
+    // and report the rest of the document as being in the host language.
+    const applyScopeFacts = this.shouldApplySyntaxFolds(loadResult)
+    // Only an answer covering the viewport restarts, so nothing on screen loses its colors.
+    const restart = this.restartRangeTokens && !this.highlighterSession && applyScopeFacts
+    if (restart || !loadResult.range) this.restartRangeTokens = false
     const canOwnRanges =
+      restart ||
       this.rangeTokenOwner?.store === this.currentTokens ||
       this.currentTokens.length === 0 ||
       (snapshot &&
@@ -1571,11 +1600,11 @@ export class EditorSyntaxController {
         loadResult.range.endIndex >= snapshot.length)
     const nextTokens = this.highlighterSession
       ? this.currentTokens
-      : this.syntaxTokensForResult(result.tokens, loadResult.range)
-    // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
-    // window that does not cover the viewport would pair brackets across the part it never parsed
-    // and report the rest of the document as being in the host language.
-    const applyScopeFacts = this.shouldApplySyntaxFolds(loadResult)
+      : this.syntaxTokensForResult(
+          result.tokens,
+          loadResult.range,
+          restart ? EditorTokenStore.empty() : this.currentTokens,
+        )
     // Ahead of the tokens, because adopting them is the only notification this pass sends the view
     // contributions: a bracket list assigned after it is a parse late to everyone reading the
     // snapshot, and on a document nobody touches after opening it that means never.
@@ -1779,10 +1808,11 @@ export class EditorSyntaxController {
   private syntaxTokensForResult(
     tokens: EditorTokenInput,
     range: EditorSyntaxRange | null,
+    base: EditorTokenStore,
   ): EditorTokenStore {
     const store = toEditorTokenStore(tokens)
     if (!range) return store
-    return mergeSyntaxRangeTokens(this.currentTokens, store, range)
+    return mergeSyntaxRangeTokens(base, store, range)
   }
 
   private applyCachedSyntaxFolds(range: EditorSyntaxRange): void {
@@ -1822,6 +1852,8 @@ export class EditorSyntaxController {
   }
 
   private clearSyntaxRangeCache(): void {
+    this.restartRangeTokens = false
+    this.projectedRangeTokens = null
     this.lastRangeTrim = null
     this.rangeTokenOwner = null
     this.rangeCopyOwner = null
@@ -1831,29 +1863,26 @@ export class EditorSyntaxController {
     this.cachedSyntaxFoldRanges = []
   }
 
-  private projectSyntaxRangeCache(change: DocumentSessionChange): void {
+  /** Whether the cache followed the edit; otherwise it was cleared. */
+  private projectSyntaxRangeCache(change: DocumentSessionChange): boolean {
     const edit = change.edits[0]
     if (change.edits.length !== 1 || !edit || !canProjectSyntaxRangeCacheThroughEdit(edit)) {
       this.clearSyntaxRangeCache()
-      return
+      return false
     }
 
+    this.cachedSyntaxRanges = projectCachedSyntaxRanges(
+      this.cachedSyntaxRanges,
+      edit,
+      change.snapshot.length,
+    )
     this.cachedSyntaxFoldRanges = projectCachedSyntaxFoldRanges(
       this.cachedSyntaxFoldRanges,
       edit,
       change.snapshot.length,
       change.textSnapshot,
     )
-    // Coverage kept for an answer the trim dropped relied on a newer answer's folds, which a
-    // projected answer serves only where it was queried. Keep only coverage an answer still backs.
-    const answered = this.cachedSyntaxFoldRanges.reduce<readonly EditorSyntaxRange[]>(
-      (ranges, cached) => appendCachedSyntaxRange(ranges, cached.range),
-      [],
-    )
-    this.cachedSyntaxRanges = intersectSyntaxRanges(
-      projectCachedSyntaxRanges(this.cachedSyntaxRanges, edit, change.snapshot.length),
-      answered,
-    )
+    return true
   }
 
   private applyHighlightResult(
@@ -2387,7 +2416,6 @@ const projectCachedSyntaxFoldRanges = (
       range: nextRange,
       tokenRanges: projectCachedSyntaxRanges(range.tokenRanges, edit, documentLength),
       folds: projectFoldRangesThroughInsertion(range.folds, edit, documentLength),
-      projected: true,
     })
   }
   return projected
@@ -2507,14 +2535,11 @@ const cachedSyntaxFoldsForRange = (
 ): readonly FoldRange[] | null => {
   if (syntaxRangeCoverage(range, coverageRanges) !== 'full') return null
 
-  // Folds are looked up by the rule retention keeps them by (foldServesSyntaxRange): by a fold's
-  // own span, since the answer that reported a crossing fold last can have been queried for a
-  // range that is off screen now, except that an answer carried through an edit is trusted only
-  // where it was queried, since a fresh answer elsewhere may already have dropped its fold.
   const foldsByKey = new Map<string, FoldRange>()
   for (const cachedRange of cachedRanges) {
+    if (!syntaxRangesIntersect(cachedRange.range, range)) continue
     for (const fold of cachedRange.folds) {
-      if (!foldServesSyntaxRange(cachedRange, fold, range)) continue
+      if (!foldIntersectsSyntaxRange(fold, range)) continue
       foldsByKey.set(foldRangeKey(fold), fold)
     }
   }
@@ -2529,18 +2554,6 @@ const syntaxRangesIntersect = (left: EditorSyntaxRange, right: EditorSyntaxRange
 
 const foldIntersectsSyntaxRange = (fold: FoldRange, range: EditorSyntaxRange): boolean =>
   fold.startIndex < range.endIndex && fold.endIndex > range.startIndex
-
-/**
- * Whether a cached answer's fold may be shown for a range. Retention and lookup share this rule,
- * so the answer kept for a fold is always one that can serve it.
- */
-const foldServesSyntaxRange = (
-  cached: CachedSyntaxFoldRange,
-  fold: FoldRange,
-  range: EditorSyntaxRange,
-): boolean =>
-  foldIntersectsSyntaxRange(fold, range) &&
-  (!cached.projected || syntaxRangesIntersect(cached.range, range))
 
 const compareFoldRanges = (left: FoldRange, right: FoldRange): number =>
   left.startLine - right.startLine ||
@@ -2693,7 +2706,7 @@ function activeFoldContributors(
   const winners = new Map<string, CachedSyntaxFoldRange>()
   for (const contributor of contributors) {
     for (const fold of contributor.folds) {
-      if (ranges.some((range) => foldServesSyntaxRange(contributor, fold, range)))
+      if (ranges.some((range) => foldIntersectsSyntaxRange(fold, range)))
         winners.set(foldRangeKey(fold), contributor)
     }
   }
