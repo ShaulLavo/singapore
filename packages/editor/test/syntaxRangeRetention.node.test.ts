@@ -358,6 +358,84 @@ describe('syntax range contributor lifetime', () => {
     },
   )
 
+  it.each(['a mixed token store', 'a separate highlighter'] as const)(
+    'keeps a crossing fold when scrolling back during an edit, with %s',
+    async (mode) => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(250))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'edit-scroll-back' })
+      const ranges = vi.fn(async (range: EditorSyntaxRange) => ({
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        records: { languageId: 'typescript', data: new Uint32Array(16) },
+        tokens: EditorTokenStore.fromTokens([
+          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
+        ]),
+        folds:
+          range.endIndex > 40
+            ? [
+                {
+                  startIndex: 40,
+                  endIndex: 400,
+                  startLine: 20,
+                  endLine: 199,
+                  type: 'scope' as const,
+                },
+              ]
+            : [],
+      }))
+      const provider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          queryRange: ranges,
+        })),
+      }
+      const highlighter = {
+        operation: createEditorHighlighterOperation(() => ({
+          analyze: async () => ({
+            tokens: EditorTokenStore.fromTokens([{ start: 0, end: 1, style: { color: 'h' } }]),
+          }),
+          dispose: () => undefined,
+        })),
+      }
+      const view = createView(
+        buffer,
+        analysis,
+        provider,
+        { startIndex: 0, endIndex: 40 },
+        mode === 'a separate highlighter' ? highlighter : undefined,
+      )
+      try {
+        if (mode === 'a mixed token store')
+          view.syntax.setTokens(
+            EditorTokenStore.fromTokens([{ start: 450, end: 451, style: { color: 'earlier' } }]),
+          )
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(1))
+        for (const [startIndex, calls] of [
+          [20, 2],
+          [40, 3],
+        ] as const) {
+          view.setRange({ startIndex, endIndex: startIndex + 40 })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+          await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(calls))
+          await vi.waitFor(() => expect(view.folds()).toBe(1))
+        }
+        // An edit at the end of the file, with no fresh answer yet.
+        const change = createEditorBufferSession(buffer).applyEdits([
+          { from: 500, to: 500, text: '!' },
+        ])
+        view.syntax.acceptChange(change)
+        view.setRange({ startIndex: 40, endIndex: 60 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(view.folds()).toBe(1)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    },
+  )
+
   it('does not bring back a crossing fold that a fresh answer after an edit dropped', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'stale-fold' })

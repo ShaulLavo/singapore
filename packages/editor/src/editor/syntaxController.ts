@@ -1838,16 +1838,21 @@ export class EditorSyntaxController {
       return
     }
 
-    this.cachedSyntaxRanges = projectCachedSyntaxRanges(
-      this.cachedSyntaxRanges,
-      edit,
-      change.snapshot.length,
-    )
     this.cachedSyntaxFoldRanges = projectCachedSyntaxFoldRanges(
       this.cachedSyntaxFoldRanges,
       edit,
       change.snapshot.length,
       change.textSnapshot,
+    )
+    // Coverage kept for an answer the trim dropped relied on a newer answer's folds, which a
+    // projected answer serves only where it was queried. Keep only coverage an answer still backs.
+    const answered = this.cachedSyntaxFoldRanges.reduce<readonly EditorSyntaxRange[]>(
+      (ranges, cached) => appendCachedSyntaxRange(ranges, cached.range),
+      [],
+    )
+    this.cachedSyntaxRanges = intersectSyntaxRanges(
+      projectCachedSyntaxRanges(this.cachedSyntaxRanges, edit, change.snapshot.length),
+      answered,
     )
   }
 

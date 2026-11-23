@@ -292,6 +292,8 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     readonly kind: string
     readonly source: string
     readonly range: EditorSyntaxRange
+    /** The number of counted requests when this one started. */
+    readonly request: number
   }[] = []
   let rangeRequests = 0
   syntax.loadSyntaxRangeResult = (...args: Parameters<typeof loadRange>) => {
@@ -300,9 +302,11 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     // needs the range answers that looped.
     if (source === 'warm') return new Promise<never>(() => undefined)
     rangeRequests++
+    const request = rangeRequests
     if (rangeRequests > rangeRequestCap) return new Promise<never>(() => undefined)
     return loadRange(...args).then((loaded: { readonly result: EditorSyntaxResult }) => {
-      answers.push({ kind: loaded.result.projection.analysis?.kind ?? 'none', source, range })
+      const kind = loaded.result.projection.analysis?.kind ?? 'none'
+      answers.push({ kind, source, range, request })
       return loaded
     })
   }
@@ -336,7 +340,7 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await expect.poll(() => published, { timeout: 20_000 }).toBe(true)
     unsubscribe()
     await userEvent.keyboard('const value = 42; ')
-    const answersBeforeScroll = answers.length
+    const requestsBeforeScroll = rangeRequests
     const scroll: HTMLElement = editor['view'].scrollElement
     // Uneven steps line the scroll up against range answers in many ways; the loop needed a few
     // neighbouring answers on screen at once and never ended once it began.
@@ -349,26 +353,21 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(await frameOrTimeout(10_000)).toBe('frame')
     expect(rangeRequests).toBeLessThan(rangeRequestCap)
-    // The scroll reached text far below the middle, a complete answer asked for after the scroll
-    // began covers it, and that text is painted.
+    // The scroll reached text far below the middle, a complete answer to a request made after the
+    // scroll began covers it, and syntax colors are registered on the rows shown there.
     const reached: EditorSyntaxRange = syntax['options'].getVisibleSyntaxRange()
     expect(reached.startIndex).toBeGreaterThan(middle + 20_000)
     const covers = (range: EditorSyntaxRange) =>
       range.startIndex <= reached.startIndex && reached.endIndex <= range.endIndex
     await expect
       .poll(() =>
-        answers
-          .slice(answersBeforeScroll)
-          .some((answer) => answer.kind === 'full' && covers(answer.range)),
+        answers.some(
+          (answer) =>
+            answer.request > requestsBeforeScroll && answer.kind === 'full' && covers(answer.range),
+        ),
       )
       .toBe(true)
-    const painted = syntax.tokens.toTokens()
-    expect(
-      painted.some(
-        (token: { readonly start: number }) =>
-          reached.startIndex <= token.start && token.start < reached.endIndex,
-      ),
-    ).toBe(true)
+    await expect.poll(() => visibleSyntaxHighlights(host, scroll)).toBeGreaterThan(0)
   } finally {
     editor.dispose()
     host.remove()
@@ -388,6 +387,23 @@ function generatedLine(line: number): string {
   if (line % 25 === 2) return `  return label + ":" + String(value * ${line})`
   if (line % 25 === 3) return '}'
   return `export const item_${line}: number = computeValue(${line}, "label-${line}");`
+}
+
+function visibleSyntaxHighlights(host: HTMLElement, scroll: HTMLElement): number {
+  const viewport = scroll.getBoundingClientRect()
+  let count = 0
+  for (const [name, highlight] of CSS.highlights) {
+    if (!name.startsWith('editor-shared-token-')) continue
+    for (const range of highlight) {
+      const node = (range as AbstractRange).startContainer
+      if (!host.contains(node)) continue
+      const element = node instanceof Element ? node : node.parentElement
+      if (!element) continue
+      const box = element.getBoundingClientRect()
+      if (box.height > 0 && box.bottom > viewport.top && box.top < viewport.bottom) count++
+    }
+  }
+  return count
 }
 
 function frameOrTimeout(timeoutMs: number): Promise<'frame' | 'timeout'> {
