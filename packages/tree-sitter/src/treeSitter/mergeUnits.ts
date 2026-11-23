@@ -171,8 +171,7 @@ function nodeContentKey(node: Node, cancelled?: () => boolean): string | undefin
   }
 }
 
-/** Whether an ERROR or MISSING node intersects the range. */
-export function mergeRangeHasErrors(
+function mergeRangeHasErrors(
   root: Node,
   range: TreeSitterSyntaxRange,
   cancelled?: () => boolean,
