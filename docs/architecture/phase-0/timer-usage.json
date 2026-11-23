@@ -543,16 +543,24 @@
       "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
       "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:00a37bab4d",
       "justification": "Yields one macrotask between warm-up compiles so a parse or edit message queued meanwhile runs before the next language; worker-task tracking keeps idle fences behind warm-up.",
-      "line": 340,
+      "line": 359,
       "snippet": "const yieldToMessages = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))"
     },
     {
       "api": "setTimeout",
       "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
-      "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:74252f76bf",
-      "justification": "Runs once after the parse answer is posted; it re-checks that the document is still cached and idle, so a late or stale callback does nothing.",
-      "line": 965,
-      "snippet": "setTimeout(() => reparseIdleDocument(runtimeSessionId, document, runtime), 0)"
+      "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:12f91c71b2",
+      "justification": "One quiet round before a closed document is freed. A timer, not a posted message: it has to outlast the round trips between the requests of a document opened in its place. `waitForQuiet` bounds the rounds.",
+      "line": 4348,
+      "snippet": "setTimeout(resolve, DOCUMENT_RELEASE_QUIET_MS)"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
+      "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:21b122d19d",
+      "justification": "Runs after the parse answer is posted; it re-checks that the document is still cached and idle, so a late or stale callback does nothing.",
+      "line": 991,
+      "snippet": "setTimeout(() => {"
     },
     {
       "api": "setTimeout",

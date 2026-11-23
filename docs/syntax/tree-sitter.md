@@ -49,6 +49,13 @@ The main thread may render syntax results, but it must not synchronously parse o
 
 Each parse result is tied to a document snapshot/version. Consumers must be able to reject syntax results whose base snapshot is older than the visible document state.
 
+### Long requests
+
+A page without cross-origin isolation has no shared memory, so it cannot interrupt a running worker. The worker therefore never runs long without returning to its message loop:
+
+- A range query against a parsed document runs in slices of 8,192 units and yields between slices once 8 ms have passed. A request queued behind it (a newly opened document, rows just scrolled into view) waits for one slice. The answer is the same as one query over the whole range: a node that crosses a slice boundary is reported by the slice that contains its start, and brackets and errors come from one walk over the whole range that pauses and resumes. A query whose document was closed or edited meanwhile stops at its next slice. If its snapshot was replaced by another parse of the same text, it starts over on the replacement.
+- A closed document is forgotten at once, and its trees are freed after the first 20 ms in which no request arrived, a few milliseconds at a time. The document opened in its place is queued right behind the close, and its first colors need a handful of short requests: they run before the release, and what follows them runs between its steps. The wait counts request arrivals, with a bound of 100 rounds.
+
 ## Incremental Parse Pipeline
 
 1. Worker receives an edit batch against snapshot `S`.
