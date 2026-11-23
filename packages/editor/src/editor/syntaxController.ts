@@ -46,7 +46,11 @@ import type {
   EditorPreparedTagValue,
   EditorPreparedTabSizePolicy,
 } from './preparedDocument'
-import { projectSyntaxRangesThroughEdits, removeTokensInRanges } from './syntaxRangeTokens'
+import {
+  projectSyntaxRangesThroughEdits,
+  removeTokensInRanges,
+  shownTokenAnchors,
+} from './syntaxRangeTokens'
 import { nowMs } from './timing'
 import {
   editorPerformanceDiagnosticsEnabled,
@@ -399,20 +403,30 @@ export class EditorSyntaxController {
   /**
    * Removes the range answers' tokens that nothing needs any more. A piece no answer covers goes
    * whole, once none of it is shown: until then it is what the text shows while it waits for its
-   * answer (after a newer analysis or an edit the cache could not follow).
+   * answer (after a newer analysis or an edit the cache could not follow). A token of such a
+   * piece that still paints shown text keeps one character of the piece, and with it its place
+   * in the list.
    */
   private trimRangeTokens(
     coverage: readonly EditorSyntaxRange[],
     shown: readonly EditorSyntaxRange[],
   ): void {
-    const dropped = subtractSyntaxRanges(this.rangeTokenRanges, coverage).filter(
+    const painted = this.rangeTokenRanges
+    const unneeded = subtractSyntaxRanges(painted, coverage).filter(
       (piece) => !syntaxRangeListsIntersect([piece], shown),
     )
+    if (unneeded.length === 0) return
+
+    const needed = subtractSyntaxRanges(painted, unneeded)
+    const tokens = this.currentTokens
+    const kept = unneeded
+      .flatMap((piece) => shownTokenAnchors(tokens, piece, shown, needed))
+      .reduce<readonly EditorSyntaxRange[]>(appendCachedSyntaxRange, needed)
+    const dropped = subtractSyntaxRanges(painted, kept)
     if (dropped.length === 0) return
 
-    const kept = subtractSyntaxRanges(this.rangeTokenRanges, dropped)
     this.rangeTokenRanges = kept
-    this.currentTokens = removeTokensInRanges(this.currentTokens, dropped, kept)
+    this.currentTokens = removeTokensInRanges(tokens, dropped, kept)
   }
 
   private stopOptionalWarm(snapshot: DocumentTextSnapshot): void {
@@ -578,11 +592,15 @@ export class EditorSyntaxController {
     this.carriedRangeTokens = null
     const structural = prepared?.structural
     const read = structural?.session.read(structural.range)
-    // The whole store is the prepared range answer's tokens, wherever they lie.
-    this.rangeTokenRanges =
-      !prepared?.highlighter && read?.kind === 'ready' && read.result === structuralResult
-        ? [{ startIndex: 0, endIndex: read.snapshot.length }]
-        : []
+    // A session that answers ranges prepared a range answer, and the whole store is that
+    // answer's tokens, wherever they lie. One that cannot prepared its whole-document result:
+    // what the trim removed from it could never be asked for again.
+    const rangeAnswer =
+      !prepared?.highlighter &&
+      read?.kind === 'ready' &&
+      read.result === structuralResult &&
+      (structural?.session.canQueryRange?.() ?? true)
+    this.rangeTokenRanges = rangeAnswer ? [{ startIndex: 0, endIndex: read.snapshot.length }] : []
     this.preparedInitialTokensInstalled = Boolean(highlighterResult || structuralTokens)
     if (highlighterResult?.theme !== undefined) this.setHighlighterTheme(highlighterResult.theme)
     return tokens
@@ -1706,12 +1724,14 @@ export class EditorSyntaxController {
   /**
    * The first answer from the parse of this text. Answers carried through the edits before it
    * stood in for it; they describe the old parse, so they stop counting as answers here, and
-   * what they covered is asked for again when it is shown.
+   * what they covered is asked for again when it is shown. Folds repainted from them no longer
+   * cover the viewport either; they stay painted until the new parse's folds replace them.
    */
   private acceptSyntaxDocument(contentVersion: number): void {
     if (this.parsedSyntaxContentVersion !== contentVersion) {
       this.cachedSyntaxRanges = []
       this.cachedSyntaxFoldRanges = []
+      this.foldCoverage = null
     }
     this.markSyntaxDocumentCurrent(contentVersion)
   }

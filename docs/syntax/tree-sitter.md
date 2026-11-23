@@ -84,6 +84,8 @@ A range-mode editor asks for the text it shows, one range at a time, and keeps t
 
 After a newer analysis or an edit the cache cannot follow, the old tokens stay painted with no answers behind them. New answers write over them range by range, and the trim removes what scrolls away unanswered.
 
+A token can reach past the range it was written for. The trim keeps a token while it reaches a kept range. A token of a removed range that still paints shown text keeps one character of that range in the list, so it stays painted and is removed once it is shown no more. A session that cannot answer ranges prepares its whole-document result, whose tokens are not in the list. One case leaves a token the trim cannot find again: [range colors orphaned by an edit](../limitations.md#range-colors-orphaned-by-an-edit).
+
 ### Read-only slices
 
 `createTreeSitterSliceHighlighter` uses the same worker, root grammar, highlight query, and token styles. It accepts a plain string and returns UTF-16 spans relative to that string. A caller can include adjacent text it already holds and choose which spans to paint. Pass the input verbatim, including CRLF and any real line breaks at fragment boundaries. The slice highlighter has no source reader or document session.

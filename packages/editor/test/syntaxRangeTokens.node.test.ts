@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   projectSyntaxRangesThroughEdits,
   removeTokensInRanges,
+  shownTokenAnchors,
 } from '../src/editor/syntaxRangeTokens'
 import { EditorTokenStore } from '../src/syntax/tokenStore'
 
@@ -93,5 +94,34 @@ describe('removeTokensInRanges', () => {
     const store = EditorTokenStore.fromTokens([token(0, 5), token(8, 12), token(30, 35)])
     expect(removeTokensInRanges(store, [range(10, 20)], [range(0, 10)])).toBe(store)
     expect(removeTokensInRanges(store, [range(40, 50)], [])).toBe(store)
+  })
+})
+
+describe('shownTokenAnchors', () => {
+  const shown = [range(100, 200)]
+
+  it('anchors a token that reaches from the range into shown text', () => {
+    const store = EditorTokenStore.fromTokens([token(12, 14), token(15, 150), token(160, 170)])
+    expect(shownTokenAnchors(store, range(10, 20), shown, [])).toEqual([range(15, 16)])
+  })
+
+  it('anchors a token that starts before the range at the start of the range', () => {
+    const store = EditorTokenStore.fromTokens([token(5, 150)])
+    expect(shownTokenAnchors(store, range(10, 20), shown, [])).toEqual([range(10, 11)])
+  })
+
+  it('leaves a token that already reaches a kept range to that range', () => {
+    const store = EditorTokenStore.fromTokens([token(15, 150)])
+    expect(shownTokenAnchors(store, range(10, 20), shown, [range(120, 140)])).toEqual([])
+  })
+
+  it('anchors nothing when no token of the range reaches shown text', () => {
+    const store = EditorTokenStore.fromTokens([token(12, 14), token(15, 60), token(110, 120)])
+    expect(shownTokenAnchors(store, range(10, 20), shown, [])).toEqual([])
+  })
+
+  it('finds a nested token that reaches shown text behind shorter ones', () => {
+    const store = EditorTokenStore.fromTokens([token(11, 150), token(12, 14), token(16, 18)])
+    expect(shownTokenAnchors(store, range(10, 20), shown, [])).toEqual([range(11, 12)])
   })
 })

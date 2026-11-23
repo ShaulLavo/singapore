@@ -72,29 +72,77 @@ function removeTokensInRange(
   range: EditorSyntaxRange,
   kept: readonly EditorSyntaxRange[],
 ): EditorTokenStore {
-  const last = store.firstStartingAtOrAfter(range.endIndex)
-  const first = store.firstEndingAfter(range.startIndex, last)
-  if (first >= last) return store
+  const edges = edgeTokens(store, range)
+  if (!edges) return store
 
-  // Tokens that start inside the range and end inside it go unchecked. Only the ones around
-  // them, which start before the range or end after it, can reach a kept range.
-  const inside = Math.max(first, store.firstStartingAtOrAfter(range.startIndex))
-  const after = Math.max(inside, store.firstEndingAfter(range.endIndex, last))
-  const survivors = createTokenRun(inside - first + last - after)
-  const keep = (start: number, end: number, styleId: number): void => {
+  const survivors = createTokenRun(edges.inside - edges.first + edges.last - edges.after)
+  forEachEdgeToken(store, edges, (start, end, styleId) => {
     // With nested tokens the window can hold one that ends before the range; it is not in it.
     const reachesIn = end > range.startIndex
     if (reachesIn && !tokenReachesRanges(start, end, kept)) return
     writeTokenRun(survivors, start, end, styleId)
-  }
-  store.forEachInRange(first, inside, keep)
-  store.forEachInRange(after, last, keep)
-  if (survivors.count === last - first) return store
+  })
+  if (survivors.count === edges.last - edges.first) return store
 
-  return store.replaceRange(first, last, finishTokenRun(survivors), {
+  return store.replaceRange(edges.first, edges.last, finishTokenRun(survivors), {
     delta: 0,
     keepsLiveRanges: null,
   })
+}
+
+/**
+ * One character of `range` under each token that reaches into it and into `shown` but into none
+ * of `kept`. A token written for a range can paint text far from it; while that text is shown,
+ * this character keeps the token a range of its own, so it is neither removed now nor left
+ * behind later.
+ */
+export function shownTokenAnchors(
+  store: EditorTokenStore,
+  range: EditorSyntaxRange,
+  shown: readonly EditorSyntaxRange[],
+  kept: readonly EditorSyntaxRange[],
+): readonly EditorSyntaxRange[] {
+  const edges = edgeTokens(store, range)
+  if (!edges) return []
+
+  const anchors: EditorSyntaxRange[] = []
+  forEachEdgeToken(store, edges, (start, end) => {
+    if (end <= range.startIndex || !tokenReachesRanges(start, end, shown)) return
+    if (tokenReachesRanges(start, end, kept)) return
+    const startIndex = Math.max(start, range.startIndex)
+    anchors.push({ startIndex, endIndex: startIndex + 1 })
+  })
+  return anchors
+}
+
+type EdgeTokens = {
+  readonly first: number
+  readonly inside: number
+  readonly after: number
+  readonly last: number
+}
+
+/**
+ * The tokens reaching into `range` are `[first, last)`. Those in `[inside, after)` start inside
+ * it and end inside it; only the ones around them can reach text outside the range.
+ */
+function edgeTokens(store: EditorTokenStore, range: EditorSyntaxRange): EdgeTokens | null {
+  const last = store.firstStartingAtOrAfter(range.endIndex)
+  const first = store.firstEndingAfter(range.startIndex, last)
+  if (first >= last) return null
+
+  const inside = Math.max(first, store.firstStartingAtOrAfter(range.startIndex))
+  const after = Math.max(inside, store.firstEndingAfter(range.endIndex, last))
+  return { first, inside, after, last }
+}
+
+function forEachEdgeToken(
+  store: EditorTokenStore,
+  edges: EdgeTokens,
+  visit: (start: number, end: number, styleId: number) => void,
+): void {
+  store.forEachInRange(edges.first, edges.inside, visit)
+  store.forEachInRange(edges.after, edges.last, visit)
 }
 
 function tokenReachesRanges(

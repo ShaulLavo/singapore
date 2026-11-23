@@ -87,6 +87,14 @@ Each entry names its source and whether the limit is expected to change.
 - Why. Bounded initial parsing can paint the viewport before full-document analysis finishes. Starting at zero preserves grammar entry context; partial structure cannot describe the whole document.
 - Outlook. The prefix cap is a work budget, not a maximum file size.
 
+### Range colors orphaned by an edit
+
+- Limit. The editor records which **ranges** of the painted colors range answers wrote, not which tokens. A token an answer wrote can reach past the range it was asked for. If one edit replaces that whole range and the token survives the edit, no range records the token any more.
+- Source. `rangeTokenRanges` in [syntaxController.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/editor/syntaxController.ts) and `projectSyntaxRangesThroughEdits` in [syntaxRangeTokens.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/editor/syntaxRangeTokens.ts).
+- What you see. Nothing while the token is shown. After the view leaves, the frame trim does not remove it. It goes when a later answer covers text it reaches, or when the host installs tokens. It takes one deletion or replacement that covers a whole recorded range and lies inside a single token that is longer still, such as a long comment or string.
+- Why. Host tokens can overlap such a token on both sides, and ranges cannot tell them apart. Telling them apart needs each token's origin in the token store.
+- Outlook. Recording token origins in the store would remove the limit. Only an edit can orphan a token, and before ranges were tracked no token was removed after an edit at all.
+
 ### Tree-sitter operation budgets
 
 - Limit. Parsing and range queries each use a **20,000 ms** elapsed-work budget. Cancellation checks enforce it cooperatively, so it is not an exact wall-clock deadline for every native call.

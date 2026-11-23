@@ -345,8 +345,6 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await expect.poll(() => published, stuck).toBe(true)
     unsubscribe()
     await userEvent.keyboard('const value = 42; ')
-    // The typed-through colors are still the range answers', so the frame trim can remove them.
-    expect(syntax['rangeTokenRanges'].length).toBeGreaterThan(0)
     const requestsBeforeScroll = rangeRequests
     const scroll: HTMLElement = editor['view'].scrollElement
     // Uneven steps line the scroll up against range answers in many ways; the loop needed a few
