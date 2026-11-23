@@ -285,6 +285,79 @@ describe('syntax range contributor lifetime', () => {
     },
   )
 
+  it.each(['a mixed token store', 'a separate highlighter'] as const)(
+    'keeps a crossing fold when scrolling back past the answer that reported it, with %s',
+    async (mode) => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(250))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'scroll-back' })
+      // Every answer that reaches past 40 reports the fold that starts there.
+      const ranges = vi.fn(async (range: EditorSyntaxRange) => ({
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        records: { languageId: 'typescript', data: new Uint32Array(16) },
+        tokens: EditorTokenStore.fromTokens([
+          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
+        ]),
+        folds:
+          range.endIndex > 40
+            ? [
+                {
+                  startIndex: 40,
+                  endIndex: 400,
+                  startLine: 20,
+                  endLine: 199,
+                  type: 'scope' as const,
+                },
+              ]
+            : [],
+      }))
+      const provider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          queryRange: ranges,
+        })),
+      }
+      const highlighter = {
+        operation: createEditorHighlighterOperation(() => ({
+          analyze: async () => ({
+            tokens: EditorTokenStore.fromTokens([{ start: 0, end: 1, style: { color: 'h' } }]),
+          }),
+          dispose: () => undefined,
+        })),
+      }
+      const view = createView(
+        buffer,
+        analysis,
+        provider,
+        { startIndex: 0, endIndex: 40 },
+        mode === 'a separate highlighter' ? highlighter : undefined,
+      )
+      try {
+        if (mode === 'a mixed token store')
+          view.syntax.setTokens(
+            EditorTokenStore.fromTokens([{ start: 450, end: 451, style: { color: 'earlier' } }]),
+          )
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(1))
+        for (const [startIndex, calls] of [
+          [20, 2],
+          [40, 3],
+        ] as const) {
+          view.setRange({ startIndex, endIndex: startIndex + 40 })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+          await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(calls))
+          await vi.waitFor(() => expect(view.folds()).toBe(1))
+        }
+        view.setRange({ startIndex: 20, endIndex: 60 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.folds()).toBe(1))
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    },
+  )
+
   it('keeps an actual crossing fold contributor when its query lies outside the new frame', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'crossing' })

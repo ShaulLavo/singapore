@@ -2499,9 +2499,10 @@ const cachedSyntaxFoldsForRange = (
 ): readonly FoldRange[] | null => {
   if (syntaxRangeCoverage(range, coverageRanges) !== 'full') return null
 
+  // A fold is looked up by its own span, as retention keeps it (activeFoldContributors): the answer
+  // that reported a crossing fold last can have been queried for a range that is off screen now.
   const foldsByKey = new Map<string, FoldRange>()
   for (const cachedRange of cachedRanges) {
-    if (!syntaxRangesIntersect(cachedRange.range, range)) continue
     for (const fold of cachedRange.folds) {
       if (!foldIntersectsSyntaxRange(fold, range)) continue
       foldsByKey.set(foldRangeKey(fold), fold)
