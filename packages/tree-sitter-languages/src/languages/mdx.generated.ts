@@ -13,6 +13,7 @@ export const mdxContribution: TreeSitterLanguageContribution = {
     const assets = await import('./mdx.assets.generated')
     return {
       wasmUrl: assets.wasmUrl,
+      extraWasmUrls: assets.extraWasmUrls,
       highlightQuerySource: mapQueryCaptures(assets.highlightQuerySource, captureMappings),
       foldQuerySource: '',
       injectionQuerySource: mapQueryCaptures(assets.injectionQuerySource, captureMappings),

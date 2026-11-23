@@ -2,8 +2,16 @@
 // oxlint-disable-next-line typescript-eslint/triple-slash-reference
 /// <reference path="../vite-assets.d.ts" />
 import wasmUrl from '../grammars/tree-sitter-mdx.wasm?url'
+import markdownWasmUrl from 'tree-sitter-md/tree-sitter-markdown.wasm?url'
+import resolverWasmUrl from 'tree-sitter-md/tree-sitter-md.wasm?url'
+import mathWasmUrl from 'tree-sitter-md/tree-sitter-markdown-math.wasm?url'
 import query0 from '../queries/mdx-highlights.scm?raw'
 import query1 from '../queries/mdx-injections.scm?raw'
 export { wasmUrl }
+export const extraWasmUrls: Readonly<Record<string, string>> = {
+  markdown: markdownWasmUrl,
+  resolver: resolverWasmUrl,
+  math: mathWasmUrl,
+}
 export const highlightQuerySource: string = query0
 export const injectionQuerySource: string = query1

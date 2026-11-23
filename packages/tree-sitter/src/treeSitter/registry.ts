@@ -8,8 +8,9 @@ export type TreeSitterLanguageAssets = {
   readonly mergeUnitQuerySource?: string
   /**
    * Grammars the language's native support loads besides `wasmUrl`. Markdown names `resolver`
-   * (tree-sitter-md.wasm) and `math` (tree-sitter-markdown-math.wasm). They come from the
-   * language's plugin so an app that never highlights Markdown never bundles them.
+   * (tree-sitter-md.wasm) and `math` (tree-sitter-markdown-math.wasm); MDX, which parses its
+   * prose with the same support, also names `markdown`. They come from the language's plugin so
+   * an app that never highlights Markdown never bundles them.
    */
   readonly extraWasmUrls?: Readonly<Record<string, string>>
 }

@@ -160,9 +160,11 @@ describe('Tree-sitter language contributions', () => {
     expect(tsxAssets.foldQuerySource).toContain('jsx_self_closing_element')
   })
 
-  it('gives Markdown the resolver and math grammars its worker support loads', async () => {
-    const assets = await loadAssets(requiredContribution('markdown'))
-    expect(Object.keys(assets.extraWasmUrls ?? {}).toSorted()).toEqual(['math', 'resolver'])
+  it('gives Markdown and MDX the tree-sitter-md grammars the worker support loads', async () => {
+    const markdown = await loadAssets(requiredContribution('markdown'))
+    const mdx = await loadAssets(requiredContribution('mdx'))
+    expect(Object.keys(markdown.extraWasmUrls ?? {}).toSorted()).toEqual(['math', 'resolver'])
+    expect(mdx.extraWasmUrls).toEqual({ markdown: markdown.wasmUrl, ...markdown.extraWasmUrls })
   })
 })
 

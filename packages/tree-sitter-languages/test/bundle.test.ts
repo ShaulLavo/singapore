@@ -88,10 +88,13 @@ it('emits every grammar for the catalog', async () => {
     }[]
   }
   // File names, not ids: `shellscript` ships `tree-sitter-bash.wasm`.
-  const expected = manifest.languages.flatMap((language) =>
-    [language.wasm]
-      .concat(Object.values(language.extraWasm ?? {}))
-      .map((file) => file.split('/').at(-1)!),
+  // Markdown and MDX name the same tree-sitter-md grammars; each file is emitted once.
+  const expected = new Set(
+    manifest.languages.flatMap((language) =>
+      [language.wasm]
+        .concat(Object.values(language.extraWasm ?? {}))
+        .map((file) => file.split('/').at(-1)!),
+    ),
   )
-  expect(grammars).toEqual(expected.toSorted())
+  expect(grammars).toEqual(Array.from(expected).toSorted())
 }, 60_000)

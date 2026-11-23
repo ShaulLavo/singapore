@@ -324,17 +324,19 @@ const loadMarkdown = async (): Promise<MarkdownSupport> => {
   return support
 }
 
-// The Markdown language registration (an MDX one names it as a dependency) carries the grammars,
-// so the worker itself references none and apps without Markdown never emit them.
+// The Markdown and MDX registrations carry tree-sitter-md's grammars, so the worker itself
+// references none and apps without either never emit them.
 const markdownGrammarUrls = (): MarkdownSupportModule.MarkdownGrammarUrls => {
-  const descriptor = languageDescriptors.get('markdown')
-  const resolver = descriptor?.extraWasmUrls?.['resolver']
-  const math = descriptor?.extraWasmUrls?.['math']
-  if (!descriptor || !resolver || !math)
-    throw new Error(
-      'Markdown needs the markdown language registered with its resolver and math grammars',
-    )
-  return { grammar: descriptor.wasmUrl, resolver, math }
+  const markdown = languageDescriptors.get('markdown')
+  const urls = markdown
+    ? { markdown: markdown.wasmUrl, ...markdown.extraWasmUrls }
+    : languageDescriptors.get('mdx')?.extraWasmUrls
+  const grammar = urls?.['markdown']
+  const resolver = urls?.['resolver']
+  const math = urls?.['math']
+  if (!grammar || !resolver || !math)
+    throw new Error('Markdown needs a markdown or mdx language registered with its grammars')
+  return { grammar, resolver, math }
 }
 
 /** For code that reads a Markdown document, which only exists once `loadMarkdown` has settled. */
