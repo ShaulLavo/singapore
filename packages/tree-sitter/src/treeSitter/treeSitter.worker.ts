@@ -20,6 +20,7 @@ import {
   enclosingMergeUnit,
   touchingMergeUnits,
   lineMergeUnit,
+  mergeRangeHasErrors,
 } from './mergeUnits'
 import type { EditorSyntaxAnalysis } from '@singapore-editor/core/syntax'
 import {
@@ -1385,7 +1386,22 @@ const disposeBootstrap = (runtimeSessionId: string): void => {
   bootstrapDocuments.delete(runtimeSessionId)
 }
 
-const yieldWorker = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+// Slices yield through a posted message: nested setTimeout(0) is clamped to 4 ms after five levels,
+// which left the worker idle a third of the time between 8 ms parse slices. A message is still a
+// macrotask, so requests and cancellations queued meanwhile run between slices.
+const pendingYields: (() => void)[] = []
+let yieldChannel: MessageChannel | null = null
+const yieldWorker = (): Promise<void> =>
+  new Promise((resolve) => {
+    if (!yieldChannel) {
+      yieldChannel = new MessageChannel()
+      yieldChannel.port1.onmessage = () => pendingYields.shift()?.()
+      // Node keeps a port with a listener alive; the worker's lifetime is its owner's decision.
+      ;(yieldChannel.port1 as { unref?: () => void }).unref?.()
+    }
+    pendingYields.push(resolve)
+    yieldChannel.port2.postMessage(null)
+  })
 
 const parseCompleteRoot = async (
   runtime: Runtime,
@@ -1524,9 +1540,12 @@ const queryBootstrapRange = async (
 
   const preview = staged.preview
   if (!preview) return undefined
-  // Recovery in a truncated tree can reinterpret tokens before the error's range.
-  if (preview.layers.some((layer) => layer.tree.rootNode.hasError)) return undefined
   const range = normalizedSyntaxRange(request.range, staged.source.length)
+  // Cutting the source almost always leaves an error at the cut, past the requested range.
+  // Recovery that reinterprets earlier tokens wraps them in an ERROR node, so an error
+  // touching the range means the preview may disagree with the complete tree there.
+  if (preview.layers.some((layer) => mergeRangeHasErrors(layer.tree.rootNode, range)))
+    return undefined
   const result = await flattenDocumentRange(preview, context, {
     range,
     includeHighlights: request.includeHighlights,

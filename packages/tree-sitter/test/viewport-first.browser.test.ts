@@ -75,6 +75,38 @@ it.each([
   30_000,
 )
 
+it.each([
+  [
+    'typescript',
+    'class Large {\n',
+    '  method(value: number): string { return `${value}` }\n',
+    '}\n',
+  ],
+  ['typescript', 'export function large() {\n', '  const item = compute(1, "one");\n', '}\n'],
+  ['typescript', 'const a = 1;\n', 'const value_1: number = compute(1, "one");\n', ''],
+])(
+  'previews %s while the cut leaves an error past the visible range',
+  async (languageId, prefix, line, suffix) => {
+    const text = prefix + line.repeat(Math.ceil(120_000 / line.length)) + suffix
+    const doc = document(text, languageId)
+    await doc.run()
+    const range = { startIndex: 0, endIndex: 400 }
+    const preview = await doc.runtime.queryRange(range)
+    expect(preview.projection.analysis?.kind).toBe('partial')
+    expect(preview.captures.length).toBeGreaterThan(0)
+    await expect
+      .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+      .toBe('full')
+    const complete = await doc.runtime.queryRange(range)
+    const visible = (result: typeof preview) =>
+      result.captures
+        .filter((capture) => capture.startIndex < range.endIndex)
+        .map((capture) => ({ ...capture, endIndex: Math.min(range.endIndex, capture.endIndex) }))
+    expect(visible(preview)).toEqual(visible(complete))
+  },
+  30_000,
+)
+
 it('never treats a preview tree as complete context after a jump', async () => {
   const doc = document('/*' + 'comment\n'.repeat(12_000) + '*/\nconst answer = 42;\n')
   await doc.run()
