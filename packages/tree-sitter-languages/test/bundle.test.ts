@@ -31,7 +31,12 @@ async function emittedGrammars(entry: string): Promise<string[]> {
   return output.output
     .map((file) => file.fileName)
     .filter((name) => name.endsWith('.wasm'))
-    .map((name) => /tree-sitter-([a-z_-]+?)-[\w-]{8}\.wasm$/.exec(name)?.[1] ?? name)
+    .map((name) =>
+      name
+        .split('/')
+        .at(-1)!
+        .replace(/-[\w-]{8}\.wasm$/, '.wasm'),
+    )
     .toSorted()
 }
 
@@ -41,16 +46,16 @@ it('emits only the grammars a typeScript() app can load', async () => {
   )
   // The root entry's own exports name these languages; none of the others may appear.
   expect(grammars).toEqual([
-    'astro',
-    'css',
-    'html',
-    'javascript',
-    'jsdoc',
-    'json',
-    'markdown',
-    'regex',
-    'tsx',
-    'typescript',
+    'tree-sitter-astro.wasm',
+    'tree-sitter-css.wasm',
+    'tree-sitter-html.wasm',
+    'tree-sitter-javascript.wasm',
+    'tree-sitter-jsdoc.wasm',
+    'tree-sitter-json.wasm',
+    'tree-sitter-markdown.wasm',
+    'tree-sitter-regex.wasm',
+    'tree-sitter-tsx.wasm',
+    'tree-sitter-typescript.wasm',
   ])
 }, 60_000)
 
@@ -60,6 +65,8 @@ it('emits every grammar for the catalog', async () => {
   )
   const manifest = JSON.parse(
     readFileSync(new URL('../languages.json', import.meta.url), 'utf8'),
-  ) as { languages: readonly unknown[] }
-  expect(grammars).toHaveLength(manifest.languages.length)
+  ) as { languages: readonly { readonly wasm: string }[] }
+  // File names, not ids: `shellscript` ships `tree-sitter-bash.wasm`.
+  const expected = manifest.languages.map((language) => language.wasm.split('/').at(-1)!)
+  expect(grammars).toEqual(expected.toSorted())
 }, 60_000)
