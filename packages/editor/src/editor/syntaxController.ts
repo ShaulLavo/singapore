@@ -299,6 +299,8 @@ export class EditorSyntaxController {
     readonly range: EditorSyntaxRange
   } | null = null
   private pendingPrefetch: PendingSyntaxPrefetch | null = null
+  /** Rows came into view while the visible answer was on the way; ask for them once it lands. */
+  private visibleFollowUp = false
   private lookAhead: SyntaxLookAhead | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   private warmGeneration = 0
@@ -954,10 +956,17 @@ export class EditorSyntaxController {
     if (
       this.rangeRequests.isActive() &&
       pending?.documentVersion === documentVersion &&
-      pending.contentVersion === this.syntaxContentVersion &&
-      syntaxRangeCoverage(uncoveredRange, [pending.range]) === 'full'
-    )
-      return
+      pending.contentVersion === this.syntaxContentVersion
+    ) {
+      if (syntaxRangeCoverage(uncoveredRange, [pending.range]) === 'full') return
+      // The answer on the way covers part of the rows now shown. Replacing it would ask for those
+      // rows again on every scroll step until one answer lands; the rest is asked for after it.
+      if (syntaxRangesIntersect(uncoveredRange, pending.range)) {
+        this.visibleFollowUp = true
+        return
+      }
+    }
+    this.visibleFollowUp = false
     this.pendingVisibleRange = {
       documentVersion,
       contentVersion: this.syntaxContentVersion,
@@ -1000,9 +1009,10 @@ export class EditorSyntaxController {
       }
       return true
     }
-    // The answer on the way already reaches the gap's near edge; replacing it would throw that work
-    // away for a range that is only a few rows longer.
-    if (active && syntaxRangesIntersect(active, missing)) return true
+    // The answer on the way is still inside the window. Replacing it would throw that work away for
+    // a range a few rows longer, or, when the scroll turns back and forth, for the other side and
+    // then back again with neither ever landing. The rest is asked for after it lands.
+    if (active && syntaxRangesIntersect(active, range)) return true
 
     this.lookAhead = { snapshot, window: range, request: missing }
     this.scheduleSyntaxRangeRequest(
@@ -1370,16 +1380,26 @@ export class EditorSyntaxController {
           startedAt,
           configurationGeneration,
         )
-        if (applied && kind === 'visible' && this.foldsCoverViewport()) {
+        const followingUp = kind === 'visible' && this.askVisibleFollowUp()
+        if (applied && kind === 'visible' && !followingUp && this.foldsCoverViewport()) {
           if (!this.flushPendingPrefetch()) this.flushPendingWarm()
         }
         if (applied && kind === 'prefetch' && !this.continueLookAhead(documentVersion, options))
           this.flushPendingWarm()
       }),
-      fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) =>
-        this.recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration),
-      ),
+      fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) => {
+        this.recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration)
+        if (kind === 'visible') this.askVisibleFollowUp()
+      }),
     })
+  }
+
+  /** Asks for rows that came into view while the last visible answer was on the way. */
+  private askVisibleFollowUp(): boolean {
+    if (!this.visibleFollowUp) return false
+    this.visibleFollowUp = false
+    this.refreshVisibleRange(this.options.getDocumentVersion(), { delayMs: 0 })
+    return this.rangeRequests.isActive()
   }
 
   private repaintCachedVisibleSyntaxRange(range: EditorSyntaxRange): boolean {

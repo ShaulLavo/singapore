@@ -435,20 +435,19 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(await frameOrTimeout(10_000)).toBe('frame')
     expect(rangeRequests).toBeLessThan(rangeRequestCap)
-    // The scroll reached text far below the middle, a complete answer to a request made after the
-    // scroll began covers it, and syntax colors are registered on the rows shown there.
+    // The scroll reached text far below the middle, complete answers to requests made after the
+    // scroll began cover it, and syntax colors are registered on the rows shown there. Each request
+    // asks only for text not answered yet, so the cover is usually several answers side by side.
     const reached: EditorSyntaxRange = syntax['options'].getVisibleSyntaxRange()
     expect(reached.startIndex).toBeGreaterThan(middle + 20_000)
-    const covers = (range: EditorSyntaxRange) =>
-      range.startIndex <= reached.startIndex && reached.endIndex <= range.endIndex
     await expect
       .poll(
         () =>
-          answers.some(
-            (answer) =>
-              answer.request > requestsBeforeScroll &&
-              answer.kind === 'full' &&
-              covers(answer.range),
+          rangesCover(
+            answers
+              .filter((answer) => answer.request > requestsBeforeScroll && answer.kind === 'full')
+              .map((answer) => answer.range),
+            reached,
           ),
         stuck,
       )
@@ -494,10 +493,12 @@ it('asks the worker for little more than the scrolled text while scrolling durin
     await expect.poll(() => paintedRows(scrolled.host, scroll).length, stuck).toBeGreaterThan(0)
     await workerIdle(asked)
 
-    // The scroll moved about 1,800 lines, some 120,000 characters. Each look-ahead side is asked
-    // for once and topped up as the reader nears its end, so the worker is asked for a small
-    // multiple of that. Asking for the whole look-ahead window on every step asked for over ten
-    // million characters, and replayed the look-ahead asks queued during the preview.
+    // The scroll moved about 1,500 lines, some 100,000 characters. Each look-ahead side is asked
+    // for once and topped up as the reader nears its end, and two background tiles follow, so the
+    // worker is asked for under a million characters. Asking for the whole look-ahead window again
+    // as each step's strip cancelled the one on the way, and asking again for a growing visible
+    // range during the preview, asked for about three million here and over ten million in a
+    // slower scroll.
     const askedChars = asked
       .slice(askedBeforeScroll)
       .reduce((total, range) => total + range.endIndex - range.startIndex, 0)
@@ -544,6 +545,15 @@ function scrollingEditor() {
   }
 }
 
+function rangesCover(ranges: readonly EditorSyntaxRange[], target: EditorSyntaxRange): boolean {
+  let cursor = target.startIndex
+  for (const range of ranges.toSorted((left, right) => left.startIndex - right.startIndex)) {
+    if (range.startIndex > cursor) break
+    cursor = Math.max(cursor, range.endIndex)
+  }
+  return cursor >= target.endIndex
+}
+
 function analysisKind(editor: Editor): string | undefined {
   return editor['syntax']['syntaxSession']?.getResult().projection.analysis?.kind
 }
@@ -557,10 +567,13 @@ async function workerIdle(asked: readonly EditorSyntaxRange[]): Promise<void> {
   }
 }
 
-/** Each painted syntax token on a shown row: its highlight, row offset, column and text. */
+/**
+ * Each painted syntax token on a shown row: its row offset, column, text and style. Editors number
+ * their token styles independently, so styles are named by the order they first appear on screen.
+ */
 function paintedRows(host: HTMLElement, scroll: HTMLElement): string[] {
   const viewport = scroll.getBoundingClientRect()
-  const painted: string[] = []
+  const painted: { readonly at: readonly [number, number, string]; readonly style: string }[] = []
   for (const [name, highlight] of CSS.highlights) {
     if (!name.startsWith('editor-shared-token-')) continue
     for (const range of highlight) {
@@ -573,10 +586,21 @@ function paintedRows(host: HTMLElement, scroll: HTMLElement): string[] {
       const { startOffset, endOffset, endContainer } = range as AbstractRange
       const end = endContainer === node ? endOffset : undefined
       const text = (node.textContent ?? '').slice(startOffset, end)
-      painted.push(`${name}|${Math.round(box.top - viewport.top)}|${startOffset}|${text}`)
+      painted.push({ at: [Math.round(box.top - viewport.top), startOffset, text], style: name })
     }
   }
-  return painted.sort()
+  painted.sort(
+    (left, right) =>
+      left.at[0] - right.at[0] ||
+      left.at[1] - right.at[1] ||
+      left.at[2].localeCompare(right.at[2]) ||
+      left.style.localeCompare(right.style),
+  )
+  const styles = new Map<string, number>()
+  return painted.map(({ at, style }) => {
+    if (!styles.has(style)) styles.set(style, styles.size)
+    return `${at.join('|')}|style-${styles.get(style)}`
+  })
 }
 
 function generatedModule(lines: number): string {
