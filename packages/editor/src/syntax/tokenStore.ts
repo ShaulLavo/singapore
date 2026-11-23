@@ -299,7 +299,54 @@ export class EditorTokenStore {
   ): EditorTokenStore {
     const last = this.firstStartingAtOrAfter(endOffset)
     const first = this.firstEndingAfter(startOffset, last)
-    return this.insertPacked(first, last, tokens.toPacked(), 0)
+    // Only the answer's tokens that reach into the range replace anything. A provider can answer
+    // with a wider slice; inserting its tokens outside the range would duplicate the ones kept
+    // there, and a store that grows on every repeated answer re-sorts more each time.
+    const answerLast = tokens.firstStartingAtOrAfter(endOffset)
+    const answerFirst = tokens.firstEndingAfter(startOffset, answerLast)
+    const answer = slicePacked(tokens.toPacked(), answerFirst, answerLast)
+    if (this.monotonicEnd && tokens.monotonicEnd) return this.insertPacked(first, last, answer, 0)
+    return this.replaceNestedOffsetRange(first, last, startOffset, answer)
+  }
+
+  /**
+   * With nested tokens the index windows are only candidates: the search runs on the running
+   * maximum end, so a window can hold tokens that end before the range. Each candidate's own end
+   * decides whether it is replaced (existing) or inserted (answer).
+   */
+  private replaceNestedOffsetRange(
+    first: number,
+    last: number,
+    startOffset: number,
+    answer: PackedEditorTokens,
+  ): EditorTokenStore {
+    const merged = mergeStyles(this.styles, answer.styles)
+    const sorted = answer.sortedByStart ? answer : sortRunByStart(answer)
+    const starts: number[] = []
+    const ends: number[] = []
+    const styleIds: number[] = []
+    for (let index = first; index < last; index += 1) {
+      if (this.endAt(index) > startOffset) continue
+      starts.push(this.startAt(index))
+      ends.push(this.endAt(index))
+      styleIds.push(this.styleIdAt(index))
+    }
+    for (let index = 0; index < sorted.starts.length; index += 1) {
+      if (sorted.ends[index]! <= startOffset) continue
+      starts.push(sorted.starts[index]!)
+      ends.push(sorted.ends[index]!)
+      styleIds.push(merged.remap[sorted.styleIds[index]!]!)
+    }
+    const run = sortRunByStart({
+      starts: Uint32Array.from(starts),
+      ends: Uint32Array.from(ends),
+      styleIds: Uint32Array.from(styleIds),
+    })
+    return this.replaceRange(first, last, run, {
+      delta: 0,
+      keepsLiveRanges: null,
+      styles: merged.styles,
+    })
   }
 
   private insertPacked(
@@ -693,6 +740,16 @@ function isSortedByStart(starts: Uint32Array): boolean {
     if (starts[index]! < starts[index - 1]!) return false
   }
   return true
+}
+
+function slicePacked(packed: PackedEditorTokens, from: number, to: number): PackedEditorTokens {
+  if (from === 0 && to === packed.starts.length) return packed
+  return {
+    ...packed,
+    starts: packed.starts.slice(from, to),
+    ends: packed.ends.slice(from, to),
+    styleIds: packed.styleIds.slice(from, to),
+  }
 }
 
 // Stable, so tokens that share a start keep the order their producer gave them.
