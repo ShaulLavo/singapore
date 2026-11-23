@@ -154,7 +154,8 @@ type CachedSyntaxFoldRange = {
   readonly folds: readonly FoldRange[]
   readonly result: EditorSyntaxResult
   readonly snapshot: DocumentTextSnapshot
-  readonly tokenRanges: readonly EditorSyntaxRange[]
+  /** The parts of `range` that no later answer has covered. */
+  readonly newestRanges: readonly EditorSyntaxRange[]
 }
 
 type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
@@ -342,11 +343,14 @@ export class EditorSyntaxController {
       !this.highlighterSession &&
       this.rangeTokenOwner?.store === this.currentTokens &&
       this.rangeTokenOwner.snapshot === demand.snapshot
-    const tokenContributors = rangeOwned
-      ? oldCache.filter((cached) => syntaxRangeListsIntersect(cached.tokenRanges, ranges))
-      : []
+    // Every answer that is the newest for some shown text stays, whoever painted the tokens. The
+    // view asks again for shown text without an answer, so dropping one of these would have it
+    // asked for again on every frame.
+    const newestContributors = oldCache.filter((cached) =>
+      syntaxRangeListsIntersect(cached.newestRanges, ranges),
+    )
     const foldContributors = activeFoldContributors(oldCache, ranges)
-    const retained = new Set(tokenContributors.concat(foldContributors))
+    const retained = new Set(newestContributors.concat(foldContributors))
     const scope = this.rangeScopeOwner
     const copy =
       this.rangeCopyOwner?.store === this.copyTokens ? this.rangeCopyOwner.contributor : null
@@ -363,13 +367,10 @@ export class EditorSyntaxController {
         retained.add(cached)
     }
     const nextCache = oldCache.filter((cached) => retained.has(cached))
-    const completeRanges = nextCache.reduce<readonly EditorSyntaxRange[]>(
-      (coverage, cached) => appendCachedSyntaxRange(coverage, cached.range),
+    const coverage = nextCache.reduce<readonly EditorSyntaxRange[]>(
+      (covered, cached) => appendCachedSyntaxRange(covered, cached.range),
       [],
     )
-    const coverage = rangeOwned
-      ? completeRanges
-      : intersectSyntaxRanges(this.cachedSyntaxRanges, completeRanges)
     const discardedOffDemand = oldCache.filter(
       (cached) => !retained.has(cached) && !syntaxRangeListsIntersect([cached.range], ranges),
     )
@@ -1551,7 +1552,7 @@ export class EditorSyntaxController {
       }))
     }
     const result = loadResult.result
-    if (loadResult.updatesDocument) this.markSyntaxDocumentCurrent(loadResult.contentVersion)
+    if (loadResult.updatesDocument) this.acceptSyntaxDocument(loadResult.contentVersion)
     const snapshot = this.options.getSession()?.getTextSnapshot()
     const canOwnRanges =
       this.rangeTokenOwner?.store === this.currentTokens ||
@@ -1660,6 +1661,21 @@ export class EditorSyntaxController {
 
   private syntaxDocumentVersionIsCurrent(): boolean {
     return this.parsedSyntaxContentVersion === this.syntaxContentVersion
+  }
+
+  /**
+   * The first answer from the parse of this text. Answers carried through the edits before it
+   * stood in for it; they describe the old parse, so they stop counting as answers here, and
+   * what they covered is asked for again when it is shown. Folds repainted from them no longer
+   * cover the viewport either; they stay painted until the new parse's folds replace them.
+   */
+  private acceptSyntaxDocument(contentVersion: number): void {
+    if (this.parsedSyntaxContentVersion !== contentVersion) {
+      this.cachedSyntaxRanges = []
+      this.cachedSyntaxFoldRanges = []
+      this.foldCoverage = null
+    }
+    this.markSyntaxDocumentCurrent(contentVersion)
   }
 
   private markSyntaxDocumentCurrent(contentVersion: number): void {
@@ -1800,12 +1816,12 @@ export class EditorSyntaxController {
       result,
       snapshot,
       folds: result.folds,
-      tokenRanges: [range],
+      newestRanges: [range],
     }
     this.cachedSyntaxRanges = appendCachedSyntaxRange(this.cachedSyntaxRanges, range)
     const previous = this.cachedSyntaxFoldRanges.map((cached) => ({
       ...cached,
-      tokenRanges: subtractSyntaxRange(cached.tokenRanges, range),
+      newestRanges: subtractSyntaxRange(cached.newestRanges, range),
     }))
     this.cachedSyntaxFoldRanges = appendCachedSyntaxFoldRange(previous, contributor)
     return contributor
@@ -2370,7 +2386,7 @@ const projectCachedSyntaxFoldRanges = (
       ...range,
       snapshot,
       range: nextRange,
-      tokenRanges: projectCachedSyntaxRanges(range.tokenRanges, edit, documentLength),
+      newestRanges: projectCachedSyntaxRanges(range.newestRanges, edit, documentLength),
       folds: projectFoldRangesThroughInsertion(range.folds, edit, documentLength),
     })
   }
@@ -2639,21 +2655,6 @@ function subtractSyntaxRange(
       remaining.push({ startIndex: removed.endIndex, endIndex: range.endIndex })
   }
   return remaining
-}
-function intersectSyntaxRanges(
-  ranges: readonly EditorSyntaxRange[],
-  protectedRanges: readonly EditorSyntaxRange[],
-): readonly EditorSyntaxRange[] {
-  let intersection: readonly EditorSyntaxRange[] = []
-  for (const range of ranges) {
-    for (const protectedRange of protectedRanges) {
-      const startIndex = Math.max(range.startIndex, protectedRange.startIndex)
-      const endIndex = Math.min(range.endIndex, protectedRange.endIndex)
-      if (endIndex > startIndex)
-        intersection = appendCachedSyntaxRange(intersection, { startIndex, endIndex })
-    }
-  }
-  return intersection
 }
 function activeFoldContributors(
   contributors: readonly CachedSyntaxFoldRange[],

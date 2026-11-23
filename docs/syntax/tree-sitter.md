@@ -75,6 +75,14 @@ Tree-sitter highlight queries are the long-term source of syntax highlighting.
 
 Highlight output should be represented as dense decorations with offsets or line-scoped ranges. It must not allocate an anchor per token. The renderer may continue using the CSS Highlight API, but the source of ranges should be Tree-sitter query output.
 
+### Range answers
+
+A range-mode editor asks for the text it shows, one range at a time, and keeps the answers in `EditorSyntaxController`. The frame trim keeps every answer that is the newest one for some shown text, whoever painted the tokens (range answers, a separate highlighter, or a host). The view asks again for shown text without an answer, so dropping one of these would make it ask on every frame.
+
+Answers carried through an edit only stand in for the new parse. Its first answer replaces them, and what they covered is asked for again when it is shown.
+
+The trim removes tokens only while the painted store is made of range answers alone. After an edit, a newer analysis, or tokens installed by a host, it removes none.
+
 ### Read-only slices
 
 `createTreeSitterSliceHighlighter` uses the same worker, root grammar, highlight query, and token styles. It accepts a plain string and returns UTF-16 spans relative to that string. A caller can include adjacent text it already holds and choose which spans to paint. Pass the input verbatim, including CRLF and any real line breaks at fragment boundaries. The slice highlighter has no source reader or document session.

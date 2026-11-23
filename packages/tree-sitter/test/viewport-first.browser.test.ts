@@ -1,6 +1,11 @@
 import { afterEach, expect, it } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { Editor } from '@singapore-editor/core/editor'
-import { toEditorTokenStore } from '@singapore-editor/core/syntax'
+import {
+  toEditorTokenStore,
+  type EditorSyntaxRange,
+  type EditorSyntaxResult,
+} from '@singapore-editor/core/syntax'
 import { createTreeSitterLanguagePlugin } from '../src/index'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
@@ -74,6 +79,132 @@ it.each([
   },
   30_000,
 )
+
+it.each([
+  [
+    'typescript',
+    'class Large {\n',
+    '  method(value: number): string { return `${value}` }\n',
+    '}\n',
+  ],
+  ['typescript', 'export function large() {\n', '  const item = compute(1, "one");\n', '}\n'],
+  ['typescript', 'const a = 1;\n', 'const value_1: number = compute(1, "one");\n', ''],
+])(
+  'previews %s while the cut leaves an error past the visible range',
+  async (languageId, prefix, line, suffix) => {
+    const text = prefix + line.repeat(Math.ceil(120_000 / line.length)) + suffix
+    const doc = document(text, languageId)
+    await doc.run()
+    const range = { startIndex: 0, endIndex: 400 }
+    const preview = await doc.runtime.queryRange(range)
+    expect(preview.projection.analysis?.kind).toBe('partial')
+    expect(preview.captures.length).toBeGreaterThan(0)
+    await expect
+      .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+      .toBe('full')
+    const complete = await doc.runtime.queryRange(range)
+    const visible = (result: typeof preview) =>
+      result.captures
+        .filter((capture) => capture.startIndex < range.endIndex)
+        .map((capture) => ({ ...capture, endIndex: Math.min(range.endIndex, capture.endIndex) }))
+    expect(visible(preview)).toEqual(visible(complete))
+  },
+  30_000,
+)
+
+it('previews a parameter list that its arrow settles beyond the visible range', async () => {
+  const visible = 'function outer() {\n  const fn = (value'
+  const parameters = ',\n    parameter: number'.repeat(400)
+  const text = visible + parameters + ') => value\n' + 'const a = 1;\n'.repeat(10_000) + '}\n'
+  expect(parameters.length).toBeGreaterThan(4096)
+  const doc = document(text)
+  await doc.run()
+  const range = { startIndex: 0, endIndex: visible.length }
+  const preview = await doc.runtime.queryRange(range)
+  expect(preview.projection.analysis?.kind).toBe('partial')
+  await expect
+    .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+    .toBe('full')
+  const complete = await doc.runtime.queryRange(range)
+  const inRange = (result: typeof preview) =>
+    result.captures.filter((capture) => capture.startIndex < range.endIndex)
+  expect(inRange(preview)).toEqual(inRange(complete))
+}, 30_000)
+
+it('keeps the whole lookahead when a line ends right after the visible range', async () => {
+  const visible = 'function outer() {\n  const fn = (value'
+  const text =
+    visible +
+    ', other)\n' +
+    ' '.repeat(10_000) +
+    '=> value;\n' +
+    'const a = 1;\n'.repeat(10_000) +
+    '}\n'
+  const doc = document(text)
+  await doc.run()
+  const range = { startIndex: 0, endIndex: visible.length }
+  const preview = await doc.runtime.queryRange(range)
+  expect(preview.projection.analysis?.kind).toBe('partial')
+  expect(preview.projection.analysis?.coveredRange.endIndex).toBeGreaterThanOrEqual(
+    visible.length + 16_384,
+  )
+  await expect
+    .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+    .toBe('full')
+  const complete = await doc.runtime.queryRange(range)
+  const inRange = (result: typeof preview) =>
+    result.captures.filter((capture) => capture.startIndex < range.endIndex)
+  expect(inRange(preview)).toEqual(inRange(complete))
+}, 30_000)
+
+it('previews a jump near the end of the prefix when the prefix parses cleanly', async () => {
+  const line = 'const answer: number = 42;\n'
+  const doc = document(line.repeat(50_000))
+  await doc.run()
+  // Less than the full lookahead fits between this range and the end of the prefix.
+  const range = { startIndex: line.length * 2100, endIndex: line.length * 2110 }
+  expect(range.endIndex + 16_384).toBeGreaterThan(65_536)
+  const preview = await doc.runtime.queryRange(range)
+  expect(preview.projection.analysis?.kind).toBe('partial')
+  expect(preview.captures.length).toBeGreaterThan(0)
+  await expect
+    .poll(() => doc.runtime.getResult().projection.analysis?.kind, { timeout: 20_000 })
+    .toBe('full')
+  const complete = await doc.runtime.queryRange(range)
+  expect(preview.captures).toEqual(complete.captures)
+}, 30_000)
+
+it('waits for the complete tree near the end of the prefix when the prefix has an error', async () => {
+  const line = 'const answer: number = 42;\n'
+  const doc = document('const = ;\n' + line.repeat(50_000))
+  await doc.run()
+  // With the full lookahead parsed, an error that does not touch the range is no obstacle.
+  const early = { startIndex: line.length * 100, endIndex: line.length * 110 }
+  expect((await doc.runtime.queryRange(early)).projection.analysis?.kind).toBe('partial')
+  // Near the end of the prefix the lookahead is cut short, and any error waits.
+  const late = { startIndex: line.length * 2100, endIndex: line.length * 2110 }
+  expect((await doc.runtime.queryRange(late)).projection.analysis?.kind).toBe('full')
+}, 30_000)
+
+it('previews a jump near the end of the prefix when only the prefix limit cuts a comment', async () => {
+  const line = 'const answer: number = 42;\n'
+  // The comment starts after the short lookahead of the range and runs past the prefix limit.
+  const text = line.repeat(2100).padEnd(60_000) + '/*' + 'comment\n'.repeat(3000) + '*/\n'
+  const doc = document(text)
+  await doc.run()
+  const result = await doc.runtime.queryRange({ startIndex: 54_700, endIndex: 55_000 })
+  expect(result.projection.analysis?.kind).toBe('partial')
+  expect(result.captures.length).toBeGreaterThan(0)
+}, 30_000)
+
+it('converges when text past the lookahead changes a visible token', async () => {
+  const visible = 'function outer() {\n  const fn = (value'
+  const text = visible + ', other)' + ' '.repeat(70_000) + '=> value;\n}'
+  const doc = document(text)
+  await doc.run()
+  await doc.runtime.queryRange({ startIndex: 0, endIndex: visible.length })
+  await expectBaselineTokens(doc, text, 'typescript', { startIndex: 0, endIndex: visible.length })
+}, 30_000)
 
 it('never treats a preview tree as complete context after a jump', async () => {
   const doc = document('/*' + 'comment\n'.repeat(12_000) + '*/\nconst answer = 42;\n')
@@ -184,6 +315,193 @@ it('replaces provisional syntax in a mounted editor without another edit or scro
   }
 }, 30_000)
 
+it('keeps painting frames while scrolling a large file after its preview is replaced', async () => {
+  const host = globalThis.document.createElement('div')
+  host.style.cssText = 'width:1200px;height:800px;display:flex;flex-direction:column'
+  globalThis.document.body.append(host)
+  const editor = new Editor(host, {
+    plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],
+  })
+  // The freeze this guards against was a range request loop: the view kept asking for the same few
+  // ranges and starved the page, timers included. Past the cap the requests stop being answered,
+  // which ends such a loop so the assertions below can report it instead of hanging the run.
+  const syntax = editor['syntax']
+  const loadRange = syntax.loadSyntaxRangeResult.bind(syntax)
+  const rangeRequestCap = 2_000
+  const answers: {
+    readonly kind: string
+    readonly source: string
+    readonly range: EditorSyntaxRange
+    /** The number of counted requests when this one started. */
+    readonly request: number
+  }[] = []
+  let rangeRequests = 0
+  // While held, look-ahead answers do not arrive either, so only the answers to shown text do.
+  let lookAheadHeld = false
+  // While set, every range the view asks for is listed.
+  let neighbours: string[] | null = null
+  syntax.loadSyntaxRangeResult = (...args: Parameters<typeof loadRange>) => {
+    const [range, source] = args as unknown as [EditorSyntaxRange, string]
+    // Background warming is held: it can answer so much around the viewport that the scroll never
+    // needs the range answers that looped.
+    if (source === 'warm') return new Promise<never>(() => undefined)
+    if (lookAheadHeld && source === 'prefetch') return new Promise<never>(() => undefined)
+    if (neighbours && source === 'visible') neighbours.push(`${range.startIndex}-${range.endIndex}`)
+    rangeRequests++
+    const request = rangeRequests
+    if (rangeRequests > rangeRequestCap) return new Promise<never>(() => undefined)
+    return loadRange(...args).then((loaded: { readonly result: EditorSyntaxResult }) => {
+      const kind = loaded.result.projection.analysis?.kind ?? 'none'
+      answers.push({ kind, source, range, request })
+      return loaded
+    })
+  }
+  try {
+    editor.setText(generatedModule(50_000), { languageId: 'typescript' })
+    // The loop began after the complete analysis replaced the painted preview, and after typing:
+    // both leave a token store the range answers no longer own, and the frame trim then kept only
+    // two of the range answers on screen, so three neighbours displaced each other without end.
+    let published = false
+    const unsubscribe = syntax['retainedSyntax'].onDidProduceSyntax(() => {
+      published = true
+    })
+    // Waits here only catch a stuck page. The middle's answer needs the complete parse, which
+    // takes seconds on a slow machine.
+    const stuck = { timeout: 30_000 }
+    await expect.poll(() => editor.getState().initialHighlightStatus, stuck).toBe('painted')
+    expect(answers[0]?.kind).toBe('partial')
+    const middle = Math.floor(editor.getState().length / 2)
+    editor.setSelection(middle, middle, { reveal: true })
+    editor.focus()
+    // Once the middle has been answered and the complete analysis has published, type and then
+    // scroll, as the freeze's reproduction did. The steps are spaced like a person scrolling. The
+    // frame cap only catches a stuck page; it judges no speed.
+    await expect
+      .poll(
+        () =>
+          answers.some(
+            (answer) =>
+              answer.source === 'visible' &&
+              answer.range.startIndex <= middle &&
+              middle < answer.range.endIndex,
+          ),
+        stuck,
+      )
+      .toBe(true)
+    await expect.poll(() => published, stuck).toBe(true)
+    unsubscribe()
+    // Held from before the typing: a look-ahead answer landing after it would cover the strips
+    // the steps below expose, and nothing would be asked for.
+    lookAheadHeld = true
+    await userEvent.keyboard('const value = 42; ')
+    await expect.poll(() => editor.getState().syntaxStatus, stuck).toBe('ready')
+    const requestsBeforeScroll = rangeRequests
+    const scroll: HTMLElement = editor['view'].scrollElement
+    // First the loop's conditions on purpose. With look-ahead answers held, each step waits for
+    // the answer to the strip of text it brought into range, so the answers to the typed-in
+    // frame and to every strip lie side by side in range at once. The steps are short: a strip
+    // of a few lines seldom holds a fold of its own, and those were the answers that got
+    // dropped. Each range is asked for once.
+    const asked: string[] = []
+    neighbours = asked
+    for (let step = 0; step < 24; step++) {
+      scroll.scrollTop += 100
+      expect(await frameOrTimeout(10_000)).toBe('frame')
+      // Ready again once the strip is answered. A loop hits the request cap instead, long
+      // before the wait runs out.
+      await expect
+        .poll(
+          () => rangeRequests >= rangeRequestCap || editor.getState().syntaxStatus === 'ready',
+          stuck,
+        )
+        .toBe(true)
+      expect(rangeRequests).toBeLessThan(rangeRequestCap)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(await frameOrTimeout(10_000)).toBe('frame')
+    neighbours = null
+    lookAheadHeld = false
+    expect(asked.length).toBeGreaterThanOrEqual(3)
+    expect(asked).toEqual(Array.from(new Set(asked)))
+    expect(rangeRequests).toBeLessThan(rangeRequestCap)
+    // Then uneven steps, with look-ahead answers arriving, line the scroll up against range
+    // answers in many other ways.
+    for (let step = 0; step < 120; step++) {
+      scroll.scrollTop += [600, 400, 200][step % 3]!
+      expect(await frameOrTimeout(10_000)).toBe('frame')
+      expect(rangeRequests).toBeLessThan(rangeRequestCap)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(await frameOrTimeout(10_000)).toBe('frame')
+    expect(rangeRequests).toBeLessThan(rangeRequestCap)
+    // The scroll reached text far below the middle, a complete answer to a request made after the
+    // scroll began covers it, and syntax colors are registered on the rows shown there.
+    const reached: EditorSyntaxRange = syntax['options'].getVisibleSyntaxRange()
+    expect(reached.startIndex).toBeGreaterThan(middle + 20_000)
+    const covers = (range: EditorSyntaxRange) =>
+      range.startIndex <= reached.startIndex && reached.endIndex <= range.endIndex
+    await expect
+      .poll(
+        () =>
+          answers.some(
+            (answer) =>
+              answer.request > requestsBeforeScroll &&
+              answer.kind === 'full' &&
+              covers(answer.range),
+          ),
+        stuck,
+      )
+      .toBe(true)
+    await expect.poll(() => visibleSyntaxHighlights(host, scroll), stuck).toBeGreaterThan(0)
+  } finally {
+    editor.dispose()
+    host.remove()
+  }
+}, 120_000)
+
+function generatedModule(lines: number): string {
+  const out: string[] = []
+  for (let line = 0; line < lines; line++) out.push(generatedLine(line))
+  return out.join('\n')
+}
+
+function generatedLine(line: number): string {
+  if (line % 25 === 0) return `// section ${line}`
+  if (line % 25 === 1)
+    return `export function helper_${line}(value: number, label: string): string {`
+  if (line % 25 === 2) return `  return label + ":" + String(value * ${line})`
+  if (line % 25 === 3) return '}'
+  return `export const item_${line}: number = computeValue(${line}, "label-${line}");`
+}
+
+function visibleSyntaxHighlights(host: HTMLElement, scroll: HTMLElement): number {
+  const viewport = scroll.getBoundingClientRect()
+  let count = 0
+  for (const [name, highlight] of CSS.highlights) {
+    if (!name.startsWith('editor-shared-token-')) continue
+    for (const range of highlight) {
+      const node = (range as AbstractRange).startContainer
+      if (!host.contains(node)) continue
+      const element = node instanceof Element ? node : node.parentElement
+      if (!element) continue
+      const box = element.getBoundingClientRect()
+      if (box.height > 0 && box.bottom > viewport.top && box.top < viewport.bottom) count++
+    }
+  }
+  return count
+}
+
+function frameOrTimeout(timeoutMs: number): Promise<'frame' | 'timeout'> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('timeout'), timeoutMs)
+    requestAnimationFrame(() => {
+      clearTimeout(timer)
+      resolve('frame')
+    })
+  })
+}
+
 it.each([
   ['terminated call', 'foo();\n', ' '.repeat(80_000)],
   ['distant call continuation', 'foo', ' '.repeat(80_000) + '(42);\n'],
@@ -208,7 +526,7 @@ it('paints function declarations provisionally without a statement-kind whitelis
   const range = { startIndex: 0, endIndex: prefix.length }
   const initial = await doc.runtime.queryRange(range)
   expect(initial.projection.analysis?.kind).toBe('partial')
-  expect(initial.projection.analysis?.coveredRange.endIndex).toBe(prefix.length + 4096)
+  expect(initial.projection.analysis?.coveredRange.endIndex).toBe(prefix.length + 16_384)
   expect(initial.folds).toEqual([])
   expect(initial.errors).toEqual([])
   expect(initial.brackets).toEqual([])

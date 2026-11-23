@@ -23,7 +23,11 @@ import {
   type EditorSyntaxResult,
 } from '../src/syntax/session'
 import { EditorTokenStore } from '../src/syntax/tokenStore'
+import { projectTokensThroughEdit } from '../src/editor/tokenProjection'
+import type { DocumentRead } from '../src/editor/documentDelivery'
+import { createEditorPreparedDocument } from '../src/editor/preparedDocument'
 import type { EditorHighlighterProvider } from '../src/syntax/highlighter'
+import type { TextEdit } from '../src/tokens'
 
 describe('syntax range contributor lifetime', () => {
   it.each(['disjoint', 'overlap'] as const)(
@@ -207,6 +211,440 @@ describe('syntax range contributor lifetime', () => {
     }
   })
 
+  it('keeps neighbouring range answers after a newer analysis replaces the painted ones', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'replaced-preview' })
+    // Every answer reports the same wide fold, as a bounded-slice answer does, so no answer keeps a
+    // fold of its own once a neighbour arrives.
+    let answers = 0
+    const ranges = vi.fn(async (range: EditorSyntaxRange) => {
+      // A request loop would never end; stop answering so it fails on the call list below.
+      answers++
+      if (answers > 20) return new Promise<never>(() => undefined)
+      return {
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        records: { languageId: 'typescript', data: new Uint32Array(16) },
+        tokens: EditorTokenStore.fromTokens([
+          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
+        ]),
+        folds: [
+          { startIndex: 0, endIndex: 400, startLine: 0, endLine: 199, type: 'scope' as const },
+        ],
+      }
+    })
+    let analyzed: DocumentRead | null = null
+    let publish: ((read: DocumentRead, result: EditorSyntaxResult) => void) | null = null
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        analyze: async (read: DocumentRead) => {
+          analyzed = read
+          return createEmptySyntaxResult()
+        },
+        subscribeResults: (listener: (read: DocumentRead, result: EditorSyntaxResult) => void) => {
+          publish = listener
+          return () => undefined
+        },
+        queryRange: ranges,
+      })),
+    }
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      await vi.waitFor(() => expect(analyzed).not.toBeNull())
+      // The complete analysis publishes while the earlier answer's tokens are painted.
+      publish!(analyzed!, createEmptySyntaxResult())
+      await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      for (const endIndex of [40, 60, 80]) {
+        view.setRange({ startIndex: 0, endIndex })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(view.syntax.tokens.toTokens()).toContainEqual({
+            start: endIndex - 20,
+            end: endIndex - 19,
+            style: { color: 'range' },
+          }),
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(ranges.mock.calls.map(([range]) => [range.startIndex, range.endIndex])).toEqual([
+        [0, 20],
+        [0, 20],
+        [20, 40],
+        [40, 60],
+        [60, 80],
+      ])
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it.each([
+    ['a single-line edit', '!'],
+    ['a multi-line edit', '!\n'],
+  ] as const)('keeps neighbouring range answers after %s', async (_name, text) => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'edited-ranges' })
+    // Every answer reports the same wide fold, so no answer keeps a fold of its own.
+    let answers = 0
+    const ranges = vi.fn(async (range: EditorSyntaxRange) => {
+      // A request loop would never end; stop answering so it fails on the call list below.
+      answers++
+      if (answers > 20) return new Promise<never>(() => undefined)
+      return {
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        records: { languageId: 'typescript', data: new Uint32Array(16) },
+        tokens: EditorTokenStore.fromTokens([
+          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
+        ]),
+        folds: [
+          { startIndex: 0, endIndex: 400, startLine: 0, endLine: 199, type: 'scope' as const },
+        ],
+      }
+    })
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: ranges,
+      })),
+    }
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      // Typing, as the editor applies it: the change, then the tokens projected through it.
+      const previous = buffer.getTextSnapshot()
+      const edit = { from: 5, to: 5, text }
+      const change = createEditorBufferSession(buffer).applyEdits([edit])
+      view.syntax.acceptChange(change)
+      view.syntax.setTokens(projectTokensThroughEdit(view.syntax.tokens, edit, previous), false)
+      view.syntax.refresh(1, change, { delayMs: 0 })
+      await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(2))
+      for (const endIndex of [40, 60, 80]) {
+        view.setRange({ startIndex: 0, endIndex })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(view.syntax.tokens.toTokens().some((token) => token.start >= endIndex - 20)).toBe(
+            true,
+          ),
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      const afterEdit = ranges.mock.calls
+        .slice(2)
+        .map(([range]) => `${range.startIndex}-${range.endIndex}`)
+      expect(afterEdit).toHaveLength(3)
+      expect(new Set(afterEdit).size).toBe(3)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('asks for each neighbouring range once after two line-breaking edits before the parser answers', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'two-edits' })
+    const answers = rangeAnswers('shared')
+    const view = createView(buffer, analysis, structuralProvider(answers.query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      typeText(view, buffer, { from: 5, to: 5, text: '!\n' })
+      const change = typeText(view, buffer, { from: 9, to: 9, text: '!\n' })
+      view.syntax.refresh(1, change, { delayMs: 0 })
+      await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(2))
+      await growFrame(view, [40, 60, 80])
+      expect(answers.calls().slice(1)).toEqual([
+        [0, 20],
+        [20, 40],
+        [40, 60],
+        [60, 80],
+      ])
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('asks for each range once when no answer covers the frame after a newer analysis', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'moving-frame' })
+    const answers = rangeAnswers('shared')
+    const replaced = replaceableAnalysis(answers.query)
+    const view = createView(buffer, analysis, replaced.provider, firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      await replaced.analyzed()
+      // The frame grows while the new analysis's first answer is on its way, so that answer
+      // covers only part of it, and so does every answer after it.
+      const releaseRefresh = answers.hold()
+      replaced.publishComplete()
+      await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(2))
+      const releaseAnswer = answers.hold()
+      view.setRange({ startIndex: 0, endIndex: 40 })
+      releaseRefresh()
+      await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(3))
+      view.setRange({ startIndex: 0, endIndex: 60 })
+      releaseAnswer()
+      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(40)))
+      await growFrame(view, [80])
+      expect(answers.calls()).toEqual([
+        [0, 20],
+        [0, 20],
+        [0, 40],
+        [40, 60],
+        [60, 80],
+      ])
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('asks for each neighbouring fold range once beside a separate highlighter', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'highlighter-folds' })
+    const tokens = EditorTokenStore.fromTokens([{ start: 0, end: 1, style: { color: 'full' } }])
+    const highlighter = {
+      operation: createEditorHighlighterOperation(() => ({
+        analyze: async () => ({ tokens }),
+        dispose: () => undefined,
+      })),
+    }
+    const answers = rangeAnswers('shared')
+    const view = createView(
+      buffer,
+      analysis,
+      structuralProvider(answers.query),
+      firstFrame,
+      highlighter,
+    )
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens).toBe(tokens))
+      await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(1))
+      for (const [step, endIndex] of [40, 60, 80].entries()) {
+        view.setRange({ startIndex: 0, endIndex })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(step + 2))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(answers.calls()).toEqual([
+        [0, 20],
+        [20, 40],
+        [40, 60],
+        [60, 80],
+      ])
+      expect(view.syntax.tokens).toBe(tokens)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('keeps the tokens of an answer that stays cached through a newer analysis', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'cached-colors' })
+    // Each answer is the only one to report its fold, so it stays cached while that fold is shown.
+    const answers = rangeAnswers('own')
+    const replaced = replaceableAnalysis(answers.query)
+    const view = createView(buffer, analysis, replaced.provider, firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      await replaced.analyzed()
+      // The new analysis answers a frame after the view has moved on from it, then answers the
+      // frame the view moved to in full.
+      const releaseRefresh = answers.hold()
+      replaced.publishComplete()
+      await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(2))
+      const releaseAnswer = answers.hold()
+      const left = { startIndex: 0, endIndex: 30 }
+      view.setRange(left)
+      releaseRefresh()
+      await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(3))
+      view.setRange({ startIndex: 30, endIndex: 50 })
+      releaseAnswer()
+      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(30)))
+      view.setRange(left)
+      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      // Still answered, so not asked for again, and still colored.
+      expect(answers.calls()).toEqual([
+        [0, 20],
+        [0, 20],
+        [0, 30],
+        [30, 50],
+      ])
+      expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(0))
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it.each([
+    ['a single-line edit', '!'],
+    ['a multi-line edit', '!\n'],
+  ] as const)('keeps tokens a host installs with %s through later answers', async (_name, text) => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'host-edit-tokens' })
+    const answers = rangeAnswers('shared')
+    const view = createView(buffer, analysis, structuralProvider(answers.query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      // Editor.applyEdit(edit, tokens): the edit with its projection, then the host's tokens.
+      const change = typeText(view, buffer, { from: 5, to: 5, text })
+      view.syntax.setTokens(EditorTokenStore.fromTokens([hostToken]))
+      view.syntax.refresh(1, change, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(0)))
+      await moveFrame(view, [20, 40, 60])
+      expect(view.syntax.tokens.toTokens()).toContainEqual(hostToken)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('keeps a host store installed in place of an edit projection', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'host-store' })
+    const answers = rangeAnswers('shared')
+    const view = createView(buffer, analysis, structuralProvider(answers.query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      // The host's store arrives where the projection of the painted tokens would have.
+      const change = createEditorBufferSession(buffer).applyEdits([{ from: 5, to: 5, text: '!' }])
+      view.syntax.acceptChange(change)
+      view.syntax.setTokens(EditorTokenStore.fromTokens([hostToken]))
+      view.syntax.refresh(1, change, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(0)))
+      await moveFrame(view, [20, 40, 60])
+      // The store was never the range answers', so dropping their answers removes nothing of it.
+      expect(view.syntax.tokens.toTokens()).toContainEqual(hostToken)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('keeps whole-document colors prepared by a provider that cannot answer ranges', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(50_000))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'prepared-full' })
+    const farToken = rangeToken(80_000)
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        analyze: async () => ({
+          ...createEmptySyntaxResult(),
+          tokens: EditorTokenStore.fromTokens([rangeToken(0), farToken]),
+        }),
+      })),
+    }
+    const prepared = createEditorPreparedDocument({
+      analysis,
+      buffer,
+      documentId: 'prepared-full',
+      languageId: 'typescript',
+      configuredTabSize: 4,
+      tabSizePolicy: 'fixed',
+      documentConfigurationTag: [],
+    })
+    const document = {
+      analysis,
+      documentId: 'prepared-full',
+      languageId: 'typescript',
+      snapshot: buffer.getSnapshot(),
+      textSnapshot: buffer.getTextSnapshot(),
+    }
+    const view = createView(buffer, analysis, provider, firstFrame)
+    try {
+      const stage = await prepared.startStage({
+        family: 'structural',
+        provider,
+        configuration: { includeCaptures: false, includeHighlights: true, syntaxMode: 'range' },
+        configurationTag: [],
+        range: firstFrame,
+        abortSignal: new AbortController().signal,
+      })
+      expect(stage).toBe('ready')
+      const transfer = view.syntax.borrowPreparedDocument(document, prepared, {
+        configuredTabSize: 4,
+        tabSizePolicy: 'fixed',
+        documentConfigurationTag: [],
+        highlighterConfigurationTag: [],
+        structuralConfigurationTag: [],
+      })
+      view.syntax.startDocument(document, transfer)
+      expect(view.syntax.stagePreparedReadyTokens(transfer).toTokens()).toContainEqual(farToken)
+      view.syntax.adoptPreparedReadyResults(transfer)
+      // Nothing could paint the far token again, so it has to survive the frames before it.
+      view.setRange({ startIndex: 79_990, endIndex: 80_010 })
+      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+      expect(view.syntax.tokens.toTokens()).toContainEqual(farToken)
+    } finally {
+      view.dispose()
+      prepared.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('asks the new parse for a frame shown again while its first answer was on the way', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'returned-frame' })
+    const away = { startIndex: 60, endIndex: 80 }
+    const gate = Promise.withResolvers<void>()
+    // Each answer's token is colored by the parse that produced it. The fold every answer reports
+    // crosses both frames, so the first frame's answer stays cached while the view is away.
+    let parse = 'before'
+    const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+      if (parse === 'after' && range.startIndex === away.startIndex) await gate.promise
+      return {
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        tokens: EditorTokenStore.fromTokens([
+          { start: range.startIndex, end: range.startIndex + 1, style: { color: parse } },
+        ]),
+        folds: [{ startIndex: 0, endIndex: 400, startLine: 0, endLine: 199, type: 'scope' }],
+      }
+    })
+    const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+      parse = 'after'
+      const change = typeText(view, buffer, { from: 5, to: 5, text: 'x' })
+      view.setRange(away)
+      view.syntax.refresh(1, change, { delayMs: 0 })
+      await vi.waitFor(() =>
+        expect(query.mock.calls.some(([range]) => range.startIndex === away.startIndex)).toBe(true),
+      )
+      // Back on the first frame, the answer carried through the edit repaints it for now.
+      view.setRange(firstFrame)
+      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+      gate.resolve()
+      await vi.waitFor(() =>
+        expect(view.syntax.tokens.toTokens()).toContainEqual({
+          start: 0,
+          end: 1,
+          style: { color: 'after' },
+        }),
+      )
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+    } finally {
+      gate.resolve()
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
   it('keeps an actual crossing fold contributor when its query lies outside the new frame', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'crossing' })
@@ -368,6 +806,143 @@ describe('syntax range contributor lifetime', () => {
     },
   )
 })
+
+const firstFrame: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+
+const hostToken = { start: 300, end: 310, style: { color: 'host' } }
+
+const rangeToken = (startIndex: number) => ({
+  start: startIndex,
+  end: startIndex + 1,
+  style: { color: 'range' },
+})
+
+/**
+ * Range answers with one token at the start of the range. `shared` answers all report the same
+ * wide fold, as bounded-slice answers do, so none keeps a fold of its own once a neighbour
+ * arrives. `own` answers each report a fold nobody else does.
+ */
+function rangeAnswers(folds: 'shared' | 'own') {
+  let answered = 0
+  let held: Promise<void> | null = null
+  const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+    // A request loop would never end; stop answering so it fails on the call list.
+    answered++
+    if (answered > 20) return new Promise<never>(() => undefined)
+    await held
+    const startIndex = folds === 'shared' ? 0 : range.startIndex
+    return {
+      ...createEmptySyntaxResult({ requestedRanges: [range] }),
+      records: { languageId: 'typescript', data: new Uint32Array(16) },
+      tokens: EditorTokenStore.fromTokens([rangeToken(range.startIndex)]),
+      folds: [
+        {
+          startIndex,
+          endIndex: startIndex + 400,
+          startLine: startIndex / 2,
+          endLine: startIndex / 2 + 199,
+          type: 'scope',
+        },
+      ],
+    }
+  })
+  return {
+    query,
+    calls: () => query.mock.calls.map(([range]) => [range.startIndex, range.endIndex]),
+    /** Keeps the answers asked for from now on waiting until the returned function is called. */
+    hold: () => {
+      const gate = Promise.withResolvers<void>()
+      held = gate.promise
+      return () => {
+        if (held === gate.promise) held = null
+        gate.resolve()
+      }
+    },
+  }
+}
+
+type RangeQuery = (range: EditorSyntaxRange) => Promise<EditorSyntaxResult>
+
+function structuralProvider(queryRange: RangeQuery): EditorSyntaxProvider {
+  return {
+    operation: createEditorStructuralOperation(() => ({
+      ...createEmptySyntaxRuntime(),
+      foldingSupport: 'supported' as const,
+      queryRange,
+    })),
+  }
+}
+
+/** A provider whose complete analysis can publish over the answers already painted. */
+function replaceableAnalysis(queryRange: RangeQuery) {
+  let analyzed: DocumentRead | null = null
+  let publish: ((read: DocumentRead, result: EditorSyntaxResult) => void) | null = null
+  const provider: EditorSyntaxProvider = {
+    operation: createEditorStructuralOperation(() => ({
+      ...createEmptySyntaxRuntime(),
+      foldingSupport: 'supported' as const,
+      analyze: async (read: DocumentRead) => {
+        analyzed = read
+        return createEmptySyntaxResult()
+      },
+      subscribeResults: (listener: (read: DocumentRead, result: EditorSyntaxResult) => void) => {
+        publish = listener
+        return () => undefined
+      },
+      queryRange,
+    })),
+  }
+  return {
+    provider,
+    analyzed: () => vi.waitFor(() => expect(analyzed).not.toBeNull()),
+    publishComplete: () => publish!(analyzed!, createEmptySyntaxResult()),
+  }
+}
+
+type SyntaxView = ReturnType<typeof createView>
+
+/** Typing, as the editor applies it: the change, then the painted tokens moved through it. */
+function typeText(view: SyntaxView, buffer: EditorTextBuffer, edit: TextEdit) {
+  const previous = buffer.getTextSnapshot()
+  const change = createEditorBufferSession(buffer).applyEdits([edit])
+  view.syntax.acceptChange(change)
+  view.syntax.setTokens(projectTokensThroughEdit(view.syntax.tokens, edit, previous), false)
+  return change
+}
+
+/** Grows the frame from the document start, one more range beside the last at each step. */
+async function growFrame(view: SyntaxView, ends: readonly number[]) {
+  for (const endIndex of ends) {
+    view.setRange({ startIndex: 0, endIndex })
+    view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+    await vi.waitFor(() =>
+      expect(view.syntax.tokens.toTokens().some((token) => token.start >= endIndex - 20)).toBe(
+        true,
+      ),
+    )
+  }
+  // A request loop keeps asking; give it time to show on the call list.
+  await new Promise((resolve) => setTimeout(resolve, 50))
+}
+
+/** Moves the frame to each range in turn and waits for an answer to paint inside it. */
+async function moveFrame(view: SyntaxView, starts: readonly number[]) {
+  for (const startIndex of starts) {
+    const endIndex = startIndex + 20
+    view.setRange({ startIndex, endIndex })
+    view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+    await vi.waitFor(() =>
+      expect(
+        view.syntax.tokens
+          .toTokens()
+          .some(
+            (token) =>
+              token.style.color === 'range' && startIndex <= token.start && token.start < endIndex,
+          ),
+      ).toBe(true),
+    )
+  }
+}
 
 function createView(
   buffer: EditorTextBuffer,
