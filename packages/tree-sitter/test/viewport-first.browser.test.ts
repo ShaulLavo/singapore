@@ -1,4 +1,5 @@
 import { afterEach, expect, it } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { Editor } from '@singapore-editor/core/editor'
 import { toEditorTokenStore } from '@singapore-editor/core/syntax'
 import { createTreeSitterLanguagePlugin } from '../src/index'
@@ -269,6 +270,80 @@ it('replaces provisional syntax in a mounted editor without another edit or scro
     host.remove()
   }
 }, 30_000)
+
+it('keeps painting frames while a large file scrolls during its partial analysis', async () => {
+  const host = globalThis.document.createElement('div')
+  host.style.cssText = 'width:1200px;height:800px;display:flex;flex-direction:column'
+  globalThis.document.body.append(host)
+  const editor = new Editor(host, {
+    plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],
+  })
+  // The freeze this guards against was a range request loop: the view kept asking for the same few
+  // ranges and starved the page, timers included. Past the cap the requests stop being answered,
+  // which ends such a loop so the assertions below can report it instead of hanging the run.
+  const syntax = editor['syntax']
+  const loadRange = syntax.loadSyntaxRangeResult.bind(syntax)
+  const rangeRequestCap = 2_000
+  let rangeRequests = 0
+  syntax.loadSyntaxRangeResult = (...args: Parameters<typeof loadRange>) => {
+    rangeRequests++
+    if (rangeRequests > rangeRequestCap) return new Promise<never>(() => undefined)
+    return loadRange(...args)
+  }
+  try {
+    editor.setText(generatedModule(50_000), { languageId: 'typescript' })
+    await expect.poll(() => editor.getState().initialHighlightStatus).toBe('painted')
+    const middle = Math.floor(editor.getState().length / 2)
+    editor.setSelection(middle, middle, { reveal: true })
+    editor.focus()
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await userEvent.keyboard('const value = 42; ')
+    const scroll: HTMLElement = editor['view'].scrollElement
+    // Steps are spaced like a person scrolling, so they span the moment the background parse
+    // publishes, when the loop began. The frame cap only catches a stuck page; it judges no speed.
+    for (let step = 0; step < 60; step++) {
+      scroll.scrollTop += 600
+      expect(await frameOrTimeout(10_000)).toBe('frame')
+      expect(rangeRequests).toBeLessThan(rangeRequestCap)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    await expect
+      .poll(() => editor['syntax']['syntaxSession']?.getResult().projection.analysis?.kind, {
+        timeout: 20_000,
+      })
+      .toBe('full')
+    expect(await frameOrTimeout(10_000)).toBe('frame')
+    expect(rangeRequests).toBeLessThan(rangeRequestCap)
+  } finally {
+    editor.dispose()
+    host.remove()
+  }
+}, 120_000)
+
+function generatedModule(lines: number): string {
+  const out: string[] = []
+  for (let line = 0; line < lines; line++) out.push(generatedLine(line))
+  return out.join('\n')
+}
+
+function generatedLine(line: number): string {
+  if (line % 25 === 0) return `// section ${line}`
+  if (line % 25 === 1)
+    return `export function helper_${line}(value: number, label: string): string {`
+  if (line % 25 === 2) return `  return label + ":" + String(value * ${line})`
+  if (line % 25 === 3) return '}'
+  return `export const item_${line}: number = computeValue(${line}, "label-${line}");`
+}
+
+function frameOrTimeout(timeoutMs: number): Promise<'frame' | 'timeout'> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('timeout'), timeoutMs)
+    requestAnimationFrame(() => {
+      clearTimeout(timer)
+      resolve('frame')
+    })
+  })
+}
 
 it.each([
   ['terminated call', 'foo();\n', ' '.repeat(80_000)],

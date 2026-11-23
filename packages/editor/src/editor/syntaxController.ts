@@ -342,9 +342,13 @@ export class EditorSyntaxController {
       !this.highlighterSession &&
       this.rangeTokenOwner?.store === this.currentTokens &&
       this.rangeTokenOwner.snapshot === demand.snapshot
-    const tokenContributors = rangeOwned
-      ? oldCache.filter((cached) => syntaxRangeListsIntersect(cached.tokenRanges, ranges))
-      : []
+    // Range answers paint the store even when it also holds tokens from elsewhere (an earlier
+    // result kept after the cache was cleared), so an on-screen answer stays whether or not the
+    // store is range-owned. Dropping it would make the view ask for that range again, and the new
+    // answer would then push out its neighbour: scrolling during a partial analysis looped there.
+    const tokenContributors = this.highlighterSession
+      ? []
+      : oldCache.filter((cached) => syntaxRangeListsIntersect(cached.tokenRanges, ranges))
     const foldContributors = activeFoldContributors(oldCache, ranges)
     const retained = new Set(tokenContributors.concat(foldContributors))
     const scope = this.rangeScopeOwner
