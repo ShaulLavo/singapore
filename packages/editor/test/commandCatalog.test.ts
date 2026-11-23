@@ -11,7 +11,7 @@ describe('editor command catalog', () => {
     expect(EDITOR_COMMANDS.filter((command) => command.title.trim() === '')).toEqual([])
   })
   it('keeps mutations outside the readonly diff pack', () => {
-    const mutations = new Set(
+    const mutations = new Set<string | null>(
       EDITOR_COMMANDS.filter((command) => command.mutates).map((command) => command.id),
     )
     for (const platform of ['linux', 'mac', 'windows'] as const)

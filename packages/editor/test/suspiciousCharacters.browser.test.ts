@@ -1,7 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import '../src/style.css'
 
+import { loadSuspiciousCharacterData } from '../src/unicodeHighlight'
 import { VirtualizedTextView } from '../src/virtualization'
+
+// The markers draw in the pass that mounts a row once the tables are in.
+beforeAll(() => loadSuspiciousCharacterData())
 
 const CYRILLIC_A = 'а'
 const ZERO_WIDTH_SPACE = '​'

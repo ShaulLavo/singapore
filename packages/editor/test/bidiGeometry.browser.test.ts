@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { detectPlatform } from '@shaulavo/hotkeys'
 import '../src/style.css'
 
@@ -6,9 +6,10 @@ import { Editor, type EditorOptions } from '../src/editor'
 import { createInlineMap } from '../src/inlineMap'
 import { createDocumentSession, createPieceTableSnapshot } from '../src/public/document'
 import { resolveSelection } from '../src/selections'
+import { suspiciousCharacterRanges } from '../src/suspiciousCharacterRanges'
 import {
+  loadSuspiciousCharacterData,
   normalizeSuspiciousCharactersOptions,
-  suspiciousCharacterRanges,
 } from '../src/unicodeHighlight'
 import { VirtualizedTextView } from '../src/virtualization'
 import {
@@ -225,6 +226,9 @@ const BIDI_VISUAL_PATHS = {
   },
   latin: simpleLtrVisualPath(BIDI_CORPUS.latin.length),
 } satisfies Record<(typeof BIDI_CORPUS_NAMES)[number], VisualCaretPath>
+
+// Suspicious-character markers draw in the pass that mounts a row once the tables are in.
+beforeAll(() => loadSuspiciousCharacterData())
 
 describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry browser oracle', () => {
   let fixture: BidiGeometryFixture | null
