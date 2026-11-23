@@ -2,6 +2,7 @@ import { createTouchSelectionPlugin } from '@singapore-editor/plugin-ui/touch-se
 import {
   createBracketMatchPlugin,
   createOccurrenceHighlightPlugin,
+  createPaintSnapshotPlugin,
   Editor,
 } from '@singapore-editor/core/editor'
 import { createTreeSitterLanguagePlugin } from '@singapore-editor/tree-sitter'
@@ -47,6 +48,8 @@ export function mountExample(
     plugins: [
       createLineGutterPlugin({ minWidth: 40 }),
       createTouchSelectionPlugin({ haptics: true }),
+      // The build captures each example's paint, and the page shows it until the editor is live.
+      createPaintSnapshotPlugin(),
     ].concat(
       language === 'text' ? [] : [createTreeSitterLanguagePlugin([languageContribution(language)])],
     ),
