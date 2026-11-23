@@ -1360,8 +1360,10 @@ export class Editor {
     })
   }
 
+  /** `current` is false for the painted tokens moved through an edit, which stay who wrote them. */
   private adoptTokens(tokens: EditorTokenStore, current = true): void {
-    this.syntax.setTokens(tokens, current)
+    if (current) this.syntax.setTokens(tokens)
+    else this.syntax.setProjectedTokens(tokens)
   }
 
   setDocument(document: EditorDocument): void {

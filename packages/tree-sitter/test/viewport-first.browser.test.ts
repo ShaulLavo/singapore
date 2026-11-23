@@ -312,9 +312,9 @@ it('keeps painting frames while scrolling a large file after its preview is repl
   }
   try {
     editor.setText(generatedModule(50_000), { languageId: 'typescript' })
-    // The loop began after the complete analysis replaced the painted preview: that publication
-    // clears the range cache but keeps the preview's tokens, so the store is no longer the
-    // ranges' own, and range answers on screen then displaced each other.
+    // The loop began after the complete analysis replaced the painted preview, and after typing:
+    // both leave painted tokens with no answers behind them, and the frame trim then kept only two
+    // of the range answers on screen, so three neighbours displaced each other without end.
     let published = false
     const unsubscribe = syntax['retainedSyntax'].onDidProduceSyntax(() => {
       published = true
@@ -340,6 +340,8 @@ it('keeps painting frames while scrolling a large file after its preview is repl
     await expect.poll(() => published, { timeout: 20_000 }).toBe(true)
     unsubscribe()
     await userEvent.keyboard('const value = 42; ')
+    // The typed-through colors are still the range answers', so the frame trim can remove them.
+    expect(syntax['rangeTokenRanges'].length).toBeGreaterThan(0)
     const requestsBeforeScroll = rangeRequests
     const scroll: HTMLElement = editor['view'].scrollElement
     // Uneven steps line the scroll up against range answers in many ways; the loop needed a few
@@ -368,6 +370,10 @@ it('keeps painting frames while scrolling a large file after its preview is repl
       )
       .toBe(true)
     await expect.poll(() => visibleSyntaxHighlights(host, scroll)).toBeGreaterThan(0)
+    // The preview's colors at the top of the file had no answer behind them once the complete
+    // analysis published. They stayed while shown and are gone now that the view has left.
+    const previewEnd = answers[0]!.range.endIndex
+    await expect.poll(() => syntax.tokens.firstStartingAtOrAfter(previewEnd)).toBe(0)
   } finally {
     editor.dispose()
     host.remove()

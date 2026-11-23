@@ -46,6 +46,7 @@ import type {
   EditorPreparedTagValue,
   EditorPreparedTabSizePolicy,
 } from './preparedDocument'
+import { projectSyntaxRangesThroughEdits, removeTokensInRanges } from './syntaxRangeTokens'
 import { nowMs } from './timing'
 import {
   editorPerformanceDiagnosticsEnabled,
@@ -154,7 +155,8 @@ type CachedSyntaxFoldRange = {
   readonly folds: readonly FoldRange[]
   readonly result: EditorSyntaxResult
   readonly snapshot: DocumentTextSnapshot
-  readonly tokenRanges: readonly EditorSyntaxRange[]
+  /** The parts of `range` that no later answer has covered. */
+  readonly newestRanges: readonly EditorSyntaxRange[]
 }
 
 type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
@@ -256,19 +258,20 @@ export class EditorSyntaxController {
     taskClass: 'background-derived',
   })
   private currentTokens = EditorTokenStore.empty()
-  private rangeTokenOwner: {
-    readonly store: EditorTokenStore
-    readonly snapshot: DocumentTextSnapshot
-  } | null = null
   /**
-   * Set when a newer analysis replaced range answers whose tokens are still painted. The next
-   * answer covering the viewport starts the range tokens again instead of merging into them.
+   * The parts of the painted tokens that range answers wrote, in offsets of the text the tokens
+   * describe. Tokens outside them came from elsewhere (a host, a highlighter, a whole-document
+   * result) and are never removed here.
+   *
+   * Four things change the list, and nothing else does: a range answer adds its range, an edit
+   * moves the ranges with the text, tokens installed from elsewhere empty it, and the frame trim
+   * drops a range once no answer covers it and none of it is shown.
    */
-  private restartRangeTokens = false
-  /** A range-owned store whose projection through the current edit the editor adopts next. */
-  private projectedRangeTokens: {
+  private rangeTokenRanges: readonly EditorSyntaxRange[] = []
+  /** `rangeTokenRanges` moved through the change just accepted, for the store the editor projects. */
+  private carriedRangeTokens: {
     readonly from: EditorTokenStore
-    readonly snapshot: DocumentTextSnapshot
+    readonly ranges: readonly EditorSyntaxRange[]
   } | null = null
   private rangeCopyOwner: {
     readonly store: EditorTokenStore
@@ -348,15 +351,14 @@ export class EditorSyntaxController {
     )
       return null
     const oldCache = this.cachedSyntaxFoldRanges
-    const rangeOwned =
-      !this.highlighterSession &&
-      this.rangeTokenOwner?.store === this.currentTokens &&
-      this.rangeTokenOwner.snapshot === demand.snapshot
-    const tokenContributors = rangeOwned
-      ? oldCache.filter((cached) => syntaxRangeListsIntersect(cached.tokenRanges, ranges))
-      : []
+    // Every answer that is the newest for some shown text stays, whoever painted the tokens. The
+    // view asks again for shown text without an answer, so dropping one of these would have it
+    // asked for again on every frame.
+    const newestContributors = oldCache.filter((cached) =>
+      syntaxRangeListsIntersect(cached.newestRanges, ranges),
+    )
     const foldContributors = activeFoldContributors(oldCache, ranges)
-    const retained = new Set(tokenContributors.concat(foldContributors))
+    const retained = new Set(newestContributors.concat(foldContributors))
     const scope = this.rangeScopeOwner
     const copy =
       this.rangeCopyOwner?.store === this.copyTokens ? this.rangeCopyOwner.contributor : null
@@ -373,25 +375,16 @@ export class EditorSyntaxController {
         retained.add(cached)
     }
     const nextCache = oldCache.filter((cached) => retained.has(cached))
-    const completeRanges = nextCache.reduce<readonly EditorSyntaxRange[]>(
-      (coverage, cached) => appendCachedSyntaxRange(coverage, cached.range),
+    const coverage = nextCache.reduce<readonly EditorSyntaxRange[]>(
+      (covered, cached) => appendCachedSyntaxRange(covered, cached.range),
       [],
     )
-    const coverage = rangeOwned
-      ? completeRanges
-      : intersectSyntaxRanges(this.cachedSyntaxRanges, completeRanges)
     const discardedOffDemand = oldCache.filter(
       (cached) => !retained.has(cached) && !syntaxRangeListsIntersect([cached.range], ranges),
     )
-    const removed =
-      nextCache.length !== oldCache.length || !sameSyntaxRanges(this.cachedSyntaxRanges, coverage)
     this.cachedSyntaxFoldRanges = nextCache
     this.cachedSyntaxRanges = coverage
-    if (removed && rangeOwned) {
-      const tokens = compactSyntaxRangeTokens(this.currentTokens, coverage)
-      this.currentTokens = tokens
-      this.rangeTokenOwner = { store: tokens, snapshot: demand.snapshot }
-    }
+    this.trimRangeTokens(coverage, ranges)
     if (discardedOffDemand.length > 0 && !this.retainedSyntax)
       this.stopOptionalWarm(demand.snapshot)
     this.lastRangeTrim = {
@@ -401,6 +394,25 @@ export class EditorSyntaxController {
       store: this.currentTokens,
     }
     return discardedOffDemand
+  }
+
+  /**
+   * Removes the range answers' tokens that nothing needs any more. A piece no answer covers goes
+   * whole, once none of it is shown: until then it is what the text shows while it waits for its
+   * answer (after a newer analysis or an edit the cache could not follow).
+   */
+  private trimRangeTokens(
+    coverage: readonly EditorSyntaxRange[],
+    shown: readonly EditorSyntaxRange[],
+  ): void {
+    const dropped = subtractSyntaxRanges(this.rangeTokenRanges, coverage).filter(
+      (piece) => !syntaxRangeListsIntersect([piece], shown),
+    )
+    if (dropped.length === 0) return
+
+    const kept = subtractSyntaxRanges(this.rangeTokenRanges, dropped)
+    this.rangeTokenRanges = kept
+    this.currentTokens = removeTokensInRanges(this.currentTokens, dropped, kept)
   }
 
   private stopOptionalWarm(snapshot: DocumentTextSnapshot): void {
@@ -509,12 +521,25 @@ export class EditorSyntaxController {
     return this.highlighterTheme
   }
 
-  setTokens(tokens: EditorTokenStore, current = true, copyTokens = tokens): void {
-    const projection = this.projectedRangeTokens
-    this.projectedRangeTokens = null
-    if (this.rangeTokenOwner?.store !== tokens) this.rangeTokenOwner = null
-    if (projection?.from === this.currentTokens && tokens !== this.currentTokens)
-      this.rangeTokenOwner = { store: tokens, snapshot: projection.snapshot }
+  /** Tokens from outside the range answers: a host, a highlighter, a document being shown. */
+  setTokens(tokens: EditorTokenStore): void {
+    this.rangeTokenRanges = []
+    this.carriedRangeTokens = null
+    this.commitTokens(tokens)
+  }
+
+  /**
+   * The painted tokens as the editor moved them through the change just accepted. Only that
+   * store keeps the range answers' parts; any other store is not theirs.
+   */
+  setProjectedTokens(tokens: EditorTokenStore): void {
+    const carried = this.carriedRangeTokens
+    this.carriedRangeTokens = null
+    this.rangeTokenRanges = carried?.from === this.currentTokens ? carried.ranges : []
+    this.commitTokens(tokens, false)
+  }
+
+  private commitTokens(tokens: EditorTokenStore, current = true, copyTokens = tokens): void {
     if (!current || this.rangeCopyOwner?.store !== copyTokens) this.rangeCopyOwner = null
     if (!current && tokens !== this.currentTokens)
       this.acceptedCopyTokens = EditorTokenStore.empty()
@@ -532,7 +557,6 @@ export class EditorSyntaxController {
   }
 
   setExternalTokens(tokens: EditorTokenStore): void {
-    this.restartRangeTokens = false
     if (!this.highlighterSession) {
       this.setTokens(tokens)
       return
@@ -550,14 +574,15 @@ export class EditorSyntaxController {
     const structuralTokens = prepared?.highlighter ? undefined : structuralResult?.tokens
     const tokens = highlighterResult?.tokens ?? toEditorTokenStore(structuralTokens ?? [])
 
-    this.restartRangeTokens = false
     this.currentTokens = tokens
+    this.carriedRangeTokens = null
     const structural = prepared?.structural
     const read = structural?.session.read(structural.range)
-    this.rangeTokenOwner =
+    // The whole store is the prepared range answer's tokens, wherever they lie.
+    this.rangeTokenRanges =
       !prepared?.highlighter && read?.kind === 'ready' && read.result === structuralResult
-        ? { store: tokens, snapshot: read.snapshot }
-        : null
+        ? [{ startIndex: 0, endIndex: read.snapshot.length }]
+        : []
     this.preparedInitialTokensInstalled = Boolean(highlighterResult || structuralTokens)
     if (highlighterResult?.theme !== undefined) this.setHighlighterTheme(highlighterResult.theme)
     return tokens
@@ -801,7 +826,7 @@ export class EditorSyntaxController {
       const terminalStatus = this.lastInitialHighlightTerminalStatus ?? 'painted'
       this.commitInitialHighlightStatus(
         terminalStatus,
-        () => this.setTokens(this.currentTokens, false),
+        () => this.commitTokens(this.currentTokens, false),
         configurationGeneration,
       )
     }
@@ -824,7 +849,7 @@ export class EditorSyntaxController {
     if (status === null) return false
     this.commitInitialHighlightStatus(
       status,
-      () => this.setTokens(this.currentTokens, false),
+      () => this.commitTokens(this.currentTokens, false),
       configurationGeneration,
     )
     return true
@@ -927,15 +952,14 @@ export class EditorSyntaxController {
     this.pendingInitialHighlightThemeTerminal = null
     this.foldCoverage = null
     this.parsedSyntaxContentVersion = null
-    const rangeOwned =
-      !this.highlighterSession && this.rangeTokenOwner?.store === this.currentTokens
-    const from = this.currentTokens
-    const projected = this.projectSyntaxRangeCache(change)
-    // The editor adopts these tokens projected through the edit. They are still the ranges' own:
-    // losing that made the cache trim push neighbouring answers out and ask for them again
-    // without end. When the cache could not follow the edit, the next answer starts over instead.
-    if (rangeOwned && projected) this.projectedRangeTokens = { from, snapshot: change.textSnapshot }
-    if (rangeOwned && !projected) this.restartRangeTokens = true
+    this.projectSyntaxRangeCache(change)
+    // The painted tokens describe the text before this change until the editor hands back their
+    // projection. Until then none of them are the ranges' to remove.
+    this.carriedRangeTokens = {
+      from: this.currentTokens,
+      ranges: projectSyntaxRangesThroughEdits(this.rangeTokenRanges, change.edits),
+    }
+    this.rangeTokenRanges = []
     if (this.retainedHighlighter) {
       this.refreshHighlightTokens(this.options.getDocumentVersion(), change, { delayMs: 0 })
     }
@@ -1062,14 +1086,9 @@ export class EditorSyntaxController {
       this.warmRangeRequests.cancel()
       this.pendingPrefetch = null
       this.pendingWarm = null
-      // The painted tokens are range answers from the analysis just replaced (with an early
-      // preview, from before the complete parse). Merging the next answers into them would leave
-      // a store the ranges do not own, whose cache trim then pushed neighbouring answers out and
-      // asked for them again without end.
-      const rangeOwned =
-        !this.highlighterSession && this.rangeTokenOwner?.store === this.currentTokens
+      // The answers are the replaced analysis's (with an early preview, from before the complete
+      // parse). Their tokens stay painted until the new answers write over them.
       this.clearSyntaxRangeCache()
-      this.restartRangeTokens = rangeOwned
       this.parsedSyntaxContentVersion = null
       this.refreshStructuralSyntax(this.options.getDocumentVersion(), null, { delayMs: 0 })
     })
@@ -1582,29 +1601,14 @@ export class EditorSyntaxController {
       }))
     }
     const result = loadResult.result
-    if (loadResult.updatesDocument) this.markSyntaxDocumentCurrent(loadResult.contentVersion)
-    const snapshot = this.options.getSession()?.getTextSnapshot()
+    if (loadResult.updatesDocument) this.acceptSyntaxDocument(loadResult.contentVersion)
+    const nextTokens = this.highlighterSession
+      ? this.currentTokens
+      : this.syntaxTokensForResult(result.tokens, loadResult.range)
     // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
     // window that does not cover the viewport would pair brackets across the part it never parsed
     // and report the rest of the document as being in the host language.
     const applyScopeFacts = this.shouldApplySyntaxFolds(loadResult)
-    // Only an answer covering the viewport restarts, so nothing on screen loses its colors.
-    const restart = this.restartRangeTokens && !this.highlighterSession && applyScopeFacts
-    if (restart || !loadResult.range) this.restartRangeTokens = false
-    const canOwnRanges =
-      restart ||
-      this.rangeTokenOwner?.store === this.currentTokens ||
-      this.currentTokens.length === 0 ||
-      (snapshot &&
-        loadResult.range?.startIndex === 0 &&
-        loadResult.range.endIndex >= snapshot.length)
-    const nextTokens = this.highlighterSession
-      ? this.currentTokens
-      : this.syntaxTokensForResult(
-          result.tokens,
-          loadResult.range,
-          restart ? EditorTokenStore.empty() : this.currentTokens,
-        )
     // Ahead of the tokens, because adopting them is the only notification this pass sends the view
     // contributions: a bracket list assigned after it is a parse late to everyone reading the
     // snapshot, and on a document nobody touches after opening it that means never.
@@ -1627,12 +1631,10 @@ export class EditorSyntaxController {
     if (!this.highlighterSession) {
       const status: SettledHighlightStatus = result.degraded ? 'degraded' : 'painted'
       const copyTokens = loadResult.range ? toEditorTokenStore(result.tokens) : nextTokens
-      this.rangeTokenOwner =
-        contributor && canOwnRanges ? { store: nextTokens, snapshot: contributor.snapshot } : null
       this.rangeCopyOwner = contributor ? { store: copyTokens, contributor } : null
       this.commitInitialHighlightStatus(
         status,
-        () => this.setTokens(nextTokens, true, copyTokens),
+        () => this.commitRangeAnswerTokens(nextTokens, loadResult.range, copyTokens),
         configurationGeneration,
       )
     }
@@ -1650,7 +1652,7 @@ export class EditorSyntaxController {
     ) {
       this.commitInitialHighlightStatus(
         'painted',
-        () => this.setTokens(this.currentTokens, false),
+        () => this.commitTokens(this.currentTokens, false),
         configurationGeneration,
       )
     }
@@ -1699,6 +1701,19 @@ export class EditorSyntaxController {
 
   private syntaxDocumentVersionIsCurrent(): boolean {
     return this.parsedSyntaxContentVersion === this.syntaxContentVersion
+  }
+
+  /**
+   * The first answer from the parse of this text. Answers carried through the edits before it
+   * stood in for it; they describe the old parse, so they stop counting as answers here, and
+   * what they covered is asked for again when it is shown.
+   */
+  private acceptSyntaxDocument(contentVersion: number): void {
+    if (this.parsedSyntaxContentVersion !== contentVersion) {
+      this.cachedSyntaxRanges = []
+      this.cachedSyntaxFoldRanges = []
+    }
+    this.markSyntaxDocumentCurrent(contentVersion)
   }
 
   private markSyntaxDocumentCurrent(contentVersion: number): void {
@@ -1808,11 +1823,24 @@ export class EditorSyntaxController {
   private syntaxTokensForResult(
     tokens: EditorTokenInput,
     range: EditorSyntaxRange | null,
-    base: EditorTokenStore,
   ): EditorTokenStore {
     const store = toEditorTokenStore(tokens)
     if (!range) return store
-    return mergeSyntaxRangeTokens(base, store, range)
+    return mergeSyntaxRangeTokens(this.currentTokens, store, range)
+  }
+
+  /**
+   * A range answer replaced every token reaching into its range, so that range is the answers'
+   * from here on. A whole-document result replaces the store and leaves them nothing.
+   */
+  private commitRangeAnswerTokens(
+    tokens: EditorTokenStore,
+    range: EditorSyntaxRange | null,
+    copyTokens: EditorTokenStore,
+  ): void {
+    this.carriedRangeTokens = null
+    this.rangeTokenRanges = range ? appendCachedSyntaxRange(this.rangeTokenRanges, range) : []
+    this.commitTokens(tokens, true, copyTokens)
   }
 
   private applyCachedSyntaxFolds(range: EditorSyntaxRange): void {
@@ -1840,22 +1868,19 @@ export class EditorSyntaxController {
       result,
       snapshot,
       folds: result.folds,
-      tokenRanges: [range],
+      newestRanges: [range],
     }
     this.cachedSyntaxRanges = appendCachedSyntaxRange(this.cachedSyntaxRanges, range)
     const previous = this.cachedSyntaxFoldRanges.map((cached) => ({
       ...cached,
-      tokenRanges: subtractSyntaxRange(cached.tokenRanges, range),
+      newestRanges: subtractSyntaxRange(cached.newestRanges, range),
     }))
     this.cachedSyntaxFoldRanges = appendCachedSyntaxFoldRange(previous, contributor)
     return contributor
   }
 
   private clearSyntaxRangeCache(): void {
-    this.restartRangeTokens = false
-    this.projectedRangeTokens = null
     this.lastRangeTrim = null
-    this.rangeTokenOwner = null
     this.rangeCopyOwner = null
     this.rangeScopeOwner = null
     this.foldCoverage = null
@@ -1863,12 +1888,11 @@ export class EditorSyntaxController {
     this.cachedSyntaxFoldRanges = []
   }
 
-  /** Whether the cache followed the edit; otherwise it was cleared. */
-  private projectSyntaxRangeCache(change: DocumentSessionChange): boolean {
+  private projectSyntaxRangeCache(change: DocumentSessionChange): void {
     const edit = change.edits[0]
     if (change.edits.length !== 1 || !edit || !canProjectSyntaxRangeCacheThroughEdit(edit)) {
       this.clearSyntaxRangeCache()
-      return false
+      return
     }
 
     this.cachedSyntaxRanges = projectCachedSyntaxRanges(
@@ -1882,7 +1906,6 @@ export class EditorSyntaxController {
       change.snapshot.length,
       change.textSnapshot,
     )
-    return true
   }
 
   private applyHighlightResult(
@@ -1951,7 +1974,7 @@ export class EditorSyntaxController {
       const terminalStatus = this.lastInitialHighlightTerminalStatus ?? 'painted'
       this.commitInitialHighlightStatus(
         terminalStatus,
-        () => this.setTokens(this.currentTokens, false),
+        () => this.commitTokens(this.currentTokens, false),
         configurationGeneration,
       )
     }
@@ -2147,7 +2170,7 @@ export class EditorSyntaxController {
     ) {
       this.commitInitialHighlightStatus(
         terminal.status,
-        () => this.setTokens(this.currentTokens, false),
+        () => this.commitTokens(this.currentTokens, false),
         terminal.configurationGeneration,
       )
       return
@@ -2414,7 +2437,7 @@ const projectCachedSyntaxFoldRanges = (
       ...range,
       snapshot,
       range: nextRange,
-      tokenRanges: projectCachedSyntaxRanges(range.tokenRanges, edit, documentLength),
+      newestRanges: projectCachedSyntaxRanges(range.newestRanges, edit, documentLength),
       folds: projectFoldRangesThroughInsertion(range.folds, edit, documentLength),
     })
   }
@@ -2684,20 +2707,11 @@ function subtractSyntaxRange(
   }
   return remaining
 }
-function intersectSyntaxRanges(
+function subtractSyntaxRanges(
   ranges: readonly EditorSyntaxRange[],
-  protectedRanges: readonly EditorSyntaxRange[],
+  removed: readonly EditorSyntaxRange[],
 ): readonly EditorSyntaxRange[] {
-  let intersection: readonly EditorSyntaxRange[] = []
-  for (const range of ranges) {
-    for (const protectedRange of protectedRanges) {
-      const startIndex = Math.max(range.startIndex, protectedRange.startIndex)
-      const endIndex = Math.min(range.endIndex, protectedRange.endIndex)
-      if (endIndex > startIndex)
-        intersection = appendCachedSyntaxRange(intersection, { startIndex, endIndex })
-    }
-  }
-  return intersection
+  return removed.reduce(subtractSyntaxRange, ranges)
 }
 function activeFoldContributors(
   contributors: readonly CachedSyntaxFoldRange[],
@@ -2712,27 +2726,6 @@ function activeFoldContributors(
   }
   return [...new Set(winners.values())]
 }
-function compactSyntaxRangeTokens(
-  store: EditorTokenStore,
-  ranges: readonly EditorSyntaxRange[],
-): EditorTokenStore {
-  const tokens: ReturnType<EditorTokenStore['tokenAt']>[] = []
-  const selected = new Set<number>()
-  for (const range of ranges) {
-    const last = store.firstStartingAtOrAfter(range.endIndex)
-    store.forEachInRange(
-      store.firstEndingAfter(range.startIndex, last),
-      last,
-      (start, end, _style, index) => {
-        if (end <= range.startIndex || selected.has(index)) return
-        selected.add(index)
-        tokens.push({ start, end, style: store.styleAt(index) })
-      },
-    )
-  }
-  return EditorTokenStore.fromTokens(tokens)
-}
-
 function syntaxRangeListsIntersect(
   left: readonly EditorSyntaxRange[],
   right: readonly EditorSyntaxRange[],
