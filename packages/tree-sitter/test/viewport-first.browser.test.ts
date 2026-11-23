@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { Editor } from '@singapore-editor/core/editor'
-import { toEditorTokenStore } from '@singapore-editor/core/syntax'
+import { toEditorTokenStore, type EditorSyntaxResult } from '@singapore-editor/core/syntax'
 import { createTreeSitterLanguagePlugin } from '../src/index'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
@@ -271,7 +271,7 @@ it('replaces provisional syntax in a mounted editor without another edit or scro
   }
 }, 30_000)
 
-it('keeps painting frames while a large file scrolls during its partial analysis', async () => {
+it('keeps painting frames while scrolling a large file after its preview is replaced', async () => {
   const host = globalThis.document.createElement('div')
   host.style.cssText = 'width:1200px;height:800px;display:flex;flex-direction:column'
   globalThis.document.body.append(host)
@@ -284,34 +284,48 @@ it('keeps painting frames while a large file scrolls during its partial analysis
   const syntax = editor['syntax']
   const loadRange = syntax.loadSyntaxRangeResult.bind(syntax)
   const rangeRequestCap = 2_000
+  const answers: string[] = []
   let rangeRequests = 0
   syntax.loadSyntaxRangeResult = (...args: Parameters<typeof loadRange>) => {
     rangeRequests++
     if (rangeRequests > rangeRequestCap) return new Promise<never>(() => undefined)
-    return loadRange(...args)
+    return loadRange(...args).then((loaded: { readonly result: EditorSyntaxResult }) => {
+      answers.push(loaded.result.projection.analysis?.kind ?? 'none')
+      return loaded
+    })
   }
   try {
     editor.setText(generatedModule(50_000), { languageId: 'typescript' })
+    // The loop began after the complete analysis replaced the painted preview: that publication
+    // clears the range cache but keeps the preview's tokens, so the store is no longer the
+    // ranges' own, and range answers on screen then displaced each other.
+    let published = false
+    const unsubscribe = syntax['retainedSyntax'].onDidProduceSyntax(() => {
+      published = true
+    })
     await expect.poll(() => editor.getState().initialHighlightStatus).toBe('painted')
+    expect(answers[0]).toBe('partial')
     const middle = Math.floor(editor.getState().length / 2)
     editor.setSelection(middle, middle, { reveal: true })
     editor.focus()
+    // Typing once the middle has been answered and then scrolling, as the freeze's reproduction
+    // did. The steps are spaced like a person scrolling and continue until well after the
+    // complete analysis has published. The frame cap only catches a stuck page; it judges no
+    // speed.
     await new Promise((resolve) => setTimeout(resolve, 500))
     await userEvent.keyboard('const value = 42; ')
     const scroll: HTMLElement = editor['view'].scrollElement
-    // Steps are spaced like a person scrolling, so they span the moment the background parse
-    // publishes, when the loop began. The frame cap only catches a stuck page; it judges no speed.
-    for (let step = 0; step < 60; step++) {
+    let stepsAfterPublication = 0
+    for (let step = 0; step < 400 && stepsAfterPublication < 30; step++) {
+      if (published) stepsAfterPublication++
       scroll.scrollTop += 600
       expect(await frameOrTimeout(10_000)).toBe('frame')
       expect(rangeRequests).toBeLessThan(rangeRequestCap)
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
-    await expect
-      .poll(() => editor['syntax']['syntaxSession']?.getResult().projection.analysis?.kind, {
-        timeout: 20_000,
-      })
-      .toBe('full')
+    unsubscribe()
+    expect(stepsAfterPublication).toBe(30)
+    await new Promise((resolve) => setTimeout(resolve, 500))
     expect(await frameOrTimeout(10_000)).toBe('frame')
     expect(rangeRequests).toBeLessThan(rangeRequestCap)
   } finally {

@@ -342,13 +342,9 @@ export class EditorSyntaxController {
       !this.highlighterSession &&
       this.rangeTokenOwner?.store === this.currentTokens &&
       this.rangeTokenOwner.snapshot === demand.snapshot
-    // Range answers paint the store even when it also holds tokens from elsewhere (an earlier
-    // result kept after the cache was cleared), so an on-screen answer stays whether or not the
-    // store is range-owned. Dropping it would make the view ask for that range again, and the new
-    // answer would then push out its neighbour: scrolling during a partial analysis looped there.
-    const tokenContributors = this.highlighterSession
-      ? []
-      : oldCache.filter((cached) => syntaxRangeListsIntersect(cached.tokenRanges, ranges))
+    const tokenContributors = rangeOwned
+      ? oldCache.filter((cached) => syntaxRangeListsIntersect(cached.tokenRanges, ranges))
+      : []
     const foldContributors = activeFoldContributors(oldCache, ranges)
     const retained = new Set(tokenContributors.concat(foldContributors))
     const scope = this.rangeScopeOwner
@@ -371,9 +367,17 @@ export class EditorSyntaxController {
       (coverage, cached) => appendCachedSyntaxRange(coverage, cached.range),
       [],
     )
+    // A store the ranges do not own is never compacted, so an on-screen answer dropped here leaves
+    // its tokens painted, and its on-screen folds are the ones a newer answer won (a contributor
+    // that still wins a fold is retained). Its coverage therefore stays true on screen. Dropping
+    // that coverage made the view ask for the range again, and the new answer then displaced its
+    // neighbour: scrolling during a partial analysis requested the same ranges without end.
     const coverage = rangeOwned
       ? completeRanges
-      : intersectSyntaxRanges(this.cachedSyntaxRanges, completeRanges)
+      : intersectSyntaxRanges(
+          this.cachedSyntaxRanges,
+          ranges.reduce(appendCachedSyntaxRange, completeRanges),
+        )
     const discardedOffDemand = oldCache.filter(
       (cached) => !retained.has(cached) && !syntaxRangeListsIntersect([cached.range], ranges),
     )

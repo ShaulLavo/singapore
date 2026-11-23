@@ -207,64 +207,83 @@ describe('syntax range contributor lifetime', () => {
     }
   })
 
-  it('keeps neighbouring on-screen range answers in a store it does not own', async () => {
-    const buffer = createEditorTextBuffer('x\n'.repeat(250))
-    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'unowned-neighbours' })
-    // Every answer reports the same wide fold, as a bounded-slice answer during a partial analysis
-    // does, so no answer keeps a fold of its own once a neighbour arrives.
-    let answers = 0
-    const ranges = vi.fn(async (range: EditorSyntaxRange) => {
-      // A request loop would never end; stop answering so it fails on the call list below.
-      answers++
-      if (answers > 20) return new Promise<never>(() => undefined)
-      return answerRange(range)
-    })
-    const answerRange = (range: EditorSyntaxRange) => ({
-      ...createEmptySyntaxResult({ requestedRanges: [range] }),
-      records: { languageId: 'typescript', data: new Uint32Array(16) },
-      tokens: EditorTokenStore.fromTokens([
-        { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
-      ]),
-      folds: [{ startIndex: 0, endIndex: 400, startLine: 0, endLine: 199, type: 'scope' as const }],
-    })
-    const provider = {
-      operation: createEditorStructuralOperation(() => ({
-        ...createEmptySyntaxRuntime(),
-        foldingSupport: 'supported' as const,
-        queryRange: ranges,
-      })),
-    }
-    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
-    try {
-      // Tokens from elsewhere make the store mixed, as after the range cache is cleared mid-parse.
-      view.syntax.setTokens(
-        EditorTokenStore.fromTokens([{ start: 450, end: 451, style: { color: 'earlier' } }]),
-      )
-      view.syntax.refresh(1, null, { delayMs: 0 })
-      await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(1))
-      for (const endIndex of [40, 60, 80]) {
-        view.setRange({ startIndex: 0, endIndex })
-        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
-        await vi.waitFor(() =>
-          expect(view.syntax.tokens.toTokens()).toContainEqual({
-            start: endIndex - 20,
-            end: endIndex - 19,
-            style: { color: 'range' },
-          }),
-        )
+  it.each(['a mixed token store', 'a separate highlighter'] as const)(
+    'keeps neighbouring on-screen range answers with %s',
+    async (mode) => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(250))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'unowned-neighbours' })
+      // Every answer reports the same wide fold, as a bounded-slice answer during a partial
+      // analysis does, so no answer keeps a fold of its own once a neighbour arrives.
+      const answerRange = (range: EditorSyntaxRange) => ({
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        records: { languageId: 'typescript', data: new Uint32Array(16) },
+        tokens: EditorTokenStore.fromTokens([
+          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
+        ]),
+        folds: [
+          { startIndex: 0, endIndex: 400, startLine: 0, endLine: 199, type: 'scope' as const },
+        ],
+      })
+      let answers = 0
+      const ranges = vi.fn(async (range: EditorSyntaxRange) => {
+        // A request loop would never end; stop answering so it fails on the call list below.
+        answers++
+        if (answers > 20) return new Promise<never>(() => undefined)
+        return answerRange(range)
+      })
+      const provider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          queryRange: ranges,
+        })),
       }
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      expect(ranges.mock.calls.map(([range]) => [range.startIndex, range.endIndex])).toEqual([
-        [0, 20],
-        [20, 40],
-        [40, 60],
-        [60, 80],
+      const highlighterTokens = EditorTokenStore.fromTokens([
+        { start: 0, end: 1, style: { color: 'highlighter' } },
       ])
-    } finally {
-      view.dispose()
-      analysis.dispose()
-    }
-  })
+      const highlighter = {
+        operation: createEditorHighlighterOperation(() => ({
+          analyze: async () => ({ tokens: highlighterTokens }),
+          dispose: () => undefined,
+        })),
+      }
+      const view = createView(
+        buffer,
+        analysis,
+        provider,
+        { startIndex: 0, endIndex: 20 },
+        mode === 'a separate highlighter' ? highlighter : undefined,
+      )
+      try {
+        // Tokens from elsewhere make the store mixed, as after the range cache is cleared
+        // mid-parse; with a separate highlighter the store is never the ranges' own.
+        if (mode === 'a mixed token store')
+          view.syntax.setTokens(
+            EditorTokenStore.fromTokens([{ start: 450, end: 451, style: { color: 'earlier' } }]),
+          )
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(1))
+        for (const endIndex of [40, 60, 80]) {
+          view.setRange({ startIndex: 0, endIndex })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+          await vi.waitFor(() =>
+            expect(ranges.mock.calls.length).toBeGreaterThan(endIndex / 20 - 1),
+          )
+          await vi.waitFor(() => expect(view.folds()).toBe(1))
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(ranges.mock.calls.map(([range]) => [range.startIndex, range.endIndex])).toEqual([
+          [0, 20],
+          [20, 40],
+          [40, 60],
+          [60, 80],
+        ])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    },
+  )
 
   it('keeps an actual crossing fold contributor when its query lies outside the new frame', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
