@@ -423,12 +423,33 @@ it('releases queued work on disposal and gives plain text for missing grammar or
   await highlighted(dense, slice('const next = 2'))
 })
 
+// The worker cancels slice work on wall-clock budgets, so a slow or cold machine would answer
+// 'over-budget' for work these tests expect to be colored. Workers made here run a clock at a
+// fiftieth of real speed, so a 40 ms budget allows two seconds: the budgets stay in force but a
+// slow runner cannot trip them. The bounds that are not about time (text, predicate and capture
+// limits) are unchanged, and the tests of those still get 'over-budget' without relying on speed.
+const CLOCK_SCALE = 0.02
+
+function createClockedWorkerOwner(): ReturnType<typeof createTreeSitterWorkerOwner> {
+  const owner = createTreeSitterWorkerOwner({ workerFactory: () => createClockedWorker() })
+  owners.add(owner)
+  return owner
+}
+
+function createClockedWorker(): Worker {
+  return new Worker(new URL('./fixtures/scaledClock.worker.ts', import.meta.url), {
+    type: 'module',
+    name: String(CLOCK_SCALE),
+  })
+}
+
 function createHighlighter(
   options: TreeSitterSliceHighlighterOptions = {},
 ): TreeSitterSliceHighlighter {
   const highlighter = createTreeSitterSliceHighlighter({
     language: TYPESCRIPT_TREE_SITTER_LANGUAGE,
     ...options,
+    workerOwner: options.workerOwner ?? createClockedWorkerOwner(),
   })
   highlighters.add(highlighter)
   return highlighter
@@ -466,10 +487,7 @@ function recordWorker() {
   } | null = null
   const workerOwner = createTreeSitterWorkerOwner({
     workerFactory: () => {
-      const worker = new Worker(
-        new URL('../src/treeSitter/treeSitter.worker.ts', import.meta.url),
-        { type: 'module' },
-      )
+      const worker = createClockedWorker()
       const postMessage = worker.postMessage.bind(worker)
       worker.postMessage = (request: TreeSitterWorkerRequest): void => {
         requests.push(request)
