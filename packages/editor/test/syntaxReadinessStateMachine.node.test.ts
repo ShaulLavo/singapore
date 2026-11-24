@@ -1700,5 +1700,303 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it.each(['rejection', 'range-unavailable'] as const)(
+      'requests the moved viewport when an obsolete initial query settles via %s',
+      async (mode) => {
+        const buffer = createEditorTextBuffer('x\n'.repeat(200))
+        const analysis = createEditorDocumentAnalysis({ buffer, documentId: `obsolete-${mode}` })
+        let settleInitial: {
+          resolve: (r: EditorSyntaxResult) => void
+          reject: (e: Error) => void
+        } | null = null
+        const queried: EditorSyntaxRange[] = []
+        const query = vi.fn(async (range: EditorSyntaxRange) => {
+          queried.push(range)
+          if (range.startIndex === 0 && range.endIndex === 20) {
+            return new Promise<EditorSyntaxResult>((resolve, reject) => {
+              settleInitial = { resolve, reject }
+            })
+          }
+          return answerFor(range)
+        })
+        const view = createView(buffer, analysis, structuralProvider(query), {
+          startIndex: 0,
+          endIndex: 20,
+        })
+        try {
+          view.syntax.refresh(1, null, { delayMs: 0 })
+          await vi.waitFor(() => expect(settleInitial).not.toBeNull())
+
+          // Move viewport to [60, 80) while initial parse/query is still loading.
+          view.setRange({ startIndex: 60, endIndex: 80 })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+
+          if (mode === 'rejection') {
+            settleInitial!.reject(new Error('old viewport failed'))
+          } else {
+            settleInitial!.resolve({
+              ...createEmptySyntaxResult({ requestedRanges: [{ startIndex: 0, endIndex: 20 }] }),
+              degraded: { kind: 'range-unavailable', message: 'gone' },
+            })
+          }
+
+          await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+          expect(queried).toContainEqual({ startIndex: 60, endIndex: 80 })
+        } finally {
+          view.dispose()
+          analysis.dispose()
+        }
+      },
+    )
+
+    it('settles initialHighlightStatus and renderDataReady independently of host copy ownership on complete and partial answers', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'host-copy-settle' })
+      let partialMode = true
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (partialMode) {
+          return {
+            ...answerFor(range, {
+              tokens: EditorTokenStore.fromTokens([
+                { start: 1, end: 4, style: { color: 'partial' } },
+              ]),
+            }),
+            projection: {
+              ...answerFor(range).projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+          }
+        }
+        return answerFor(range, {
+          tokens: EditorTokenStore.fromTokens([{ start: 1, end: 4, style: { color: 'complete' } }]),
+        })
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+      try {
+        const hostTokens = EditorTokenStore.fromTokens([
+          { start: 0, end: 10, style: { color: 'host-copy' } },
+        ])
+        view.syntax.setTokens(hostTokens)
+
+        // Part A: required non-terminal partial settles initialHighlightStatus without replacing host copyTokens.
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.initialHighlightStatus).toBe('painted'))
+        expect(view.syntax.copyTokens).toBe(hostTokens)
+
+        // Part B: complete viewport answer settles status, initialHighlightStatus, and renderDataReady while keeping host copyTokens.
+        partialMode = false
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.initialHighlightStatus).toBe('painted')
+        expect(view.syntax.renderDataReady).toBe(true)
+        expect(view.syntax.copyTokens).toBe(hostTokens)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('never caches terminal partials via protectContributor and allows explicit refresh retry after a degraded prepared attachment', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'prepared-retry' })
+      let healthy = false
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (!healthy) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'request-failed', message: 'degraded' },
+            projection: {
+              ...createEmptySyntaxResult({ requestedRanges: [range] }).projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+          }
+        }
+        return answerFor(range)
+      })
+      const provider = structuralProvider(query)
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      const preparedResult = await retained.queryRange(firstFrame)
+
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getDocumentId: () => 'prepared-retry.ts',
+        getCurrentSessionDocumentId: () => 'prepared-retry.ts',
+        getLanguageId: () => 'typescript',
+        getVisibleSyntaxRange: () => firstFrame,
+        adoptTokens: () =>
+          syntax.setDisplayDemand({
+            kind: 'frame',
+            snapshot: buffer.getTextSnapshot(),
+            ranges: [firstFrame],
+          }),
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () =>
+          syntax.setDisplayDemand({
+            kind: 'frame',
+            snapshot: buffer.getTextSnapshot(),
+            ranges: [firstFrame],
+          }),
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: 'rt-retry',
+          provider,
+          configurationTag: [],
+          session: retained,
+          range: firstFrame,
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(preparedResult),
+          readyResult: preparedResult,
+          dispose: () => retained.dispose(),
+        },
+      }
+      try {
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-retry.ts',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntax.adoptPreparedReadyResults(prepared)
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: [firstFrame],
+        })
+        expect(syntax.status).toBe('degraded')
+        // protectContributor must NOT reinsert the terminal partial into the shared range cache!
+        expect(analysis.inspectRetention().entries[0]?.cachedRangeCount).toBe(0)
+
+        // Provider recovers -> explicit refresh must NOT be suppressed by #preparedStructuralContentVersion!
+        healthy = true
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(query).toHaveBeenCalledTimes(2)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('keeps a prepared full-document-only provider ready across scrolling', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'prepared-full-only' })
+      const fullResult = createEmptySyntaxResult({ requestedRanges: [firstFrame] })
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async () => fullResult,
+          // No queryRange: full-document-only provider!
+        })),
+      }
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      const readyResult = await retained.refresh(buffer.getTextSnapshot())
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let viewport: EditorSyntaxRange = firstFrame
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getDocumentId: () => 'prepared-full-only.ts',
+        getCurrentSessionDocumentId: () => 'prepared-full-only.ts',
+        getLanguageId: () => 'typescript',
+        getVisibleSyntaxRange: () => viewport,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: 'rt-full',
+          provider,
+          configurationTag: [],
+          session: retained,
+          range: firstFrame,
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(readyResult),
+          readyResult,
+          dispose: () => retained.dispose(),
+        },
+      }
+      try {
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-full-only.ts',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntax.adoptPreparedReadyResults(prepared)
+        expect(syntax.status).toBe('ready')
+
+        // Scrolling far away must stay 'ready' (full-document mode, NOT range mode!).
+        viewport = { startIndex: 200, endIndex: 240 }
+        expect(syntax.status).toBe('ready')
+        expect(syntax.renderDataReady).toBe(true)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

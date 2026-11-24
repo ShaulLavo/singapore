@@ -1035,6 +1035,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     )
     if (
       !cached &&
+      !isTerminalIncompleteSyntaxResult(contributor.result) &&
       origin?.snapshot === snapshot &&
       origin.point === this.buffer.getDocumentSyncPoint() &&
       origin.generation === this.generation
@@ -1207,6 +1208,22 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
 
   currentBase(): Promise<EditorRetainedSyntaxBase> {
     return this.currentReady()
+  }
+
+  clearPartialRanges(): void {
+    for (const [key, cached] of this.ranges) {
+      if (cached.result.projection.analysis?.kind === 'partial') {
+        this.ranges.delete(key)
+        this.resultOrigins.delete(cached.result)
+      }
+    }
+    for (const list of this.contributors.values()) {
+      for (const contributor of list) {
+        if (contributor.result.projection.analysis?.kind === 'partial') {
+          this.resultOrigins.delete(contributor.result)
+        }
+      }
+    }
   }
 
   invalidationStepsSince(
@@ -1857,6 +1874,7 @@ function structuralLease(
       options?.forceRetry === true &&
       currentRead.kind === 'ready' &&
       isTerminalIncompleteSyntaxResult(currentRead.result)
+    if (options?.forceRetry === true) entry.clearPartialRanges()
     if (shouldRetryFailed || shouldForceRetryTerminal) entry.refresh()
     const generation = entry.analysisGeneration
     try {

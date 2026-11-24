@@ -1090,24 +1090,26 @@ const editDocument = async (
     )
     const editMs = nowMs() - editStart
     const parseStart = nowMs()
-    const rootTree = stagesSlowEdit(request)
-      ? parseEditOrStage(request, runtime, source, { reusableTree, oldDocument: cached }, context)
-      : runWorkerPhase('parse root', () =>
-          measurePhase(context, 'parseRoot', () =>
-            parseSource(runtime.parser, source, reusableTree, context),
-          ),
-        )
-    if (!rootTree) {
-      return {
-        ...parseAckResult(request, [], phaseTimings(context)),
-        analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
-        statistics: editStatistics(context),
-      }
-    }
+    let ownsReusableTree = true
     let parsedDocument: ParsedDocument
     let changedRanges: readonly TreeSitterSyntaxRange[]
     let invalidation: TreeSitterParseInvalidation
     try {
+      const rootTree = stagesSlowEdit(request)
+        ? parseEditOrStage(request, runtime, source, { reusableTree, oldDocument: cached }, context)
+        : runWorkerPhase('parse root', () =>
+            measurePhase(context, 'parseRoot', () =>
+              parseSource(runtime.parser, source, reusableTree, context),
+            ),
+          )
+      if (!rootTree) {
+        ownsReusableTree = false
+        return {
+          ...parseAckResult(request, [], phaseTimings(context)),
+          analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
+          statistics: editStatistics(context),
+        }
+      }
       const edited = await parseEditedDocument(
         request,
         runtime,
@@ -1124,7 +1126,7 @@ const editDocument = async (
       changedRanges = edited.changedRanges
       invalidation = edited.invalidation
     } finally {
-      reusableTree.delete()
+      if (ownsReusableTree) reusableTree.delete()
     }
     const parseMs = nowMs() - parseStart
     assertNotCancelled(context)

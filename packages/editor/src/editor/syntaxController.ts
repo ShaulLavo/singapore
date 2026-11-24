@@ -1043,11 +1043,13 @@ export class EditorSyntaxController {
     prefetchRange: EditorSyntaxRange | null | undefined,
     guard: RequestGuard,
   ): void {
-    const visible = this.options.getVisibleSyntaxRange()
+    const canRange = Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
+    const visible = canRange ? this.options.getVisibleSyntaxRange() : null
     const structural = this.retainedSyntax?.read(visible ?? undefined)
     if (structural?.kind !== 'ready') return
     const cachedRange = structural.range ?? structural.result.projection.requestedRanges[0]
     const adoptedRange =
+      canRange &&
       visible &&
       cachedRange &&
       cachedRange.startIndex <= visible.startIndex &&
@@ -1060,16 +1062,16 @@ export class EditorSyntaxController {
         parseGeneration: guard.parseGeneration,
         parseId: null,
         baseResult: structural.result,
-        range: adoptedRange,
+        range: canRange ? adoptedRange : null,
         result: structural.result,
-        source: adoptedRange ? 'visible' : 'full',
+        source: canRange && adoptedRange ? 'visible' : 'full',
         suppressWarm: true,
         updatesDocument: true,
       },
       guard,
       nowMs(),
     )
-    this.#adoptReadyPrefetch(prefetchRange, guard)
+    if (canRange) this.#adoptReadyPrefetch(prefetchRange, guard)
   }
 
   #adoptReadyPrefetch(
@@ -1328,7 +1330,14 @@ export class EditorSyntaxController {
         range: options.range ?? null,
       },
     })
-    if (this.#syntaxContentVersion !== this.#preparedStructuralContentVersion) {
+    const skipPreparedStructural =
+      this.#syntaxContentVersion === this.#preparedStructuralContentVersion &&
+      !(
+        explicitRetry &&
+        (this.#parseState.kind === 'error' || this.#publishedScope?.degraded === true)
+      )
+    if (!skipPreparedStructural) {
+      this.#preparedStructuralContentVersion = null
       this.#refreshStructuralSyntax(documentVersion, change, options, explicitRetry)
     }
     if (
@@ -1697,15 +1706,17 @@ export class EditorSyntaxController {
     if (this.syntaxSession !== transfer.session) return
     if (!this.#isRequestCurrent(guard)) return
 
+    const canRange = Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
+    const range = canRange ? transfer.range : null
     this.#applySyntaxResult(
       {
         contentVersion: guard.contentVersion,
         parseGeneration: guard.parseGeneration,
         parseId: null,
         baseResult: result,
-        range: transfer.range,
+        range,
         result,
-        source: transfer.range ? 'visible' : 'full',
+        source: range ? 'visible' : 'full',
         suppressWarm: true,
         updatesDocument: true,
       },
@@ -1887,7 +1898,12 @@ export class EditorSyntaxController {
     if (error instanceof DOMException && error.name === 'AbortError') return
     if (!this.#isRequestCurrent(guard)) return
     const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(range)
-    if (gaps.length === 0 && !emptyGap && !recordsGap) return
+    if (gaps.length === 0 && !emptyGap && !recordsGap) {
+      if (!this.#publishedScopeCoversViewport()) {
+        this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
+      }
+      return
+    }
     if (recordsGap) {
       const visible = this.options.getVisibleSyntaxRange()
       if (visible) this.#unavailableRecordsRange = visible
@@ -1936,12 +1952,10 @@ export class EditorSyntaxController {
         this.#copyOwner === 'range' &&
         this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
         this.#acceptedTokensTextVersion === this.options.getTextVersion()
+      const needsStatusCommit =
+        this.#initialHighlightState !== status || this.pendingInitialHighlightReplacement !== null
       const needsCopyOrStatusUpdate =
-        this.#copyOwner !== 'external' &&
-        (reconciled.promoted ||
-          !copyCurrent ||
-          this.#initialHighlightState !== status ||
-          this.pendingInitialHighlightReplacement !== null)
+        this.#copyOwner !== 'external' && (reconciled.promoted || !copyCurrent || needsStatusCommit)
       if (needsCopyOrStatusUpdate) {
         const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
         const primary =
@@ -1956,10 +1970,7 @@ export class EditorSyntaxController {
         if (snapshot && this.#rangeTokenOwner?.store === this.#currentTokens) {
           this.#rangeTokenOwner = { store: this.#currentTokens, snapshot }
         }
-        if (
-          this.#initialHighlightState !== status ||
-          this.pendingInitialHighlightReplacement !== null
-        ) {
+        if (needsStatusCommit) {
           this.#commitInitialHighlightStatus(
             status,
             () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
@@ -1968,6 +1979,13 @@ export class EditorSyntaxController {
         } else {
           this.setTokens(this.#currentTokens, true, nextCopyTokens)
         }
+        notifyUpdate = true
+      } else if (this.#copyOwner === 'external' && needsStatusCommit) {
+        this.#commitInitialHighlightStatus(
+          status,
+          () => this.options.adoptTokens(this.#currentTokens),
+          configurationGeneration,
+        )
         notifyUpdate = true
       } else {
         this.options.adoptTokens(this.#currentTokens)
@@ -2473,11 +2491,10 @@ export class EditorSyntaxController {
         return true
       }
 
-      const mode: 'full' | 'range' =
-        loadResult.range !== null ||
-        Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
-          ? 'range'
-          : 'full'
+      const canRange = Boolean(
+        this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange(),
+      )
+      const mode: 'full' | 'range' = canRange ? 'range' : 'full'
       const parseKind: 'full' | 'partial' =
         baseAnalysis?.kind === 'partial' || analysis?.kind === 'partial' ? 'partial' : 'full'
       this.#acceptSyntaxDocument(
@@ -2542,7 +2559,10 @@ export class EditorSyntaxController {
     }
 
     // Full-document mode (no range queries).
-    if (loadResult.range === null) {
+    if (
+      loadResult.range === null ||
+      !(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
+    ) {
       return this.#publishFullDocumentResult(result, guard)
     }
 
@@ -2605,32 +2625,40 @@ export class EditorSyntaxController {
       })
       if (reconciled.kind === 'settled') {
         settledStatus = reconciled.degraded ? 'degraded' : 'painted'
-        // Only rebuild copyTokens if viewport settlement promoted a prefetch/warm entry or copy
-        // ownership is not yet active; otherwise only settle initialHighlightStatus when needed.
-        if (!this.#highlighterSession && this.#copyOwner !== 'external') {
-          const needsRebuild = reconciled.promoted || this.#copyOwner !== 'range'
+        // Settle highlighting independently of copy ownership: external/host copy owners settle
+        // initialHighlightStatus without clobbering host-installed copyTokens.
+        if (!this.#highlighterSession) {
           const needsStatusCommit =
             this.#initialHighlightState !== settledStatus ||
             this.pendingInitialHighlightReplacement !== null
-          if (needsRebuild) {
-            const nextCopyTokens = this.#rebuildRangeCopyTokens(
-              this.#rangeEntries,
-              this.#currentTokens,
-            )
-            const primary =
-              reconciled.contributors[0] ?? this.#primaryCopyContributor(this.#rangeEntries)
-            this.#rangeCopyTokens = nextCopyTokens
-            this.#copyOwner = 'range'
-            this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
-            this.#commitInitialHighlightStatus(
-              settledStatus,
-              () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
-              guard.configurationGeneration,
-            )
+          if (this.#copyOwner !== 'external') {
+            const needsRebuild = reconciled.promoted || this.#copyOwner !== 'range'
+            if (needsRebuild) {
+              const nextCopyTokens = this.#rebuildRangeCopyTokens(
+                this.#rangeEntries,
+                this.#currentTokens,
+              )
+              const primary =
+                reconciled.contributors[0] ?? this.#primaryCopyContributor(this.#rangeEntries)
+              this.#rangeCopyTokens = nextCopyTokens
+              this.#copyOwner = 'range'
+              this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+              this.#commitInitialHighlightStatus(
+                settledStatus,
+                () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
+                guard.configurationGeneration,
+              )
+            } else if (needsStatusCommit) {
+              this.#commitInitialHighlightStatus(
+                settledStatus,
+                () => this.setTokens(this.#currentTokens, true, this.#rangeCopyTokens),
+                guard.configurationGeneration,
+              )
+            }
           } else if (needsStatusCommit) {
             this.#commitInitialHighlightStatus(
               settledStatus,
-              () => this.setTokens(this.#currentTokens, true, this.#rangeCopyTokens),
+              () => this.options.adoptTokens(this.#currentTokens),
               guard.configurationGeneration,
             )
           }
@@ -2646,13 +2674,13 @@ export class EditorSyntaxController {
       !terminalPartial
     ) {
       // Non-terminal partial on a required visible query: provisional tokens painted; settle
-      // initialHighlightStatus to 'painted' (while structural `status` stays 'loading').
+      // initialHighlightStatus to 'painted' without clobbering external/host copy ownership.
       const status: SettledHighlightStatus = result.degraded ? 'degraded' : 'painted'
-      this.#commitInitialHighlightStatus(
-        status,
-        () => this.setTokens(this.#currentTokens, true, this.#rangeCopyTokens),
-        guard.configurationGeneration,
-      )
+      const publish =
+        this.#copyOwner === 'external'
+          ? () => this.options.adoptTokens(this.#currentTokens)
+          : () => this.setTokens(this.#currentTokens, true, this.#rangeCopyTokens)
+      this.#commitInitialHighlightStatus(status, publish, guard.configurationGeneration)
     }
 
     // Settle pending structural replacement when an external highlighter owns colors.
@@ -2754,18 +2782,29 @@ export class EditorSyntaxController {
     })
     if (reconciled.kind === 'settled') {
       if (!this.#highlighterSession) {
-        const nextCopyTokens = this.#rebuildRangeCopyTokens(this.#rangeEntries, this.#currentTokens)
-        const primary =
-          reconciled.contributors[0] ?? this.#primaryCopyContributor(this.#rangeEntries)
-        this.#rangeCopyTokens = nextCopyTokens
-        this.#copyOwner = 'range'
-        this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
         const status: SettledHighlightStatus = reconciled.degraded ? 'degraded' : 'painted'
-        this.#commitInitialHighlightStatus(
-          status,
-          () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
-          guard.configurationGeneration,
-        )
+        if (this.#copyOwner !== 'external') {
+          const nextCopyTokens = this.#rebuildRangeCopyTokens(
+            this.#rangeEntries,
+            this.#currentTokens,
+          )
+          const primary =
+            reconciled.contributors[0] ?? this.#primaryCopyContributor(this.#rangeEntries)
+          this.#rangeCopyTokens = nextCopyTokens
+          this.#copyOwner = 'range'
+          this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+          this.#commitInitialHighlightStatus(
+            status,
+            () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
+            guard.configurationGeneration,
+          )
+        } else {
+          this.#commitInitialHighlightStatus(
+            status,
+            () => this.options.adoptTokens(this.#currentTokens),
+            guard.configurationGeneration,
+          )
+        }
       } else if (this.#pendingReplacementMatches('syntax', guard.configurationGeneration)) {
         this.#commitInitialHighlightStatus(
           this.#lastInitialHighlightTerminalStatus ?? 'painted',
@@ -2819,7 +2858,12 @@ export class EditorSyntaxController {
     options: { readonly preserveProvisionalPaint: boolean },
   ): void {
     const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(requestRange)
-    if (gaps.length === 0 && !emptyGap && !recordsGap) return
+    if (gaps.length === 0 && !emptyGap && !recordsGap) {
+      if (!this.#publishedScopeCoversViewport()) {
+        this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
+      }
+      return
+    }
 
     for (const gap of gaps) {
       this.#unavailableRanges = appendCachedSyntaxRange(this.#unavailableRanges, gap)
