@@ -60,6 +60,12 @@ runs:
           "$PLAYWRIGHT" install-deps --dry-run $BROWSERS
         }
 
+        # Nothing to do when an earlier step already provided everything.
+        if ready; then
+          echo "Playwright system packages are already in place."
+          exit 0
+        fi
+
         if compgen -G "$debs/*.deb" > /dev/null; then
           # dpkg, not apt: apt downloads again from the mirror even for files it was handed.
           if ! sudo dpkg -i "$debs"/*.deb; then
