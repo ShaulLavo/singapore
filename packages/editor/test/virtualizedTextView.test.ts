@@ -3030,6 +3030,44 @@ describe('VirtualizedTextView', () => {
     expect(viewportChanges).toBe(1)
   })
 
+  it('reports a scroll once when its own report applies new fold markers', () => {
+    view.dispose()
+    const lines = Array.from({ length: 40 }, (_, row) => (row % 4 === 0 ? 'if (x) {' : '  y();'))
+    const offsets = lineStartOffsets(lines)
+    const marker = (row: number): VirtualizedFoldMarker => ({
+      key: `fold-${row}`,
+      startOffset: offsets[row]!,
+      endOffset: offsets[row + 2]!,
+      startRow: row,
+      endRow: row + 1,
+      collapsed: false,
+    })
+    let viewportChanges = 0
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      gutterContributions: [createFoldGutterContribution()],
+      // As the editor does: the report applies the cached syntax folds of the new rows.
+      onViewportChange: () => {
+        viewportChanges += 1
+        const first = view.getState().mountedRows[0]?.index ?? 0
+        view.setFoldMarkers([marker(first + ((4 - (first % 4)) % 4))])
+      },
+    })
+    view.setText(lines.join('\n'))
+    view.setScrollMetrics(0, 100, 100)
+    viewportChanges = 0
+
+    view.setScrollMetrics(200, 100, 100)
+    view.setScrollMetrics(400, 100, 100)
+
+    expect(viewportChanges).toBe(2)
+    const toggles = container.querySelectorAll('.editor-virtualized-fold-toggle:not([hidden])')
+    expect(toggles.length).toBe(1)
+  })
+
   it('passes a marker whose extent changed under the same key to gutter cells', () => {
     view.dispose()
     view = new VirtualizedTextView(container, {
