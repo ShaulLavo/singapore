@@ -269,18 +269,10 @@
     {
       "api": "setTimeout",
       "file": "packages/editor/src/editor/workScheduler.ts",
-      "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:97308acba5",
+      "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:af292fe7dc",
       "justification": "The scheduler owns this task budget deadline. Expiry checks task identity before aborting; completion, failure, cancellation, and disposal clear the budget timer.",
-      "line": 381,
-      "snippet": "work.budgetTimer = globalThis.setTimeout(() => this.timeoutWork(work), budgetMs)"
-    },
-    {
-      "api": "setTimeout",
-      "file": "packages/editor/src/editor/workScheduler.ts",
-      "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:9ac9ef7b67",
-      "justification": "The scheduler owns one deferred queue flush at a time, selects current tasks by priority, and drops cancelled or replaced work before starting it. Disposal clears the queue timer and queued work.",
-      "line": 246,
-      "snippet": "this.queueTimer = globalThis.setTimeout(() => this.flushQueuedWork(), 0)"
+      "line": 377,
+      "snippet": "work.budgetTimer = globalThis.setTimeout(() => this.#timeoutWork(work), budgetMs)"
     },
     {
       "api": "setTimeout",
@@ -289,6 +281,14 @@
       "justification": "The scheduler owns delayed task starts and clamps repeated scheduling to the requested maximum delay. Cancellation and disposal clear the handle; task identity and stale-result checks guard execution and application.",
       "line": 195,
       "snippet": "work.timer = globalThis.setTimeout(() => this.start(work), delayMs)"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/editor/src/editor/workScheduler.ts",
+      "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:f4e762a685",
+      "justification": "The scheduler owns one deferred queue flush at a time, selects current tasks by priority, and drops cancelled or replaced work before starting it. Disposal clears the queue timer and queued work.",
+      "line": 246,
+      "snippet": "this.#queueTimer = globalThis.setTimeout(() => this.#flushQueuedWork(), 0)"
     },
     {
       "api": "setTimeout",
@@ -327,7 +327,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 2002,
+      "line": 1999,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -335,7 +335,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 2011,
+      "line": 2008,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {

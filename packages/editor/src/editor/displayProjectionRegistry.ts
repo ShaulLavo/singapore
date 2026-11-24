@@ -85,20 +85,20 @@ export class EditorDisplayProjectionRegistry {
     string,
     StoredDisplayProjection<EditorDisplayProjectionKind>
   >()
-  private nextSequence = 0
+  #nextSequence = 0
 
   set<K extends EditorDisplayProjectionKind>(projection: EditorDisplayProjection<K>): void {
     validateDisplayProjection(projection)
 
     const key = displayProjectionKey(projection.kind, projection.owner)
     const previous = this.projections.get(key)
-    const sequence = previous?.sequence ?? this.nextSequence
+    const sequence = previous?.sequence ?? this.#nextSequence
     const next = { projection, sequence }
 
-    this.validateNextProjectionState(next)
-    this.disposeReplacedProjection(previous, projection)
+    this.#validateNextProjectionState(next)
+    this.#disposeReplacedProjection(previous, projection)
     this.projections.set(key, next)
-    if (!previous) this.nextSequence += 1
+    if (!previous) this.#nextSequence += 1
   }
 
   get<K extends EditorDisplayProjectionKind>(
@@ -112,7 +112,7 @@ export class EditorDisplayProjectionRegistry {
   }
 
   values<K extends EditorDisplayProjectionKind>(kind: K): readonly EditorDisplayProjection<K>[] {
-    return this.storedValues(kind).map((stored) => stored.projection)
+    return this.#storedValues(kind).map((stored) => stored.projection)
   }
 
   replaceValue<K extends EditorDisplayProjectionKind>(
@@ -137,7 +137,7 @@ export class EditorDisplayProjectionRegistry {
     const next = { projection, sequence: stored.sequence }
 
     validateDisplayProjection(projection)
-    this.validateNextProjectionState(next)
+    this.#validateNextProjectionState(next)
     this.projections.set(key, next)
     return true
   }
@@ -147,7 +147,7 @@ export class EditorDisplayProjectionRegistry {
     source: EditorDisplayProjectionSource,
   ): void {
     validateDisplayProjectionSource(source)
-    for (const stored of this.storedValues(kind)) {
+    for (const stored of this.#storedValues(kind)) {
       this.replaceValue(kind, stored.projection.owner, stored.projection.value, { source })
     }
   }
@@ -170,7 +170,7 @@ export class EditorDisplayProjectionRegistry {
     this.projections.clear()
   }
 
-  private storedValues<K extends EditorDisplayProjectionKind>(
+  #storedValues<K extends EditorDisplayProjectionKind>(
     kind: K,
   ): readonly StoredDisplayProjection<K>[] {
     const values: StoredDisplayProjection<K>[] = []
@@ -183,7 +183,7 @@ export class EditorDisplayProjectionRegistry {
     return values.sort(compareStoredDisplayProjections)
   }
 
-  private storedValuesWithReplacement<K extends EditorDisplayProjectionKind>(
+  #storedValuesWithReplacement<K extends EditorDisplayProjectionKind>(
     next: StoredDisplayProjection<K>,
   ): readonly StoredDisplayProjection<K>[] {
     const nextKey = displayProjectionKey(next.projection.kind, next.projection.owner)
@@ -200,16 +200,16 @@ export class EditorDisplayProjectionRegistry {
     return values.sort(compareStoredDisplayProjections)
   }
 
-  private validateNextProjectionState<K extends EditorDisplayProjectionKind>(
+  #validateNextProjectionState<K extends EditorDisplayProjectionKind>(
     next: StoredDisplayProjection<K>,
   ): void {
     if (next.projection.kind !== 'folds') return
 
-    const projections = this.storedValuesWithReplacement(next as StoredDisplayProjection<'folds'>)
+    const projections = this.#storedValuesWithReplacement(next as StoredDisplayProjection<'folds'>)
     validateFoldProjectionSet(projections)
   }
 
-  private disposeReplacedProjection<K extends EditorDisplayProjectionKind>(
+  #disposeReplacedProjection<K extends EditorDisplayProjectionKind>(
     previous: StoredDisplayProjection<EditorDisplayProjectionKind> | undefined,
     next: EditorDisplayProjection<K>,
   ): void {

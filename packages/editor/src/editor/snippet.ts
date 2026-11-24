@@ -222,7 +222,7 @@ function insertionLineIndent(insertion: SnippetInsertion): string {
 class SnippetParser {
   private index = 0
   private out = ''
-  private readonly byStop = new Map<number, SnippetRange[]>()
+  readonly #byStop = new Map<number, SnippetRange[]>()
   /** Set once a transform on a numbered placeholder has been read, never cleared. */
   sawPlaceholderTransform = false
 
@@ -239,22 +239,22 @@ class SnippetParser {
       if (char === undefined) break
 
       if (char === '\\') {
-        this.readEscape()
+        this.#readEscape()
         continue
       }
       if (char === '$') {
-        if (this.readTabStop()) continue
+        if (this.#readTabStop()) continue
       }
 
       this.out += char
       this.index += 1
     }
 
-    return { stops: this.orderedStops(), text: this.out }
+    return { stops: this.#orderedStops(), text: this.out }
   }
 
   /** `\$`, `\}` and `\\` are literals; a lone backslash stays a backslash. */
-  private readEscape(): void {
+  #readEscape(): void {
     const next = this.source[this.index + 1]
     if (next === '$' || next === '}' || next === '\\') {
       this.out += next
@@ -267,28 +267,28 @@ class SnippetParser {
   }
 
   /** Reads any `$…` form at the cursor. Returns false when it is a bare `$`. */
-  private readTabStop(): boolean {
+  #readTabStop(): boolean {
     const simple = /^\$(\d+)/.exec(this.source.slice(this.index))
     if (simple?.[1] !== undefined) {
-      this.recordStop(Number(simple[1]), this.out.length, this.out.length)
+      this.#recordStop(Number(simple[1]), this.out.length, this.out.length)
       this.index += simple[0].length
       return true
     }
 
     const simpleVariable = /^\$([A-Za-z_][A-Za-z0-9_]*)/.exec(this.source.slice(this.index))
     if (simpleVariable?.[1] !== undefined) {
-      this.out += this.variableValue(simpleVariable[1])
+      this.out += this.#variableValue(simpleVariable[1])
       this.index += simpleVariable[0].length
       return true
     }
 
     if (this.source[this.index + 1] !== '{') return false
 
-    return this.readBracedStop()
+    return this.#readBracedStop()
   }
 
-  private readBracedStop(): boolean {
-    const braced = this.readBracedBody()
+  #readBracedStop(): boolean {
+    const braced = this.#readBracedBody()
     if (braced === null) return false
 
     const { body, end } = braced
@@ -297,8 +297,8 @@ class SnippetParser {
       this.index = end
       const start = this.out.length
       if (numbered[2] !== undefined) this.expand(numbered[2])
-      this.recordStop(Number(numbered[1]), start, this.out.length)
-      this.rememberDefault(Number(numbered[1]), start)
+      this.#recordStop(Number(numbered[1]), start, this.out.length)
+      this.#rememberDefault(Number(numbered[1]), start)
       return true
     }
 
@@ -308,21 +308,21 @@ class SnippetParser {
       const start = this.out.length
       // The first choice is the default, matching what an editor shows before the user picks.
       this.out += choiceOptions(choice[2])[0] ?? ''
-      this.recordStop(Number(choice[1]), start, this.out.length)
-      this.rememberDefault(Number(choice[1]), start)
+      this.#recordStop(Number(choice[1]), start, this.out.length)
+      this.#rememberDefault(Number(choice[1]), start)
       return true
     }
 
     const variable = /^([A-Za-z_][A-Za-z0-9_]*)(?::([\s\S]*))?$/.exec(body)
     if (variable?.[1] !== undefined) {
       this.index = end
-      const value = this.variableValue(variable[1])
+      const value = this.#variableValue(variable[1])
       if (value.length > 0) this.out += value
       else if (variable[2] !== undefined) this.expand(variable[2])
       return true
     }
 
-    return this.readTransformed(body, end)
+    return this.#readTransformed(body, end)
   }
 
   /**
@@ -331,7 +331,7 @@ class SnippetParser {
    * Tried last, so a default that merely contains slashes — `${1:a/b/c}` — is still read as the
    * placeholder it is.
    */
-  private readTransformed(body: string, end: number): boolean {
+  #readTransformed(body: string, end: number): boolean {
     const parts = transformParts(body)
     if (!parts) return false
 
@@ -340,7 +340,7 @@ class SnippetParser {
 
     if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(parts.name)) {
       this.index = end
-      this.out += transform(this.variableValue(parts.name))
+      this.out += transform(this.#variableValue(parts.name))
       return true
     }
     if (!/^\d+$/.test(parts.name)) return false
@@ -350,7 +350,7 @@ class SnippetParser {
     const index = Number(parts.name)
     const start = this.out.length
     this.out += transform(this.defaults.get(index) ?? '')
-    this.recordStop(index, start, this.out.length, transform)
+    this.#recordStop(index, start, this.out.length, transform)
     return true
   }
 
@@ -364,7 +364,7 @@ class SnippetParser {
     this.sawPlaceholderTransform ||= nested.sawPlaceholderTransform
     for (const stop of parsed.stops) {
       for (const range of stop.ranges) {
-        this.recordStop(stop.index, start + range.start, start + range.end, range.transform)
+        this.#recordStop(stop.index, start + range.start, start + range.end, range.transform)
       }
     }
   }
@@ -374,7 +374,7 @@ class SnippetParser {
    * unterminated. Leaves the cursor alone: a body no branch below recognises has to be re-read as
    * the literal text it was written as.
    */
-  private readBracedBody(): { readonly body: string; readonly end: number } | null {
+  #readBracedBody(): { readonly body: string; readonly end: number } | null {
     let cursor = this.index + 2
     let depth = 1
     let body = ''
@@ -402,37 +402,37 @@ class SnippetParser {
   }
 
   /** The first non-empty expansion of a placeholder number is the value its transforms read. */
-  private rememberDefault(index: number, start: number): void {
+  #rememberDefault(index: number, start: number): void {
     if (this.out.length === start) return
     if (this.defaults.has(index)) return
 
     this.defaults.set(index, this.out.slice(start))
   }
 
-  private recordStop(
+  #recordStop(
     index: number,
     start: number,
     end: number,
     transform?: (value: string) => string,
   ): void {
     const range = transform ? { end, start, transform } : { end, start }
-    const ranges = this.byStop.get(index)
+    const ranges = this.#byStop.get(index)
     if (ranges) {
       ranges.push(range)
       return
     }
 
-    this.byStop.set(index, [range])
+    this.#byStop.set(index, [range])
   }
 
   /** 1, 2, 3 … then 0, because `$0` is where the caret exits. */
-  private orderedStops(): readonly SnippetStop[] {
-    return Array.from(this.byStop.entries(), ([index, ranges]) => ({ index, ranges })).sort(
+  #orderedStops(): readonly SnippetStop[] {
+    return Array.from(this.#byStop.entries(), ([index, ranges]) => ({ index, ranges })).sort(
       (left, right) => stopOrder(left.index) - stopOrder(right.index),
     )
   }
 
-  private variableValue(name: string): string {
+  #variableValue(name: string): string {
     if (name === 'TM_SELECTED_TEXT') return this.options.selection ?? ''
 
     return ''

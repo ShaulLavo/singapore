@@ -54,7 +54,7 @@ type TrackedStop = {
  * goes quiet rather than moving the caret somewhere stale.
  */
 export class SnippetSession {
-  private validForSnapshot: PieceTableSnapshot | null = null
+  #validForSnapshot: PieceTableSnapshot | null = null
   private stops: TrackedStop[] = []
   private cursor = 0
 
@@ -67,7 +67,7 @@ export class SnippetSession {
       return
     }
 
-    this.validForSnapshot = snapshot
+    this.#validForSnapshot = snapshot
     this.stops = stops.map((stop) => ({
       caret: trackedRange(snapshot, stop),
       mirrors: (stop.mirrors ?? []).map((mirror) => trackedMirror(snapshot, mirror)),
@@ -81,7 +81,7 @@ export class SnippetSession {
 
   /** Advances to the next or previous stop and returns its range, or null when there is none. */
   move(snapshot: PieceTableSnapshot, direction: 1 | -1): SnippetStopRange | null {
-    if (this.validForSnapshot !== snapshot) {
+    if (this.#validForSnapshot !== snapshot) {
       this.clear()
       return null
     }
@@ -112,7 +112,7 @@ export class SnippetSession {
    * the document — a copy resolved from a stale offset would be rewritten over the wrong text.
    */
   activeStop(snapshot: PieceTableSnapshot): ActiveSnippetStop | null {
-    if (this.validForSnapshot !== snapshot) return null
+    if (this.#validForSnapshot !== snapshot) return null
 
     const stop = this.stops[this.cursor]
     if (!stop) return null
@@ -140,10 +140,10 @@ export class SnippetSession {
    * again at.
    */
   reanchor(snapshot: PieceTableSnapshot, stop: ActiveSnippetStop): void {
-    if (this.validForSnapshot === null) return
+    if (this.#validForSnapshot === null) return
     if (!this.stops[this.cursor]) return
 
-    this.validForSnapshot = snapshot
+    this.#validForSnapshot = snapshot
     this.stops[this.cursor] = {
       caret: trackedRange(snapshot, stop.range),
       mirrors: stop.mirrors.map((mirror) => trackedMirror(snapshot, mirror)),
@@ -163,21 +163,21 @@ export class SnippetSession {
    * left its text is worked out from the edits themselves, and the anchors are taken again there.
    */
   advance(snapshot: PieceTableSnapshot, edits: readonly TextEdit[] = []): void {
-    if (this.validForSnapshot === null) return
+    if (this.#validForSnapshot === null) return
 
-    const carried = this.carriedStopRange(snapshot, edits)
-    this.validForSnapshot = snapshot
+    const carried = this.#carriedStopRange(snapshot, edits)
+    this.#validForSnapshot = snapshot
     if (!carried) return
 
     this.stops[this.cursor] = { caret: trackedRange(snapshot, carried), mirrors: [] }
   }
 
   /** Where the edits left the active stop, asked only of one they have just untracked. */
-  private carriedStopRange(
+  #carriedStopRange(
     snapshot: PieceTableSnapshot,
     edits: readonly TextEdit[],
   ): SnippetStopRange | null {
-    const previous = this.validForSnapshot
+    const previous = this.#validForSnapshot
     if (!previous || edits.length === 0) return null
 
     const stop = this.stops[this.cursor]
@@ -193,7 +193,7 @@ export class SnippetSession {
   }
 
   clear(): void {
-    this.validForSnapshot = null
+    this.#validForSnapshot = null
     this.stops = []
     this.cursor = 0
   }

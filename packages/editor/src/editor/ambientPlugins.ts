@@ -43,7 +43,7 @@ export class EditorAmbientPluginController implements EditorDisposable {
     if (this.disposed) return
     this.disposed = true
     for (const subscription of this.subscriptions) subscription.dispose()
-    for (const ambient of Array.from(this.installed.keys())) this.uninstall(ambient)
+    for (const ambient of Array.from(this.installed.keys())) this.#uninstall(ambient)
   }
 
   private sync(): void {
@@ -55,7 +55,7 @@ export class EditorAmbientPluginController implements EditorDisposable {
       if (!this.installed.has(ambient)) this.install(ambient)
     }
     for (const ambient of Array.from(this.installed.keys())) {
-      if (!wanted.has(ambient)) this.uninstall(ambient)
+      if (!wanted.has(ambient)) this.#uninstall(ambient)
     }
   }
 
@@ -83,7 +83,7 @@ export class EditorAmbientPluginController implements EditorDisposable {
     )
   }
 
-  private uninstall(ambient: AmbientEditorPlugin): void {
+  #uninstall(ambient: AmbientEditorPlugin): void {
     const entry = this.installed.get(ambient)
     if (!entry) return
     this.installed.delete(ambient)

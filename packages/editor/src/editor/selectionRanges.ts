@@ -99,7 +99,7 @@ export class SelectionRangeStore {
       .selections.map((selection) => resolveSelection(snapshot, selection))
     if (resolved.length === 0) return false
 
-    const ladders = this.laddersFor(session, snapshot, resolved, direction)
+    const ladders = this.#laddersFor(session, snapshot, resolved, direction)
     if (!ladders) return false
 
     const step = direction === 'expand' ? 1 : -1
@@ -122,7 +122,7 @@ export class SelectionRangeStore {
    * out for the same snapshot as well is what stops an edit the caret never felt from being climbed
    * as if the rungs above it had not moved.
    */
-  private laddersFor(
+  #laddersFor(
     session: DocumentSession,
     snapshot: PieceTableSnapshot,
     resolved: readonly ResolvedSelection[],

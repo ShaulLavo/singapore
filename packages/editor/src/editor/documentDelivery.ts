@@ -126,10 +126,10 @@ export class DocumentDelivery {
     { readonly read: DocumentRead; readonly snapshot: DocumentTextSnapshot }
   >()
   private readonly segments = new WeakMap<DocumentSyncSegment, string>()
-  private readonly endpoints = new Map<SourceEndpoint, SourceProgress>()
-  private readonly sourceScopes = new Map<SourceEndpoint, Set<SourceScope>>()
-  private nextSegment = 0
-  private nextRead = 0
+  readonly #endpoints = new Map<SourceEndpoint, SourceProgress>()
+  readonly #sourceScopes = new Map<SourceEndpoint, Set<SourceScope>>()
+  #nextSegment = 0
+  #nextRead = 0
   private head: DocumentRead
   private disposed = false
 
@@ -137,12 +137,12 @@ export class DocumentDelivery {
     readonly buffer: EditorTextBuffer,
     readonly documentId: string,
   ) {
-    this.head = this.issue(buffer.getDocumentSyncPoint(), buffer.getTextSnapshot())
+    this.head = this.#issue(buffer.getDocumentSyncPoint(), buffer.getTextSnapshot())
   }
 
   public accept(event: EditorTextBufferChange): DocumentRead | null {
     if (this.disposed) return null
-    this.head = this.issue(event.syncPointAfter, event.change.textSnapshot)
+    this.head = this.#issue(event.syncPointAfter, event.change.textSnapshot)
     return this.head
   }
 
@@ -150,7 +150,7 @@ export class DocumentDelivery {
     if (this.disposed) return null
     const point = this.buffer.getDocumentSyncPoint()
     if (point !== this.head.revision.point)
-      this.head = this.issue(point, this.buffer.getTextSnapshot())
+      this.head = this.#issue(point, this.buffer.getTextSnapshot())
     return this.head
   }
 
@@ -187,27 +187,27 @@ export class DocumentDelivery {
           this.prepareReader(endpoint, read, scope, signal),
         prepareProjection: (endpoint, read) => this.prepareProjection(endpoint, read, scope),
       },
-      dispose: () => this.releaseScope(scope),
+      dispose: () => this.#releaseScope(scope),
     }
   }
 
-  private releaseScope(scope: SourceScope): void {
+  #releaseScope(scope: SourceScope): void {
     if (scope.cancellation.signal.aborted) return
     scope.cancellation.abort()
     const endpoints = [...scope.endpoints]
     scope.endpoints.clear()
     completeDocumentCleanup(
-      endpoints.map((endpoint) => () => this.releaseEndpoint(endpoint, scope)),
+      endpoints.map((endpoint) => () => this.#releaseEndpoint(endpoint, scope)),
     )
   }
 
-  private releaseEndpoint(endpoint: SourceEndpoint, scope: SourceScope): void {
-    const scopes = this.sourceScopes.get(endpoint)
+  #releaseEndpoint(endpoint: SourceEndpoint, scope: SourceScope): void {
+    const scopes = this.#sourceScopes.get(endpoint)
     scopes?.delete(scope)
     if (scopes?.size) return
-    this.sourceScopes.delete(endpoint)
-    const progress = this.endpoints.get(endpoint)
-    this.endpoints.delete(endpoint)
+    this.#sourceScopes.delete(endpoint)
+    const progress = this.#endpoints.get(endpoint)
+    this.#endpoints.delete(endpoint)
     progress?.cancellation.abort()
     if (progress) progress.connection.release(progress.identity)
   }
@@ -222,15 +222,15 @@ export class DocumentDelivery {
       ? AbortSignal.any([scope.cancellation.signal, signal])
       : scope.cancellation.signal
     if (waitSignal.aborted || this.disposed) return null
-    const scopes = this.sourceScopes.get(endpoint) ?? new Set<SourceScope>()
+    const scopes = this.#sourceScopes.get(endpoint) ?? new Set<SourceScope>()
     scopes.add(scope)
     scope.endpoints.add(endpoint)
-    this.sourceScopes.set(endpoint, scopes)
+    this.#sourceScopes.set(endpoint, scopes)
     const issued = this.read(read.revision)
     if (issued !== read) return null
     const connection = await scopeWait(endpoint.connect(), waitSignal)
     if (!connection || this.disposed || waitSignal.aborted) return null
-    let progress = this.endpoints.get(endpoint)
+    let progress = this.#endpoints.get(endpoint)
     if (!progress || progress.kind !== 'reader' || progress.connection !== connection) {
       progress?.cancellation.abort()
       if (progress) progress.connection.release(progress.identity)
@@ -248,16 +248,16 @@ export class DocumentDelivery {
         registered: false,
         pending: null,
       }
-      this.endpoints.set(endpoint, progress)
+      this.#endpoints.set(endpoint, progress)
     }
     while (progress.pending) await scopeWait(progress.pending, waitSignal)
-    if (this.disposed || waitSignal.aborted || this.endpoints.get(endpoint) !== progress)
+    if (this.disposed || waitSignal.aborted || this.#endpoints.get(endpoint) !== progress)
       return null
     let settle = () => {}
     progress.pending = new Promise<void>((resolve) => {
       settle = resolve
     })
-    const admission = this.prepareSource(endpoint, progress, read).finally(() => {
+    const admission = this.#prepareSource(endpoint, progress, read).finally(() => {
       progress.pending = null
       settle()
     })
@@ -270,13 +270,13 @@ export class DocumentDelivery {
     scope: SourceScope,
   ): Promise<DocumentProjectionReceipt | null> {
     if (scope.cancellation.signal.aborted || this.read(read.revision) !== read) return null
-    const scopes = this.sourceScopes.get(endpoint) ?? new Set<SourceScope>()
+    const scopes = this.#sourceScopes.get(endpoint) ?? new Set<SourceScope>()
     scopes.add(scope)
     scope.endpoints.add(endpoint)
-    this.sourceScopes.set(endpoint, scopes)
+    this.#sourceScopes.set(endpoint, scopes)
     const connection = await scopeWait(endpoint.connect(), scope.cancellation.signal)
     if (!connection || this.disposed || scope.cancellation.signal.aborted) return null
-    let progress = this.endpoints.get(endpoint)
+    let progress = this.#endpoints.get(endpoint)
     if (!progress || progress.kind !== 'projection' || progress.connection !== connection) {
       progress?.cancellation.abort()
       if (progress) progress.connection.release(progress.identity)
@@ -296,37 +296,37 @@ export class DocumentDelivery {
         receipt: null,
         read: null,
       }
-      this.endpoints.set(endpoint, progress)
+      this.#endpoints.set(endpoint, progress)
     }
     while (progress.pending) await scopeWait(progress.pending, scope.cancellation.signal)
     if (
       this.disposed ||
       scope.cancellation.signal.aborted ||
-      this.endpoints.get(endpoint) !== progress
+      this.#endpoints.get(endpoint) !== progress
     )
       return null
     let settle = () => {}
     progress.pending = new Promise<void>((resolve) => {
       settle = resolve
     })
-    const admitted = this.admitProjection(endpoint, progress, read).finally(() => {
+    const admitted = this.#admitProjection(endpoint, progress, read).finally(() => {
       progress.pending = null
       settle()
     })
     return await scopeWait(admitted, scope.cancellation.signal)
   }
 
-  private async admitProjection(
+  async #admitProjection(
     endpoint: DocumentProjectionEndpoint,
     progress: ProjectionProgress,
     read: DocumentRead,
   ): Promise<DocumentProjectionReceipt> {
     const target = read.revision.point
-    if (progress.receipt && pointsEqual(progress.receipt.target, this.wirePoint(target)))
+    if (progress.receipt && pointsEqual(progress.receipt.target, this.#wirePoint(target)))
       return progress.receipt
     if (progress.point && progress.point.revision > target.revision)
       throw new DOMException('Projected source demand was superseded', 'AbortError')
-    const base = progress.point ? this.wirePoint(progress.point) : null
+    const base = progress.point ? this.#wirePoint(progress.point) : null
     const changes = progress.point
       ? this.buffer.changesBetweenDocumentSyncPoints(
           progress.point,
@@ -339,15 +339,15 @@ export class DocumentDelivery {
         identity: progress.identity,
         base,
         baseRead: progress.read,
-        target: this.wirePoint(target),
+        target: this.#wirePoint(target),
         read,
         changes,
       },
       progress.cancellation.signal,
     )
-    if (this.disposed || this.endpoints.get(endpoint) !== progress)
+    if (this.disposed || this.#endpoints.get(endpoint) !== progress)
       throw new DOMException('Document source scope was released', 'AbortError')
-    if (!projectionReceiptMatches(receipt, progress.identity, base, this.wirePoint(target)))
+    if (!projectionReceiptMatches(receipt, progress.identity, base, this.#wirePoint(target)))
       throw createError({
         message: 'Projected source acknowledgement failed',
         code: 'DOCUMENT_PROJECTION_ACKNOWLEDGEMENT',
@@ -366,7 +366,7 @@ export class DocumentDelivery {
     return receipt
   }
 
-  private async prepareSource(
+  async #prepareSource(
     endpoint: DocumentSourceEndpoint,
     progress: ReaderProgress,
     read: DocumentRead,
@@ -382,50 +382,50 @@ export class DocumentDelivery {
       progress.registered = true
     }
     if (read.revision.point !== this.buffer.getDocumentSyncPoint())
-      return this.pinRead(endpoint, progress, read)
-    if (progress.point === read.revision.point) return this.pinRead(endpoint, progress, read)
+      return this.#pinRead(endpoint, progress, read)
+    if (progress.point === read.revision.point) return this.#pinRead(endpoint, progress, read)
     const text = this.snapshot(read)
     if (!text) return null
     const target = read.revision.point
     const changed =
       progress.point && this.buffer.changesBetweenDocumentSyncPoints(progress.point, target, null)
-    const base = progress.point ? this.wirePoint(progress.point) : null
+    const base = progress.point ? this.#wirePoint(progress.point) : null
     const command: DocumentWorkerSourceCommand =
       changed?.edits && base
         ? {
             kind: 'advance',
             identity: progress.identity,
             base,
-            target: this.wirePoint(target),
+            target: this.#wirePoint(target),
             edits: changed.edits,
           }
-        : resetSource(progress.identity, base, this.wirePoint(target), text)
-    if (!(await this.applySource(endpoint, progress, command, target))) return null
-    return this.pinRead(endpoint, progress, read)
+        : resetSource(progress.identity, base, this.#wirePoint(target), text)
+    if (!(await this.#applySource(endpoint, progress, command, target))) return null
+    return this.#pinRead(endpoint, progress, read)
   }
 
-  private async pinRead(
+  async #pinRead(
     endpoint: DocumentSourceEndpoint,
     progress: ReaderProgress,
     read: DocumentRead,
   ): Promise<PreparedDocumentWorkerRead | null> {
     const point = read.revision.point
-    const readId = `${this.documentId}:${++this.nextRead}`
+    const readId = `${this.documentId}:${++this.#nextRead}`
     let command: DocumentWorkerSourceCommand = {
       kind: 'pin',
       identity: progress.identity,
-      point: this.wirePoint(point),
+      point: this.#wirePoint(point),
       readId,
     }
     let result = await progress.connection.send(command, progress.cancellation.signal)
     if (result.kind === 'rejected' && result.reason === 'unavailable') {
       const snapshot = this.snapshot(read)
       if (!snapshot) return null
-      const source = resetSource(progress.identity, null, this.wirePoint(point), snapshot)
+      const source = resetSource(progress.identity, null, this.#wirePoint(point), snapshot)
       command = {
         kind: 'importRead',
         identity: progress.identity,
-        point: this.wirePoint(point),
+        point: this.#wirePoint(point),
         readId,
         chunks: source.chunks,
         lineEnding: source.lineEnding,
@@ -436,7 +436,7 @@ export class DocumentDelivery {
     }
     if (
       this.disposed ||
-      this.endpoints.get(endpoint) !== progress ||
+      this.#endpoints.get(endpoint) !== progress ||
       progress.cancellation.signal.aborted
     )
       return null
@@ -459,12 +459,12 @@ export class DocumentDelivery {
   public dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    const progress = [...this.endpoints.values()]
-    this.endpoints.clear()
-    for (const scopes of this.sourceScopes.values()) {
+    const progress = [...this.#endpoints.values()]
+    this.#endpoints.clear()
+    for (const scopes of this.#sourceScopes.values()) {
       for (const scope of scopes) scope.cancellation.abort()
     }
-    this.sourceScopes.clear()
+    this.#sourceScopes.clear()
     completeDocumentCleanup(
       progress.map((entry) => () => {
         entry.cancellation.abort()
@@ -473,31 +473,31 @@ export class DocumentDelivery {
     )
   }
 
-  private issue(point: DocumentSyncPoint, text: DocumentTextSnapshot): DocumentRead {
+  #issue(point: DocumentSyncPoint, text: DocumentTextSnapshot): DocumentRead {
     const revision: DocumentRevision = { point, [revisionBrand]: true }
     const read: DocumentRead = { revision, text: boundedRead(text) }
     this.issued.set(revision, { read, snapshot: text })
-    this.wirePoint(point)
+    this.#wirePoint(point)
     return read
   }
 
-  private wirePoint(point: DocumentSyncPoint): DocumentWorkerPoint {
+  #wirePoint(point: DocumentSyncPoint): DocumentWorkerPoint {
     let segment = this.segments.get(point.segment)
     if (!segment) {
-      segment = `${this.documentId}:${++this.nextSegment}`
+      segment = `${this.documentId}:${++this.#nextSegment}`
       this.segments.set(point.segment, segment)
     }
     return { segment, revision: point.revision, textVersion: point.textVersion }
   }
 
-  private async applySource(
+  async #applySource(
     endpoint: DocumentSourceEndpoint,
     progress: ReaderProgress,
     command: DocumentWorkerSourceCommand,
     target: DocumentSyncPoint,
   ): Promise<boolean> {
     const result = await progress.connection.send(command, progress.cancellation.signal)
-    if (this.disposed || this.endpoints.get(endpoint) !== progress) return false
+    if (this.disposed || this.#endpoints.get(endpoint) !== progress) return false
     if (result.kind !== 'applied') throw admissionFailure(command, result)
     progress.point = target
     return true

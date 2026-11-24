@@ -591,13 +591,13 @@ export class EditorRegionMarkerClassifier {
   private stage: 'leading' | 'opener' | 'space' | 'word' | 'boundary' | 'done' = 'leading'
   private candidates: readonly string[]
   private index = 0
-  private wordCandidates: readonly MarkerAlternative[] = []
+  #wordCandidates: readonly MarkerAlternative[] = []
   private result: EditorRegionMarker = null
-  private hashAllowed: boolean
+  #hashAllowed: boolean
 
   constructor(rules: EditorFoldingRules['regionMarkers']) {
     this.candidates = rules.openers
-    this.hashAllowed = rules.optionalHash
+    this.#hashAllowed = rules.optionalHash
   }
 
   push(code: number): void {
@@ -605,7 +605,7 @@ export class EditorRegionMarkerClassifier {
     const character = String.fromCharCode(code)
     if (this.stage === 'leading' && /\s/.test(character)) return
     if (this.stage === 'leading') this.stage = 'opener'
-    if (this.stage === 'opener') return this.opener(character)
+    if (this.stage === 'opener') return this.#opener(character)
     if (this.stage === 'space') return this.space(character)
     if (this.stage === 'word') return this.word(character)
     this.result = /[A-Za-z0-9_]/.test(character) ? null : this.result
@@ -616,7 +616,7 @@ export class EditorRegionMarkerClassifier {
     return this.stage === 'boundary' || this.stage === 'done' ? this.result : null
   }
 
-  private opener(character: string): void {
+  #opener(character: string): void {
     this.candidates = this.candidates.filter((opener) => opener[this.index] === character)
     this.index += 1
     if (this.candidates.length === 0) this.stage = 'done'
@@ -627,17 +627,17 @@ export class EditorRegionMarkerClassifier {
 
   private space(character: string): void {
     if (/\s/.test(character)) return
-    if (character === '#' && this.hashAllowed) {
-      this.hashAllowed = false
+    if (character === '#' && this.#hashAllowed) {
+      this.#hashAllowed = false
       this.stage = 'word'
-      this.wordCandidates = [
+      this.#wordCandidates = [
         { text: 'region', marker: 'start' },
         { text: 'endregion', marker: 'end' },
       ]
       return
     }
     this.stage = 'word'
-    this.wordCandidates = [
+    this.#wordCandidates = [
       { text: 'region', marker: 'start' },
       { text: 'endregion', marker: 'end' },
     ]
@@ -645,10 +645,12 @@ export class EditorRegionMarkerClassifier {
   }
 
   private word(character: string): void {
-    this.wordCandidates = this.wordCandidates.filter((word) => word.text[this.index] === character)
+    this.#wordCandidates = this.#wordCandidates.filter(
+      (word) => word.text[this.index] === character,
+    )
     this.index += 1
-    if (this.wordCandidates.length === 0) this.stage = 'done'
-    const complete = this.wordCandidates.find((word) => word.text.length === this.index)
+    if (this.#wordCandidates.length === 0) this.stage = 'done'
+    const complete = this.#wordCandidates.find((word) => word.text.length === this.index)
     if (!complete) return
     this.result = complete.marker
     this.stage = 'boundary'

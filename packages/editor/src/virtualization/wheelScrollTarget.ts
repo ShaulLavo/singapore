@@ -46,10 +46,10 @@ export function registerWheelScrollTarget(
 }
 
 class NativeWheelScrollOwner {
-  private remainderX = 0
-  private remainderY = 0
-  private lastLeft = Number.NaN
-  private lastTop = Number.NaN
+  #remainderX = 0
+  #remainderY = 0
+  #lastLeft = Number.NaN
+  #lastTop = Number.NaN
 
   public constructor(
     private readonly element: HTMLElement,
@@ -59,8 +59,8 @@ class NativeWheelScrollOwner {
   public handleWheel(event: WheelEvent): void {
     if (event.defaultPrevented || event.ctrlKey || !event.cancelable) return
     if (!this.options.isEnabled()) {
-      this.remainderX = 0
-      this.remainderY = 0
+      this.#remainderX = 0
+      this.#remainderY = 0
       return
     }
 
@@ -100,8 +100,8 @@ class NativeWheelScrollOwner {
     const top = this.options.readScrollTop()
     const canX = scrollsX && canMove(left, maxLeft, x)
     const canY = scrollsY && canMove(top, maxTop, y)
-    if (left !== this.lastLeft || !canX) this.remainderX = 0
-    if (top !== this.lastTop || !canY) this.remainderY = 0
+    if (left !== this.#lastLeft || !canX) this.#remainderX = 0
+    if (top !== this.#lastTop || !canY) this.#remainderY = 0
 
     // Decide consumption in native coordinates, including subpixel input that rounds to zero.
     // At a boundary, let the original event chain unless the editor's CSS forbids it.
@@ -111,13 +111,13 @@ class NativeWheelScrollOwner {
     event.preventDefault()
     if (!canX && !canY) return
 
-    const targetLeft = canX ? clamp(left + this.remainderX + x, maxLeft) : left
-    const targetTop = canY ? clamp(top + this.remainderY + y, maxTop) : top
+    const targetLeft = canX ? clamp(left + this.#remainderX + x, maxLeft) : left
+    const targetTop = canY ? clamp(top + this.#remainderY + y, maxTop) : top
     element.scrollBy({ left: targetLeft - left, top: targetTop - top, behavior: 'instant' })
-    this.lastLeft = element.scrollLeft
-    this.lastTop = this.options.readScrollTop()
-    this.remainderX = canX ? targetLeft - this.lastLeft : 0
-    this.remainderY = canY ? targetTop - this.lastTop : 0
+    this.#lastLeft = element.scrollLeft
+    this.#lastTop = this.options.readScrollTop()
+    this.#remainderX = canX ? targetLeft - this.#lastLeft : 0
+    this.#remainderY = canY ? targetTop - this.#lastTop : 0
     // Chromium delivers the scroll event a frame late; a queued resize flush would rewrite the
     // native offset from the cached logical one first. Schedule the sync now, as the listener would.
     this.options.onScrolled()

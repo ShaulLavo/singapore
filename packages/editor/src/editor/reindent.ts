@@ -442,14 +442,14 @@ class RowReader {
   read(index: number): Row {
     if (index === this.#index) return this.#row
 
-    const start = this.startOf(index)
+    const start = this.#startOf(index)
     const end = lineBreakFrom(this.cursor, start)
     this.#index = index
     this.#row = { start, text: this.cursor.slice(start, end) }
     return this.#row
   }
 
-  private startOf(index: number): number {
+  #startOf(index: number): number {
     if (index > 0 && index === this.#index + 1) {
       return this.#row.start + this.#row.text.length + 1
     }

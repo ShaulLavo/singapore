@@ -29,7 +29,7 @@ export class EditorEvlogError extends Error {
     this.link = resolved.link
     this.status = resolved.status ?? 500
     this.why = resolved.why
-    if (resolved.internal !== undefined) this.defineInternal(resolved.internal)
+    if (resolved.internal !== undefined) this.#defineInternal(resolved.internal)
   }
 
   public get internal(): Record<string, unknown> | undefined {
@@ -78,7 +78,7 @@ export class EditorEvlogError extends Error {
     return serialized
   }
 
-  private defineInternal(internal: Record<string, unknown>): void {
+  #defineInternal(internal: Record<string, unknown>): void {
     Object.defineProperty(this, evlogErrorInternalKey, {
       configurable: true,
       enumerable: false,

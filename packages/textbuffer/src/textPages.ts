@@ -5,32 +5,34 @@ type TextBacking = { text: string }
 // Logical text stays immutable while maintenance moves its physical backing.
 export class TextPage {
   readonly length: number
-  private backing: TextBacking
+  #backing: TextBacking
 
   constructor(
     text: string | TextBacking,
     private start = 0,
     end?: number,
   ) {
-    this.backing = typeof text === 'string' ? { text } : text
-    this.length = (end ?? this.backing.text.length) - start
+    this.#backing = typeof text === 'string' ? { text } : text
+    this.length = (end ?? this.#backing.text.length) - start
   }
 
   get storageLength(): number {
-    return this.backing.text.length
+    return this.#backing.text.length
   }
 
   charCodeAt(offset: number): number {
     if (offset < 0 || offset >= this.length) return Number.NaN
-    return this.backing.text.charCodeAt(this.start + offset)
+    return this.#backing.text.charCodeAt(this.start + offset)
   }
 
   slice(start: number, end: number): string {
-    return this.backing.text.slice(this.start + start, this.start + end)
+    return this.#backing.text.slice(this.start + start, this.start + end)
   }
 
   detach(): void {
-    this.backing = { text: copyTextRange(this.backing.text, this.start, this.start + this.length) }
+    this.#backing = {
+      text: copyTextRange(this.#backing.text, this.start, this.start + this.length),
+    }
     this.start = 0
   }
 }

@@ -163,8 +163,8 @@ export const createIdentityIndex = (start: CharId, count: number): IdentityIndex
 
 /** Keep one allocator per author session, even when restoring or replacing snapshots. */
 export class CharIdAllocator {
-  private runSeq = 0
-  private readonly nextCounters = new Map<string, number>()
+  #runSeq = 0
+  readonly #nextCounters = new Map<string, number>()
 
   constructor(readonly actor: string) {
     if (actor.length === 0) throw new RangeError('character identity actor must be nonempty')
@@ -178,24 +178,24 @@ export class CharIdAllocator {
     const suffix = start.bunch.slice(prefix.length)
     const sequence = Number(suffix)
     if (!Number.isSafeInteger(sequence) || sequence < 0 || String(sequence) !== suffix) return
-    this.runSeq = Math.max(this.runSeq, sequence + 1)
-    const next = Math.max(this.nextCounters.get(start.bunch) ?? 0, start.counter + count)
-    this.nextCounters.set(start.bunch, next)
+    this.#runSeq = Math.max(this.#runSeq, sequence + 1)
+    const next = Math.max(this.#nextCounters.get(start.bunch) ?? 0, start.counter + count)
+    this.#nextCounters.set(start.bunch, next)
   }
 
   generateAfter(before: CharId | 'start', count = 1): CharId {
     if (!Number.isSafeInteger(count) || count <= 0) throw new RangeError('invalid identity count')
     if (before !== 'start') validateCharId(before)
-    const next = before === 'start' ? undefined : this.nextCounters.get(before.bunch)
+    const next = before === 'start' ? undefined : this.#nextCounters.get(before.bunch)
     if (before !== 'start' && next === before.counter + 1) {
       validateCharIdSpan({ bunch: before.bunch, counter: next }, count)
-      this.nextCounters.set(before.bunch, next + count)
+      this.#nextCounters.set(before.bunch, next + count)
       return { bunch: before.bunch, counter: next }
     }
-    if (!Number.isSafeInteger(this.runSeq + 1))
+    if (!Number.isSafeInteger(this.#runSeq + 1))
       throw new RangeError('identity run sequence exhausted')
-    const bunch = `${this.actor}:${this.runSeq++}`
-    this.nextCounters.set(bunch, count)
+    const bunch = `${this.actor}:${this.#runSeq++}`
+    this.#nextCounters.set(bunch, count)
     return { bunch, counter: 0 }
   }
 }

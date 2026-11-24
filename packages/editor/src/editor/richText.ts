@@ -93,16 +93,16 @@ export function readRichTextFont(element: Element): RichTextFont {
 class BoundedMarkup {
   private readonly parts: string[] = []
   private bytes = 0
-  private remainingTokenVisits = MAX_RICH_TEXT_SOURCE_LENGTH
-  private readonly encoder = new TextEncoder()
+  #remainingTokenVisits = MAX_RICH_TEXT_SOURCE_LENGTH
+  readonly #encoder = new TextEncoder()
 
   takeTokens(count: number): boolean {
-    this.remainingTokenVisits -= count
-    return this.remainingTokenVisits >= 0
+    this.#remainingTokenVisits -= count
+    return this.#remainingTokenVisits >= 0
   }
 
   append(text: string): boolean {
-    this.bytes += this.encoder.encode(text).byteLength
+    this.bytes += this.#encoder.encode(text).byteLength
     if (this.bytes > MAX_RICH_TEXT_OUTPUT_BYTES) return false
     this.parts.push(text)
     return true

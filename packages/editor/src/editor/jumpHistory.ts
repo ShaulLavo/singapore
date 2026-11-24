@@ -115,12 +115,12 @@ function resolvePosition(snapshot: PieceTableSnapshot, position: AnchoredPositio
 export class JumpHistory {
   private entries: JumpLocation[] = []
   private index = -1
-  private walking = false
+  #walking = false
 
   clear(): void {
     this.entries = []
     this.index = -1
-    this.walking = false
+    this.#walking = false
   }
 
   record(snapshot: PieceTableSnapshot, origin: JumpLocation, destination: JumpLocation): void {
@@ -131,7 +131,7 @@ export class JumpHistory {
     this.entries.push(destination)
     if (this.entries.length > 50) this.entries.splice(0, this.entries.length - 50)
     this.index = this.entries.length - 1
-    this.walking = false
+    this.#walking = false
   }
 
   move(
@@ -141,7 +141,7 @@ export class JumpHistory {
   ): ResolvedJumpLocation | null {
     if (this.index < 0) return null
     if (
-      !this.walking ||
+      !this.#walking ||
       ((!this.entries[this.index]!.viewportGap ||
         resolveJumpLocation(snapshot, this.entries[this.index]!) !== null) &&
         !sameLocations(snapshot, this.entries[this.index]!, current))
@@ -153,7 +153,7 @@ export class JumpHistory {
       const resolved = resolveJumpLocation(snapshot, location)
       if (!resolved || sameLocations(snapshot, location, current)) continue
       this.index = index
-      this.walking = true
+      this.#walking = true
       return resolved
     }
     return null

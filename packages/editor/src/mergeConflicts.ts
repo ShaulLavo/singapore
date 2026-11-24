@@ -203,8 +203,8 @@ function scanMergeConflicts(source: TextReadSnapshot): readonly MergeConflictReg
 class MarkerLineScanner {
   private line = 0
   private lineStart = 0
-  private headCode = 0
-  private headRun = 0
+  #headCode = 0
+  #headRun = 0
   private rest = ''
   private mode: 'head' | 'marker' | 'skip' = 'head'
 
@@ -214,7 +214,7 @@ class MarkerLineScanner {
     let index = 0
     while (index < text.length) {
       if (this.mode === 'head') {
-        index = this.readHead(text, offset, index)
+        index = this.#readHead(text, offset, index)
         continue
       }
 
@@ -232,19 +232,19 @@ class MarkerLineScanner {
     if (this.lineStart < length) this.endLine(length)
   }
 
-  private readHead(text: string, offset: number, from: number): number {
+  #readHead(text: string, offset: number, from: number): number {
     for (let index = from; index < text.length; index += 1) {
       const code = text.charCodeAt(index)
       if (code === NEWLINE) {
         this.endLine(offset + index + 1)
         return index + 1
       }
-      if (this.headRun === 0 && !MARKER_CODES.has(code)) return this.skip(index)
-      if (this.headRun > 0 && code !== this.headCode) return this.skip(index)
+      if (this.#headRun === 0 && !MARKER_CODES.has(code)) return this.skip(index)
+      if (this.#headRun > 0 && code !== this.#headCode) return this.skip(index)
 
-      this.headCode = code
-      this.headRun += 1
-      if (this.headRun === MARKER_LENGTH) {
+      this.#headCode = code
+      this.#headRun += 1
+      if (this.#headRun === MARKER_LENGTH) {
         this.mode = 'marker'
         return index + 1
       }
@@ -259,13 +259,13 @@ class MarkerLineScanner {
 
   private endLine(end: number): void {
     if (this.mode === 'marker') {
-      const marker = String.fromCharCode(this.headCode).repeat(MARKER_LENGTH)
+      const marker = String.fromCharCode(this.#headCode).repeat(MARKER_LENGTH)
       this.visit({ line: this.line, start: this.lineStart, end, text: marker + this.rest })
     }
     this.line += 1
     this.lineStart = end
-    this.headCode = 0
-    this.headRun = 0
+    this.#headCode = 0
+    this.#headRun = 0
     this.rest = ''
     this.mode = 'head'
   }

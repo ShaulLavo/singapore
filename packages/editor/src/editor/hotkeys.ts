@@ -43,7 +43,7 @@ type EditorKeymapGroup = {
 
 export class EditorHotkeys {
   readonly host: EditorHotkeysHost
-  private readonly ownDispatcher: boolean
+  readonly #ownDispatcher: boolean
   private readonly detach: () => void
   private readonly handlers = new Map<EditorAnyCommandId, () => void>()
   private readonly groups = new Map<Element, EditorKeymapGroup>()
@@ -62,7 +62,7 @@ export class EditorHotkeys {
   ) {
     const dispatcher =
       options.hotkeys ?? createBrowserDispatcher({ root: options.target.ownerDocument })
-    this.ownDispatcher = !options.hotkeys
+    this.#ownDispatcher = !options.hotkeys
     const node = dispatcher.createNode({ parent: options.parent, readContext: options.readContext })
     this.host = { dispatcher, node }
     this.detach = dispatcher.attachElement(node, options.target)
@@ -92,7 +92,7 @@ export class EditorHotkeys {
     const signature = JSON.stringify(options ?? null)
     if (signature === this.signature) return false
     this.signature = signature
-    if (this.ownDispatcher)
+    if (this.#ownDispatcher)
       this.host.dispatcher.setKeymap(editorKeymapBindings(options, detectPlatform()))
     return true
   }
@@ -145,7 +145,7 @@ export class EditorHotkeys {
     this.host.node.remove()
     for (const remove of this.handlers.values()) remove()
     this.handlers.clear()
-    if (this.ownDispatcher) this.host.dispatcher.dispose()
+    if (this.#ownDispatcher) this.host.dispatcher.dispose()
   }
 }
 

@@ -145,11 +145,11 @@ export function linkedEditingChange(
  * before it shifted.
  */
 export class LinkedEditingSession {
-  private validForSnapshot: PieceTableSnapshot | null = null
+  #validForSnapshot: PieceTableSnapshot | null = null
   private tracked: readonly TrackedRange[] = []
 
   start(snapshot: PieceTableSnapshot, ranges: readonly LinkedEditingRange[]): void {
-    this.validForSnapshot = snapshot
+    this.#validForSnapshot = snapshot
     this.tracked = ranges.map((range) => ({
       endAnchor: anchorAfter(snapshot, range.end),
       startAnchor: anchorBefore(snapshot, range.start),
@@ -158,7 +158,7 @@ export class LinkedEditingSession {
 
   /** Where the tracked names are now, or null once the session no longer describes the document. */
   ranges(snapshot: PieceTableSnapshot): readonly LinkedEditingRange[] | null {
-    if (this.validForSnapshot !== snapshot) return null
+    if (this.#validForSnapshot !== snapshot) return null
 
     const ranges: LinkedEditingRange[] = []
     for (const tracked of this.tracked) {
@@ -175,13 +175,13 @@ export class LinkedEditingSession {
 
   /** Keeps the session alive across an edit this editor itself produced. */
   advance(snapshot: PieceTableSnapshot): void {
-    if (this.validForSnapshot === null) return
+    if (this.#validForSnapshot === null) return
 
-    this.validForSnapshot = snapshot
+    this.#validForSnapshot = snapshot
   }
 
   clear(): void {
-    this.validForSnapshot = null
+    this.#validForSnapshot = null
     this.tracked = []
   }
 }

@@ -232,7 +232,7 @@ export class RetentionChanges {
   private readonly subscriptions = new Set<() => void>()
   private depth = 0
   private pending = false
-  private delivering = false
+  #delivering = false
   private disposed = false
 
   subscribe(listener: () => void): () => void {
@@ -270,15 +270,15 @@ export class RetentionChanges {
   }
 
   private flush(): void {
-    if (this.disposed || this.depth > 0 || this.delivering || !this.pending) return
+    if (this.disposed || this.depth > 0 || this.#delivering || !this.pending) return
     this.pending = false
-    this.delivering = true
+    this.#delivering = true
     try {
       this.events.fire()
     } finally {
       // Reentrant mutations belong to this delivery; hosts reconcile after their callback.
       this.pending = false
-      this.delivering = false
+      this.#delivering = false
     }
   }
 }
@@ -288,13 +288,13 @@ export class AnalysisEntry<T> {
   private readonly cancellation = new AbortController()
   private interests = 0
   private active = false
-  private lastRelease: number | null = null
+  #lastRelease: number | null = null
   protected queuedPoint: DocumentSyncPoint | null = null
-  private queuedRead: DocumentRead | null = null
-  private queuedConfiguration: unknown
+  #queuedRead: DocumentRead | null = null
+  #queuedConfiguration: unknown
   private requests = 0
   protected generation = 0
-  private pendingInterest = new AbortController()
+  #pendingInterest = new AbortController()
   private running = false
   private pending: {
     readonly read: DocumentRead
@@ -308,7 +308,7 @@ export class AnalysisEntry<T> {
   } | null = null
   private completion: Promise<T> | null = null
   private state: EditorAnalysisRead<T>
-  private readonly unsubscribeResults: (() => void) | undefined
+  readonly #unsubscribeResults: (() => void) | undefined
 
   constructor(
     readonly buffer: EditorTextBuffer,
@@ -324,7 +324,7 @@ export class AnalysisEntry<T> {
     this.state = { kind: 'pending', revision: buffer.getRevision() }
     const read = delivery.current()
     if (read) this.enqueue(read)
-    this.unsubscribeResults = session.subscribeResults?.((read, result) => {
+    this.#unsubscribeResults = session.subscribeResults?.((read, result) => {
       if (read.revision.point !== this.queuedPoint) return
       const snapshot = delivery.snapshot(read)
       if (!snapshot || this.signal.aborted) return
@@ -361,7 +361,7 @@ export class AnalysisEntry<T> {
   }
 
   get lastLeaseReleasedAt(): number | null {
-    return this.lastRelease
+    return this.#lastRelease
   }
 
   get cachedRangeCount(): number {
@@ -397,7 +397,7 @@ export class AnalysisEntry<T> {
       'abort',
       () => {
         this.interests--
-        this.lastRelease = Date.now()
+        this.#lastRelease = Date.now()
         this.retention.changed()
       },
       { once: true },
@@ -427,7 +427,7 @@ export class AnalysisEntry<T> {
   }
 
   refresh(): void {
-    const read = this.scheduling === 'pinned' ? this.queuedRead : this.delivery.current()
+    const read = this.scheduling === 'pinned' ? this.#queuedRead : this.delivery.current()
     if (read) this.enqueue(read)
   }
 
@@ -436,15 +436,15 @@ export class AnalysisEntry<T> {
     const expectedGeneration = this.queuedPoint === point ? this.generation : null
     // Publication finishes before demand captures the corresponding analysis generation.
     await Promise.resolve()
-    this.assertCurrent(point, expectedGeneration ?? this.generation)
+    this.#assertCurrent(point, expectedGeneration ?? this.generation)
     this.synchronize()
     const generation = this.generation
     this.requests++
-    this.schedulePending()
+    this.#schedulePending()
     try {
       if (!this.completion) throw cancelled()
-      await interruptible(this.completion, this.pendingInterest.signal)
-      this.assertCurrent(point, generation)
+      await interruptible(this.completion, this.#pendingInterest.signal)
+      this.#assertCurrent(point, generation)
       if (!this.isConfigurationCurrent()) throw cancelled()
       const state = this.read()
       if (state.kind === 'ready') return state.result
@@ -465,9 +465,9 @@ export class AnalysisEntry<T> {
         ? this.completion
         : this.enqueue(read)
     this.requests++
-    this.schedulePending()
+    this.#schedulePending()
     const generation = this.generation
-    const interest = this.pendingInterest.signal
+    const interest = this.#pendingInterest.signal
     try {
       const value = await interruptible(interruptible(result, this.signal), interest)
       if (generation !== this.generation || !this.isConfigurationCurrent()) throw cancelled()
@@ -481,12 +481,12 @@ export class AnalysisEntry<T> {
     await this.current()
     const point = this.buffer.getDocumentSyncPoint()
     const generation = this.generation
-    const interest = this.pendingInterest.signal
-    this.assertCurrent(point, generation)
+    const interest = this.#pendingInterest.signal
+    this.#assertCurrent(point, generation)
     if (!this.isConfigurationCurrent()) throw cancelled()
     const result = run(interest)
     const value = await interruptible(interruptible(result, this.cancellation.signal), interest)
-    this.assertCurrent(point, generation)
+    this.#assertCurrent(point, generation)
     if (!this.isConfigurationCurrent()) throw cancelled()
     return value
   }
@@ -498,13 +498,13 @@ export class AnalysisEntry<T> {
 
   protected stop(): boolean {
     if (this.cancellation.signal.aborted) return false
-    this.unsubscribeResults?.()
+    this.#unsubscribeResults?.()
     this.cancellation.abort()
-    this.pendingInterest.abort()
+    this.#pendingInterest.abort()
     this.scheduler.cancel(this.runtimeSessionId, 'scope-released')
     this.pending?.reject(cancelled())
     this.pending = null
-    this.queuedRead = null
+    this.#queuedRead = null
     this.state = { kind: 'failed', revision: this.buffer.getRevision(), error: cancelled() }
     return true
   }
@@ -519,12 +519,12 @@ export class AnalysisEntry<T> {
   }
 
   private enqueue(read: DocumentRead): Promise<T> {
-    this.pendingInterest.abort()
-    this.pendingInterest = new AbortController()
+    this.#pendingInterest.abort()
+    this.#pendingInterest = new AbortController()
     const revision = read.revision.point.revision
     this.queuedPoint = read.revision.point
-    this.queuedRead = read
-    this.queuedConfiguration = this.session.configurationKey?.()
+    this.#queuedRead = read
+    this.#queuedConfiguration = this.session.configurationKey?.()
     const generation = ++this.generation
     this.state = { kind: 'pending', revision }
     this.pending?.reject(cancelled())
@@ -546,28 +546,28 @@ export class AnalysisEntry<T> {
       revision,
       generation,
       snapshot,
-      signal: this.pendingInterest.signal,
-      configurationKey: this.queuedConfiguration,
+      signal: this.#pendingInterest.signal,
+      configurationKey: this.#queuedConfiguration,
       settle,
       reject,
     }
-    this.schedulePending()
+    this.#schedulePending()
     if (this.active) this.retention.changed()
     return completion
   }
 
-  private schedulePending(): void {
+  #schedulePending(): void {
     if (this.running || !this.pending || this.cancellation.signal.aborted) return
     if (this.scheduling !== 'ordered' && this.requests === 0) return
     this.scheduler.schedule({
       key: this.runtimeSessionId,
       taskClass: 'background-derived',
       defer: true,
-      run: () => this.runPending(),
+      run: () => this.#runPending(),
     })
   }
 
-  private async runPending(): Promise<void> {
+  async #runPending(): Promise<void> {
     const demand = this.pending
     if (!demand || this.cancellation.signal.aborted) return
     this.pending = null
@@ -585,7 +585,7 @@ export class AnalysisEntry<T> {
     } finally {
       this.running = false
       if (this.scheduling === 'ordered' && !this.pending) this.synchronize()
-      this.schedulePending()
+      this.#schedulePending()
     }
   }
 
@@ -604,7 +604,7 @@ export class AnalysisEntry<T> {
     this.retention.changed()
   }
 
-  private assertCurrent(point: DocumentSyncPoint, generation = this.generation): void {
+  #assertCurrent(point: DocumentSyncPoint, generation = this.generation): void {
     if (
       this.cancellation.signal.aborted ||
       point !== this.buffer.getDocumentSyncPoint() ||
@@ -614,23 +614,23 @@ export class AnalysisEntry<T> {
   }
 
   isConfigurationCurrent(): boolean {
-    return this.queuedConfiguration === this.session.configurationKey?.()
+    return this.#queuedConfiguration === this.session.configurationKey?.()
   }
 }
 
 class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResult> {
   private readonly produced = new EditorEventSource<void>({ action: 'document.highlighter.tokens' })
-  private producedTokens: {
+  #producedTokens: {
     readonly point: DocumentSyncPoint
     readonly configuration: unknown
     readonly signal: AbortSignal
     readonly result: EditorHighlightResult
   } | null = null
-  private readonly invalidCohort = {}
+  readonly #invalidCohort = {}
   private providerTheme: ProviderThemeOutcome | null = null
-  private themeWork: Promise<ProviderThemeOutcome> | null = null
+  #themeWork: Promise<ProviderThemeOutcome> | null = null
   private readonly lifetime = new AbortController()
-  private configurationWork: AbortController | null = null
+  #configurationWork: AbortController | null = null
 
   constructor(
     private readonly highlighter: EditorHighlighterRuntime,
@@ -640,7 +640,7 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
   configurationKey(): unknown {
     return themeCohortIsCurrent(this.cohort)
       ? this.highlighter.configurationKey?.()
-      : this.invalidCohort
+      : this.#invalidCohort
   }
 
   analyze(read: DocumentRead, signal: AbortSignal): Promise<EditorHighlightResult> {
@@ -648,7 +648,7 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
     const tokens = this.highlighter.analyze(read, signal).then((result) => {
       signal.throwIfAborted()
       if (configuration !== this.configurationKey()) throw cancelled()
-      this.producedTokens = { point: read.revision.point, configuration, signal, result }
+      this.#producedTokens = { point: read.revision.point, configuration, signal, result }
       if (!this.providerTheme && this.cohort.some((provider) => provider.loadTheme))
         this.produced.fire()
       return result
@@ -657,7 +657,7 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
   }
 
   readProducedTokens(point: DocumentSyncPoint | null): EditorHighlightResult | null {
-    const produced = this.producedTokens
+    const produced = this.#producedTokens
     if (!produced || this.lifetime.signal.aborted || produced.signal.aborted) return null
     if (produced.point !== point || produced.configuration !== this.configurationKey()) return null
     return produced.result
@@ -669,7 +669,7 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
   }
 
   retainedTokens(): EditorHighlightResult | null {
-    return this.producedTokens?.result ?? null
+    return this.#producedTokens?.result ?? null
   }
 
   themeOutcome(): ProviderThemeOutcome {
@@ -681,20 +681,20 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
     return interruptible(
       this.providerTheme
         ? Promise.resolve(this.providerTheme)
-        : (this.themeWork ??= this.loadTheme(this.lifetime.signal)),
+        : (this.#themeWork ??= this.loadTheme(this.lifetime.signal)),
       signal,
     )
   }
 
   invalidateTheme(): void {
-    this.configurationWork?.abort()
+    this.#configurationWork?.abort()
     this.providerTheme = null
-    this.themeWork = null
+    this.#themeWork = null
   }
 
   dispose(): void {
     this.lifetime.abort()
-    this.producedTokens = null
+    this.#producedTokens = null
     this.invalidateTheme()
     this.highlighter.dispose()
   }
@@ -713,7 +713,7 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
 
   private async loadTheme(owner: AbortSignal): Promise<ProviderThemeOutcome> {
     const work = new AbortController()
-    this.configurationWork = work
+    this.#configurationWork = work
     const abort = () => work.abort(owner.reason)
     owner.addEventListener('abort', abort, { once: true })
     if (owner.aborted) abort()
@@ -734,7 +734,7 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
       return outcome
     } finally {
       owner.removeEventListener('abort', abort)
-      if (this.configurationWork === work) this.configurationWork = null
+      if (this.#configurationWork === work) this.#configurationWork = null
     }
   }
 }
@@ -788,13 +788,13 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   protected override runtimeResultPublished(): void {
     this.produced.fire()
   }
-  private readonly displayed = new Map<AbortSignal, EditorAnalysisDisplayDemand>()
+  readonly #displayed = new Map<AbortSignal, EditorAnalysisDisplayDemand>()
   private readonly queryWaiters = new Map<
     AbortSignal,
     { snapshot: DocumentTextSnapshot; range: EditorSyntaxRange }
   >()
-  private readonly contributors = new Map<AbortSignal, readonly RetainedRangeContributor[]>()
-  private readonly resultOrigins = new WeakMap<
+  readonly #contributors = new Map<AbortSignal, readonly RetainedRangeContributor[]>()
+  readonly #resultOrigins = new WeakMap<
     EditorSyntaxResult,
     {
       readonly snapshot: DocumentTextSnapshot
@@ -804,7 +804,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   >()
   private ranges = new Map<string, ReadyRange>()
   private queries = new Map<string, PendingRangeQuery>()
-  private rangePoint: DocumentSyncPoint | null = null
+  #rangePoint: DocumentSyncPoint | null = null
   private stoppedWarmGeneration: number | null = null
 
   constructor(
@@ -838,13 +838,13 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
 
   registerDisplayDemand(signal: AbortSignal): void {
     if (signal.aborted) return
-    this.displayed.set(signal, { kind: 'unmanaged' })
+    this.#displayed.set(signal, { kind: 'unmanaged' })
     signal.addEventListener(
       'abort',
       () => {
-        this.displayed.delete(signal)
-        this.contributors.delete(signal)
-        this.trimOptionalRanges()
+        this.#displayed.delete(signal)
+        this.#contributors.delete(signal)
+        this.#trimOptionalRanges()
         this.retention.changed()
       },
       { once: true },
@@ -860,8 +860,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
             ranges: demand.ranges.map((range) => boundedRange(range, demand.snapshot.length)),
           }
         : demand
-    this.displayed.set(signal, stored)
-    this.trimOptionalRanges()
+    this.#displayed.set(signal, stored)
+    this.#trimOptionalRanges()
     this.retention.changed()
   }
 
@@ -870,8 +870,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     contributors: readonly RetainedRangeContributor[] | null,
   ): void {
     if (signal.aborted) return
-    if (contributors) this.contributors.set(signal, contributors)
-    else this.contributors.delete(signal)
+    if (contributors) this.#contributors.set(signal, contributors)
+    else this.#contributors.delete(signal)
   }
 
   canWarm(signal: AbortSignal): boolean {
@@ -884,12 +884,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     discarded: readonly RetainedRangeContributor[],
   ): void {
     if (signal.aborted || this.signal.aborted) return
-    const protection = this.rangeProtection()
+    const protection = this.#rangeProtection()
     if (protection.fullyPinned) return
     const snapshot = this.buffer.getTextSnapshot()
     const point = this.buffer.getDocumentSyncPoint()
     const retired = discarded.some((contributor) => {
-      const origin = this.resultOrigins.get(contributor.result)
+      const origin = this.#resultOrigins.get(contributor.result)
       if (
         origin?.snapshot !== snapshot ||
         origin.point !== point ||
@@ -906,12 +906,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     if (retired) this.stoppedWarmGeneration = this.generation
   }
 
-  private rangeProtection() {
+  #rangeProtection() {
     const snapshot = this.buffer.getTextSnapshot()
     const intervals: EditorSyntaxRange[] = []
     const protectedSlots = new Set<ReadyRange>()
     let fullyPinned = false
-    for (const [signal, demand] of this.displayed) {
+    for (const [signal, demand] of this.#displayed) {
       if (
         demand.kind === 'unknown' ||
         demand.kind === 'unmanaged' ||
@@ -921,47 +921,47 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
         break
       }
       intervals.push(...demand.ranges)
-      const contributors = this.contributors.get(signal)
-      if (contributors) this.protectContributors(contributors, protectedSlots)
+      const contributors = this.#contributors.get(signal)
+      if (contributors) this.#protectContributors(contributors, protectedSlots)
       if (!contributors || demand.kind === 'preparation')
-        this.protectIntersecting(demand.ranges, protectedSlots)
-      this.protectLookup(demand.ranges, protectedSlots)
+        this.#protectIntersecting(demand.ranges, protectedSlots)
+      this.#protectLookup(demand.ranges, protectedSlots)
     }
     for (const waiter of this.queryWaiters.values()) {
       if (waiter.snapshot !== snapshot) continue
       intervals.push(waiter.range)
-      this.protectLookup([waiter.range], protectedSlots)
+      this.#protectLookup([waiter.range], protectedSlots)
     }
     return { intervals, protectedSlots, fullyPinned }
   }
 
-  private trimOptionalRanges(): void {
-    const { intervals, protectedSlots, fullyPinned } = this.rangeProtection()
+  #trimOptionalRanges(): void {
+    const { intervals, protectedSlots, fullyPinned } = this.#rangeProtection()
     for (const query of this.queries.values()) {
       query.admission =
         fullyPinned || intervals.some((range) => rangesIntersect(range, query.range))
           ? 'cache'
           : 'return-only'
     }
-    if (fullyPinned || this.displayed.size === 0) return
+    if (fullyPinned || this.#displayed.size === 0) return
     for (const [key, cached] of this.ranges) {
       if (!protectedSlots.has(cached)) this.ranges.delete(key)
     }
   }
 
-  private protectContributors(
+  #protectContributors(
     contributors: readonly RetainedRangeContributor[],
     protectedSlots: Set<ReadyRange>,
   ): void {
-    for (const contributor of contributors) this.protectContributor(contributor, protectedSlots)
+    for (const contributor of contributors) this.#protectContributor(contributor, protectedSlots)
   }
 
-  private protectContributor(
+  #protectContributor(
     contributor: RetainedRangeContributor,
     protectedSlots: Set<ReadyRange>,
   ): void {
     const snapshot = this.buffer.getTextSnapshot()
-    const origin = this.resultOrigins.get(contributor.result)
+    const origin = this.#resultOrigins.get(contributor.result)
     let cached = this.ranges.get(rangeKey(contributor.range))
     if (cached?.result !== contributor.result) cached = undefined
     cached ??= [...this.ranges.values()].find(
@@ -981,7 +981,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     if (cached) protectedSlots.add(cached)
   }
 
-  private protectIntersecting(
+  #protectIntersecting(
     ranges: readonly EditorSyntaxRange[],
     protectedSlots: Set<ReadyRange>,
   ): void {
@@ -996,10 +996,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
   }
 
-  private protectLookup(
-    ranges: readonly EditorSyntaxRange[],
-    protectedSlots: Set<ReadyRange>,
-  ): void {
+  #protectLookup(ranges: readonly EditorSyntaxRange[], protectedSlots: Set<ReadyRange>): void {
     for (const range of ranges) {
       if ([...protectedSlots].some((cached) => rangeContains(cached.range, range))) continue
       const cached =
@@ -1017,7 +1014,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     const ranges: EditorSyntaxRange[] = []
     const preparationRanges: EditorSyntaxRange[] = []
     const snapshot = this.buffer.getTextSnapshot()
-    for (const demand of this.displayed.values()) {
+    for (const demand of this.#displayed.values()) {
       if (demand.kind === 'unmanaged') {
         unmanagedLeases++
         continue
@@ -1057,7 +1054,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     })
     const release = () => {
       if (!this.queryWaiters.delete(signal)) return
-      this.trimOptionalRanges()
+      this.#trimOptionalRanges()
       this.retention.changed()
     }
     signal.addEventListener('abort', release, { once: true })
@@ -1087,8 +1084,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
 
   override dispose(): void {
     this.stoppedWarmGeneration = null
-    this.displayed.clear()
-    this.contributors.clear()
+    this.#displayed.clear()
+    this.#contributors.clear()
     this.queryWaiters.clear()
     this.ranges.clear()
     this.queries.clear()
@@ -1122,10 +1119,10 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.queuedPoint === this.buffer.getDocumentSyncPoint() ? this.generation : null
     const key = `${revision}:${generation ?? 'publication'}:${rangeKey(range)}`
     const existing = [...this.queries.values()].find((query) =>
-      this.compatibleQuery(query, point, range),
+      this.#compatibleQuery(query, point, range),
     )
     if (existing) {
-      this.trimOptionalRanges()
+      this.#trimOptionalRanges()
       return existing.promise
     }
     let queried = false
@@ -1142,8 +1139,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
         queried = true
         return this.structuralSession.queryRange?.(range, signal) ?? this.current()
       }).then((result) => {
-        if (queried && syntaxResultCoversRange(result, range) && this.canAdmitRange(key, pending)) {
-          this.resultOrigins.set(result, {
+        if (
+          queried &&
+          syntaxResultCoversRange(result, range) &&
+          this.#canAdmitRange(key, pending)
+        ) {
+          this.#resultOrigins.set(result, {
             snapshot: pending.snapshot,
             point,
             generation: this.generation,
@@ -1155,7 +1156,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }),
     }
     this.queries.set(key, pending)
-    this.trimOptionalRanges()
+    this.#trimOptionalRanges()
     this.retention.changed()
     void pending.promise
       .finally(() => {
@@ -1167,7 +1168,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return pending.promise
   }
 
-  private compatibleQuery(
+  #compatibleQuery(
     query: PendingRangeQuery,
     point: DocumentSyncPoint,
     range: EditorSyntaxRange,
@@ -1180,7 +1181,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     )
   }
 
-  private canAdmitRange(key: string, query: PendingRangeQuery): boolean {
+  #canAdmitRange(key: string, query: PendingRangeQuery): boolean {
     return (
       !this.signal.aborted &&
       this.queries.get(key) === query &&
@@ -1199,8 +1200,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   }
 
   override changed(read: DocumentRead): void {
-    if (read.revision.point === this.rangePoint) return
-    this.rangePoint = read.revision.point
+    if (read.revision.point === this.#rangePoint) return
+    this.#rangePoint = read.revision.point
     this.ranges.clear()
     super.changed(read)
   }
@@ -1209,8 +1210,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
 export class HighlighterEntry extends AnalysisEntry<EditorHighlightResult> {
   private readonly highlighter: HighlighterAnalysisSession
   private readonly themes = new EditorEventSource<void>({ action: 'document.highlighter.theme' })
-  private unsubscribeTheme: (() => void) | void
-  private readonly unsubscribeProduced: () => void
+  #unsubscribeTheme: (() => void) | void
+  readonly #unsubscribeProduced: () => void
   constructor(
     buffer: EditorTextBuffer,
     readonly highlighterSession: EditorHighlighterRuntime,
@@ -1234,8 +1235,8 @@ export class HighlighterEntry extends AnalysisEntry<EditorHighlightResult> {
       scheduling,
     )
     this.highlighter = adapter
-    this.unsubscribeProduced = adapter.onDidProduceTokens(() => this.retention.changed())
-    this.unsubscribeTheme = highlighterSession.onDidChangeTheme?.(() => {
+    this.#unsubscribeProduced = adapter.onDidProduceTokens(() => this.retention.changed())
+    this.#unsubscribeTheme = highlighterSession.onDidChangeTheme?.(() => {
       this.refresh()
       this.themes.fire()
     })
@@ -1257,11 +1258,11 @@ export class HighlighterEntry extends AnalysisEntry<EditorHighlightResult> {
   }
   override dispose(): void {
     if (!this.stop()) return
-    const unsubscribe = this.unsubscribeTheme
-    this.unsubscribeTheme = undefined
+    const unsubscribe = this.#unsubscribeTheme
+    this.#unsubscribeTheme = undefined
     completeDocumentCleanup([
       () => unsubscribe?.(),
-      this.unsubscribeProduced,
+      this.#unsubscribeProduced,
       () => this.highlighter.dispose(),
       () => this.finishDispose(),
     ])
