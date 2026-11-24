@@ -128,7 +128,10 @@ it('cancels computation waits independently of a shared source ACK and releases 
   createEditorBufferSession(buffer).applyText('!')
   const latest = delivery.current()!
   const peer = scope.source.prepareReader(external.transport, latest)
-  expect(external.commands.some((command) => command.kind === 'reset')).toBe(false)
+  // The first admission sent its source and pin with the (held, unrecorded) register; the peer
+  // waits for that admission and sends nothing of its own before it settles.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(external.commands.map((command) => command.kind)).toEqual(['reset', 'pin'])
   releaseRegister()
   const loan = await peer
   expect(loan?.reference.point.revision).toBe(latest.revision.point.revision)
@@ -246,6 +249,77 @@ it.each(['register', 'pin'] as const)(
     await delivery.dispose()
   },
 )
+
+// A worker running a long query in slices reads one queued message per slice, so each reply the
+// page waits for before sending the next command costs a slice.
+function heldEndpoint() {
+  const transport = endpoint()
+  const held: (() => void)[] = []
+  transport.connection.send = (command) => {
+    transport.commands.push(command)
+    const result = transport.reader.apply(command)
+    return new Promise((resolve) => {
+      held.push(() => resolve(result))
+    })
+  }
+  const releaseAll = async () => {
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      for (const release of held.splice(0)) release()
+    } while (held.length > 0)
+  }
+  return { ...transport, held, releaseAll }
+}
+
+it('sends register, source and pin before any of their replies arrive', async () => {
+  const buffer = createEditorTextBuffer('first line\nsecond line')
+  const delivery = new DocumentDelivery(buffer, 'pipelined.ts')
+  const scope = delivery.createScope()
+  const transport = heldEndpoint()
+  const first = scope.source.prepareReader(transport.transport, delivery.current()!)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(transport.commands.map((command) => command.kind)).toEqual(['register', 'reset', 'pin'])
+  await transport.releaseAll()
+  const loan = await first
+  expect(loan?.reference.point.revision).toBe(delivery.current()!.revision.point.revision)
+  const released = loan?.dispose()
+  await transport.releaseAll()
+  await released
+
+  createEditorBufferSession(buffer).applyText('!')
+  transport.commands.length = 0
+  const next = scope.source.prepareReader(transport.transport, delivery.current()!)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(transport.commands.map((command) => command.kind)).toEqual(['advance', 'pin'])
+  await transport.releaseAll()
+  const edited = await next
+  expect(edited?.reference.point.revision).toBe(delivery.current()!.revision.point.revision)
+  const unpinned = edited?.dispose()
+  await transport.releaseAll()
+  await unpinned
+  expect(transport.reader.inspect().pins).toBe(0)
+  scope.dispose()
+  delivery.dispose()
+})
+
+it('releases a pin sent with a source the worker rejected', async () => {
+  const buffer = createEditorTextBuffer('stable')
+  const delivery = new DocumentDelivery(buffer, 'rejected.ts')
+  const scope = delivery.createScope()
+  const transport = endpoint()
+  const send = transport.connection.send
+  transport.connection.send = (command, signal) =>
+    command.kind === 'reset'
+      ? Promise.resolve({ kind: 'rejected', identity: command.identity, reason: 'base' })
+      : send(command, signal)
+  await expect(
+    scope.source.prepareReader(transport.transport, delivery.current()!),
+  ).rejects.toMatchObject({ code: 'DOCUMENT_SOURCE_ADMISSION' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(transport.reader.inspect().pins).toBe(0)
+  scope.dispose()
+  delivery.dispose()
+})
 
 it('settles scope disposal while connection is unresolved', async () => {
   const delivery = new DocumentDelivery(createEditorTextBuffer('stable'), 'connect.ts')

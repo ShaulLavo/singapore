@@ -3393,8 +3393,12 @@ const flattenLayerRange = async (
 // an edit) therefore runs in slices and returns to the message loop between them: a request queued
 // behind it, such as a newly opened document or the rows just scrolled into view, waits for one
 // slice, and a released document's query stops at its next slice.
+// Every step of an edit (source, parse, the visible rows' query) is a round trip that can land in
+// one of those slices, so the budget is short: on a 50,000-line file one 8,192-unit slice takes about
+// 3 ms, and an edit made during a background tile waited 64 ms for its colors with an 8 ms budget
+// against 30 ms with this one. The extra pauses cost the tile about 0.1 ms each.
 const RANGE_SLICE_UNITS = 8_192
-const RANGE_SLICE_BUDGET_MS = 8
+const RANGE_SLICE_BUDGET_MS = 2
 
 const rangeSliceDue = (pacing: RangePacing): boolean =>
   nowMs() - pacing.resumedAt >= RANGE_SLICE_BUDGET_MS

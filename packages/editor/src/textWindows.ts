@@ -38,6 +38,10 @@ export function forEachTextWindowBackward(
 export class TextBlockReader {
   readonly length: number
   private readonly blocks = new Map<number, string>()
+  // The block the last read landed in. Consecutive reads mostly stay in it, and the cache's
+  // recency order already has it last, so they skip the map entirely.
+  private lastIndex = -1
+  private lastBlock = ''
 
   constructor(private readonly source: TextReadSnapshot) {
     this.length = source.length
@@ -47,7 +51,11 @@ export class TextBlockReader {
     if (offset < 0 || offset >= this.length) return Number.NaN
 
     const index = Math.floor(offset / TEXT_WINDOW_LENGTH)
-    return this.block(index).charCodeAt(offset - index * TEXT_WINDOW_LENGTH)
+    if (index !== this.lastIndex) {
+      this.lastBlock = this.block(index)
+      this.lastIndex = index
+    }
+    return this.lastBlock.charCodeAt(offset - index * TEXT_WINDOW_LENGTH)
   }
 
   private block(index: number): string {
