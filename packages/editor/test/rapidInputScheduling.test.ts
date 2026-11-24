@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Editor } from '../src/editor'
+import { createEditorStructuralOperation } from '../src/editor/operationDefinitions'
+import { createEmptySyntaxResult, type EditorSyntaxRuntime } from '../src/syntax/session'
 import {
   EditorSecondaryWorkScheduler,
   type EditorSecondaryWorkOptions,
@@ -82,5 +84,94 @@ describe('rapid input secondary work', () => {
       }),
     )
     expect(syntax.isCurrent?.(syntax.version!)).toBe(false)
+  })
+})
+
+/**
+ * The debounce protects colors that are already on screen. A key typed while the document's
+ * first highlight is still loading has none to protect, so its syntax request goes out at once.
+ */
+describe('typing before the first highlight', () => {
+  let container: HTMLElement
+  let editor: Editor
+  let scheduled: EditorSecondaryWorkOptions[]
+
+  beforeEach(() => {
+    scheduled = []
+    vi.spyOn(EditorSecondaryWorkScheduler.prototype, 'schedule').mockImplementation((options) => {
+      scheduled.push(options)
+    })
+    resetEditorInstanceCount()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+  })
+
+  afterEach(() => {
+    editor.dispose()
+    container.remove()
+    vi.restoreAllMocks()
+  })
+
+  const type = (data: string) =>
+    editor.getInputElement().dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data,
+        inputType: 'insertText',
+      }),
+    )
+
+  const open = (analyze: EditorSyntaxRuntime['analyze']) => {
+    const result = createEmptySyntaxResult()
+    const session: EditorSyntaxRuntime = {
+      foldingSupport: 'unsupported',
+      analyze,
+      getResult: () => result,
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    editor = new Editor(container, {
+      plugins: [
+        {
+          activate: (context) =>
+            context.registerSyntaxProvider({
+              operation: createEditorStructuralOperation(() => session),
+            }),
+        },
+      ],
+    })
+    editor.setText('abc', { languageId: 'fixture' })
+  }
+
+  it('requests syntax for the typed text without the typing debounce', async () => {
+    const analysed: number[] = []
+    // Answers only by being superseded: the first highlight stays pending, as it does while a
+    // grammar downloads.
+    open((read, signal) => {
+      analysed.push(read.text.length)
+      return new Promise((_resolve, reject) =>
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+      )
+    })
+    await vi.waitFor(() => expect(analysed).toEqual([3]))
+
+    type('x')
+
+    // The scheduler is stubbed, so deferred work never runs: only an immediate request gets here.
+    expect(scheduled.map((work) => work.key)).not.toContain('editor.syntaxRefresh')
+    expect(scheduled.map((work) => work.key)).toContain('editor.featureContributions')
+    await vi.waitFor(() => expect(analysed).toEqual([3, 4]))
+    expect(editor.getState().initialHighlightStatus).toBe('loading')
+  })
+
+  it('debounces again once the first highlight has landed', async () => {
+    open(async () => createEmptySyntaxResult())
+    await vi.waitFor(() => expect(editor.getState().initialHighlightStatus).not.toBe('loading'))
+
+    type('x')
+
+    expect(scheduled.map((work) => work.key)).toContain('editor.syntaxRefresh')
   })
 })

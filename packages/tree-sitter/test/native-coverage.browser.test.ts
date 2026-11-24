@@ -42,6 +42,17 @@ function registry(loads: string[]) {
   return registry
 }
 
+/**
+ * The grammars a language declares it can inject, of those the catalog provides. A session loads
+ * them ahead, with the language itself; any other grammar is loaded when a document's injection
+ * asks for it.
+ */
+function declaredInjections(languageId: string): readonly string[] {
+  const provided = (id: string) => TREE_SITTER_LANGUAGE_CONTRIBUTIONS.some((item) => item.id === id)
+  const contribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((item) => item.id === languageId)
+  return (contribution?.injectionDependencies ?? []).filter(provided)
+}
+
 browserTest.each([
   [
     'typescript',
@@ -110,7 +121,7 @@ browserTest.each([
 )
 
 browserTest(
-  'loads only TypeScript on a cold open and preserves angle-bracket assertions',
+  'loads TypeScript and the grammars it declares on a cold open and preserves angle-bracket assertions',
   async () => {
     const backend = new TreeSitterWorkerClient()
     const loads: string[] = []
@@ -124,7 +135,10 @@ browserTest(
     })
     try {
       const result = await session.run()
-      expect(loads).toEqual(['typescript'])
+      // Nothing in this document is injected. The two grammars TypeScript can inject are loaded
+      // ahead all the same, so a document that does use them does not wait for a second pass.
+      expect(new Set(loads)).toEqual(new Set(['typescript', 'regex', 'jsdoc']))
+      expect(loads.length).toBe(3)
       expect(result.errors).toEqual([])
       expect(result.captures.some((capture) => capture.captureName === 'type.builtin')).toBe(true)
     } finally {
@@ -351,7 +365,7 @@ browserTest(
 )
 
 browserTest.each(NATIVE_FIXTURES)(
-  'paints $id with only its dependency assets and matches fresh edits',
+  'paints $id with its own and its declared injection assets and matches fresh edits',
   async (fixture) => {
     const backend = new TreeSitterWorkerClient()
     const loads: string[] = []
@@ -387,11 +401,9 @@ browserTest.each(NATIVE_FIXTURES)(
       expect(incremental.folds).toEqual(expected.folds)
       expect(incremental.injections).toEqual(expected.injections)
       expect(loads.length).toBe(new Set(loads).size)
-      const injected: Readonly<Record<string, readonly string[]>> = {
-        astro: ['typescript'],
-        svelte: ['typescript', 'css'],
-      }
-      expect(new Set(loads)).toEqual(new Set([fixture.id].concat(injected[fixture.id] ?? [])))
+      // The language, the grammars it declares it can inject (loaded ahead), and nothing else:
+      // what an injected grammar can inject in turn is loaded only when a document asks.
+      expect(new Set(loads)).toEqual(new Set([fixture.id].concat(declaredInjections(fixture.id))))
       fresh.dispose()
     } finally {
       session.dispose()
@@ -482,7 +494,9 @@ browserTest.each([
           ? initial
           : await session.runtime.queryRange({ startIndex: 0, endIndex: text.length })
       expect(result.degraded).toBeNull()
-      expect(new Set(loads)).toEqual(new Set([languageId, 'mdx', 'sql']))
+      expect(new Set(loads)).toEqual(
+        new Set([languageId, 'mdx', 'sql'].concat(declaredInjections(languageId))),
+      )
       assertPaint(result, text, MDX_CATEGORIES)
       if (languageId === 'markdown') {
         expect(

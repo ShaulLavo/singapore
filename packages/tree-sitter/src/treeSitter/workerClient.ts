@@ -221,6 +221,21 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     }
   }
 
+  /**
+   * Creates the worker and starts loading the parser runtime without waiting for either, so both
+   * are under way while the caller builds its view. A failure is reported by the first request.
+   */
+  public start(): void {
+    try {
+      if (!this.startWorker() || !this.initPromise) return
+      void this.trackClientTask(this.initPromise).catch(() => undefined)
+    } catch {
+      // Best effort: a worker that cannot be constructed here (a `SecurityError` from the
+      // constructor or the host's factory) is constructed again by the first document's request,
+      // which reports the failure through the usual syntax path.
+    }
+  }
+
   public registerLanguages(languages: readonly TreeSitterLanguageDescriptor[]): Promise<void> {
     return this.trackClientTask(this.finishRegisterLanguages(languages))
   }
@@ -231,7 +246,9 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const nextLanguages = this.unregisteredLanguages(languages)
     if (nextLanguages.length === 0) return
 
-    const handle = await this.ensureWorkerReady()
+    // Not held back until the parser runtime has loaded: the worker starts downloading a grammar
+    // when it is registered, and on a cold worker that overlaps the runtime's own download.
+    const handle = this.startWorker()
     if (!handle) return
 
     await this.postRequest({ type: 'registerLanguages', languages: nextLanguages })
@@ -700,15 +717,23 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return handle
   }
 
-  private async ensureWorkerReady(): Promise<Worker | null> {
+  /** The worker with its parser runtime load posted; requests sent now queue behind that load. */
+  private startWorker(): Worker | null {
     const handle = this.getWorker()
-    if (!handle) return null
+    if (!handle || this.initPromise) return handle
 
-    if (!this.initPromise) {
-      this.initPromise = this.postRequest({ type: 'init' }).then(() => {
-        if (this.worker === handle) this.lifecycle = 'ready'
-      })
-    }
+    this.initPromise = this.postRequest({ type: 'init' }).then(() => {
+      if (this.worker === handle) this.lifecycle = 'ready'
+    })
+    // Reported to whoever waits in `ensureWorkerReady`; a caller that only started the worker
+    // learns of a failed load from its own request.
+    void this.initPromise.catch(() => undefined)
+    return handle
+  }
+
+  private async ensureWorkerReady(): Promise<Worker | null> {
+    const handle = this.startWorker()
+    if (!handle) return null
 
     await this.initPromise
     if (this.lifecycle === 'disposing' || this.lifecycle === 'disposed') return null

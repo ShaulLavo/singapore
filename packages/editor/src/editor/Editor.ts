@@ -646,6 +646,7 @@ export class Editor {
       getLanguageId: () => this.languageId,
       getSession: () => this.session,
       getVisibleSyntaxRange: () => this.visibleSyntaxRange(),
+      getMountedSyntaxRange: () => this.syntaxRangeAroundMountedRows(0, 0),
       adoptTokens: (tokens) => {
         this.view.adoptTokens(tokens)
         this.notifyViewContributions('tokens', null)
@@ -5188,6 +5189,17 @@ export class Editor {
       return
     }
 
+    // The debounce keeps colors that are on screen from being recomputed on every key. Before the
+    // document's first highlight there are none, and waiting only adds the debounce to the time
+    // the text stays uncolored when a key arrives while the grammar is still loading.
+    if (this.syntax.awaitingFirstHighlight) {
+      measureEditorPerformance('editor.refreshSyntax', () =>
+        this.refreshSyntax(documentVersion, change, { delayMs: 0 }),
+      )
+      this.scheduleDeferredFeatureContributions(change, sessionChangeVersion, documentVersion)
+      return
+    }
+
     this.secondaryWork.schedule({
       key: 'editor.syntaxRefresh',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
@@ -5201,6 +5213,14 @@ export class Editor {
         ),
       ),
     })
+    this.scheduleDeferredFeatureContributions(change, sessionChangeVersion, documentVersion)
+  }
+
+  private scheduleDeferredFeatureContributions(
+    change: DocumentSessionChange,
+    sessionChangeVersion: number,
+    documentVersion: number,
+  ): void {
     this.secondaryWork.schedule({
       key: 'editor.featureContributions',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,

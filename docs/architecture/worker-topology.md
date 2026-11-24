@@ -64,6 +64,8 @@ Limits:
 
 Disposal and restart:
 
+- A syntax plugin starts its owner's worker (`init`) when an editor activates the plugin, ahead of
+  the first document. Language registrations are posted behind `init` without waiting for it.
 - `disposeDocument(documentId)` invalidates owner source chunk accounting and posts
   `disposeDocument` to the worker once the document's requests have settled. When some are still
   running it first posts `closeRuntimeSession`, which stops a sliced range query at its next

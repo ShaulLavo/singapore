@@ -49,6 +49,15 @@ The main thread may render syntax results, but it must not synchronously parse o
 
 Each parse result is tied to a document snapshot/version. Consumers must be able to reject syntax results whose base snapshot is older than the visible document state.
 
+### Start-up
+
+Everything on the way to a document's first colors starts as early as its inputs are known. None of it changes what an answer means or when it is complete:
+
+- A syntax plugin starts its provider's worker when an editor activates it, which is before the editor builds its view. The worker script and the parser runtime load while that view is built. The start is best effort: a worker that cannot be constructed there is constructed again by the first document's request, which reports the failure.
+- A syntax session resolves its language when it is created, and registers it with the worker without waiting for the parser runtime. The worker starts downloading and compiling a grammar when it is registered, so on a cold worker the grammar and the runtime download together. Both are compiled while they stream, which lets a browser reuse the compiled code from its HTTP cache.
+- The grammars a language declares it can inject (`injectionDependencies`: documentation comments and regular expressions for TypeScript) are resolved and registered as soon as the language is known, in parallel with the first parse. See [Injections](#injections).
+- A key typed before the first colors is not debounced. The debounce protects colors that are on screen, and there are none yet.
+
 ### Long requests
 
 A page without cross-origin isolation has no shared memory, so it cannot interrupt a running worker. The worker therefore never runs long without returning to its message loop:
@@ -92,6 +101,8 @@ Highlight output should be represented as dense decorations with offsets or line
 A range-mode editor asks for the text it shows, one range at a time, and keeps the answers in `EditorSyntaxController`. The frame trim keeps every answer that is the newest one for some shown text, whoever painted the tokens (range answers, a separate highlighter, or a host). The view asks again for shown text without an answer, so dropping one of these would make it ask on every frame.
 
 Answers carried through an edit only stand in for the new parse. Its first answer replaces them, and what they covered is asked for again when it is shown.
+
+A document with no colors yet is asked for the rows on screen first, and for the visible range (those rows plus the text kept ready around them) right after. The first answer paints tokens only; folds, brackets and injected spans come with the answer that covers the visible range, as before. The extra request is skipped when the rows on screen are within 4,096 characters of the visible range.
 
 The trim removes tokens only while the painted store is made of range answers alone. After an edit, a newer analysis, or tokens installed by a host, it removes none.
 
@@ -147,6 +158,8 @@ Fold ranges should cross into the display transform layer as anchor-backed range
 Language injections are part of the syntax system, not a separate tokenizer path.
 
 Injected parse trees must retain parent snapshot identity and produce highlights/decorations in buffer coordinates so rendering and selection stay unified.
+
+A document's first answer includes its injected layers, and waits for the grammars they need. To keep that wait short, a session starts loading the grammars its language declares it can inject as soon as the language is known, without waiting for a parse to ask: the first parse then usually finds them registered and their download under way, and adds their layers in one pass instead of answering, loading and parsing again. Only the declared grammars are loaded ahead, not the ones those can inject in turn. Nothing waits for the load, and a grammar that is late or fails to load is asked for by the parse that needs it, as before. Any other injected grammar (a Markdown fence's language) still loads on demand.
 
 ## Acceptance Criteria
 

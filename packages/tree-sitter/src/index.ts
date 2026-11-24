@@ -102,6 +102,11 @@ export type TreeSitterSyntaxProvider = EditorSyntaxProvider &
       contribution: TreeSitterLanguageContribution,
       options?: TreeSitterLanguageRegistrationOptions,
     ): TreeSitterLanguageDisposable
+    /**
+     * Starts the provider's worker and its parser runtime ahead of the first document. The plugins
+     * call it when an editor activates them, so the worker loads while the editor builds its view.
+     */
+    start?(): void
   }
 
 export type TreeSitterLanguagePluginOptions = TreeSitterLanguageRegistrationOptions & {
@@ -171,6 +176,7 @@ export const createTreeSitterSyntaxProvider = (
       }
     },
     resolveTreeSitterLanguage: (languageId) => registry.resolveTreeSitterLanguage(languageId),
+    start: () => backend.start(),
   }
 }
 
@@ -256,6 +262,9 @@ const contributeToEditor = (
   context: EditorPluginContext,
   provider: TreeSitterSyntaxProvider,
 ): readonly EditorDisposable[] => {
+  // An editor activates its plugins before it builds its view, and a document usually follows in
+  // the same task: the worker script and the parser runtime download while that work runs.
+  provider.start?.()
   return [
     context.registerSyntaxProvider(provider),
     context.registerSelectionRangeProvider((selection) =>
