@@ -70,6 +70,12 @@ The session numbers its range requests. Each caller is answered with the range i
 5. Queries run for invalidated or visible ranges first.
 6. Query results are emitted as syntax decorations or structural ranges tagged with their base snapshot.
 
+### Range requests while scrolling
+
+Each viewport change asks for the visible rows' uncached text and for a look-ahead window around them: 64,000 characters in the scroll direction and 32,000 behind (up to 192,000 ahead on a fast scroll). A look-ahead on its way stays while the next window overlaps it, and the newest window is asked for once it lands; a window that does not overlap it, as after a far jump, replaces it.
+
+A range query that every caller has left is never sent to the worker. One already running stays joinable for 150 ms for a caller asking for the same range again; after that, or as soon as another range is asked for, it is cancelled, so it is not sent again once the complete analysis lands. A caller's query is never cancelled because another caller's query started. Cancelling stops the worker mid-query where shared cancellation flags are available (a cross-origin-isolated page), and otherwise drops the query before it is sent.
+
 Open implementation details:
 
 - exact Tree-sitter input adapter for piece-table reads

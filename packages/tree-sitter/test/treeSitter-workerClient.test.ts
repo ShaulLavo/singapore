@@ -363,6 +363,39 @@ describe('tree-sitter worker client language registration cache', () => {
     await expect(secondRange).resolves.toMatchObject({ range: { startIndex: 5, endIndex: 12 } })
   })
 
+  it('leaves a range query whose caller can cancel it to that caller', async () => {
+    FakeWorker.autoResolve = false
+    const client = await loadWorkerClient()
+    const snapshot = createPieceTableSnapshot('const answer = 1;')
+    const parse = client.parse(parsePayload(snapshot, 1))
+    const worker = fakeWorkerAt(0)
+
+    worker.resolveRequest(requestOfType(worker, 'init'))
+    await flushMicrotasks()
+    const parseRequest = parseRequests(worker)[0]!
+    const owner = new AbortController()
+    const owned = client.queryRange(rangePayload(1, 0, 5), owner.signal)
+    await flushMicrotasks()
+    const ownedRequest = rangeRequests(worker)[0]!
+    // Another caller's query, owned or not, does not cancel it.
+    const other = client.queryRange(rangePayload(1, 5, 12), new AbortController().signal)
+    const unowned = client.queryRange(rangePayload(1, 12, 15))
+    await flushMicrotasks()
+    expect(cancellationValue(ownedRequest)).toBe(0)
+
+    // Its own caller does.
+    owner.abort()
+    expect(cancellationValue(ownedRequest)).toBe(1)
+    await expect(owned).rejects.toMatchObject({ name: 'AbortError' })
+
+    worker.resolveRequest(parseRequest, parseResult(1))
+    worker.resolveRequest(rangeRequests(worker)[1]!, rangeResult(1, 5, 12))
+    worker.resolveRequest(rangeRequests(worker)[2]!, rangeResult(1, 12, 15))
+    await expect(parse).resolves.toMatchObject({ snapshotVersion: 1 })
+    await expect(other).resolves.toBeDefined()
+    await expect(unowned).resolves.toBeDefined()
+  })
+
   it('keeps runtime disposal and its barrier behind a parse waiting on initialization', async () => {
     FakeWorker.autoResolve = false
     const client = await loadWorkerClient()
