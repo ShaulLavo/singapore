@@ -2,6 +2,7 @@ import { editReusableTree } from './reuse'
 import { REVIEW_BATCH_YIELD_RANGES } from './reviewBatch'
 import { parseProjectedTree } from './projection'
 import { TREE_SITTER_BOOTSTRAP_UNITS } from './source'
+import { queryStaysInRootChildren } from './injectionLocality'
 import {
   SLICE_CAPTURE_LIMIT,
   SLICE_GRAMMAR_LIMIT,
@@ -59,7 +60,6 @@ import type {
   TreeSitterDegradedState,
   TreeSitterEditRequest,
   TreeSitterError,
-  TreeSitterInputEdit,
   TreeSitterInjectionInfo,
   TreeSitterLanguageId,
   TreeSitterParseAckResult,
@@ -822,12 +822,6 @@ const parseRequestedDocument = async (
       request.snapshotVersion
   )
     return undefined
-  // The complete analysis of a staged edit is that edit's own reparse, already running.
-  const staged = stagedEdits.get(request.runtimeSessionId)
-  if (staged?.request.snapshotVersion === request.snapshotVersion) {
-    await staged.completion
-    assertNotCancelled(context)
-  }
   const runtime = await runAsyncWorkerPhase('load runtime', () => ensureRuntime(request.languageId))
   const parseStart = nowMs()
   const parsedDocument =
@@ -1051,228 +1045,53 @@ const editDocument = async (
   source: TreeSitterPieceTableInput,
 ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> =>
   runCancellableRequest(request, async (context) => {
-    // Taken before any await: the staged edit's own parse stops at its next slice and releases
-    // its basis, so the copies are made while it is still whole.
-    const chained = takeStagedEditBasis(request)
-    let basis = chained
-    try {
-      const cached = chained
-        ? null
-        : cachedDocumentForVersion(
-            request.runtimeSessionId,
-            request.languageId,
-            request.previousSnapshotVersion,
-          )
-      if (cached?.readOnly) {
-        assertNotCancelled(context)
-        dropCachedDocument(request.runtimeSessionId, cached)
-        return parseRequestedDocument(
-          { ...request, type: 'parse', readOnly: false },
-          source,
-          context,
-        )
-      }
-      if (request.languageId === 'markdown') return parseMarkdownDocument(request, source, context)
-      if (
-        request.languageId === 'mdx' &&
-        (markdownDocuments.get(request.runtimeSessionId)?.snapshotVersion ?? 0) >
-          request.snapshotVersion
-      )
-        return undefined
-      const runtime = await runAsyncWorkerPhase('load runtime', () =>
-        ensureRuntime(request.languageId),
-      )
-      if (!cached && !chained) return undefined
-
-      const editStart = nowMs()
-      basis ??= runWorkerPhase('prepare reusable tree', () =>
-        cachedEditBasis(cached!, request.inputEdits),
-      )
-      const editMs = nowMs() - editStart
-      const owned = basis
-      basis = null
-      return await finishEdit(request, source, runtime, owned, context, editMs)
-    } finally {
-      if (basis) disposeEditBasis(basis)
+    const cached = cachedDocumentForVersion(
+      request.runtimeSessionId,
+      request.languageId,
+      request.previousSnapshotVersion,
+    )
+    if (cached?.readOnly) {
+      assertNotCancelled(context)
+      dropCachedDocument(request.runtimeSessionId, cached)
+      return parseRequestedDocument({ ...request, type: 'parse', readOnly: false }, source, context)
     }
-  })
+    if (request.languageId === 'markdown') return parseMarkdownDocument(request, source, context)
+    if (
+      request.languageId === 'mdx' &&
+      (markdownDocuments.get(request.runtimeSessionId)?.snapshotVersion ?? 0) >
+        request.snapshotVersion
+    )
+      return undefined
+    const runtime = await runAsyncWorkerPhase('load runtime', () =>
+      ensureRuntime(request.languageId),
+    )
+    if (!cached) return undefined
 
-/**
- * The complete document an edit builds on, and every edit since it. Usually the cached previous
- * snapshot; an edit that arrives while a slow one is still parsing continues from that one's basis
- * with both edits, rather than waiting for a parse that is already stale.
- */
-type EditBasis = {
-  readonly layers: readonly ParsedLayer[]
-  /** Copies this basis disposes, rather than a cached snapshot's own layers. */
-  readonly ownsLayers: boolean
-  readonly inputEdits: readonly TreeSitterInputEdit[]
-  /** The basis root tree with every edit applied. Always owned. */
-  readonly reusableTree: Tree
-}
-
-type StagedEdit = {
-  readonly request: TreeSitterEditRequest
-  readonly source: TreeSitterPieceTableInput
-  readonly runtime: Runtime
-  readonly basis: EditBasis
-  /** Where the edited text first differs from the basis. */
-  readonly dirtyStart: number
-  preview: StagedEditPreview | null
-  completion: Promise<void>
-}
-
-type StagedEditPreview = {
-  readonly document: ParsedDocument
-  readonly window: TreeSitterRange
-}
-
-// An edit whose reparse outlasts its first slice, waiting for that reparse to finish.
-const stagedEdits = new Map<string, StagedEdit>()
-
-const cachedEditBasis = (
-  document: ParsedDocument,
-  inputEdits: readonly TreeSitterInputEdit[],
-): EditBasis => ({
-  layers: document.layers,
-  ownsLayers: false,
-  inputEdits,
-  reusableTree: editReusableTree(rootLayerForDocument(document).tree, inputEdits),
-})
-
-const takeStagedEditBasis = (request: TreeSitterEditRequest): EditBasis | null => {
-  const staged = stagedEdits.get(request.runtimeSessionId)
-  if (!staged) return null
-  // Any newer edit supersedes it; only one that continues from its text reuses its basis.
-  stagedEdits.delete(request.runtimeSessionId)
-  if (staged.request.snapshotVersion !== request.previousSnapshotVersion) return null
-  if (staged.request.languageId !== request.languageId) return null
-  const { basis } = staged
-  return {
-    layers: basis.layers.map((layer) => ({ ...layer, tree: layer.tree.copy() })),
-    ownsLayers: true,
-    inputEdits: basis.inputEdits.concat(request.inputEdits),
-    reusableTree: editReusableTree(basis.reusableTree, request.inputEdits),
-  }
-}
-
-const disposeEditBasis = (basis: EditBasis): void => {
-  basis.reusableTree.delete()
-  if (!basis.ownsLayers) return
-  for (const layer of basis.layers) layer.tree.delete()
-}
-
-// The share of an edit's reparse that runs before it answers. Typing reparses well inside it. An
-// edit that turns the rest of a large file from code into a string does not: it answers at once,
-// range queries read a window parsed around them, and the reparse continues in slices.
-const EDIT_SLICE_MS = 8
-
-const canStageEdit = (request: TreeSitterEditRequest): boolean =>
-  request.resultMode === 'parseOnly' &&
-  request.languageId !== 'markdown' &&
-  request.languageId !== 'mdx'
-
-const finishEdit = async (
-  request: TreeSitterEditRequest,
-  source: TreeSitterPieceTableInput,
-  runtime: Runtime,
-  basis: EditBasis,
-  context: CancellationContext,
-  editMs: number,
-): Promise<TreeSitterParseResult | TreeSitterParseAckResult> => {
-  const parseStart = nowMs()
-  const parser = new Parser()
-  let staged = false
-  try {
-    parser.setLanguage(runtime.language)
-    const input = sourceInput(source)
-    const sliceStart = nowMs()
-    const first = runWorkerPhase('parse root', () =>
+    const editStart = nowMs()
+    const oldRootLayer = rootLayerForDocument(cached)
+    const reusableTree = runWorkerPhase('prepare reusable tree', () =>
+      editReusableTree(oldRootLayer.tree, request.inputEdits),
+    )
+    const editMs = nowMs() - editStart
+    const parseStart = nowMs()
+    const rootLayer = runWorkerPhase('parse root', () =>
       measurePhase(context, 'parseRoot', () =>
-        parser.parse(input, basis.reusableTree, {
-          progressCallback: () => isCancelled(context) || nowMs() - sliceStart >= EDIT_SLICE_MS,
-        }),
+        parseRootLayer(runtime, source, reusableTree, context),
       ),
     )
-    assertNotCancelled(context)
-    if (!first && canStageEdit(request)) {
-      stageEdit(request, source, runtime, basis, parser)
-      staged = true
-      return {
-        ...parseAckResult(request, [], phaseTimings(context)),
-        analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
-        statistics: editStatistics(context),
-      }
-    }
-    const tree =
-      first ??
-      runWorkerPhase('parse root', () =>
-        measurePhase(context, 'parseRoot', () =>
-          resumeSourceParse(parser, input, basis.reusableTree, context),
-        ),
-      )
-    const edited = await completeEditDocument(
-      request,
-      source,
-      basis,
-      rootLayerForTree(runtime, tree),
-      context,
-    )
-    return await editResult(request, edited, context, editMs, nowMs() - parseStart)
-  } finally {
-    if (!staged) {
-      parser.delete()
-      disposeEditBasis(basis)
-    }
-  }
-}
-
-const sourceInput =
-  (source: TreeSitterPieceTableInput) =>
-  (index: number, _position?: unknown, endIndex?: number): string | undefined =>
-    readTreeSitterPieceTableInput(source, index, endIndex)
-
-const resumeSourceParse = (
-  parser: Parser,
-  input: (index: number) => string | undefined,
-  oldTree: Tree,
-  context: CancellationContext,
-): Tree => {
-  const tree = parser.parse(input, oldTree, { progressCallback: () => isCancelled(context) })
-  if (tree) return tree
-  parser.reset()
-  if (isCancelled(context)) throw new SyntaxRequestCancelled()
-  throw new Error('Tree-sitter parse returned no tree')
-}
-
-type EditedDocument = {
-  readonly parsedDocument: ParsedDocument
-  readonly changedRanges: readonly TreeSitterSyntaxRange[]
-  readonly degraded: readonly TreeSitterDegradedState[]
-}
-
-/** Parses the edit's injections against its basis and caches the complete document. */
-const completeEditDocument = async (
-  request: TreeSitterEditRequest,
-  source: TreeSitterPieceTableInput,
-  basis: EditBasis,
-  rootLayer: ParsedLayer,
-  context: CancellationContext,
-): Promise<EditedDocument> => {
-  let parsedDocument: ParsedDocument | null = null
-  try {
     const changedRanges = runWorkerPhase('changed ranges', () =>
-      treeChangedRanges(basis.reusableTree, rootLayer.tree),
+      treeChangedRanges(reusableTree, rootLayer.tree),
     )
     // A delimiter edit that moves structure outside the edited range shows up in the root's
     // changed ranges; an edit inside an injection's text may change no root structure at all.
     const injectionRanges = enclosingRanges(
-      changedRanges.concat(editedRanges(basis.inputEdits, source.length)),
-      [basis.reusableTree, rootLayer.tree],
+      changedRanges.concat(editedRanges(request.inputEdits, source.length)),
+      [reusableTree, rootLayer.tree],
+      injectionsStayInRootChildren(runtime, rootLayer.tree.rootNode),
     )
     const degraded: TreeSitterDegradedState[] = []
     const markdown = await prepareMdxMarkdown(request, source, rootLayer)
-    parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
+    const parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
       parseParsedDocument({
         readOnly: false,
         documentId: request.documentId,
@@ -1282,148 +1101,70 @@ const completeEditDocument = async (
         rootLayer,
         markdown,
         context,
-        oldDocument: basis,
-        inputEdits: basis.inputEdits,
+        oldDocument: cached,
+        inputEdits: request.inputEdits,
         injectionRanges,
         degraded,
       }),
     )
+    const parseMs = nowMs() - parseStart
+    reusableTree.delete()
     assertNotCancelled(context)
     assertRuntimeSessionActive(request.runtimeSessionId)
     replaceCachedDocument(request.runtimeSessionId, parsedDocument)
-    return { parsedDocument, changedRanges, degraded }
-  } catch (error) {
-    if (parsedDocument) disposeCachedSnapshot(parsedDocument)
-    else rootLayer.tree.delete()
-    throw error
-  }
-}
-
-const stageEdit = (
-  request: TreeSitterEditRequest,
-  source: TreeSitterPieceTableInput,
-  runtime: Runtime,
-  basis: EditBasis,
-  parser: Parser,
-): void => {
-  let dirtyStart = source.length
-  for (const edit of basis.inputEdits) dirtyStart = Math.min(dirtyStart, edit.startIndex)
-  const staged: StagedEdit = {
-    request,
-    source: source.retain(),
-    runtime,
-    basis,
-    dirtyStart,
-    preview: null,
-    completion: Promise.resolve(),
-  }
-  stagedEdits.set(request.runtimeSessionId, staged)
-  staged.completion = continueStagedEdit(staged, parser)
-  const task = staged.completion.then(() => undefined)
-  trackWorkerTask(task)
-  trackRuntimeTask(request.runtimeSessionId, task)
-}
-
-const continueStagedEdit = async (staged: StagedEdit, parser: Parser): Promise<void> => {
-  const { request } = staged
-  const context: CancellationContext = {
-    ...createCancellationContext(undefined, PARSE_BUDGET_MS),
-    yieldParsing: true,
-    isStale: () =>
-      disposedRuntimeSessions.has(request.runtimeSessionId) ||
-      latestSnapshotVersions.get(request.runtimeSessionId) !== request.snapshotVersion,
-  }
-  try {
-    // The edit's answer and the visible range's query go first.
-    await yieldWorker()
-    // Short slices: the visible range's query usually arrives while this runs.
-    const tree = await resumeTreeSlices(parser, sourceInput(staged.source), context, {
-      phase: 'parseRoot',
-      oldTree: staged.basis.reusableTree,
-      sliceMs: 4,
-    })
-    await completeEditDocument(
-      request,
-      staged.source,
-      staged.basis,
-      rootLayerForTree(staged.runtime, tree),
-      context,
-    )
-  } catch (error) {
-    if (!(error instanceof SyntaxRequestCancelled))
-      recordOptionalWorkerPhaseFailure('staged edit', error, [], 'optional-phase-failed')
-  } finally {
-    parser.delete()
-    if (stagedEdits.get(request.runtimeSessionId) === staged)
-      stagedEdits.delete(request.runtimeSessionId)
-    if (staged.preview) disposeCachedSnapshot(staged.preview.document)
-    staged.preview = null
-    disposeEditBasis(staged.basis)
-    staged.source.dispose()
-  }
-}
-
-const editResult = async (
-  request: TreeSitterEditRequest,
-  edited: EditedDocument,
-  context: CancellationContext,
-  editMs: number,
-  parseMs: number,
-): Promise<TreeSitterParseResult | TreeSitterParseAckResult> => {
-  const { parsedDocument, changedRanges, degraded } = edited
-  if (request.resultMode === 'parseOnly') {
-    return {
-      ...parseAckResult(
-        request,
-        changedRanges,
-        phaseTimings(context).concat([
-          { name: 'treeSitter.edit', durationMs: editMs },
-          { name: 'treeSitter.parse', durationMs: parseMs },
-        ]),
-        degraded,
-        parsedDocument.missingLanguages,
-      ),
-      statistics: editStatistics(context),
+    if (request.resultMode === 'parseOnly') {
+      return {
+        ...parseAckResult(
+          request,
+          changedRanges,
+          phaseTimings(context).concat([
+            { name: 'treeSitter.edit', durationMs: editMs },
+            { name: 'treeSitter.parse', durationMs: parseMs },
+          ]),
+          degraded,
+          parsedDocument.missingLanguages,
+        ),
+        statistics: editStatistics(context),
+      }
     }
-  }
 
-  const queryStart = nowMs()
-  const result = await runAsyncWorkerPhase('flatten', () =>
-    flattenDocument(
-      parsedDocument,
-      context,
-      request.includeHighlights,
-      request.includeCaptures ?? true,
-    ),
-  )
-  assertNotCancelled(context)
-  const queryMs = nowMs() - queryStart
+    const queryStart = nowMs()
+    const result = await runAsyncWorkerPhase('flatten', () =>
+      flattenDocument(
+        parsedDocument,
+        context,
+        request.includeHighlights,
+        request.includeCaptures ?? true,
+      ),
+    )
+    assertNotCancelled(context)
+    const queryMs = nowMs() - queryStart
 
-  return {
-    documentId: request.documentId,
-    snapshotVersion: request.snapshotVersion,
-    languageId: request.languageId,
-    missingLanguages: parsedDocument.missingLanguages,
-    captures: result.captures,
-    folds: result.folds,
-    brackets: result.brackets,
-    errors: result.errors,
-    injections: result.injections,
-    degraded: result.degraded,
-    tokens: result.tokens,
-    tokensPacked: result.tokensPacked,
-    records: result.records,
-    statistics: {
-      ...resultStatistics(parsedDocument, result, context),
-      ...editStatistics(context),
-    },
-    timings: phaseTimings(context).concat([
-      { name: 'treeSitter.edit', durationMs: editMs },
-      { name: 'treeSitter.parse', durationMs: parseMs },
-      { name: 'treeSitter.query', durationMs: queryMs },
-    ]),
-  }
-}
+    return {
+      documentId: request.documentId,
+      snapshotVersion: request.snapshotVersion,
+      languageId: request.languageId,
+      statistics: {
+        ...resultStatistics(parsedDocument, result, context),
+        ...editStatistics(context),
+      },
+      missingLanguages: parsedDocument.missingLanguages,
+      captures: result.captures,
+      folds: result.folds,
+      brackets: result.brackets,
+      errors: result.errors,
+      injections: result.injections,
+      degraded: result.degraded,
+      tokens: result.tokens,
+      tokensPacked: result.tokensPacked,
+      records: result.records,
+      timings: phaseTimings(context).concat([
+        { name: 'treeSitter.edit', durationMs: editMs },
+        { name: 'treeSitter.parse', durationMs: parseMs },
+        { name: 'treeSitter.query', durationMs: queryMs },
+      ]),
+    }
+  })
 
 const queryDocumentRange = async (
   request: TreeSitterRangeRequest,
@@ -1464,8 +1205,7 @@ const queryDocumentRangeWithContext = async (
       request.languageId,
       request.snapshotVersion,
     )
-    if (!cached)
-      return (await queryStagedEditRange(request, context)) ?? queryBootstrapRange(request, context)
+    if (!cached) return queryBootstrapRange(request, context)
     try {
       return await queryCachedDocumentRange(request, cached, context)
     } catch (error) {
@@ -1794,8 +1534,6 @@ type TreeSliceOptions = {
   readonly phase: 'parseRoot' | 'parseInjection'
   readonly oldTree?: Tree | null
   readonly ranges?: TreeSitterRange[]
-  /** How long one slice runs before queued requests get a turn. */
-  readonly sliceMs?: number
 }
 
 const resumeTreeSlices = async (
@@ -1824,7 +1562,7 @@ const parseTreeSlice = (
   return measurePhase(context, options.phase, () =>
     parser.parse(input, options.oldTree ?? null, {
       includedRanges: options.ranges,
-      progressCallback: () => isCancelled(context) || nowMs() - started >= (options.sliceMs ?? 8),
+      progressCallback: () => isCancelled(context) || nowMs() - started >= 8,
     }),
   )
 }
@@ -1870,14 +1608,8 @@ const BOOTSTRAP_LOOKAHEAD_UNITS = 16_384
 // lines leaves a MISSING delimiter at the cut.
 const BOOTSTRAP_LINE_END_SEARCH_UNITS = 4096
 
-const bootstrapPreviewEnd = (source: TreeSitterPieceTableInput, rangeEnd: number): number =>
-  previewEnd(source, rangeEnd, Math.min(source.length, TREE_SITTER_BOOTSTRAP_UNITS))
-
-const previewEnd = (
-  source: TreeSitterPieceTableInput,
-  rangeEnd: number,
-  prefixEnd: number,
-): number => {
+const bootstrapPreviewEnd = (source: TreeSitterPieceTableInput, rangeEnd: number): number => {
+  const prefixEnd = Math.min(source.length, TREE_SITTER_BOOTSTRAP_UNITS)
   const end = Math.min(prefixEnd, rangeEnd + BOOTSTRAP_LOOKAHEAD_UNITS)
   const limit = Math.min(prefixEnd, end + BOOTSTRAP_LINE_END_SEARCH_UNITS)
   if (limit <= end) return end
@@ -2010,220 +1742,6 @@ const queryBootstrapRange = async (
   }
 }
 
-// A preview window longer than this waits for the complete reparse instead: a shown range and its
-// lookahead fit, while warming far from the edit would parse most of a window for nothing.
-const EDIT_PREVIEW_UNITS = TREE_SITTER_BOOTSTRAP_UNITS
-
-// Errors that end this close past the range are the text's own, read the same way by the complete
-// reparse. One that runs on toward the window's cut may be recovery from the cut.
-const EDIT_PREVIEW_SETTLE_UNITS = 4096
-
-/**
- * A range of a staged edit, read from a window parsed fresh around it while the complete reparse
- * runs. The window starts at a top-level node that starts before the edit, where the grammar is in
- * its entry state as at the start of the text, and runs past the range by the bootstrap lookahead.
- */
-const queryStagedEditRange = async (
-  request: TreeSitterRangeRequest,
-  context: CancellationContext,
-): Promise<TreeSitterRangeResult | undefined> => {
-  const staged = stagedEdits.get(request.runtimeSessionId)
-  if (!staged || staged.request.snapshotVersion !== request.snapshotVersion) return undefined
-  if (staged.request.languageId !== request.languageId) return undefined
-  const range = normalizedSyntaxRange(request.range, staged.source.length)
-  const preview = await stagedEditPreview(staged, range, context)
-  if (!preview) return undefined
-  // The staged edit releases its preview when the reparse lands, possibly while this reads it.
-  const document = borrowParsedDocument(preview.document)
-  try {
-    const result = await flattenDocumentRange(document, context, {
-      range,
-      includeHighlights: request.includeHighlights,
-      includeCaptures: request.includeCaptures ?? true,
-    })
-    assertNotCancelled(context)
-    return {
-      ...result,
-      documentId: request.documentId,
-      snapshotVersion: request.snapshotVersion,
-      languageId: request.languageId,
-      range,
-      source: sourceTag(staged.source),
-      analysis: {
-        kind: 'partial',
-        coveredRange: { startIndex: preview.window.startIndex, endIndex: preview.window.endIndex },
-      },
-      folds: [],
-      errors: [],
-      brackets: [],
-      injections: [],
-      missingLanguages: document.missingLanguages,
-      statistics: {
-        ...resultStatistics(document, result, context, range),
-        previewUnits: preview.window.endIndex - preview.window.startIndex,
-      },
-      timings: phaseTimings(context),
-    }
-  } finally {
-    disposeCachedSnapshot(document)
-  }
-}
-
-const borrowParsedDocument = (document: ParsedDocument): ParsedDocument => ({
-  readOnly: document.readOnly,
-  snapshotVersion: document.snapshotVersion,
-  languageId: document.languageId,
-  source: document.source.retain(),
-  layers: document.layers.map((layer) => ({ ...layer, tree: layer.tree.copy() })),
-  degraded: document.degraded,
-  missingLanguages: document.missingLanguages,
-  size: document.size,
-  lastUsed: document.lastUsed,
-})
-
-/** The staged edit's preview for `range`, or null when it may disagree with the reparse there. */
-const stagedEditPreview = async (
-  staged: StagedEdit,
-  range: TreeSitterSyntaxRange,
-  context: CancellationContext,
-): Promise<StagedEditPreview | null> => {
-  const current = staged.preview
-  const wanted = previewEnd(staged.source, range.endIndex, staged.source.length)
-  if (current && previewCovers(current.window, range, wanted))
-    return editPreviewUnsettled(current, range) ? null : current
-  const window = stagedEditWindow(staged, range, wanted)
-  if (!window) return null
-  const document = await parseEditPreview(staged, window, context)
-  if (stagedEdits.get(staged.request.runtimeSessionId) !== staged) {
-    disposeCachedSnapshot(document)
-    return null
-  }
-  if (staged.preview) disposeCachedSnapshot(staged.preview.document)
-  staged.preview = { document, window }
-  return editPreviewUnsettled(staged.preview, range) ? null : staged.preview
-}
-
-const previewCovers = (
-  window: TreeSitterRange,
-  range: TreeSitterSyntaxRange,
-  wantedEnd: number,
-): boolean => window.startIndex <= range.startIndex && window.endIndex >= wantedEnd
-
-const stagedEditWindow = (
-  staged: StagedEdit,
-  range: TreeSitterSyntaxRange,
-  endIndex: number,
-): TreeSitterRange | null => {
-  const anchor = Math.min(range.startIndex, staged.dirtyStart)
-  const start = topLevelNodeStartingBefore(staged.basis.reusableTree.rootNode, anchor)
-  const startIndex = start?.startIndex ?? 0
-  if (endIndex - startIndex > EDIT_PREVIEW_UNITS) return null
-  const startPosition = start?.startPosition ?? { row: 0, column: 0 }
-  const text = readTreeSitterInputRange(staged.source, startIndex, endIndex)
-  return {
-    startIndex,
-    endIndex,
-    startPosition,
-    endPosition: positionAfter(startPosition, text),
-  }
-}
-
-// The basis tree's text before the first edit is unchanged, so a top-level node that starts there
-// starts where the reparse also returns to the grammar's entry state.
-const topLevelNodeStartingBefore = (root: Node, index: number): Node | null => {
-  let node = root.firstChildForIndex(index) ?? root.lastChild
-  while (node && node.startIndex > index) node = node.previousSibling
-  return node
-}
-
-const positionAfter = (
-  start: TreeSitterRange['startPosition'],
-  text: string,
-): TreeSitterRange['endPosition'] => {
-  let rows = 0
-  let lastBreak = -1
-  for (let index = text.indexOf('\n'); index !== -1; index = text.indexOf('\n', index + 1)) {
-    rows++
-    lastBreak = index
-  }
-  return {
-    row: start.row + rows,
-    column: rows === 0 ? start.column + text.length : text.length - lastBreak - 1,
-  }
-}
-
-const parseEditPreview = async (
-  staged: StagedEdit,
-  window: TreeSitterRange,
-  context: CancellationContext,
-): Promise<ParsedDocument> => {
-  const { request, runtime, source } = staged
-  const rootLayer = rootLayerForTree(
-    runtime,
-    measurePhase(context, 'editPreviewRoot', () =>
-      parseInjectedSource(runtime.parser, source, [window], null, context),
-    ),
-  )
-  try {
-    return await parseParsedDocument({
-      readOnly: true,
-      documentId: request.documentId,
-      snapshotVersion: request.snapshotVersion,
-      languageId: request.languageId,
-      source,
-      rootLayer,
-      context,
-      oldDocument: null,
-      inputEdits: [],
-      injectionRanges: null,
-      degraded: [],
-    })
-  } catch (error) {
-    rootLayer.tree.delete()
-    throw error
-  }
-}
-
-const editPreviewUnsettled = (
-  preview: StagedEditPreview,
-  range: TreeSitterSyntaxRange,
-): boolean => {
-  const root = preview.document.layers[0]?.tree.rootNode
-  if (!root) return true
-  // A window that reaches the end of the text has no cut to recover from.
-  if (preview.window.endIndex >= preview.document.source.length) return false
-  // A cut inside a string can make recovery wrap the whole window in one ERROR root. What it had
-  // already reduced stays as that root's children, the nodes the complete reparse builds too; a
-  // token left bare under it was still waiting for text past the cut.
-  if (root.isError && holdsBareToken(root, range)) return true
-  const limit = range.endIndex + EDIT_PREVIEW_SETTLE_UNITS
-  return errorRunsPast(root.isError ? root.children : [root], range, limit)
-}
-
-const holdsBareToken = (root: Node, range: TreeSitterSyntaxRange): boolean =>
-  root.children.some(
-    (child) =>
-      child.childCount === 0 &&
-      !child.isExtra &&
-      child.endIndex >= range.startIndex &&
-      child.startIndex <= range.endIndex,
-  )
-
-/** Whether an ERROR node that touches `range` ends past `limit`. */
-const errorRunsPast = (
-  nodes: readonly Node[],
-  range: TreeSitterSyntaxRange,
-  limit: number,
-): boolean => {
-  const pending = Array.from(nodes)
-  for (let node = pending.pop(); node; node = pending.pop()) {
-    if (node.endIndex < range.startIndex || node.startIndex > range.endIndex) continue
-    if (node.isError && node.endIndex > limit) return true
-    if (node.hasError) appendItems(pending, node.children)
-  }
-  return false
-}
-
 const parseSource = (
   parser: Parser,
   source: TreeSitterPieceTableInput,
@@ -2252,7 +1770,7 @@ type ParseParsedDocumentOptions = {
   readonly source: TreeSitterPieceTableInput
   readonly rootLayer: ParsedLayer
   readonly context: CancellationContext
-  readonly oldDocument: Pick<ParsedDocument, 'layers'> | null
+  readonly oldDocument: ParsedDocument | null
   readonly inputEdits: readonly TreeSitterEditRequest['inputEdits'][number][]
   // Grows as reparsed layers report their own changed ranges, so their children are found too.
   readonly injectionRanges: TreeSitterSyntaxRange[] | null
@@ -2343,7 +1861,7 @@ const parseParsedDocument = async (
 }
 
 const prepareReusableLayers = (
-  oldDocument: Pick<ParsedDocument, 'layers'> | null,
+  oldDocument: ParsedDocument | null,
   inputEdits: ParseParsedDocumentOptions['inputEdits'],
 ): ReusableLayer[] => {
   if (!oldDocument) return []
@@ -2389,12 +1907,12 @@ const appendReusableLayer = (
  * Whether every edit comes after the layer or ends on a row above its first. Its text and the
  * column it starts at are then unchanged, and its edited tree is the tree a fresh parse builds,
  * moved. An edit on the layer's first row moves that column, which an indentation-sensitive
- * scanner reads, so that layer is reparsed. Edits checked in the old text's coordinates only:
- * each must end before the one applied ahead of it.
+ * scanner reads, so that layer is reparsed. Edits are checked in the old text's coordinates
+ * only: each must end before the one applied ahead of it.
  */
 const keepsLayerShape = (
   ranges: readonly TreeSitterRange[],
-  edits: readonly TreeSitterInputEdit[],
+  edits: ParseParsedDocumentOptions['inputEdits'],
 ): boolean => {
   const first = ranges[0]
   if (!first) return false
@@ -2546,16 +2064,18 @@ const recordLayerChanges = (
 // Changed ranges miss structure that moved without its first node changing: deleting a fence's
 // opening leaves the heading it becomes as the only change, and the fence's content turns into a
 // paragraph unreported. Each range grows to the smallest named node holding it in either tree.
-// When that node is the root, the range grows to the root's children it touches instead: a range
-// across two top-level statements would otherwise rescan the whole document for injections.
+// When that node is the root and every injection match stays inside one root child, the range
+// grows to the root children it touches instead: a range across two top-level statements would
+// otherwise rescan the whole document.
 const enclosingRanges = (
   ranges: readonly TreeSitterSyntaxRange[],
   trees: readonly Tree[],
+  matchesStayInRootChildren = false,
 ): TreeSitterSyntaxRange[] =>
   ranges.map((range) => {
     let { startIndex, endIndex } = range
     for (const tree of trees) {
-      const span = enclosingSpan(tree.rootNode, range)
+      const span = enclosingSpan(tree.rootNode, range, matchesStayInRootChildren)
       if (!span) continue
       startIndex = Math.min(startIndex, span.startIndex)
       endIndex = Math.max(endIndex, span.endIndex)
@@ -2563,14 +2083,30 @@ const enclosingRanges = (
     return { startIndex, endIndex }
   })
 
-const enclosingSpan = (root: Node, range: TreeSitterSyntaxRange): TreeSitterSyntaxRange | null => {
+const enclosingSpan = (
+  root: Node,
+  range: TreeSitterSyntaxRange,
+  matchesStayInRootChildren: boolean,
+): TreeSitterSyntaxRange | null => {
   const node = root.namedDescendantForIndex(range.startIndex, range.endIndex)
   if (!node) return null
-  if (node.id !== root.id) return node
+  if (!matchesStayInRootChildren || node.id !== root.id) return node
   const first = root.firstChildForIndex(range.startIndex)
   if (!first) return null
   const last = root.firstChildForIndex(Math.max(range.startIndex, range.endIndex - 1)) ?? first
   return { startIndex: first.startIndex, endIndex: Math.max(range.endIndex, last.endIndex) }
+}
+
+const injectionScopes = new WeakMap<Runtime, boolean>()
+
+/** Whether the language's injection matches each stay inside one child of `root`. */
+const injectionsStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
+  const known = injectionScopes.get(runtime)
+  if (known !== undefined) return known
+  const source = runtime.descriptor.injectionQuerySource ?? ''
+  const stays = queryStaysInRootChildren(source, root.type)
+  injectionScopes.set(runtime, stays)
+  return stays
 }
 
 /** Each edit's inserted text in the final document, widened by one unit to catch adjacency. */
@@ -2936,8 +2472,8 @@ const findInjectionSpan = async (
       results.seen,
     )
     if (results.matchSpans) appendItems(results.matchSpans, matches.map(injectionMatchSpan))
-    // Between chunks only: a yield after the last one would queue this behind a background
-    // reparse slice for nothing.
+    // Between chunks only: a yield after the last one would put an edit's small scan behind
+    // whatever else is queued, for nothing.
     if (range.endIndex < span.endIndex) await yieldWorker()
   }
 }
@@ -4375,7 +3911,7 @@ const projectedDocument = async (
 }
 
 const parseProjectedDocument = async (
-  options: ParseParsedDocumentOptions & { readonly oldDocument: ParsedDocument | null },
+  options: ParseParsedDocumentOptions,
 ): Promise<ParsedDocument> => {
   if (options.languageId !== 'markdown') return parseParsedDocument(options)
   const support = await loadMarkdown()
@@ -4894,8 +4430,6 @@ const disposeDocument = (runtimeSessionId: string): void => {
 const detachDocument = (runtimeSessionId: string): readonly ParsedDocument[] => {
   markRuntimeSessionDisposed(runtimeSessionId)
   disposeBootstrap(runtimeSessionId)
-  // Its reparse sees the session disposed at its next slice and releases what it holds.
-  stagedEdits.delete(runtimeSessionId)
   latestSnapshotVersions.delete(runtimeSessionId)
   viewportFirstSessions.delete(runtimeSessionId)
   markdownDocuments.get(runtimeSessionId)?.document.dispose()

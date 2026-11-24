@@ -167,6 +167,61 @@ browserTest.each(['full', 'range'] as const)(
   },
 )
 
+// A query that pairs nodes in different top-level statements: an edit to one of them can end a
+// match whose injected text lies in a statement the edit never touched.
+const SIBLING_INJECTION = String.raw`
+((expression_statement (identifier) @_name)
+  (expression_statement (string (string_fragment) @injection.content))
+  (#eq? @_name "inject")
+  (#set! injection.language "regex"))
+`
+
+browserTest(
+  'drops an injection whose match spanning top-level statements an edit ended',
+  async () => {
+    const backend = new TreeSitterWorkerClient()
+    clients.add(backend)
+    const languageResolver = new TreeSitterLanguageRegistry()
+    for (const contribution of TREE_SITTER_LANGUAGE_CONTRIBUTIONS) {
+      if (contribution.id !== 'typescript') {
+        languageResolver.registerLanguage(contribution)
+        continue
+      }
+      languageResolver.registerLanguage({
+        ...contribution,
+        load: async () => ({
+          ...(contribution.load ? await contribution.load() : contribution),
+          injectionQuerySource: SIBLING_INJECTION,
+        }),
+      })
+    }
+    const options = {
+      languageId: 'typescript',
+      languageResolver,
+      backend,
+      syntaxMode: 'full',
+    } as const
+    const text = 'inject;\nnoop;\nspace;\n"ab+";\n'
+    const document = createDocumentSession(text)
+    const session = createTreeDocument({ ...options, documentId: 'sibling.ts', text })
+    const initial = await session.run()
+    expect(initial.injections.map((injection) => injection.languageId)).toEqual(['regex'])
+    const change = document.applyEdits([{ from: 0, to: 12, text: 'other_;\nnext' }])
+    const actual = await session.edit(change.edits)
+    const fresh = createTreeDocument({
+      ...options,
+      documentId: 'sibling-fresh.ts',
+      text: readAll(createDocumentTextSnapshot(change.snapshot)),
+    })
+    const expected = await fresh.run()
+    expect(expected.injections).toEqual([])
+    expect(actual.injections).toEqual(expected.injections)
+    expect(actual.captures).toEqual(expected.captures)
+    fresh.dispose()
+    session.dispose()
+  },
+)
+
 function tokenValues(result: EditorSyntaxResult) {
   return 'toTokens' in result.tokens ? result.tokens.toTokens() : result.tokens
 }

@@ -72,20 +72,19 @@ The session numbers its range requests. Each caller is answered with the range i
 
 The editor asks for the visible range as soon as an edit after a 250 ms pause is parsed; the
 following keys of a typing burst wait for the debounce. Refreshing after an edit does not ask
-again for a warmed or prefetched range beyond the shown rows. An edit looks for injections only in the root's changed
-ranges and the edit itself, each grown to the smallest node holding it, or to the top-level nodes
-it touches when that node is the root. Injection layers outside those ranges keep their edited
-trees when every edit ends on a row above them, and are reparsed when an edit moved the column they
-start at.
+again for a warmed or prefetched range beyond the shown rows.
 
-A range-mode edit whose reparse outlasts its first 8 ms slice answers at once as partial, like a
-bootstrap, and the reparse continues in short slices. A range query for that snapshot is answered
-from a window parsed fresh with its injections: it starts at a top-level node that starts before
-the edit and the range, where the grammar is in its entry state, and runs the bootstrap lookahead
-past the range. The window is used only when no ERROR node from its cut reaches back into the
-range; otherwise the query waits for the reparse. An edit that arrives while the reparse runs
-continues from its basis with both edits. The complete analysis is that reparse, and its answer
-replaces the window's.
+An edit looks for injections only in the root's changed ranges and the edit itself, each grown to
+the smallest node holding it. When that node is the root, the range grows to the top-level nodes
+it touches, but only for a language whose injection query keeps every match inside one top-level
+node (`queryStaysInRootChildren`); a query with sibling patterns, or one naming the root or a
+wildcard, can pair a changed statement with a distant one and is scanned over the whole document.
+Injection layers outside those ranges keep their edited trees, reading the new text, when every
+edit ends on a row above them, and are reparsed when an edit moved the column they start at.
+
+An edit answers only with its complete reparse. Answering the visible range from a parse of part
+of the text was tried and dropped: no cut point is safe for an LR grammar, since a block comment
+can run past any lookahead and a call's `(` can follow its name by any number of lines.
 
 Open implementation details:
 
