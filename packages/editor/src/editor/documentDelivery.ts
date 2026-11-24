@@ -385,15 +385,18 @@ export class DocumentDelivery {
     }
     const applied = source ? progress.connection.send(source, progress.cancellation.signal) : null
     const pin = this.sendPin(progress, read)
-    // Awaited below only while every step before it succeeded.
+    // Both replies are awaited only after the steps before them succeed; until then a transport
+    // failure must not surface as an unhandled rejection. The awaits below still see the error.
     void applied?.catch(() => undefined)
+    void pin.catch(() => undefined)
     // A pin whose source never arrived is released rather than left for the endpoint's release.
+    // The unpin fails only when the scope is being released, which drops the endpoint's pins.
     const dropPin = () =>
-      void pin.then(
-        (pinned) =>
+      void pin
+        .then((pinned) =>
           pinned.result.kind === 'pinned' ? this.sendUnpin(progress, pinned) : undefined,
-        () => undefined,
-      )
+        )
+        .catch(() => undefined)
     let ready: boolean
     try {
       ready = await this.awaitSource(endpoint, progress, registration, source, applied, read)
