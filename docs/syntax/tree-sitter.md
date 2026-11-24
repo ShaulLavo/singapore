@@ -76,15 +76,21 @@ The editor asks for the visible range as soon as an edit after a 250 ms pause is
 following keys of a typing burst wait for the debounce. Refreshing after an edit does not ask
 again for a warmed or prefetched range beyond the shown rows.
 
-An edit looks for injections only in the root's changed ranges and the edit itself, each grown to
-the smallest node holding it. When that node is the root, the range grows to the top-level nodes
-it touches, but only for a language whose injection query keeps every match inside one top-level
-node (`injectionsStayInRootChildren`): every compiled pattern must be rooted, which rules out
-sibling groups and quantified alternations, and its root may be neither the document's root type
-nor a wildcard. Any other query can pair a changed statement with a distant one and is scanned
-over the whole document.
+An edit looks for injections only in the root's changed ranges and the edit itself, closed over the
+top-level root children they touch in both the old and new trees (including trailing EOF edits),
+when the language's injection query keeps every match inside one top-level node
+(`injectionsStayInRootChildren`, which also holds when the language has no injection query): every
+compiled pattern must be rooted, which rules out sibling groups and quantified alternations, and
+its root may be neither the document's root type nor a wildcard. Any other query can pair a changed
+statement with a distant one and is scanned over the whole document.
 Injection layers outside those ranges keep their edited trees, reading the new text, when every
-edit ends on a row above them, and are reparsed when an edit moved the column they start at.
+edit ends on a row above them, and are reparsed when an edit moved the column they start at;
+descendants of reparsed or dropped parents are disqualified and rediscovered cleanly.
+When all root queries stay within root children (`queriesStayInRootChildren`), no full-document
+fallback ran, and the degraded state did not change, the parse ack carries a narrow `invalidation`
+range list (covering affected root children and any reparsed, dropped, failed, or newly discovered
+injection layers) so the editor can project and reuse unaffected cached range answers without
+re-querying the worker.
 
 An edit answers with its complete reparse, with one exception that reuses the open. Answering the
 visible range from a parse of a window around the edit was tried and dropped: no window that
@@ -131,9 +137,21 @@ Highlight output should be represented as dense decorations with offsets or line
 
 ### Range answers
 
-A range-mode editor asks for the text it shows, one range at a time, and keeps the answers in `EditorSyntaxController`. The frame trim keeps every answer that is the newest one for some shown text, whoever painted the tokens (range answers, a separate highlighter, or a host). The view asks again for shown text without an answer, so dropping one of these would make it ask on every frame.
+A range-mode editor asks for the text it shows and keeps the answers in `EditorSyntaxController`,
+which separates document parse state from viewport coverage. Visible viewport state is composed
+across the cached strips that cover the viewport (subtracting superseded intervals so stale
+tokens, brackets, folds, or injections never leak, and re-querying authoritative records when a
+consumer such as Markdown requires them). Terminal failures (`range-unavailable`, budget
+cancellation, terminal partial answers, or rejections) record the unavailable strip so the editor
+settles cleanly instead of staying stuck in `loading`. Off-screen look-ahead (`prefetch` / `warm`)
+answers are bounded to one unpromoted prefetch entry and never overwrite visible token ownership
+or copy tokens until a viewport intersects them.
 
-Answers carried through an edit only stand in for the new parse. Its first answer replaces them, and what they covered is asked for again when it is shown.
+When an edit arrives, brackets and injections clear synchronously so stale structural anchors are
+not shown while reparsing. If the new parse ack provides narrow `invalidation` ranges, surviving
+cached strips outside those ranges are projected in base-snapshot coordinates and promoted directly
+into the new parse generation, skipping a redundant worker range query when the viewport stays
+covered. Any remaining carried answers stand in visually until replaced by the new parse.
 
 A document with no colors yet is asked for the rows on screen first, and for the visible range (those rows plus the text kept ready around them) right after. The first answer only puts tokens on screen. It does not settle the document's highlight: the status stays `loading`, no initial-paint event is sent, and folds, brackets and injected spans are left alone until the answer that covers the visible range arrives, as before. A request that a newer one supersedes while its rows are on their way does not go on to ask for the range around them. The extra request is skipped when the rows on screen are within 4,096 characters of the visible range.
 

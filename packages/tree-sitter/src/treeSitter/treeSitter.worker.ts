@@ -63,6 +63,7 @@ import type {
   TreeSitterInjectionInfo,
   TreeSitterLanguageId,
   TreeSitterParseAckResult,
+  TreeSitterParseInvalidation,
   TreeSitterParseRequest,
   TreeSitterParseResult,
   TreeSitterRangeRequest,
@@ -1103,7 +1104,7 @@ const editDocument = async (
         statistics: editStatistics(context),
       }
     }
-    const { parsedDocument, changedRanges } = await parseEditedDocument(
+    const { parsedDocument, changedRanges, invalidation } = await parseEditedDocument(
       request,
       runtime,
       source,
@@ -1131,6 +1132,7 @@ const editDocument = async (
           ]),
           parsedDocument.degraded,
           parsedDocument.missingLanguages,
+          invalidation,
         ),
         statistics: editStatistics(context),
       }
@@ -1189,20 +1191,28 @@ const parseEditedDocument = async (
   source: TreeSitterPieceTableInput,
   edited: EditedRoot,
   context: CancellationContext,
-): Promise<{ parsedDocument: ParsedDocument; changedRanges: TreeSitterSyntaxRange[] }> => {
+): Promise<{
+  parsedDocument: ParsedDocument
+  changedRanges: TreeSitterSyntaxRange[]
+  invalidation: TreeSitterParseInvalidation
+}> => {
   const { rootLayer, reusableTree, oldDocument } = edited
   const changedRanges = runWorkerPhase('changed ranges', () =>
     treeChangedRanges(reusableTree, rootLayer.tree),
   )
   // A delimiter edit that moves structure outside the edited range shows up in the root's
   // changed ranges; an edit inside an injection's text may change no root structure at all.
-  const injectionRanges = oldDocument
-    ? enclosingRanges(
-        changedRanges.concat(editedRanges(edited.inputEdits, source.length)),
-        [reusableTree, rootLayer.tree],
-        runtimeInjectionsStayInRootChildren(runtime, rootLayer.tree.rootNode),
-      )
-    : null
+  // When injection queries stay inside one root child, closing over the enclosing root children
+  // drives both injection discovery/carry and cache invalidation.
+  const injectionsLocal = runtimeInjectionsStayInRootChildren(runtime, rootLayer.tree.rootNode)
+  const injectionRanges =
+    oldDocument && injectionsLocal
+      ? enclosingRootChildren(
+          changedRanges.concat(editedRanges(edited.inputEdits, source.length)),
+          [reusableTree, rootLayer.tree],
+        )
+      : null
+  const layerInvalidationRanges: TreeSitterSyntaxRange[] = []
   const markdown = await prepareMdxMarkdown(request, source, rootLayer)
   const parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
     parseParsedDocument({
@@ -1217,10 +1227,34 @@ const parseEditedDocument = async (
       oldDocument,
       inputEdits: oldDocument ? edited.inputEdits : [],
       injectionRanges,
+      layerInvalidationRanges,
       degraded: [],
     }),
   )
-  return { parsedDocument, changedRanges }
+  const canEmitNarrowInvalidation =
+    request.type === 'edit' &&
+    request.resultMode === 'parseOnly' &&
+    oldDocument !== null &&
+    request.languageId !== 'markdown' &&
+    request.languageId !== 'mdx' &&
+    parsedDocument.missingLanguages.length === 0 &&
+    sameDegradedStates(oldDocument.degraded, parsedDocument.degraded) &&
+    runtimeQueriesStayInRootChildren(runtime, rootLayer.tree.rootNode) &&
+    injectionRanges !== null
+  const invalidation: TreeSitterParseInvalidation = canEmitNarrowInvalidation
+    ? {
+        kind: 'ranges',
+        baseSnapshotVersion: request.previousSnapshotVersion,
+        ranges: mergeWorkerSyntaxRanges(
+          enclosingRootChildren(injectionRanges.concat(layerInvalidationRanges), [
+            reusableTree,
+            rootLayer.tree,
+          ]),
+          source.length,
+        ),
+      }
+    : { kind: 'all' }
+  return { parsedDocument, changedRanges, invalidation }
 }
 
 /**
@@ -1477,6 +1511,7 @@ const parseAckResult = (
   timings: TreeSitterParseAckResult['timings'],
   degraded: readonly TreeSitterDegradedState[] = [],
   missingLanguages: readonly string[] = [],
+  invalidation?: TreeSitterParseInvalidation,
 ): Extract<TreeSitterParseAckResult, { status: 'parsed' }> => ({
   documentId: request.documentId,
   snapshotVersion: request.snapshotVersion,
@@ -1487,6 +1522,7 @@ const parseAckResult = (
     : undefined,
   missingLanguages,
   changedRanges,
+  invalidation,
   degraded,
   timings,
 })
@@ -1949,6 +1985,7 @@ type ParseParsedDocumentOptions = {
   readonly inputEdits: readonly TreeSitterEditRequest['inputEdits'][number][]
   // Grows as reparsed layers report their own changed ranges, so their children are found too.
   readonly injectionRanges: TreeSitterSyntaxRange[] | null
+  readonly layerInvalidationRanges?: TreeSitterSyntaxRange[]
   readonly degraded: TreeSitterDegradedState[]
 }
 
@@ -2012,6 +2049,12 @@ const parseParsedDocument = async (
     await appendInjectionLayers(parsedLayers, options.rootLayer, context)
     if (options.injectionRanges) {
       await appendCarriedLayers(parsedLayers, context)
+    }
+    if (options.layerInvalidationRanges) {
+      for (const reusable of reusableLayers) {
+        if (reusable.state !== 'available') continue
+        recordLayerRanges(options.layerInvalidationRanges, reusable.layer.ranges)
+      }
     }
     const layers = orderParsedLayers(options.rootLayer, parsedLayers)
 
@@ -2150,9 +2193,14 @@ const appendInjectionLayers = async (
     try {
       const layer = await parseInjectionLayer(plan, options)
       layers.push(layer)
-      await appendInjectionLayers(layers, layer, options)
+      // Full-parent nested rediscovery: any reparsed non-root parent scans its full span so
+      // nested injections in untouched segments of a reparsed combined parent are never carried stale.
+      await appendInjectionLayers(layers, layer, { ...options, injectionRanges: null })
     } catch (error) {
       if (error instanceof SyntaxRequestCancelled) throw error
+      if (options.layerInvalidationRanges) {
+        recordLayerRanges(options.layerInvalidationRanges, plan.ranges)
+      }
       recordOptionalWorkerPhaseFailure(
         'parse injection',
         error,
@@ -2196,6 +2244,9 @@ const parseInjectionLayer = async (
 ): Promise<ParsedLayer> => {
   const runtime = await ensureRuntime(plan.languageId)
   const reusable = takeReusableLayer(options.reusableLayers, plan)
+  if (reusable && options.layerInvalidationRanges) {
+    recordLayerRanges(options.layerInvalidationRanges, reusable.layer.ranges)
+  }
   const resolvedPlan = resolveInjectionPlan(plan, reusable, options)
   const oldTree = reusable?.layer.tree ?? null
 
@@ -2216,10 +2267,24 @@ const parseInjectionLayer = async (
           ),
         )
     recordLayerChanges(options.injectionRanges, resolvedPlan.ranges, oldTree, tree)
+    if (options.layerInvalidationRanges) {
+      recordLayerRanges(options.layerInvalidationRanges, resolvedPlan.ranges)
+    }
     return { ...resolvedPlan, tree }
   } finally {
     oldTree?.delete()
   }
+}
+
+const recordLayerRanges = (
+  target: TreeSitterSyntaxRange[],
+  ranges: readonly TreeSitterRange[],
+): void => {
+  if (ranges.length === 0) return
+  for (const range of ranges) {
+    target.push({ startIndex: range.startIndex, endIndex: range.endIndex })
+  }
+  target.push(rangeSpan(ranges))
 }
 
 const recordLayerChanges = (
@@ -2272,7 +2337,78 @@ const enclosingSpan = (
   return { startIndex: first.startIndex, endIndex: Math.max(range.endIndex, last.endIndex) }
 }
 
+const enclosingRootChildren = (
+  ranges: readonly TreeSitterSyntaxRange[],
+  trees: readonly Tree[],
+): TreeSitterSyntaxRange[] =>
+  ranges.map((range) => {
+    let { startIndex, endIndex } = range
+    for (const tree of trees) {
+      const root = tree.rootNode
+      const first = root.firstChildForIndex(range.startIndex)
+      if (!first) {
+        const tail = root.lastChild
+        if (tail) {
+          startIndex = Math.min(startIndex, tail.startIndex)
+          endIndex = Math.max(endIndex, tail.endIndex)
+        } else {
+          startIndex = 0
+          endIndex = Math.max(endIndex, root.endIndex)
+        }
+        continue
+      }
+      const last =
+        root.firstChildForIndex(Math.max(range.startIndex, range.endIndex - 1)) ??
+        root.lastChild ??
+        first
+      startIndex = Math.min(startIndex, first.startIndex)
+      endIndex = Math.max(endIndex, last.endIndex)
+    }
+    return { startIndex, endIndex }
+  })
+
+const mergeWorkerSyntaxRanges = (
+  ranges: readonly TreeSitterSyntaxRange[],
+  length: number,
+): TreeSitterSyntaxRange[] => {
+  const clamped: TreeSitterSyntaxRange[] = []
+  for (const range of ranges) {
+    const startIndex = Math.max(0, Math.min(range.startIndex, length))
+    const endIndex = Math.max(startIndex, Math.min(range.endIndex, length))
+    if (endIndex > startIndex) clamped.push({ startIndex, endIndex })
+  }
+  clamped.sort(
+    (left, right) => left.startIndex - right.startIndex || left.endIndex - right.endIndex,
+  )
+  const merged: TreeSitterSyntaxRange[] = []
+  for (const current of clamped) {
+    const previous = merged.at(-1)
+    if (!previous || current.startIndex > previous.endIndex) {
+      merged.push(current)
+      continue
+    }
+    merged[merged.length - 1] = {
+      startIndex: previous.startIndex,
+      endIndex: Math.max(previous.endIndex, current.endIndex),
+    }
+  }
+  return merged
+}
+
+const sameDegradedStates = (
+  left: readonly TreeSitterDegradedState[],
+  right: readonly TreeSitterDegradedState[],
+): boolean =>
+  left.length === right.length &&
+  left.every(
+    (entry, index) =>
+      entry.kind === right[index]?.kind &&
+      entry.phase === right[index]?.phase &&
+      entry.message === right[index]?.message,
+  )
+
 const injectionScopes = new WeakMap<Runtime, boolean>()
+const allQueryScopes = new WeakMap<Runtime, boolean>()
 
 /** Whether the language's injection matches each stay inside one child of `root`. */
 const runtimeInjectionsStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
@@ -2280,8 +2416,29 @@ const runtimeInjectionsStayInRootChildren = (runtime: Runtime, root: Node): bool
   if (known !== undefined) return known
   const query = ensureQuery(runtime, 'injection')
   const source = runtime.descriptor.injectionQuerySource ?? ''
-  const stays = query !== null && injectionsStayInRootChildren(query, source, root.type)
+  const stays = query === null || injectionsStayInRootChildren(query, source, root.type)
   injectionScopes.set(runtime, stays)
+  return stays
+}
+
+/** Whether highlight, fold, and injection queries all stay inside one child of `root`. */
+const runtimeQueriesStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
+  const known = allQueryScopes.get(runtime)
+  if (known !== undefined) return known
+  const rootType = root.type
+  const highlightQuery = ensureQuery(runtime, 'highlight')
+  const foldQuery = ensureQuery(runtime, 'fold')
+  const stays =
+    runtimeInjectionsStayInRootChildren(runtime, root) &&
+    (highlightQuery === null ||
+      injectionsStayInRootChildren(
+        highlightQuery,
+        runtime.descriptor.highlightQuerySource ?? '',
+        rootType,
+      )) &&
+    (foldQuery === null ||
+      injectionsStayInRootChildren(foldQuery, runtime.descriptor.foldQuerySource ?? '', rootType))
+  allQueryScopes.set(runtime, stays)
   return stays
 }
 
@@ -2363,12 +2520,12 @@ const resolveInjectionPlan = (
 ): InjectionPlan => {
   if (!reusable) return reserveInjectionPlanIdentity(plan, options.reservedLayerIds)
 
-  const ranges = mergedCombinedRanges(
-    plan,
-    reusable.layer.ranges,
-    options.injectionRanges ?? [],
-    options.source,
-  )
+  // Full discovery (`injectionRanges === null`) is authoritative: do not merge obsolete
+  // ranges back from `reusable.layer.ranges`, while still reusing its tree and identity.
+  const ranges =
+    options.injectionRanges === null
+      ? plan.ranges.slice()
+      : mergedCombinedRanges(plan, reusable.layer.ranges, options.injectionRanges, options.source)
   return { ...plan, id: reusable.layer.id, key: reusable.layer.key, ranges }
 }
 
@@ -2441,29 +2598,32 @@ const appendCarriedLayers = async (
   layers: ParsedLayer[],
   options: ParseInjectionContext,
 ): Promise<void> => {
-  const availableParentIds = new Set([options.rootLayer.id])
-  for (const layer of layers) availableParentIds.add(layer.id)
+  // Only the root layer and layers carried untouched may keep their old descendants blindly.
+  // Any reparsed parent already ran full nested rediscovery (`injectionRanges = null`), and any
+  // dropped parent disqualifies all of its transitive descendants.
+  const carriedParentIds = new Set([options.rootLayer.id])
 
   for (const reusable of options.reusableLayers) {
     if (reusable.state !== 'available') continue
     if (!reusable.layer.parentId) continue
-    if (!availableParentIds.has(reusable.layer.parentId)) continue
+    if (!carriedParentIds.has(reusable.layer.parentId)) continue
 
     const carried = await carryReusableLayer(reusable, options)
     if (!carried) continue
 
-    layers.push(carried)
-    // Its reparse may have grown children its old tree did not have.
-    const firstChild = layers.length
-    await appendInjectionLayers(layers, carried, options)
-    for (const layer of [carried].concat(layers.slice(firstChild))) availableParentIds.add(layer.id)
+    layers.push(carried.layer)
+    if (carried.keptUntouched) {
+      carriedParentIds.add(carried.layer.id)
+    } else {
+      await appendInjectionLayers(layers, carried.layer, { ...options, injectionRanges: null })
+    }
   }
 }
 
 const carryReusableLayer = async (
   reusable: ReusableLayer,
   options: ParseInjectionContext,
-): Promise<ParsedLayer | null> => {
+): Promise<{ readonly layer: ParsedLayer; readonly keptUntouched: boolean } | null> => {
   const changedRanges = options.injectionRanges ?? []
   const layerChanged = reusable.layer.ranges.some((range) => {
     return rangeIntersectsChangedRanges(range, changedRanges)
@@ -2472,10 +2632,13 @@ const carryReusableLayer = async (
   if (!layerChanged && reusable.keepsShape && canRebindTreeSource(reusable.layer.tree)) {
     rebindReusedTreeSource(reusable.layer.tree, options.source, reusable.layer.ranges)
     reusable.state = 'consumed'
-    return reusable.layer
+    return { layer: reusable.layer, keptUntouched: true }
   }
   // Reparsed when an edit moved the column it starts at. An unchanged reparse is cheap.
-  if (!layerChanged) return reparseCarriedLayer(reusable, options)
+  if (!layerChanged) {
+    const reparsed = await reparseCarriedLayer(reusable, options)
+    return reparsed ? { layer: reparsed, keptUntouched: false } : null
+  }
 
   if (reusable.layer.kind !== 'combined-injection') return null
   const contentRanges = rangesWithoutBridgeNewlines(reusable.layer.ranges, options.source)
@@ -2483,20 +2646,22 @@ const carryReusableLayer = async (
     return !rangeIntersectsChangedRanges(range, changedRanges)
   })
   if (untouchedRanges.length === 0) return null
-  return reparsePartialCombinedLayer(reusable, untouchedRanges, options)
+  const reparsed = await reparsePartialCombinedLayer(reusable, untouchedRanges, options)
+  return reparsed ? { layer: reparsed, keptUntouched: false } : null
 }
 
 const reparseCarriedLayer = async (
   reusable: ReusableLayer,
   options: ParseInjectionContext,
 ): Promise<ParsedLayer | null> => {
+  const plan = injectionPlanForLayer(reusable.layer, reusable.layer.ranges)
   try {
-    return await parseInjectionLayer(
-      injectionPlanForLayer(reusable.layer, reusable.layer.ranges),
-      options,
-    )
+    return await parseInjectionLayer(plan, options)
   } catch (error) {
     if (error instanceof SyntaxRequestCancelled) throw error
+    if (options.layerInvalidationRanges) {
+      recordLayerRanges(options.layerInvalidationRanges, plan.ranges)
+    }
     recordOptionalWorkerPhaseFailure('parse injection', error, options.degraded, 'injection-failed')
     return null
   }
@@ -2512,6 +2677,9 @@ const reparsePartialCombinedLayer = async (
     return await parseInjectionLayer(plan, options)
   } catch (error) {
     if (error instanceof SyntaxRequestCancelled) throw error
+    if (options.layerInvalidationRanges) {
+      recordLayerRanges(options.layerInvalidationRanges, plan.ranges)
+    }
     recordOptionalWorkerPhaseFailure('parse injection', error, options.degraded, 'injection-failed')
     return null
   }
