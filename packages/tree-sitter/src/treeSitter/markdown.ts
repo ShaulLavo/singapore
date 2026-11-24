@@ -1,7 +1,4 @@
 import { CAPTURES, init, Kind, MarkdownDocument } from 'tree-sitter-md'
-import grammar from 'tree-sitter-md/tree-sitter-markdown.wasm?url'
-import chatGrammar from 'tree-sitter-md/tree-sitter-markdown-chat.wasm?url'
-import resolver from 'tree-sitter-md/tree-sitter-md.wasm?url'
 import { Language, type Node, type Range } from 'web-tree-sitter'
 import type { TextEdit } from '@singapore-editor/core/document'
 import type { FoldRange, TreeSitterCapture, TreeSitterSyntaxRange } from './types'
@@ -9,14 +6,23 @@ import type { FoldRange, TreeSitterCapture, TreeSitterSyntaxRange } from './type
 // The worker imports this module on its first Markdown document; the class comes with it.
 export { MarkdownDocument }
 
+/** tree-sitter-md's three grammars, from the Markdown language registration. */
+export type MarkdownGrammarUrls = {
+  readonly grammar: string
+  readonly resolver: string
+  readonly math: string
+}
+
 let initialization: Promise<void> | undefined
-export const initializeMarkdown = (): Promise<void> => {
-  initialization ??= Language.load(grammar)
+export const initializeMarkdown = (urls: MarkdownGrammarUrls): Promise<void> => {
+  initialization ??= Language.load(urls.grammar)
+    // tree-sitter-md fetches a string; resolving it as before turns a Node file path into a
+    // `file:` URL it reads from disk.
     .then((language) =>
       init({
         grammar: language,
-        chatGrammar: new URL(chatGrammar, import.meta.url),
-        resolver: new URL(resolver, import.meta.url),
+        mathGrammar: new URL(urls.math, import.meta.url),
+        resolver: new URL(urls.resolver, import.meta.url),
       }),
     )
     .catch((error) => {

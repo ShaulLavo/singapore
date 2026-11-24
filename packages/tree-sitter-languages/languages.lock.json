@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "manifestHash": "f6ac7e8a439fea2c71b8934e200f787ad834f229bb3075de4f9dd645d253db9e",
+  "manifestHash": "9c07c87e50430df49fe07212ad63273496637a6a3c6e3adc1dfdcd563effee0f",
   "languages": [
     {
       "id": "javascript",
@@ -776,6 +776,14 @@
         {
           "file": "tree-sitter-md/tree-sitter-markdown.wasm",
           "sha256": "27d067c772acc4adce2c79217aaec5168914338246ad5d8ecaf4bd9d0d0548d5"
+        },
+        {
+          "file": "tree-sitter-md/tree-sitter-md.wasm",
+          "sha256": "a62768930dddde0a5d9cf49cd35f583d83e9b4aedb34de0f047fcd7879df5159"
+        },
+        {
+          "file": "tree-sitter-md/tree-sitter-markdown-math.wasm",
+          "sha256": "78e85f91c988ab9937efbeb2c1bbeaf131cca2fc5e660430d0dc9ba079520b11"
         },
         {
           "file": "./queries/markdown-merge-units.scm",
@@ -2057,6 +2065,18 @@
         {
           "file": "./grammars/tree-sitter-mdx.wasm",
           "sha256": "71c92f82a0805e336b60b08a62d1cc48be287cb699cc943acad8640829624245"
+        },
+        {
+          "file": "tree-sitter-md/tree-sitter-markdown.wasm",
+          "sha256": "27d067c772acc4adce2c79217aaec5168914338246ad5d8ecaf4bd9d0d0548d5"
+        },
+        {
+          "file": "tree-sitter-md/tree-sitter-md.wasm",
+          "sha256": "a62768930dddde0a5d9cf49cd35f583d83e9b4aedb34de0f047fcd7879df5159"
+        },
+        {
+          "file": "tree-sitter-md/tree-sitter-markdown-math.wasm",
+          "sha256": "78e85f91c988ab9937efbeb2c1bbeaf131cca2fc5e660430d0dc9ba079520b11"
         },
         {
           "file": "./queries/mdx-highlights.scm",

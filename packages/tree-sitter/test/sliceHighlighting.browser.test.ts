@@ -1,10 +1,8 @@
 import { styleForTreeSitterCapture } from '@singapore-editor/core/syntax'
 import { afterEach, expect, it } from 'vitest'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
-import {
-  TSX_TREE_SITTER_LANGUAGE,
-  TYPESCRIPT_TREE_SITTER_LANGUAGE,
-} from '../../tree-sitter-languages/src/index'
+import { TSX_TREE_SITTER_LANGUAGE } from '../../tree-sitter-languages/src/tsx'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '../../tree-sitter-languages/src/typescript'
 import {
   createTreeSitterSliceHighlighter,
   createTreeSitterLanguageRegistry,

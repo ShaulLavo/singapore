@@ -320,8 +320,23 @@ let markdownSupport: MarkdownSupport | undefined
 // this worker and only Markdown and MDX documents use it, so it loads with the first of them.
 const loadMarkdown = async (): Promise<MarkdownSupport> => {
   const support = (markdownSupport ??= await import('./markdown'))
-  await support.initializeMarkdown()
+  await support.initializeMarkdown(markdownGrammarUrls())
   return support
+}
+
+// The Markdown and MDX registrations carry tree-sitter-md's grammars, so the worker itself
+// references none and apps without either never emit them.
+const markdownGrammarUrls = (): MarkdownSupportModule.MarkdownGrammarUrls => {
+  const markdown = languageDescriptors.get('markdown')
+  const urls = markdown
+    ? { markdown: markdown.wasmUrl, ...markdown.extraWasmUrls }
+    : languageDescriptors.get('mdx')?.extraWasmUrls
+  const grammar = urls?.['markdown']
+  const resolver = urls?.['resolver']
+  const math = urls?.['math']
+  if (!grammar || !resolver || !math)
+    throw new Error('Markdown needs a markdown or mdx language registered with its grammars')
+  return { grammar, resolver, math }
 }
 
 /** For code that reads a Markdown document, which only exists once `loadMarkdown` has settled. */
@@ -4158,6 +4173,7 @@ const normalizeLanguageDescriptor = (
   foldQuerySource: descriptor.foldQuerySource,
   injectionQuerySource: descriptor.injectionQuerySource,
   mergeUnitQuerySource: descriptor.mergeUnitQuerySource,
+  extraWasmUrls: descriptor.extraWasmUrls,
 })
 
 const moveLanguageToEnd = (languageId: TreeSitterLanguageId): void => {
@@ -4177,7 +4193,17 @@ const languageDescriptorsEqual = (
   left.highlightQuerySource === right.highlightQuerySource &&
   left.foldQuerySource === right.foldQuerySource &&
   left.injectionQuerySource === right.injectionQuerySource &&
-  left.mergeUnitQuerySource === right.mergeUnitQuerySource
+  left.mergeUnitQuerySource === right.mergeUnitQuerySource &&
+  sameWasmUrls(left.extraWasmUrls, right.extraWasmUrls)
+
+const sameWasmUrls = (
+  left: Readonly<Record<string, string>> | undefined,
+  right: Readonly<Record<string, string>> | undefined,
+): boolean => {
+  const leftKeys = Object.keys(left ?? {})
+  if (leftKeys.length !== Object.keys(right ?? {}).length) return false
+  return leftKeys.every((key) => left?.[key] === right?.[key])
+}
 
 const sameItems = (left: readonly string[], right: readonly string[]): boolean => {
   if (left.length !== right.length) return false

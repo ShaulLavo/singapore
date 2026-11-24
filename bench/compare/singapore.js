@@ -1,6 +1,8 @@
 import '@singapore-editor/core/style.css'
 import { Editor } from '@singapore-editor/core/editor'
-import { typeScript, html, markdown } from '@singapore-editor/tree-sitter-languages'
+import { html } from '@singapore-editor/tree-sitter-languages/html'
+import { markdown } from '@singapore-editor/tree-sitter-languages/markdown'
+import { typeScript } from '@singapore-editor/tree-sitter-languages/typescript'
 
 export function mount(host, text, highlighted) {
   const corpus = new URLSearchParams(location.search).get('corpus')

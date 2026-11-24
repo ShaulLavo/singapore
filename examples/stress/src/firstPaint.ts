@@ -19,7 +19,7 @@ import {
   type TreeSitterWorkerOwner,
   type TreeSitterSyntaxProvider,
 } from '@singapore-editor/tree-sitter'
-import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages/typescript'
 import '@singapore-editor/core/style.css'
 import { createFoldGutterPlugin } from '../../../packages/gutters/dist/index.js'
 import '../../../packages/gutters/dist/style.css'

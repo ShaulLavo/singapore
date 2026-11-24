@@ -1,6 +1,6 @@
 import { Editor } from '@singapore-editor/core/editor'
 import { createMarkdownPreviewPlugin } from '@singapore-editor/markdown'
-import { markdown } from '../../tree-sitter-languages/dist/index.js'
+import { markdown } from '../../tree-sitter-languages/dist/markdown.js'
 import '../../editor/src/style.css'
 import '../src/style.css'
 

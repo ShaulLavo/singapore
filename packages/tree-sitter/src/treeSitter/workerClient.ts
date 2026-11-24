@@ -1014,6 +1014,7 @@ function languageDescriptorSignature(language: TreeSitterLanguageDescriptor): st
   const signature = JSON.stringify({
     aliases: sortedItems(language.aliases),
     extensions: sortedItems(language.extensions),
+    extraWasmUrls: language.extraWasmUrls,
     foldQuerySource: language.foldQuerySource,
     highlightQuerySource: language.highlightQuerySource,
     id: language.id,
