@@ -1360,9 +1360,25 @@ export class EditorSyntaxController {
         }
         if (applied && kind === 'prefetch') this.#flushPendingWarm()
       }),
-      fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) =>
-        this.#recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration),
-      ),
+      fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) => {
+        if (kind === 'prefetch') this.#logOptionalSyntaxFailure(documentVersion, error, startedAt)
+        else
+          this.#recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration)
+      }),
+    })
+  }
+
+  /**
+   * A look-ahead or background answer that fails leaves the viewport's state alone: the rows on
+   * screen have their own request, and that one reports its failure.
+   */
+  #logOptionalSyntaxFailure(documentVersion: number, error: unknown, startedAt: number): void {
+    if (error instanceof DOMException && error.name === 'AbortError') return
+    this.options.log?.({
+      action: 'editor.syntax.optional_request_failed',
+      level: 'warn',
+      error: syntaxLogError(error),
+      syntax: { ...this.#debugContext(documentVersion), startedAt },
     })
   }
 
@@ -1860,13 +1876,7 @@ export class EditorSyntaxController {
         if (applied) this.#scheduleNextWarmRange(pending)
       }),
       fail: traceEditorPerformanceTask('editor.syntax.warm.fail', (error, startedAt) =>
-        this.#recoverSyntaxError(
-          pending.documentVersion,
-          null,
-          error,
-          startedAt,
-          pending.configurationGeneration,
-        ),
+        this.#logOptionalSyntaxFailure(pending.documentVersion, error, startedAt),
       ),
     })
   }
@@ -2776,12 +2786,19 @@ function subtractSyntaxRange(
   }
   return remaining
 }
+/**
+ * The answers whose folds the shown ranges repaint from. Only an answer that meets a shown range
+ * is read for its folds (`cachedSyntaxFoldsForRange`), so one asked for elsewhere does not count
+ * even when its folds span the screen; the answer whose folds are painted is kept as the scope
+ * owner instead.
+ */
 function activeFoldContributors(
   contributors: readonly CachedSyntaxFoldRange[],
   ranges: readonly EditorSyntaxRange[],
 ): readonly CachedSyntaxFoldRange[] {
   const winners = new Map<string, CachedSyntaxFoldRange>()
   for (const contributor of contributors) {
+    if (!syntaxRangeListsIntersect([contributor.range], ranges)) continue
     for (const fold of contributor.folds) {
       if (ranges.some((range) => foldIntersectsSyntaxRange(fold, range)))
         winners.set(foldRangeKey(fold), contributor)

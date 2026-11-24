@@ -301,6 +301,28 @@ describe('hidden character markers', () => {
     expect(markerOffsets()).toEqual([7, 8])
   })
 
+  // Trailing whitespace belongs to the whole source line, so an edit to one wrap segment can change
+  // the markers of another whose own text stayed exactly the same.
+  it('re-marks an unchanged wrap segment when an edit elsewhere in its line makes it trailing', () => {
+    const view = mountView(
+      {
+        hiddenCharacters: 'trailing',
+        wrap: true,
+        gutterContributions: [createLineGutterContribution()],
+      },
+      'ab    cd ',
+    )
+    mockViewport(view.scrollElement, 76, 200)
+    view.setScrollMetrics(0, 200, 76)
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual(['ab  ', '  cd', ' '])
+    expect(markerOffsets()).toEqual([8])
+
+    view.applyEdit({ from: 6, to: 8, text: '  ' }, 'ab       ')
+
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual(['ab  ', '    ', ' '])
+    expect(markerOffsets()).toEqual([2, 3, 4, 5, 6, 7, 8])
+  })
+
   it('hangs spaces on word-wrapped rows and marks only the source line trailing spaces', () => {
     const view = mountView(
       {
