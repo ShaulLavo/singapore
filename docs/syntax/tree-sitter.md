@@ -93,10 +93,14 @@ The exception is a document that opened viewport first. There an edit that start
 bootstrap prefix gets one parse slice (8 ms) for its incremental reparse. An edit that needs more,
 such as a backtick or `/*` that changes how the rest of the file reads, is staged the way an open
 is: the edit answers partial, visible ranges inside the prefix are colored from a prefix parse
-that starts at offset zero (with the same lookahead and error rules as at open), and the complete
-analysis resumes the paused incremental reparse and carries the old snapshot's injection layers.
-An edit made before that complete analysis lands is analysed like an open, from a fresh prefix and
-a parse from scratch.
+that starts at offset zero, and the complete analysis resumes the paused incremental reparse and
+carries the old snapshot's injection layers. A preview answers a range only when nothing from
+offset zero to the end of the range has a recovery error, so a range below the opener of a block
+comment or string that runs past the cut waits for the complete tree. A partial answer repaints
+tokens only: the folds, brackets and injected spans on screen stay until the complete answer
+replaces them, and a revision that keeps the text does not cancel that complete analysis. An edit
+made before the complete analysis lands is analysed like an open, from a fresh prefix and a parse
+from scratch.
 
 ### Range requests while scrolling
 
