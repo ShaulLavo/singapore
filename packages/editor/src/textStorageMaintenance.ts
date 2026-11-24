@@ -26,27 +26,39 @@ export type TextStorageMaintenanceStats = {
 }
 
 type Maintainer = typeof maintainStorage
+const RETRY_MS = 1000
+const MAX_RETRY_MS = 60_000
 
 // Loaded for the first pass rather than with the editor: most documents never delete enough text
-// to need one, and a pass waits for a quiet moment anyway, so the load hides inside that wait.
+// to need one. One load serves the page. Buffers waiting for it are weakly listed rather than
+// captured by the promise, so a load that never settles keeps no closed buffer or history alive.
+// A failed load leaves every request outstanding; the next request after a doubling backoff tries
+// again, so an unavailable chunk costs one attempt per backoff, never a loop.
 let maintainer: Maintainer | null = null
-let loadingMaintainer: Promise<Maintainer> | null = null
-function loadMaintainer(): Promise<Maintainer> {
-  loadingMaintainer ??= import('./textStorageMaintainer').then(
-    (module) => (maintainer = module.maintainStorage),
-    (error: unknown) => {
-      loadingMaintainer = null
-      throw error
-    },
-  )
-  return loadingMaintainer
+let loading = false
+let failures = 0
+let retryAt = 0
+const waiting = new Set<WeakRef<TextStorageMaintenance>>()
+
+function maintainerLoaded(loaded: Maintainer | null, error: unknown): void {
+  loading = false
+  if (!loaded) {
+    failures++
+    retryAt = Date.now() + Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** failures)
+    console.error('[editor]', 'editor.buffer.reclamation_failed', error)
+    recordEditorPerformanceDiagnostic('buffer.reclamation.failed', { error })
+    return
+  }
+  maintainer = loaded
+  const owners = Array.from(waiting, (ref) => ref.deref())
+  waiting.clear()
+  for (const owner of owners) owner?.resume()
 }
 
 export class TextStorageMaintenance {
   private readonly scheduler = new EditorWorkScheduler()
   #job: Generator<void, StorageMaintenanceResult> | null = null
-  // The delay a pass asked for while the maintainer was still loading; null when none is waiting.
-  #loadingDelayMs: number | null = null
+  #waitRef: WeakRef<TextStorageMaintenance> | null = null
   #runMaxSliceMs = 0
   #deletedUnits = 0
   #piecesAfterPass = 0
@@ -93,7 +105,8 @@ export class TextStorageMaintenance {
 
   suspend(): void {
     this.scheduler.cancel('text-storage', 'detached')
-    this.#loadingDelayMs = null
+    if (this.#waitRef) waiting.delete(this.#waitRef)
+    this.#waitRef = null
     if (this.#job) this.stats.cancelled++
     this.#job = null
   }
@@ -104,7 +117,7 @@ export class TextStorageMaintenance {
 
   private schedule(delayMs: number): void {
     if (!maintainer) {
-      this.#scheduleAfterLoad(delayMs)
+      this.#awaitMaintainer()
       return
     }
     this.scheduler.schedule({
@@ -119,20 +132,17 @@ export class TextStorageMaintenance {
     })
   }
 
-  #scheduleAfterLoad(delayMs: number): void {
-    const waiting = this.#loadingDelayMs !== null
-    this.#loadingDelayMs = delayMs
-    if (waiting) return
-    loadMaintainer().then(
-      () => {
-        const delay = this.#loadingDelayMs
-        this.#loadingDelayMs = null
-        if (delay !== null) this.schedule(delay)
-      },
-      (error: unknown) => {
-        this.#loadingDelayMs = null
-        this.#fail(error)
-      },
+  #awaitMaintainer(): void {
+    if (!this.#waitRef) {
+      this.#waitRef = new WeakRef(this)
+      waiting.add(this.#waitRef)
+    }
+    if (loading || Date.now() < retryAt) return
+    loading = true
+    // A canceled `vite:preloadError` resolves the import with nothing: a failure like any other.
+    import('./textStorageMaintainer').then(
+      (module) => maintainerLoaded(module?.maintainStorage ?? null, 'maintainer unavailable'),
+      (error: unknown) => maintainerLoaded(null, error),
     )
   }
 
