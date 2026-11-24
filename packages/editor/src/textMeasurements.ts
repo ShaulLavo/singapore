@@ -159,12 +159,12 @@ export type MeasuredTextRange = {
 
 export class TextMeasurements {
   private readonly roots = new Map<number, TextNode>()
-  readonly #rangeEnds: readonly number[]
+  private readonly rangeEnds: readonly number[]
   readonly length: number
 
   constructor(private readonly ranges: readonly MeasuredTextRange[]) {
     let length = 0
-    this.#rangeEnds = ranges.map((range) => {
+    this.rangeEnds = ranges.map((range) => {
       length += range.end - range.start
       return length
     })
@@ -178,29 +178,29 @@ export class TextMeasurements {
   codeUnitAt(offset: number): number {
     if (offset < 0 || offset >= this.length) return Number.NaN
     let low = 0
-    let high = this.#rangeEnds.length
+    let high = this.rangeEnds.length
     while (low < high) {
       const middle = (low + high) >>> 1
-      if (this.#rangeEnds[middle]! <= offset) low = middle + 1
+      if (this.rangeEnds[middle]! <= offset) low = middle + 1
       else high = middle
     }
     const range = this.ranges[low]!
-    const start = this.#rangeEnds[low - 1] ?? 0
+    const start = this.rangeEnds[low - 1] ?? 0
     return range.source.text.charCodeAt(range.start + offset - start)
   }
 
   get isSimple(): boolean {
-    return this.#classificationRoot().summary.simple
+    return this.classificationRoot().summary.simple
   }
   get containsRTL(): boolean {
-    return this.#classificationRoot().summary.rtl
+    return this.classificationRoot().summary.rtl
   }
 
   get hasTabs(): boolean {
-    return this.#classificationRoot().summary.utf16.suffix !== null
+    return this.classificationRoot().summary.utf16.suffix !== null
   }
 
-  #classificationRoot(): TextNode {
+  private classificationRoot(): TextNode {
     return this.roots.values().next().value ?? this.root(this.ranges[0]?.source.cachedTabSize ?? 4)
   }
 

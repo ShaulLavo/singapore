@@ -252,7 +252,7 @@ function olderPoint(target: DocumentWorkerPoint, current: DocumentWorkerPoint): 
 
 export class DocumentWorkerReader {
   private readonly documents = new Map<string, SourceDocument>()
-  #lastRegistration = 0
+  private lastRegistration = 0
   private endpointGeneration: number | null = null
   private disposed = false
 
@@ -268,7 +268,7 @@ export class DocumentWorkerReader {
     if (command.kind === 'importRead') {
       if (!validPoint(command.point) || document.pins.has(command.readId))
         return rejected(command.identity, 'point')
-      const read = this.#createRead(document, command.point, resetSnapshot(command))
+      const read = this.createRead(document, command.point, resetSnapshot(command))
       document.pins.set(command.readId, read)
       return {
         kind: 'pinned',
@@ -329,10 +329,10 @@ export class DocumentWorkerReader {
         ? document.frame.snapshot
         : retainedSnapshot(document, reference.point)
     if (!snapshot) return null
-    return this.#createRead(document, reference.point, snapshot)
+    return this.createRead(document, reference.point, snapshot)
   }
 
-  #createRead(
+  private createRead(
     document: SourceDocument,
     point: DocumentWorkerPoint,
     snapshot: PieceTableSnapshot,
@@ -412,13 +412,13 @@ export class DocumentWorkerReader {
   private register(identity: DocumentWorkerIdentity): DocumentWorkerSourceResult {
     if (this.endpointGeneration !== null && identity.endpointGeneration !== this.endpointGeneration)
       return rejected(identity, 'generation')
-    if (identity.registrationId <= this.#lastRegistration) return rejected(identity, 'generation')
+    if (identity.registrationId <= this.lastRegistration) return rejected(identity, 'generation')
     const previous = this.documents.get(identity.documentId)
     if (previous && identity.documentGeneration < previous.identity.documentGeneration)
       return rejected(identity, 'generation')
     if (previous) this.release(previous)
     this.endpointGeneration = identity.endpointGeneration
-    this.#lastRegistration = identity.registrationId
+    this.lastRegistration = identity.registrationId
     this.documents.set(identity.documentId, {
       identity,
       frame: null,

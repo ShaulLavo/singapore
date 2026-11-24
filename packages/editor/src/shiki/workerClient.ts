@@ -113,7 +113,7 @@ export class ShikiWorkerOwner {
   private readonly pendingRequests = new Map<number, PendingRequest>()
   private readonly clientTasks = new Set<Promise<unknown>>()
   private readonly runtimeTasks = new Map<string, Set<Promise<unknown>>>()
-  readonly #themeRequests = new Map<string, Promise<EditorTheme | null | undefined>>()
+  private readonly themeRequests = new Map<string, Promise<EditorTheme | null | undefined>>()
   private readonly sessions = new Set<ShikiHighlighterSession>()
   private readonly lifetime = new AbortController()
   public readonly [shikiLifetimeBinding] = this.lifetime.signal
@@ -141,7 +141,7 @@ export class ShikiWorkerOwner {
     return {
       lifecycle: this.lifecycle,
       pendingRequests: this.pendingRequests.size,
-      cache: { themeRequests: this.#themeRequests.size },
+      cache: { themeRequests: this.themeRequests.size },
       workerGeneration: this.workerGeneration,
       lastError: this.lastError?.message ?? null,
       maxTokenizationLineLength: this.maxTokenizationLineLength(),
@@ -195,10 +195,12 @@ export class ShikiWorkerOwner {
   public loadTheme(options: ShikiThemeOptions): Promise<EditorTheme | null | undefined> {
     if (!this.canUseWorker()) return Promise.resolve(undefined)
 
-    return this.trackClientTask(this.#finishLoadTheme(options))
+    return this.trackClientTask(this.finishLoadTheme(options))
   }
 
-  async #finishLoadTheme(options: ShikiThemeOptions): Promise<EditorTheme | null | undefined> {
+  private async finishLoadTheme(
+    options: ShikiThemeOptions,
+  ): Promise<EditorTheme | null | undefined> {
     let registrations: ShikiResolvedRegistrations
     try {
       registrations = await waitForDocumentWork(
@@ -212,14 +214,14 @@ export class ShikiWorkerOwner {
     if (!this.canUseWorker()) return undefined
 
     const key = shikiThemeRequestKey(options.theme, registrations)
-    const existing = this.#themeRequests.get(key)
+    const existing = this.themeRequests.get(key)
     if (existing) return existing
 
     const request = requestShikiTheme(this, options.theme, registrations).catch((error) => {
-      this.#themeRequests.delete(key)
+      this.themeRequests.delete(key)
       throw error
     })
-    this.#themeRequests.set(key, request)
+    this.themeRequests.set(key, request)
     const theme = await request
     const preload = scheduleRegistrationPreload(this, options.preloadRegistrations)
     if (preload) this.trackClientTask(preload)
@@ -388,7 +390,7 @@ export class ShikiWorkerOwner {
     const error = new Error(event.message || 'Shiki worker failed')
     this.lastError = error
     this.lifecycle = 'crashed'
-    this.#themeRequests.clear()
+    this.themeRequests.clear()
     this.connection = null
     this.nextRegistration = 0
     this.rejectPendingRequests(error)
@@ -407,7 +409,7 @@ export class ShikiWorkerOwner {
 
   private clearRetainedState(lifecycle: ShikiWorkerLifecycleState): void {
     this.lifecycle = lifecycle
-    this.#themeRequests.clear()
+    this.themeRequests.clear()
     this.connection = null
     this.nextRegistration = 0
   }
@@ -455,19 +457,19 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
   private theme: string
   private registrations: Promise<ShikiResolvedRegistrations>
   public readonly onDidChangeTheme: ShikiHighlighterSessionOptions['onDidChangeTheme']
-  readonly #preloadRegistrations: ShikiPreloadRegistrationSource | null
+  private readonly preloadRegistrations: ShikiPreloadRegistrationSource | null
   private analysedRead: DocumentRead | null = null
   // The whole document's tokens, kept packed so an edit answer only has to splice its lines in.
   private store: EditorTokenStore | null = null
   private currentTheme: EditorTheme | null | undefined
-  #preloadScheduled = false
+  private preloadScheduled = false
   private opened = false
   private workerGeneration = 0
   private disposed = false
   private readonly lifetime = new AbortController()
   private task: Promise<void> = Promise.resolve()
   // The limit the worker document was opened with; a different current limit reopens it.
-  #openedLineLimit = 0
+  private openedLineLimit = 0
   public untokenizedLines = 0
 
   public constructor(
@@ -483,7 +485,7 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
     this.onDidChangeTheme = options.onDidChangeTheme
     this.registrations = Promise.resolve(options.registrations)
     void this.registrations.catch(() => undefined)
-    this.#preloadRegistrations = options.preloadRegistrations ?? null
+    this.preloadRegistrations = options.preloadRegistrations ?? null
   }
 
   public configurationKey(): number | null {
@@ -495,10 +497,10 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
     work.throwIfAborted()
     if (this.options.source.read(read.revision) !== read)
       throw new DOMException('Document revision belongs to another source', 'InvalidStateError')
-    return this.#enqueueRequest(async () => {
+    return this.enqueueRequest(async () => {
       work.throwIfAborted()
-      await this.#synchronizeTheme(work)
-      const documentOptions = await this.#documentOptions(work)
+      await this.synchronizeTheme(work)
+      const documentOptions = await this.documentOptions(work)
       work.throwIfAborted()
       const prepared = await this.options.source.prepareReader(
         this.owner[shikiSourceBinding],
@@ -516,7 +518,7 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
           : null
         const payload =
           this.opened && changes?.edits && this.analysedRead
-            ? this.#editRequest(changes.edits, prepared.reference, this.analysedRead)
+            ? this.editRequest(changes.edits, prepared.reference, this.analysedRead)
             : ({
                 type: 'open',
                 ...documentOptions,
@@ -524,13 +526,13 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
               } satisfies ShikiWorkerRequestPayload)
         const result = await this.owner[shikiRequestBinding](payload)
         this.lifetime.signal.throwIfAborted()
-        this.#schedulePreload()
+        this.schedulePreload()
         this.analysedRead = read
         this.opened = true
         this.workerGeneration = this.owner.inspect().workerGeneration
-        this.#adoptEditResult(result)
+        this.adoptEditResult(result)
         work.throwIfAborted()
-        return { tokens: this.#currentTokens(), theme: this.currentTheme }
+        return { tokens: this.currentTokens(), theme: this.currentTheme }
       } finally {
         await prepared.dispose()
       }
@@ -556,7 +558,9 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
     this.trackTask(this.runtimeSessionId, this.task)
   }
 
-  #enqueueRequest(run: () => Promise<EditorHighlightResult>): Promise<EditorHighlightResult> {
+  private enqueueRequest(
+    run: () => Promise<EditorHighlightResult>,
+  ): Promise<EditorHighlightResult> {
     const result = this.task.then(run)
     this.task = result.then(
       () => undefined,
@@ -566,13 +570,13 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
     return result
   }
 
-  async #synchronizeTheme(signal?: AbortSignal): Promise<void> {
+  private async synchronizeTheme(signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted()
     const worker = this.owner.inspect()
     if (worker.lifecycle !== 'ready' || worker.workerGeneration !== this.workerGeneration) {
       this.opened = false
     }
-    if (this.#openedLineLimit !== worker.maxTokenizationLineLength) this.opened = false
+    if (this.openedLineLimit !== worker.maxTokenizationLineLength) this.opened = false
     const next = this.options.resolveTheme?.(this.theme)
     if (!next || next.theme === this.theme) return
 
@@ -603,11 +607,11 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
 
     this.theme = next.theme
     this.registrations = Promise.resolve(themed)
-    this.#adoptEditResult(result)
+    this.adoptEditResult(result)
     signal?.throwIfAborted()
   }
 
-  #adoptEditResult(result: ShikiWorkerTransportResult | undefined): void {
+  private adoptEditResult(result: ShikiWorkerTransportResult | undefined): void {
     if (result?.theme !== undefined) this.currentTheme = result.theme
     if (result?.untokenizedLines !== undefined) this.untokenizedLines = result.untokenizedLines
     if (result?.tokensPacked) {
@@ -620,11 +624,11 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
     for (const patch of result.patchesPacked) this.store = this.store.applyPatch(patch)
   }
 
-  #currentTokens(): EditorTokenStore {
+  private currentTokens(): EditorTokenStore {
     return this.store ?? EditorTokenStore.empty()
   }
 
-  #editRequest(
+  private editRequest(
     edits: ShikiWorkerEditRequest['edits'],
     source: DocumentWorkerReadReference,
     previous: DocumentRead,
@@ -645,9 +649,9 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
     }
   }
 
-  async #documentOptions(signal?: AbortSignal): Promise<ShikiWorkerDocumentOptions> {
+  private async documentOptions(signal?: AbortSignal): Promise<ShikiWorkerDocumentOptions> {
     const registrations = await waitForDocumentWork(this.registrations, signal)
-    this.#openedLineLimit = this.owner.maxTokenizationLineLength()
+    this.openedLineLimit = this.owner.maxTokenizationLineLength()
     return {
       documentId: this.documentId,
       runtimeSessionId: this.runtimeSessionId,
@@ -656,16 +660,16 @@ class ShikiHighlighterSession implements EditorHighlighterRuntime {
       languageRegistrations: registrations.languageRegistrations,
       themeRegistration: registrations.themeRegistration,
       themeRegistrations: registrations.themeRegistrations,
-      maxLineLength: this.#openedLineLimit,
+      maxLineLength: this.openedLineLimit,
     }
   }
 
-  #schedulePreload(): void {
+  private schedulePreload(): void {
     if (this.disposed) return
-    if (this.#preloadScheduled) return
+    if (this.preloadScheduled) return
 
-    this.#preloadScheduled = true
-    const preload = scheduleRegistrationPreload(this.owner, this.#preloadRegistrations)
+    this.preloadScheduled = true
+    const preload = scheduleRegistrationPreload(this.owner, this.preloadRegistrations)
     if (preload) this.trackTask(this.runtimeSessionId, preload)
   }
 }

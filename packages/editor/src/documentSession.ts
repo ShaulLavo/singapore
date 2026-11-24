@@ -677,70 +677,70 @@ export function subscribeDocumentTransactions(
 }
 
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
-  readonly #pendingChanges: EditorTextBufferChange[] = []
-  #publishingChanges = false
+  private readonly pendingChanges: EditorTextBufferChange[] = []
+  private publishingChanges = false
   private readonly changes = new EditorEventSource<EditorTextBufferChange>({
     action: 'editor.buffer.change_listener_failed',
   })
-  readonly #leaseChanges = new EditorEventSource<DocumentMutationLeaseState>({
+  private readonly leaseChanges = new EditorEventSource<DocumentMutationLeaseState>({
     action: 'editor.buffer.lease_listener_failed',
   })
-  readonly #editChain = new DocumentEditChain(0, 0)
-  #applyLocalEdits: DocumentEditAuthor = applyBatchToPieceTable
+  private readonly editChain = new DocumentEditChain(0, 0)
+  private applyLocalEdits: DocumentEditAuthor = applyBatchToPieceTable
   private history: DocumentHistory
-  #cleanSnapshot: PieceTableSnapshot
-  #dirtyCacheSnapshot: PieceTableSnapshot
-  #dirtyCacheValue = false
+  private cleanSnapshot: PieceTableSnapshot
+  private dirtyCacheSnapshot: PieceTableSnapshot
+  private dirtyCacheValue = false
   private revision = 0
   private mutationLease: DocumentMutationLease | null = null
-  #deferredReconcile: {
+  private deferredReconcile: {
     readonly snapshot: PieceTableSnapshot
     readonly options: DocumentSessionReconcileOptions
     readonly sourceView: EditorViewSession | null
   } | null = null
-  #currentBarrier: DocumentBarrierState | null = null
-  #typingRun: TypingRun | null = null
+  private currentBarrier: DocumentBarrierState | null = null
+  private typingRun: TypingRun | null = null
   private textSnapshot: DocumentTextSnapshot
-  readonly #tooLargeForHeapOperation: boolean
-  readonly #retainedHistoryStates: number | undefined
+  private readonly tooLargeForHeapOperation: boolean
+  private readonly retainedHistoryStates: number | undefined
   private readonly now: () => number
   private subscribers = 0
-  readonly #storageMaintenance = new TextStorageMaintenance(
-    () => this.#storageSnapshots(),
+  private readonly storageMaintenance = new TextStorageMaintenance(
+    () => this.storageSnapshots(),
     () => this.history.current,
   )
 
   public constructor(initial: InitialBufferSource, options: EditorTextBufferOptions = {}) {
-    this.#retainedHistoryStates = options.retainedHistoryStates
+    this.retainedHistoryStates = options.retainedHistoryStates
     this.now = options.now ?? Date.now
     const snapshot = initial.snapshot
     const selections = createInitialSelectionSet(snapshot, createSelectionIdFactory())
-    this.history = this.#createHistory(snapshot, selections)
-    this.#cleanSnapshot = snapshot
-    this.#dirtyCacheSnapshot = snapshot
+    this.history = this.createHistory(snapshot, selections)
+    this.cleanSnapshot = snapshot
+    this.dirtyCacheSnapshot = snapshot
     this.textSnapshot = createDocumentTextSnapshot(snapshot, initial.text)
-    this.#tooLargeForHeapOperation = exceedsHeapOperationBudget(snapshot.length)
+    this.tooLargeForHeapOperation = exceedsHeapOperationBudget(snapshot.length)
   }
 
   public setEditAuthor(author: DocumentEditAuthor): { dispose(): void } {
-    if (this.#applyLocalEdits !== applyBatchToPieceTable)
+    if (this.applyLocalEdits !== applyBatchToPieceTable)
       throw new TypeError('document already has an edit author')
     // Snapshot history cannot cross into selective history after remote text changes its base.
-    this.history = this.#createHistory(this.history.current, this.history.selections)
-    this.#typingRun = null
-    this.#applyLocalEdits = author
+    this.history = this.createHistory(this.history.current, this.history.selections)
+    this.typingRun = null
+    this.applyLocalEdits = author
     return {
       dispose: () => {
-        if (this.#applyLocalEdits !== author) return
-        this.#applyLocalEdits = applyBatchToPieceTable
-        this.history = this.#createHistory(this.history.current, this.history.selections)
-        this.#typingRun = null
+        if (this.applyLocalEdits !== author) return
+        this.applyLocalEdits = applyBatchToPieceTable
+        this.history = this.createHistory(this.history.current, this.history.selections)
+        this.typingRun = null
       },
     }
   }
 
   public assertNativeTransactions(): void {
-    if (this.#applyLocalEdits !== applyBatchToPieceTable)
+    if (this.applyLocalEdits !== applyBatchToPieceTable)
       throw new TypeError('authored documents require local edits or reconcile')
   }
 
@@ -751,22 +751,22 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease)
-      return appendTiming(this.#createChange('none', []), 'session.applyText', start)
+      return appendTiming(this.createChange('none', []), 'session.applyText', start)
     // Pasted text is the common CRLF carrier; flatten before the edits are
     // derived so selections land where the inserted text actually ends.
     const text = normalizeLineEndings(rawText)
     if (text.length === 0) {
-      return appendTiming(this.#createChange('none', []), 'session.applyText', start)
+      return appendTiming(this.createChange('none', []), 'session.applyText', start)
     }
 
     const result = applyTextToSelections(
       this.history.current,
       selections,
       text,
-      this.#applyLocalEdits,
+      this.applyLocalEdits,
     )
     return appendTiming(
-      this.#commitEdit(result.snapshot, result.selections, result.edits, {
+      this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'insert-text'),
         selectionBefore: selections,
@@ -784,11 +784,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
-      return appendTiming(this.#createChange('none', []), 'session.indentSelection', start)
+      return appendTiming(this.createChange('none', []), 'session.indentSelection', start)
     }
-    const result = indentSelections(this.history.current, selections, text, this.#applyLocalEdits)
+    const result = indentSelections(this.history.current, selections, text, this.applyLocalEdits)
     return appendTiming(
-      this.#commitEdit(result.snapshot, result.selections, result.edits, {
+      this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'indent'),
         selectionBefore: selections,
@@ -806,16 +806,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
-      return appendTiming(this.#createChange('none', []), 'session.outdentSelection', start)
+      return appendTiming(this.createChange('none', []), 'session.outdentSelection', start)
     }
     const result = outdentSelections(
       this.history.current,
       selections,
       tabSize,
-      this.#applyLocalEdits,
+      this.applyLocalEdits,
     )
     return appendTiming(
-      this.#commitEdit(result.snapshot, result.selections, result.edits, {
+      this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'outdent'),
         selectionBefore: selections,
@@ -834,18 +834,18 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
-      return appendTiming(this.#createChange('none', []), 'session.applyEdits', start)
+      return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
     if (
       options.origin &&
       options.origin !== 'local' &&
       options.origin !== 'view' &&
-      this.#applyLocalEdits !== applyBatchToPieceTable
+      this.applyLocalEdits !== applyBatchToPieceTable
     )
       throw new TypeError('authored documents require reconcile for non-local updates')
     const normalizedEdits = normalizeTextEdits(edits)
     if (normalizedEdits.length === 0) {
-      return appendTiming(this.#createChange('none', []), 'session.applyEdits', start)
+      return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
 
     // Snapping can widen an edit off a surrogate pair, so the applied ranges are
@@ -853,20 +853,20 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     // undo inversion, incremental re-render, decoration remapping, the LSP's
     // copy of the document — has to be told what actually happened.
     const appliedEdits = snapBatchEditRanges(this.history.current, normalizedEdits)
-    const nextSnapshot = this.#applyLocalEdits(this.history.current, appliedEdits, options)
+    const nextSnapshot = this.applyLocalEdits(this.history.current, appliedEdits, options)
     const effectiveEdits = appliedEdits.filter(isEffectiveTextEdit)
     if (effectiveEdits.length === 0) {
-      return appendTiming(this.#createChange('none', []), 'session.applyEdits', start)
+      return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
 
-    const nextSelections = this.#selectionsAfterProgrammaticEdit(
+    const nextSelections = this.selectionsAfterProgrammaticEdit(
       nextSnapshot,
       selections,
       options.selection,
       options.selections,
     )
     return appendTiming(
-      this.#commitEdit(nextSnapshot, nextSelections, effectiveEdits, {
+      this.commitEdit(nextSnapshot, nextSelections, effectiveEdits, {
         history: options.history ?? 'record',
         origin: options.origin,
         author: options.author,
@@ -892,8 +892,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       snapshot = applyBatchToPieceTable(snapshot, edits)
     }
     if (this.mutationLease) {
-      this.#deferredReconcile = { snapshot, options, sourceView }
-      return this.#createChange('none', [])
+      this.deferredReconcile = { snapshot, options, sourceView }
+      return this.createChange('none', [])
     }
     const supplied =
       options?.edits && snapBatchEditRanges(before, normalizeTextEdits(options.edits))
@@ -909,9 +909,9 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         { view, selections: reconcileSelections(before, snapshot, view.getSelections(), edits) },
       ]
     })
-    this.#settleAuthoredHistory(snapshot)
+    this.settleAuthoredHistory(snapshot)
     this.history = replaceEditorHistoryState(this.history, snapshot, selections)
-    this.#typingRun = null
+    this.typingRun = null
     for (const mapped of mappedViews) mapped.view.acceptBufferSelections(mapped.selections)
     if (sourceView && !mappedViews.some((mapped) => mapped.view === sourceView)) {
       sourceView.acceptBufferSelections(
@@ -925,7 +925,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         logicalRevisionScope: null,
         textChanged: edits.length > 0,
       },
-      createChange: () => this.#createChange('reconcile', edits),
+      createChange: () => this.createChange('reconcile', edits),
       origin: options.origin ?? 'remote',
       author: options.author,
     })
@@ -938,16 +938,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
-      return appendTiming(this.#createChange('none', []), 'session.backspace', start)
+      return appendTiming(this.createChange('none', []), 'session.backspace', start)
     }
     const result = backspaceSelections(
       this.history.current,
       selections,
       tabSize,
-      this.#applyLocalEdits,
+      this.applyLocalEdits,
     )
     return appendTiming(
-      this.#commitEdit(result.snapshot, result.selections, result.edits, {
+      this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'backspace'),
         selectionBefore: selections,
@@ -964,11 +964,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
-      return appendTiming(this.#createChange('none', []), 'session.delete', start)
+      return appendTiming(this.createChange('none', []), 'session.delete', start)
     }
-    const result = deleteSelections(this.history.current, selections, this.#applyLocalEdits)
+    const result = deleteSelections(this.history.current, selections, this.applyLocalEdits)
     return appendTiming(
-      this.#commitEdit(result.snapshot, result.selections, result.edits, {
+      this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'delete'),
         selectionBefore: selections,
@@ -985,11 +985,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
-      return appendTiming(this.#createChange('none', []), 'session.delete', start)
+      return appendTiming(this.createChange('none', []), 'session.delete', start)
     }
-    const result = forwardDeleteSelections(this.history.current, selections, this.#applyLocalEdits)
+    const result = forwardDeleteSelections(this.history.current, selections, this.applyLocalEdits)
     return appendTiming(
-      this.#commitEdit(result.snapshot, result.selections, result.edits, {
+      this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'delete'),
         selectionBefore: selections,
@@ -1003,22 +1003,22 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public undo(sourceView: EditorViewSession | null = null): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease)
-      return appendTiming(this.#createChange('none', []), 'session.undo', start)
-    if (this.#applyLocalEdits.history)
-      return this.#moveAuthoredHistory(undoEditorHistory(this.history), 'undo', sourceView)
-    if (this.#applyLocalEdits.undo) {
+      return appendTiming(this.createChange('none', []), 'session.undo', start)
+    if (this.applyLocalEdits.history)
+      return this.moveAuthoredHistory(undoEditorHistory(this.history), 'undo', sourceView)
+    if (this.applyLocalEdits.undo) {
       // The document author publishes its history transition through reconciliation.
-      this.#applyLocalEdits.undo()
-      return appendTiming(this.#createChange('none', []), 'session.undo', start)
+      this.applyLocalEdits.undo()
+      return appendTiming(this.createChange('none', []), 'session.undo', start)
     }
     const transaction = this.history.undo?.transaction ?? null
     const next = undoEditorHistory(this.history)
     if (next === this.history) {
-      this.#typingRun = null
-      return appendTiming(this.#createChange('none', []), 'session.undo', start)
+      this.typingRun = null
+      return appendTiming(this.createChange('none', []), 'session.undo', start)
     }
 
-    this.#typingRun = null
+    this.typingRun = null
     this.history = next
     const publication = {
       edits: transaction?.inverseEdits ?? null,
@@ -1031,7 +1031,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       revision: publication,
       createChange: () =>
         appendTiming(
-          this.#createChange('undo', transaction?.inverseEdits ?? [], transaction),
+          this.createChange('undo', transaction?.inverseEdits ?? [], transaction),
           'session.undo',
           start,
         ),
@@ -1045,22 +1045,22 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public redo(sourceView: EditorViewSession | null = null): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease)
-      return appendTiming(this.#createChange('none', []), 'session.redo', start)
-    if (this.#applyLocalEdits.history)
-      return this.#moveAuthoredHistory(redoEditorHistory(this.history), 'redo', sourceView)
-    if (this.#applyLocalEdits.redo) {
+      return appendTiming(this.createChange('none', []), 'session.redo', start)
+    if (this.applyLocalEdits.history)
+      return this.moveAuthoredHistory(redoEditorHistory(this.history), 'redo', sourceView)
+    if (this.applyLocalEdits.redo) {
       // The document author publishes its history transition through reconciliation.
-      this.#applyLocalEdits.redo()
-      return appendTiming(this.#createChange('none', []), 'session.redo', start)
+      this.applyLocalEdits.redo()
+      return appendTiming(this.createChange('none', []), 'session.redo', start)
     }
     const transaction = this.history.redo?.transaction ?? null
     const next = redoEditorHistory(this.history)
     if (next === this.history) {
-      this.#typingRun = null
-      return appendTiming(this.#createChange('none', []), 'session.redo', start)
+      this.typingRun = null
+      return appendTiming(this.createChange('none', []), 'session.redo', start)
     }
 
-    this.#typingRun = null
+    this.typingRun = null
     this.history = next
     const publication = {
       edits: transaction?.edits ?? null,
@@ -1073,7 +1073,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       revision: publication,
       createChange: () =>
         appendTiming(
-          this.#createChange('redo', transaction?.edits ?? [], transaction),
+          this.createChange('redo', transaction?.edits ?? [], transaction),
           'session.redo',
           start,
         ),
@@ -1101,14 +1101,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   }
 
   public getDocumentSyncPoint(): DocumentSyncPoint {
-    return this.#editChain.point
+    return this.editChain.point
   }
 
   public changesSinceDocumentSyncPoint(
     point: DocumentSyncPoint,
     scope: DocumentLogicalRevisionScope | null,
   ): DocumentChangesSinceSyncPoint | null {
-    return this.#editChain.changesSince(point, scope)
+    return this.editChain.changesSince(point, scope)
   }
 
   public changesBetweenDocumentSyncPoints(
@@ -1116,20 +1116,20 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     target: DocumentSyncPoint,
     scope: DocumentLogicalRevisionScope | null,
   ): DocumentChangesSinceSyncPoint | null {
-    return this.#editChain.changesSince(base, scope, target)
+    return this.editChain.changesSince(base, scope, target)
   }
 
   public isTooLargeForHeapOperation(): boolean {
-    return this.#tooLargeForHeapOperation
+    return this.tooLargeForHeapOperation
   }
 
   public canUndo(): boolean {
-    return this.#applyLocalEdits.canUndo?.() ?? this.history.undo !== null
+    return this.applyLocalEdits.canUndo?.() ?? this.history.undo !== null
   }
 
   public getHistoryGraph(): EditorHistoryGraph {
     const history = this.history
-    const barrier = this.#currentBarrier
+    const barrier = this.currentBarrier
     return {
       revision: history.graphRevision,
       rootId: history.rootId,
@@ -1165,17 +1165,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
-      return appendTiming(this.#createChange('none', []), 'session.checkout', start)
+      return appendTiming(this.createChange('none', []), 'session.checkout', start)
     }
     const next = checkoutEditorHistory(this.history, id)
-    if (this.#applyLocalEdits.history)
-      return this.#moveAuthoredHistory(next, 'checkout', sourceView)
+    if (this.applyLocalEdits.history) return this.moveAuthoredHistory(next, 'checkout', sourceView)
     if (next === this.history) {
-      this.#typingRun = null
-      return appendTiming(this.#createChange('none', []), 'session.checkout', start)
+      this.typingRun = null
+      return appendTiming(this.createChange('none', []), 'session.checkout', start)
     }
 
-    this.#typingRun = null
+    this.typingRun = null
     const from = this.history.current
     const selectionBefore = this.history.selections
     this.history = next
@@ -1202,19 +1201,19 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const change = this.publish({
       revision: publication,
       createChange: () =>
-        appendTiming(this.#createChange('checkout', edits, transaction), 'session.checkout', start),
+        appendTiming(this.createChange('checkout', edits, transaction), 'session.checkout', start),
       sourceView,
       updateSelections: true,
     })
     return change
   }
 
-  #moveAuthoredHistory(
+  private moveAuthoredHistory(
     next: DocumentHistory,
     kind: 'undo' | 'redo' | 'checkout',
     sourceView: EditorViewSession | null,
   ): DocumentSessionChange {
-    if (next === this.history) return this.#createChange('none', [])
+    if (next === this.history) return this.createChange('none', [])
     const previous = this.history
     const from = editorHistoryPath(previous, previous.currentId)
     const to = editorHistoryPath(previous, next.currentId)
@@ -1233,7 +1232,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
           active: true,
         })),
       )
-    const snapshot = this.#applyLocalEdits.history!.apply(changes)
+    const snapshot = this.applyLocalEdits.history!.apply(changes)
     const selectionEdge =
       kind === 'undo'
         ? previous.nodes.get(previous.currentId)!.transaction!.authored!
@@ -1247,9 +1246,9 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const edit = diffPieceTableSnapshots(previous.current, snapshot)
     const edits = edit ? [edit] : []
     this.history = replaceEditorHistoryState(next, snapshot, selections)
-    this.#settleAuthoredHistory(snapshot)
-    this.#typingRun = null
-    this.#mapViewSelections(previous.current, snapshot, edits)
+    this.settleAuthoredHistory(snapshot)
+    this.typingRun = null
+    this.mapViewSelections(previous.current, snapshot, edits)
     const transaction: DocumentTransaction = {
       edits,
       inverseEdits: invertTextEdits(previous.current, edits),
@@ -1266,15 +1265,15 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         logicalRevisionScope: null,
         textChanged: edits.length > 0,
       },
-      createChange: () => this.#createChange(kind, edits, transaction),
+      createChange: () => this.createChange(kind, edits, transaction),
       sourceView,
       updateSelections: true,
       origin: kind === 'checkout' ? 'undo' : kind,
     })
   }
 
-  #settleAuthoredHistory(snapshot: PieceTableSnapshot): void {
-    const effects = this.#applyLocalEdits.history?.settlement()
+  private settleAuthoredHistory(snapshot: PieceTableSnapshot): void {
+    const effects = this.applyLocalEdits.history?.settlement()
     if (!effects) return
     const active = new Map(effects.map(({ op, active }) => [operationKey(op), active]))
     const nodes = new Map(this.history.nodes)
@@ -1335,7 +1334,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     this.history = { ...restored, graphRevision: this.history.graphRevision + 1 }
   }
 
-  #mapViewSelections(
+  private mapViewSelections(
     before: PieceTableSnapshot,
     after: PieceTableSnapshot,
     edits: readonly TextEdit[],
@@ -1353,18 +1352,18 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public clearHistory(sourceView: EditorViewSession | null = null): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease || this.history.nodes.size === 1) {
-      return appendTiming(this.#createChange('none', []), 'session.clearHistory', start)
+      return appendTiming(this.createChange('none', []), 'session.clearHistory', start)
     }
-    this.#applyLocalEdits.history?.seal()
+    this.applyLocalEdits.history?.seal()
     this.history = {
-      ...this.#createHistory(this.history.current, this.history.selections),
+      ...this.createHistory(this.history.current, this.history.selections),
       graphRevision: this.history.graphRevision + 1,
     }
-    this.#typingRun = null
-    this.#storageMaintenance.request(0, true)
+    this.typingRun = null
+    this.storageMaintenance.request(0, true)
     const change = this.publish({
       createChange: () =>
-        appendTiming(this.#createChange('checkout', []), 'session.clearHistory', start),
+        appendTiming(this.createChange('checkout', []), 'session.clearHistory', start),
       sourceView,
     })
     return change
@@ -1372,20 +1371,20 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public serializeHistory(): SerializedEditorHistory | null {
     if (this.history.nodes.size === 1) return null
-    return serializeDocumentHistory(this.history, this.#applyLocalEdits.history?.identity())
+    return serializeDocumentHistory(this.history, this.applyLocalEdits.history?.identity())
   }
 
   public restoreHistory(data: SerializedEditorHistory): boolean {
-    if (this.mutationLease || this.#currentBarrier || this.history.nodes.size !== 1) return false
+    if (this.mutationLease || this.currentBarrier || this.history.nodes.size !== 1) return false
     const restored = restoreDocumentHistory(data, this.history.current, {
-      retainedStates: this.#retainedHistoryStates,
-      authored: this.#applyLocalEdits.history,
+      retainedStates: this.retainedHistoryStates,
+      authored: this.applyLocalEdits.history,
     })
     if (!restored) return false
 
     this.history = { ...restored, graphRevision: this.history.graphRevision + 1 }
-    this.#typingRun = null
-    this.publish({ createChange: () => this.#createChange('checkout', []), origin: 'external' })
+    this.typingRun = null
+    this.publish({ createChange: () => this.createChange('checkout', []), origin: 'external' })
     return true
   }
 
@@ -1396,7 +1395,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return true
   }
 
-  #createHistory(
+  private createHistory(
     snapshot: PieceTableSnapshot,
     selections: SelectionSet<PieceTableAnchor>,
   ): DocumentHistory {
@@ -1404,61 +1403,58 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       PieceTableSnapshot,
       SelectionSet<PieceTableAnchor>,
       DocumentTransaction
-    >(snapshot, selections, {
-      committedAt: this.now(),
-      retainedStates: this.#retainedHistoryStates,
-    })
+    >(snapshot, selections, { committedAt: this.now(), retainedStates: this.retainedHistoryStates })
   }
 
   public canRedo(): boolean {
-    return this.#applyLocalEdits.canRedo?.() ?? this.history.redo !== null
+    return this.applyLocalEdits.canRedo?.() ?? this.history.redo !== null
   }
 
   public isDirty(): boolean {
     const snapshot = this.history.current
-    if (this.#dirtyCacheSnapshot === snapshot) return this.#dirtyCacheValue
+    if (this.dirtyCacheSnapshot === snapshot) return this.dirtyCacheValue
 
-    const dirty = !pieceTableSnapshotsHaveSameText(snapshot, this.#cleanSnapshot)
-    this.#dirtyCacheSnapshot = snapshot
-    this.#dirtyCacheValue = dirty
+    const dirty = !pieceTableSnapshotsHaveSameText(snapshot, this.cleanSnapshot)
+    this.dirtyCacheSnapshot = snapshot
+    this.dirtyCacheValue = dirty
     return dirty
   }
 
   public markClean(): void {
-    this.#cleanSnapshot = this.history.current
-    this.#dirtyCacheSnapshot = this.history.current
-    this.#dirtyCacheValue = false
-    this.#storageMaintenance.request(0, true)
+    this.cleanSnapshot = this.history.current
+    this.dirtyCacheSnapshot = this.history.current
+    this.dirtyCacheValue = false
+    this.storageMaintenance.request(0, true)
   }
 
   public breakTypingRun(): void {
-    this.#typingRun = null
-    this.#applyLocalEdits.history?.seal()
+    this.typingRun = null
+    this.applyLocalEdits.history?.seal()
   }
 
   public subscribe(listener: EditorTextBufferChangeListener): () => void {
     const subscription = this.changes.subscribe(listener)
     this.subscribers++
-    this.#storageMaintenance.resume()
+    this.storageMaintenance.resume()
     let active = true
     return () => {
       if (!active) return
       active = false
       subscription.dispose()
-      if (--this.subscribers === 0) this.#storageMaintenance.suspend()
+      if (--this.subscribers === 0) this.storageMaintenance.suspend()
     }
   }
 
   public getStorageMaintenanceStats(): Readonly<TextStorageMaintenanceStats> {
-    return this.#storageMaintenance.getStats()
+    return this.storageMaintenance.getStats()
   }
 
-  *#storageSnapshots(): Generator<PieceTableSnapshot> {
-    yield this.#cleanSnapshot
-    yield this.#dirtyCacheSnapshot
+  private *storageSnapshots(): Generator<PieceTableSnapshot> {
+    yield this.cleanSnapshot
+    yield this.dirtyCacheSnapshot
     yield this.textSnapshot.snapshot
     yield* historyStorageSnapshots(this.history)
-    for (let barrier = this.#currentBarrier; barrier; barrier = barrier.older) {
+    for (let barrier = this.currentBarrier; barrier; barrier = barrier.older) {
       yield* historyStorageSnapshots(barrier.historyBefore)
       for (const segment of barrier.segments) {
         yield segment.snapshotBefore
@@ -1484,7 +1480,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
     const lease = Object.freeze({ ownerId }) as DocumentMutationLease
     this.mutationLease = lease
-    this.#leaseChanges.fire(this.getMutationLeaseState())
+    this.leaseChanges.fire(this.getMutationLeaseState())
     return { status: 'acquired', lease }
   }
 
@@ -1492,8 +1488,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (this.mutationLease !== lease) return { status: 'already-released' }
 
     this.mutationLease = null
-    const deferred = this.#deferredReconcile
-    this.#deferredReconcile = null
+    const deferred = this.deferredReconcile
+    this.deferredReconcile = null
     if (deferred) {
       // A lease may have committed another edit; derive the transition from the actual buffer.
       const edit = diffPieceTableSnapshots(this.history.current, deferred.snapshot)
@@ -1504,7 +1500,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         deferred.sourceView,
       )
     }
-    this.#leaseChanges.fire(this.getMutationLeaseState())
+    this.leaseChanges.fire(this.getMutationLeaseState())
     return { status: 'released' }
   }
 
@@ -1516,7 +1512,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   }
 
   public subscribeMutationLeaseState(listener: DocumentMutationLeaseStateListener): () => void {
-    const subscription = this.#leaseChanges.subscribe(listener)
+    const subscription = this.leaseChanges.subscribe(listener)
     return () => subscription.dispose()
   }
 
@@ -1526,16 +1522,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     options: DocumentTransactionCommitOptions,
     existingReceipt: DocumentTransactionReceipt | null = null,
   ): PreparedDocumentCommitResult {
-    if (this.#applyLocalEdits !== applyBatchToPieceTable || !this.#canUsePrepared(target, prepared))
+    if (this.applyLocalEdits !== applyBatchToPieceTable || !this.canUsePrepared(target, prepared))
       return { status: 'stale' }
     if (!prepared.hasTextChange) {
-      const cumulativeBarrier = this.#cumulativeBarrier(existingReceipt)
+      const cumulativeBarrier = this.cumulativeBarrier(existingReceipt)
       if (existingReceipt && !cumulativeBarrier) return { status: 'stale' }
-      return this.#commitLogicalOnly(target, prepared, cumulativeBarrier)
+      return this.commitLogicalOnly(target, prepared, cumulativeBarrier)
     }
 
     const selectionBefore = target.sourceView?.getSelections() ?? this.history.selections
-    const selectionAfter = this.#selectionsAfterProgrammaticEdit(
+    const selectionAfter = this.selectionsAfterProgrammaticEdit(
       prepared.snapshotAfter,
       selectionBefore,
       options.selection,
@@ -1552,9 +1548,9 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     // Maintenance may have moved history to a reclaimed log while this was prepared on the old one.
     const storageBefore = bufferStorageIdentity(prepared.snapshotBefore.buffers)
     if (bufferStorageIdentity(prepared.snapshotAfter.buffers) !== storageBefore) {
-      this.#storageMaintenance.request(0, true)
+      this.storageMaintenance.request(0, true)
     }
-    const barrier = this.#commitPreparedHistory(
+    const barrier = this.commitPreparedHistory(
       transaction,
       options.history,
       existingReceipt,
@@ -1563,7 +1559,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     )
 
     target.sourceView?.acceptBufferSelections(selectionAfter)
-    this.#typingRun = null
+    this.typingRun = null
     barrier.revisionAfter = revisionBefore + 1
     const change = this.publish({
       revision: {
@@ -1572,7 +1568,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         logicalRevisionScope: prepared.logicalRevisionScope,
         textChanged: true,
       },
-      createChange: () => this.#createChange('edit', prepared.edits, transaction),
+      createChange: () => this.createChange('edit', prepared.edits, transaction),
       sourceView: target.sourceView,
       origin: 'external',
     })
@@ -1588,12 +1584,12 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (!barrier || barrier.buffer !== this || receipt.segmentCount !== 1) {
       return { status: 'stale' }
     }
-    if (!this.#canReverse(target, receipt, barrier)) return { status: 'stale' }
+    if (!this.canReverse(target, receipt, barrier)) return { status: 'stale' }
 
     const transaction = barrier.segments[0]!
     const historyAtAfter = this.history
     const wasInstalled = barrier.installed
-    this.#restoreHistoryForReverse(barrier, transaction)
+    this.restoreHistoryForReverse(barrier, transaction)
     target.sourceView?.acceptBufferSelections(transaction.selectionBefore)
     const revisionBefore = this.revision
     const publication = {
@@ -1606,11 +1602,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const reverseTransaction = reciprocalTransaction(transaction)
     const change = this.publish({
       revision: publication,
-      createChange: () => this.#createChange('edit', receipt.inverseEdits, reverseTransaction),
+      createChange: () => this.createChange('edit', receipt.inverseEdits, reverseTransaction),
       sourceView: target.sourceView,
       origin: 'external',
     })
-    const reciprocalBarrier = this.#createReciprocalBarrier(
+    const reciprocalBarrier = this.createReciprocalBarrier(
       barrier,
       reverseTransaction,
       historyAtAfter,
@@ -1630,13 +1626,13 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (!barrier || barrier.buffer !== this || receipt.segmentCount <= 1) {
       return { status: 'stale' }
     }
-    if (!this.#canReverse(target, receipt, barrier)) return { status: 'stale' }
+    if (!this.canReverse(target, receipt, barrier)) return { status: 'stale' }
 
     const nextSegmentIndex = receipt.segmentCount - 1
     const cursor = createReverseCursor(nextSegmentIndex)
     reverseCursorStates.set(cursor, {
       barrier,
-      expectedCurrentBarrier: this.#currentBarrier,
+      expectedCurrentBarrier: this.currentBarrier,
       expectedRevision: this.revision,
       historyBeforeReverse: this.history,
       receipt,
@@ -1657,7 +1653,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const state = reverseCursorStates.get(cursor)
     if (!state || state.nextSegmentIndex !== segmentIndex) return { status: 'out-of-order' }
     if (cursor.nextSegmentIndex !== segmentIndex) return { status: 'out-of-order' }
-    if (!this.#canContinueReverseSequence(target, state)) return { status: 'stale' }
+    if (!this.canContinueReverseSequence(target, state)) return { status: 'stale' }
 
     const transaction = state.barrier.segments[segmentIndex]
     if (!transaction || this.getSnapshot() !== transaction.snapshotAfter) {
@@ -1665,11 +1661,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     }
 
     if (segmentIndex === state.receipt.segmentCount - 1 && state.wasInstalled) {
-      this.#currentBarrier = state.barrier.older
+      this.currentBarrier = state.barrier.older
       state.barrier.installed = false
-      state.expectedCurrentBarrier = this.#currentBarrier
+      state.expectedCurrentBarrier = this.currentBarrier
     }
-    this.#setHistoryForSequenceReverse(state, transaction, segmentIndex)
+    this.setHistoryForSequenceReverse(state, transaction, segmentIndex)
     target.sourceView?.acceptBufferSelections(transaction.selectionBefore)
     const revisionBefore = this.revision
     const publication = {
@@ -1685,7 +1681,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     state.nextSegmentIndex -= 1
     const change = this.publish({
       revision: publication,
-      createChange: () => this.#createChange('edit', transaction.inverseEdits, reciprocal),
+      createChange: () => this.createChange('edit', transaction.inverseEdits, reciprocal),
       sourceView: target.sourceView,
       origin: 'external',
     })
@@ -1702,7 +1698,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (!state || state.completed) return { status: 'incomplete' }
     if (cursor.nextSegmentIndex !== state.nextSegmentIndex) return { status: 'incomplete' }
     if (state.nextSegmentIndex >= 0) return { status: 'incomplete' }
-    if (!this.#canContinueReverseSequence(target, state)) return { status: 'stale' }
+    if (!this.canContinueReverseSequence(target, state)) return { status: 'stale' }
     if (this.getSnapshot() !== state.receipt.snapshotBefore) return { status: 'stale' }
 
     const transactions = state.reversedTransactions
@@ -1713,7 +1709,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const barrier: DocumentBarrierState = {
       buffer: this,
       historyBefore: this.history,
-      older: this.#currentBarrier,
+      older: this.currentBarrier,
       phase: state.barrier.phase,
       released: false,
       installed: !state.wasInstalled,
@@ -1724,11 +1720,11 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     }
     if (barrier.installed) {
       barrier.historyBefore = state.historyBeforeReverse
-      this.#currentBarrier = barrier
-      this.history = this.#createHistory(last.snapshotAfter, last.selectionAfter)
+      this.currentBarrier = barrier
+      this.history = this.createHistory(last.snapshotAfter, last.selectionAfter)
     }
     state.completed = true
-    this.#storageMaintenance.request(0, true)
+    this.storageMaintenance.request(0, true)
     const receipt = createReceipt(barrier)
     return { status: 'completed', receipt }
   }
@@ -1739,7 +1735,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const alreadySealed = barrier.phase === 'sealed'
     barrier.phase = 'sealed'
     barrier.historyBefore = clearEditorHistoryRedo(barrier.historyBefore)
-    this.#storageMaintenance.request(0, true)
+    this.storageMaintenance.request(0, true)
     const sealedReceipt = createReceipt(barrier)
     return {
       receipt: sealedReceipt,
@@ -1755,8 +1751,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
     barrier.released = true
     barrier.installed = false
-    this.#unlinkBarrier(barrier)
-    this.#storageMaintenance.request(0, true)
+    this.unlinkBarrier(barrier)
+    this.storageMaintenance.request(0, true)
     return { status: 'released' }
   }
 
@@ -1765,13 +1761,13 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     lease: DocumentMutationLease,
   ): RotateDocumentSyncSegmentResult {
     if (this.mutationLease !== lease) return { status: 'stale' }
-    if (this.#editChain.point !== expectedPoint) return { status: 'stale' }
+    if (this.editChain.point !== expectedPoint) return { status: 'stale' }
 
-    this.#editChain.rotate()
-    return { status: 'rotated', syncPoint: this.#editChain.point }
+    this.editChain.rotate()
+    return { status: 'rotated', syncPoint: this.editChain.point }
   }
 
-  #canUsePrepared(
+  private canUsePrepared(
     target: DocumentTransactionCommitTarget,
     prepared: PreparedDocumentTransaction,
   ): boolean {
@@ -1782,7 +1778,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return true
   }
 
-  #commitLogicalOnly(
+  private commitLogicalOnly(
     target: DocumentTransactionCommitTarget,
     prepared: PreparedDocumentTransaction,
     cumulativeBarrier: DocumentBarrierState | null,
@@ -1798,25 +1794,27 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (cumulativeBarrier) cumulativeBarrier.revisionAfter = revisionBefore + 1
     const change = this.publish({
       revision: publication,
-      createChange: () => this.#createSynchronizeChange(prepared, target.sourceView),
+      createChange: () => this.createSynchronizeChange(prepared, target.sourceView),
       sourceView: target.sourceView,
       origin: 'external',
     })
     return { status: 'logical-only', change }
   }
 
-  #cumulativeBarrier(receipt: DocumentTransactionReceipt | null): DocumentBarrierState | null {
+  private cumulativeBarrier(
+    receipt: DocumentTransactionReceipt | null,
+  ): DocumentBarrierState | null {
     if (!receipt) return null
     const barrier = receiptStates.get(receipt)
     if (!barrier || barrier.buffer !== this) return null
     if (barrier.released || !barrier.installed) return null
-    if (this.#currentBarrier !== barrier) return null
+    if (this.currentBarrier !== barrier) return null
     if (receipt.revisionAfter !== this.revision) return null
     if (receipt.snapshotAfter !== this.getSnapshot()) return null
     return barrier
   }
 
-  #createSynchronizeChange(
+  private createSynchronizeChange(
     prepared: PreparedDocumentTransaction,
     sourceView: EditorViewSession | null,
   ): DocumentSessionChange {
@@ -1836,7 +1834,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     })
   }
 
-  #commitPreparedHistory(
+  private commitPreparedHistory(
     transaction: DocumentTransaction,
     history: DocumentTransactionHistory,
     existingReceipt: DocumentTransactionReceipt | null,
@@ -1854,7 +1852,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return createDetachedBarrier(
         this,
         historyBefore,
-        this.#currentBarrier,
+        this.currentBarrier,
         history,
         transaction,
         revisionBefore,
@@ -1876,7 +1874,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const barrier: DocumentBarrierState = {
       buffer: this,
       historyBefore,
-      older: this.#currentBarrier,
+      older: this.currentBarrier,
       phase: 'provisional',
       released: false,
       installed: true,
@@ -1885,12 +1883,12 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       history,
       segments: [transaction],
     }
-    this.#currentBarrier = barrier
-    this.history = this.#createHistory(transaction.snapshotAfter, transaction.selectionAfter)
+    this.currentBarrier = barrier
+    this.history = this.createHistory(transaction.snapshotAfter, transaction.selectionAfter)
     return barrier
   }
 
-  #canReverse(
+  private canReverse(
     target: DocumentTransactionCommitTarget,
     receipt: DocumentTransactionReceipt,
     barrier: DocumentBarrierState,
@@ -1900,26 +1898,26 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     if (this.getSnapshot() !== receipt.snapshotAfter) return false
     if (this.mutationLease && target.mutationLease !== this.mutationLease) return false
     if (target.mutationLease && target.mutationLease !== this.mutationLease) return false
-    if (barrier.installed && this.#currentBarrier !== barrier) return false
+    if (barrier.installed && this.currentBarrier !== barrier) return false
     return true
   }
 
-  #canUseLease(lease: DocumentMutationLease | undefined): boolean {
+  private canUseLease(lease: DocumentMutationLease | undefined): boolean {
     if (this.mutationLease) return lease === this.mutationLease
     return lease === undefined
   }
 
-  #canContinueReverseSequence(
+  private canContinueReverseSequence(
     target: DocumentTransactionCommitTarget,
     state: ReverseSequenceState,
   ): boolean {
-    if (!this.#canUseLease(target.mutationLease)) return false
+    if (!this.canUseLease(target.mutationLease)) return false
     if (state.barrier.released) return false
     if (this.revision !== state.expectedRevision) return false
-    return this.#currentBarrier === state.expectedCurrentBarrier
+    return this.currentBarrier === state.expectedCurrentBarrier
   }
 
-  #setHistoryForSequenceReverse(
+  private setHistoryForSequenceReverse(
     state: ReverseSequenceState,
     transaction: DocumentTransaction,
     segmentIndex: number,
@@ -1928,12 +1926,15 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history = state.barrier.historyBefore
       return
     }
-    this.history = this.#createHistory(transaction.snapshotBefore, transaction.selectionBefore)
+    this.history = this.createHistory(transaction.snapshotBefore, transaction.selectionBefore)
   }
 
-  #restoreHistoryForReverse(barrier: DocumentBarrierState, transaction: DocumentTransaction): void {
+  private restoreHistoryForReverse(
+    barrier: DocumentBarrierState,
+    transaction: DocumentTransaction,
+  ): void {
     if (barrier.installed) {
-      this.#currentBarrier = barrier.older
+      this.currentBarrier = barrier.older
       barrier.installed = false
       this.history = barrier.historyBefore
       return
@@ -1947,7 +1948,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     )
   }
 
-  #createReciprocalBarrier(
+  private createReciprocalBarrier(
     previous: DocumentBarrierState,
     transaction: DocumentTransaction,
     historyAtAfter: DocumentHistory,
@@ -1957,7 +1958,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const reciprocal = createDetachedBarrier(
       this,
       this.history,
-      this.#currentBarrier,
+      this.currentBarrier,
       previous.history,
       transaction,
       revisionBefore,
@@ -1967,34 +1968,34 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
     reciprocal.installed = true
     reciprocal.historyBefore = historyAtAfter
-    reciprocal.older = this.#currentBarrier
-    this.#currentBarrier = reciprocal
-    this.history = this.#createHistory(transaction.snapshotAfter, transaction.selectionAfter)
+    reciprocal.older = this.currentBarrier
+    this.currentBarrier = reciprocal
+    this.history = this.createHistory(transaction.snapshotAfter, transaction.selectionAfter)
     return reciprocal
   }
 
-  #unlinkBarrier(target: DocumentBarrierState): void {
-    if (this.#currentBarrier === target) {
-      this.#currentBarrier = target.older
+  private unlinkBarrier(target: DocumentBarrierState): void {
+    if (this.currentBarrier === target) {
+      this.currentBarrier = target.older
       return
     }
 
-    for (let barrier = this.#currentBarrier; barrier; barrier = barrier.older) {
+    for (let barrier = this.currentBarrier; barrier; barrier = barrier.older) {
       if (barrier.older !== target) continue
       barrier.older = target.older
       return
     }
   }
 
-  #commitEdit(
+  private commitEdit(
     snapshot: PieceTableSnapshot,
     selections: SelectionSet<PieceTableAnchor>,
     edits: readonly TextEdit[],
     options: CommitEditOptions,
   ): DocumentSessionChange {
-    if (edits.length === 0) return this.#createChange('none', [])
+    if (edits.length === 0) return this.createChange('none', [])
 
-    const transaction = this.#createTransaction(
+    const transaction = this.createTransaction(
       snapshot,
       options.selectionBefore,
       selections,
@@ -2003,14 +2004,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     )
     if (
       options.history === 'record' &&
-      (this.#applyLocalEdits === applyBatchToPieceTable || this.#applyLocalEdits.history)
+      (this.applyLocalEdits === applyBatchToPieceTable || this.applyLocalEdits.history)
     ) {
-      this.#commitRecordedEdit(snapshot, selections, edits, options, transaction)
+      this.commitRecordedEdit(snapshot, selections, edits, options, transaction)
     } else {
       this.history = replaceEditorHistoryState(this.history, snapshot, selections)
     }
 
-    this.#typingRun = createTypingRun(this.#typingRun, edits, options.metadata.intent, transaction)
+    this.typingRun = createTypingRun(this.typingRun, edits, options.metadata.intent, transaction)
     const publication = {
       edits,
       logicalRevisionCount: options.metadata.logicalRevisionCount,
@@ -2020,7 +2021,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
     const change = this.publish({
       revision: publication,
-      createChange: () => this.#createChange('edit', edits, transaction),
+      createChange: () => this.createChange('edit', edits, transaction),
       sourceView: options.sourceView,
       origin: options.origin,
       author: options.author,
@@ -2029,7 +2030,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return change
   }
 
-  #commitRecordedEdit(
+  private commitRecordedEdit(
     snapshot: PieceTableSnapshot,
     selections: SelectionSet<PieceTableAnchor>,
     edits: readonly TextEdit[],
@@ -2062,7 +2063,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       !transaction.authored &&
       kind &&
       previous &&
-      this.#shouldAmendTypingRun(kind, edits, transaction, previous)
+      this.shouldAmendTypingRun(kind, edits, transaction, previous)
     ) {
       this.history = amendEditorHistory(
         this.history,
@@ -2080,13 +2081,13 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     })
   }
 
-  #shouldAmendTypingRun(
+  private shouldAmendTypingRun(
     kind: TypingRunKind,
     edits: readonly TextEdit[],
     transaction: DocumentTransaction,
     previous: DocumentTransaction,
   ): boolean {
-    const run = this.#typingRun
+    const run = this.typingRun
     if (!run || run.kind !== kind) return false
 
     const edit = singleTypingRunEdit(edits, kind)
@@ -2097,7 +2098,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return canAmendTypingTransaction(previous, kind)
   }
 
-  #selectionsAfterProgrammaticEdit(
+  private selectionsAfterProgrammaticEdit(
     snapshot: PieceTableSnapshot,
     currentSelections: SelectionSet<PieceTableAnchor>,
     selection: DocumentSessionEditSelection | undefined,
@@ -2112,14 +2113,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return markSelectionSetDirty(currentSelections)
   }
 
-  #createTransaction(
+  private createTransaction(
     snapshot: PieceTableSnapshot,
     selectionBefore: SelectionSet<PieceTableAnchor>,
     selections: SelectionSet<PieceTableAnchor>,
     edits: readonly TextEdit[],
     metadata: DocumentTransactionMetadata,
   ): DocumentTransaction {
-    const captured = this.#applyLocalEdits.history?.capture()
+    const captured = this.applyLocalEdits.history?.capture()
     return {
       ...(captured
         ? {
@@ -2140,7 +2141,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     }
   }
 
-  #createChange(
+  private createChange(
     kind: DocumentSessionChangeKind,
     edits: readonly TextEdit[],
     transaction: DocumentTransaction | null = null,
@@ -2177,7 +2178,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         this.textSnapshot = createDocumentTextSnapshot(this.history.current)
       }
       this.revision += 1
-      this.#editChain.record({
+      this.editChain.record({
         ...transition.revision,
         revisionBefore,
         revisionAfter: this.revision,
@@ -2186,7 +2187,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const change = transition.createChange()
     if (transition.updateSelections)
       transition.sourceView?.acceptBufferSelections(change.selections)
-    const syncPointAfter = this.#editChain.point
+    const syncPointAfter = this.editChain.point
     const event: EditorTextBufferChange = {
       change,
       revisionBefore,
@@ -2194,27 +2195,27 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       textSnapshotBefore,
       syncPointAfter,
       changesSinceDocumentSyncPoint: (point, scope) =>
-        this.#editChain.changesSince(point, scope, syncPointAfter),
+        this.editChain.changesSince(point, scope, syncPointAfter),
       origin: transition.origin ?? 'local',
       author: transition.author,
       sourceViewId: transition.sourceView?.viewId ?? null,
     }
     const deletedUnits = change.edits.reduce((sum, edit) => sum + edit.to - edit.from, 0)
-    this.#storageMaintenance.request(deletedUnits)
-    this.#pendingChanges.push(event)
+    this.storageMaintenance.request(deletedUnits)
+    this.pendingChanges.push(event)
     transactionSources.get(this)?.fire(event)
-    this.#dispatchChanges()
+    this.dispatchChanges()
     return change
   }
 
-  #dispatchChanges(): void {
-    if (this.#publishingChanges) return
-    this.#publishingChanges = true
+  private dispatchChanges(): void {
+    if (this.publishingChanges) return
+    this.publishingChanges = true
     try {
-      for (const event of this.#pendingChanges) this.changes.fire(event)
+      for (const event of this.pendingChanges) this.changes.fire(event)
     } finally {
-      this.#pendingChanges.length = 0
-      this.#publishingChanges = false
+      this.pendingChanges.length = 0
+      this.publishingChanges = false
     }
   }
 }
@@ -2243,18 +2244,18 @@ function registerBufferView(buffer: EditorTextBuffer, view: EditorViewSession): 
 }
 
 class PieceTableEditorViewSession implements EditorViewSession {
-  readonly #createSelectionId: SelectionIdFactory = createSelectionIdFactory()
+  private readonly createSelectionId: SelectionIdFactory = createSelectionIdFactory()
   private readonly metadata = new Map<string, EditorViewMetadataValue>()
   private readonly buffer: EditorTextBuffer
   private scrollPosition: EditorViewScrollPosition | undefined
   private wordWrap: boolean | undefined
-  #foldState: EditorViewFoldState = { collapsedRegions: [], manualFolds: [] }
+  private foldState: EditorViewFoldState = { collapsedRegions: [], manualFolds: [] }
   private selections: SelectionSet<PieceTableAnchor>
 
   public constructor(buffer: EditorTextBuffer, viewId: string) {
     this.buffer = buffer
     this.viewId = viewId
-    this.selections = createInitialSelectionSet(buffer.getSnapshot(), this.#createSelectionId)
+    this.selections = createInitialSelectionSet(buffer.getSnapshot(), this.createSelectionId)
   }
 
   public readonly viewId: string
@@ -2277,8 +2278,8 @@ class PieceTableEditorViewSession implements EditorViewSession {
   ): DocumentSessionChange {
     const start = nowMs()
     this.buffer.breakTypingRun()
-    this.selections = this.#createNormalizedSelectionSet(selections, options)
-    return appendTiming(this.#createChange('selection', []), 'session.selection', start)
+    this.selections = this.createNormalizedSelectionSet(selections, options)
+    return appendTiming(this.createChange('selection', []), 'session.selection', start)
   }
 
   public addSelection(
@@ -2288,12 +2289,12 @@ class PieceTableEditorViewSession implements EditorViewSession {
   ): DocumentSessionChange {
     const start = nowMs()
     this.buffer.breakTypingRun()
-    const nextSelection = this.#createSelection(anchorOffset, headOffset, options)
+    const nextSelection = this.createSelection(anchorOffset, headOffset, options)
     this.selections = normalizeSelectionSet(
       this.buffer.getSnapshot(),
       createSelectionSet(this.selections.selections.concat([nextSelection])),
     )
-    return appendTiming(this.#createChange('selection', []), 'session.addSelection', start)
+    return appendTiming(this.createChange('selection', []), 'session.addSelection', start)
   }
 
   public clearSecondarySelections(): DocumentSessionChange {
@@ -2302,13 +2303,13 @@ class PieceTableEditorViewSession implements EditorViewSession {
     const normalized = normalizeSelectionSet(snapshot, this.selections)
     const primary = normalized.selections[0]
     if (!primary || normalized.selections.length <= 1) {
-      return appendTiming(this.#createChange('none', []), 'session.clearSecondarySelections', start)
+      return appendTiming(this.createChange('none', []), 'session.clearSecondarySelections', start)
     }
 
     this.selections = createSelectionSet([primary], true, snapshot)
     this.buffer.breakTypingRun()
     return appendTiming(
-      this.#createChange('selection', []),
+      this.createChange('selection', []),
       'session.clearSecondarySelections',
       start,
     )
@@ -2339,11 +2340,11 @@ class PieceTableEditorViewSession implements EditorViewSession {
   }
 
   public getFoldState(): EditorViewFoldState {
-    return this.#foldState
+    return this.foldState
   }
 
   public setFoldState(state: EditorViewFoldState): void {
-    this.#foldState = state
+    this.foldState = state
   }
 
   public setMetadata(key: string, value: EditorViewMetadataValue | undefined): void {
@@ -2355,7 +2356,7 @@ class PieceTableEditorViewSession implements EditorViewSession {
     this.metadata.set(key, value)
   }
 
-  #createNormalizedSelectionSet(
+  private createNormalizedSelectionSet(
     selections: readonly DocumentSessionSelectionRange[],
     options: DocumentSessionSelectionOptions,
   ): SelectionSet<PieceTableAnchor> {
@@ -2363,11 +2364,11 @@ class PieceTableEditorViewSession implements EditorViewSession {
       this.buffer.getSnapshot(),
       selections,
       options,
-      this.#createSelectionId,
+      this.createSelectionId,
     )
   }
 
-  #createSelection(
+  private createSelection(
     anchorOffset: number,
     headOffset: number,
     options: DocumentSessionSelectionOptions,
@@ -2375,11 +2376,11 @@ class PieceTableEditorViewSession implements EditorViewSession {
     return createAnchorSelection(this.buffer.getSnapshot(), anchorOffset, headOffset, {
       goal: options.goal,
       affinity: options.affinity,
-      idFactory: this.#createSelectionId,
+      idFactory: this.createSelectionId,
     })
   }
 
-  #createChange(
+  private createChange(
     kind: DocumentSessionChangeKind,
     edits: readonly TextEdit[],
   ): DocumentSessionChange {

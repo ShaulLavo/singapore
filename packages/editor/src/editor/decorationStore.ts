@@ -100,13 +100,13 @@ const DEFAULT_END_BIAS: AnchorBias = 'left'
  */
 export class EditorDecorationStore {
   private readonly decorations = new Map<string, StoredDecoration>()
-  readonly #surfaces = new Map<EditorDecorationSurface, DecorationSurfaceIndex>()
+  private readonly surfaces = new Map<EditorDecorationSurface, DecorationSurfaceIndex>()
   /**
    * Owners an edit has moved a decoration of since they last replaced their set. What they last
    * painted describes offsets the document no longer has, so specs that read the same as the stored
    * ones are still a repaint rather than a match.
    */
-  readonly #movedOwners = new Set<string>()
+  private readonly movedOwners = new Set<string>()
   private nextId = 0
 
   add(spec: EditorDecorationSpec): string {
@@ -118,7 +118,7 @@ export class EditorDecorationStore {
     for (const surface of DECORATION_SURFACES) {
       if (!decoration[surface]) continue
 
-      const index = this.#surfaceIndex(surface)
+      const index = this.surfaceIndex(surface)
       index.entries.push(decoration)
       index.ordered = false
     }
@@ -131,7 +131,7 @@ export class EditorDecorationStore {
     if (!decoration) return false
 
     this.decorations.delete(id)
-    this.#forgetIndexed(new Set([decoration]))
+    this.forgetIndexed(new Set([decoration]))
     return true
   }
 
@@ -151,11 +151,11 @@ export class EditorDecorationStore {
       if (decoration.owner === owner) replaced.add(decoration)
     }
 
-    if (!this.#movedOwners.has(owner) && sameOwnedDecorations([...replaced], specs)) return false
+    if (!this.movedOwners.has(owner) && sameOwnedDecorations([...replaced], specs)) return false
 
-    this.#movedOwners.delete(owner)
+    this.movedOwners.delete(owner)
     for (const decoration of replaced) this.decorations.delete(decoration.id)
-    this.#forgetIndexed(replaced)
+    this.forgetIndexed(replaced)
     for (const spec of specs) this.add(spec)
     return true
   }
@@ -175,19 +175,19 @@ export class EditorDecorationStore {
       if (!projected) {
         this.decorations.delete(decoration.id)
         dropped.add(decoration)
-        this.#movedOwners.add(decoration.owner)
+        this.movedOwners.add(decoration.owner)
         continue
       }
       if (projected.start !== decoration.start || projected.end !== decoration.end) {
-        this.#movedOwners.add(decoration.owner)
+        this.movedOwners.add(decoration.owner)
       }
 
       decoration.start = projected.start
       decoration.end = projected.end
     }
 
-    for (const index of this.#surfaces.values()) index.ordered = false
-    this.#forgetIndexed(dropped)
+    for (const index of this.surfaces.values()) index.ordered = false
+    this.forgetIndexed(dropped)
   }
 
   decorationsInRange(
@@ -195,7 +195,7 @@ export class EditorDecorationStore {
     start: number,
     end: number,
   ): readonly EditorDecoration[] {
-    const index = this.#orderedSurfaceIndex(surface)
+    const index = this.orderedSurfaceIndex(surface)
     const matched: StoredDecoration[] = []
     let examined = 0
 
@@ -223,30 +223,30 @@ export class EditorDecorationStore {
 
   clear(): void {
     this.decorations.clear()
-    this.#surfaces.clear()
-    this.#movedOwners.clear()
+    this.surfaces.clear()
+    this.movedOwners.clear()
   }
 
-  #forgetIndexed(decorations: ReadonlySet<StoredDecoration>): void {
+  private forgetIndexed(decorations: ReadonlySet<StoredDecoration>): void {
     if (decorations.size === 0) return
 
-    for (const index of this.#surfaces.values()) {
+    for (const index of this.surfaces.values()) {
       index.entries = index.entries.filter((entry) => !decorations.has(entry))
       index.ordered = false
     }
   }
 
-  #surfaceIndex(surface: EditorDecorationSurface): DecorationSurfaceIndex {
-    const existing = this.#surfaces.get(surface)
+  private surfaceIndex(surface: EditorDecorationSurface): DecorationSurfaceIndex {
+    const existing = this.surfaces.get(surface)
     if (existing) return existing
 
     const index: DecorationSurfaceIndex = { entries: [], maxEnds: [], ordered: true }
-    this.#surfaces.set(surface, index)
+    this.surfaces.set(surface, index)
     return index
   }
 
-  #orderedSurfaceIndex(surface: EditorDecorationSurface): DecorationSurfaceIndex {
-    const index = this.#surfaceIndex(surface)
+  private orderedSurfaceIndex(surface: EditorDecorationSurface): DecorationSurfaceIndex {
+    const index = this.surfaceIndex(surface)
     if (index.ordered) return index
 
     index.entries.sort(byDecorationOffset)

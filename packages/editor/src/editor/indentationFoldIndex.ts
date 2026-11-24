@@ -115,33 +115,33 @@ export class IndentationFoldIndex {
   private directory = new Map<FoldLineOwner, readonly OwnerLocation[]>()
   private reader: FoldFactReader | null = null
   private tasks: ReadTask[] = []
-  #taskIndex = 0
+  private taskIndex = 0
   private phase: 'facts' | 'bottom' | 'accept' | 'ready' | 'cancelled' = 'facts'
-  #bottomIndex = -1
-  #dirtyFirst = Infinity
-  #dirtyLast = -1
-  #candidateFirst = Infinity
-  #candidateLast = -1
+  private bottomIndex = -1
+  private dirtyFirst = Infinity
+  private dirtyLast = -1
+  private candidateFirst = Infinity
+  private candidateLast = -1
   private bottom: IndentationStack = EMPTY_STACK
-  #acceptIndex = 0
+  private acceptIndex = 0
   private accepted: AcceptedStack | null = null
-  #topologyChanged = false
-  #directoryChanged = false
+  private topologyChanged = false
+  private directoryChanged = false
   private reused = false
-  #allCache: readonly FoldRange[] | null = null
+  private allCache: readonly FoldRange[] | null = null
   private rowsRead = 0
   private codeUnitsRead = 0
-  #rebuilt = 0
-  #propagation = 0
+  private rebuilt = 0
+  private propagation = 0
   private elapsed = 0
   private maxSliceMs = 0
-  #processedBlocks = 0
+  private processedBlocks = 0
   private metadata: FoldMetadataWork | null = null
   private metadataSteps = 0
   private maxMetadataStepsPerSlice = 0
   private semanticWork: Generator<void, void> | null = null
   private stackSteps = 0
-  #maxStackStepsPerSlice = 0
+  private maxStackStepsPerSlice = 0
   private coldReason: IndentationFoldWork['coldReason'] = null
 
   constructor(options: IndentationFoldIndexOptions) {
@@ -154,12 +154,12 @@ export class IndentationFoldIndex {
       this.cold('initial')
       return
     }
-    if (!this.#compatible(previous)) {
+    if (!this.compatible(previous)) {
       this.cold('configuration')
       return
     }
     if (sameIndentationSnapshot(previous.snapshot, this.snapshot)) {
-      this.#adopt(previous)
+      this.adopt(previous)
       this.phase = 'ready'
       this.reused = true
       return
@@ -173,7 +173,7 @@ export class IndentationFoldIndex {
       this.cold('edit-chain-gap')
       return
     }
-    this.#adopt(previous)
+    this.adopt(previous)
     this.tasks = readTasks(batch)
     if (this.tasks.length === 0) {
       this.phase = 'ready'
@@ -199,13 +199,13 @@ export class IndentationFoldIndex {
       metadataSteps: this.metadataSteps,
       maxMetadataStepsPerSlice: this.maxMetadataStepsPerSlice,
       stackSteps: this.stackSteps,
-      maxStackStepsPerSlice: this.#maxStackStepsPerSlice,
+      maxStackStepsPerSlice: this.maxStackStepsPerSlice,
       retainedBytesEstimated: true,
       rowsRead: this.rowsRead,
       codeUnitsRead: this.codeUnitsRead,
-      factBlocksRebuilt: this.#rebuilt,
-      factBlocksReused: Math.max(0, this.blocks.length - this.#rebuilt),
-      propagationRows: this.#propagation,
+      factBlocksRebuilt: this.rebuilt,
+      factBlocksReused: Math.max(0, this.blocks.length - this.rebuilt),
+      propagationRows: this.propagation,
       foldCount: this.count,
       materializations: 0,
       retainedBytes: this.snapshot.lineCount * 40 + this.blocks.length * 256 + this.count * 80,
@@ -229,16 +229,15 @@ export class IndentationFoldIndex {
     const stackStart = this.stackSteps
     const stackEnd = stackStart + Math.max(1, budget.maxStackSteps ?? budget.maxRows ?? 1024)
     const metadataEnd = metadataStart + Math.max(1, budget.maxBlocks ?? budget.maxRows ?? 1024)
-    const rowEnd = this.rowsRead + this.#propagation + (budget.maxRows ?? 1024)
+    const rowEnd = this.rowsRead + this.propagation + (budget.maxRows ?? 1024)
     const unitEnd = this.codeUnitsRead + (budget.maxCodeUnits ?? 32768)
     const blockEnd =
-      this.#processedBlocks +
-      Math.max(1, Math.ceil((budget.maxRows ?? 1024) / FOLD_FACT_BLOCK_SIZE))
+      this.processedBlocks + Math.max(1, Math.ceil((budget.maxRows ?? 1024) / FOLD_FACT_BLOCK_SIZE))
     while (
       !this.ready &&
-      this.rowsRead + this.#propagation < rowEnd &&
+      this.rowsRead + this.propagation < rowEnd &&
       this.codeUnitsRead < unitEnd &&
-      this.#processedBlocks < blockEnd &&
+      this.processedBlocks < blockEnd &&
       this.metadataSteps < metadataEnd &&
       this.stackSteps < stackEnd
     ) {
@@ -251,10 +250,7 @@ export class IndentationFoldIndex {
       this.maxMetadataStepsPerSlice,
       this.metadataSteps - metadataStart,
     )
-    this.#maxStackStepsPerSlice = Math.max(
-      this.#maxStackStepsPerSlice,
-      this.stackSteps - stackStart,
-    )
+    this.maxStackStepsPerSlice = Math.max(this.maxStackStepsPerSlice, this.stackSteps - stackStart)
     return this.ready
   }
 
@@ -289,11 +285,16 @@ export class IndentationFoldIndex {
     const last = locateFoldBlock(this.tree, Math.min(this.snapshot.lineCount - 1, endRow), 'row')
     const result: FoldRange[] = []
     for (let index = first.index; index <= last.index; index += 1)
-      this.#collectHeaders(this.blocks[index]!, startRow, endRow, result)
+      this.collectHeaders(this.blocks[index]!, startRow, endRow, result)
     return result
   }
 
-  #collectHeaders(block: IndentationBlock, start: number, end: number, result: FoldRange[]): void {
+  private collectHeaders(
+    block: IndentationBlock,
+    start: number,
+    end: number,
+    result: FoldRange[],
+  ): void {
     for (const fold of block.accepted) {
       const row = this.position(fold.start).row
       if (row < start || row > end) continue
@@ -307,10 +308,10 @@ export class IndentationFoldIndex {
 
   all(): readonly FoldRange[] {
     this.complete()
-    if (this.#allCache) return this.#allCache
+    if (this.allCache) return this.allCache
     const result: FoldRange[] = []
     this.forEach((fold) => result.push(fold))
-    this.#allCache = result
+    this.allCache = result
     return result
   }
 
@@ -327,7 +328,7 @@ export class IndentationFoldIndex {
     return this.reused ? 'reused' : 'completed'
   }
 
-  #compatible(previous: IndentationFoldIndex): boolean {
+  private compatible(previous: IndentationFoldIndex): boolean {
     return (
       this.languageId === previous.languageId &&
       this.tabSize === previous.tabSize &&
@@ -337,7 +338,7 @@ export class IndentationFoldIndex {
 
   private cold(reason: IndentationFoldWork['coldReason']): void {
     this.coldReason = reason
-    this.#topologyChanged = true
+    this.topologyChanged = true
     this.tasks = [
       {
         beforeStart: 0,
@@ -354,22 +355,22 @@ export class IndentationFoldIndex {
     ]
   }
 
-  #adopt(previous: IndentationFoldIndex): void {
+  private adopt(previous: IndentationFoldIndex): void {
     this.blocks = previous.blocks.slice()
     this.tree = previous.tree
     this.directory = previous.directory
   }
 
   private advance(codeUnits: number): void {
-    if (this.semanticWork) return this.#advanceSemanticWork()
-    if (this.metadata) return this.#advanceMetadata(this.metadata)
+    if (this.semanticWork) return this.advanceSemanticWork()
+    if (this.metadata) return this.advanceMetadata(this.metadata)
     if (this.phase === 'facts') return this.read(codeUnits)
-    if (this.phase === 'bottom') this.semanticWork = this.#analyzeBottom()
-    if (this.phase === 'accept') this.semanticWork = this.#acceptBlock()
-    this.#advanceSemanticWork()
+    if (this.phase === 'bottom') this.semanticWork = this.analyzeBottom()
+    if (this.phase === 'accept') this.semanticWork = this.acceptBlock()
+    this.advanceSemanticWork()
   }
 
-  #advanceSemanticWork(): void {
+  private advanceSemanticWork(): void {
     const work = this.semanticWork
     if (!work) return
     if (!work.next().done) {
@@ -377,17 +378,17 @@ export class IndentationFoldIndex {
       return
     }
     this.semanticWork = null
-    this.#processedBlocks += 1
+    this.processedBlocks += 1
   }
 
   private read(codeUnits: number): void {
-    const task = this.tasks[this.#taskIndex]
+    const task = this.tasks[this.taskIndex]
     if (!task) {
-      this.#finishFacts()
+      this.finishFacts()
       return
     }
     if (task.row === task.afterEnd) {
-      if (this.#installTask(task)) this.#taskIndex += 1
+      if (this.installTask(task)) this.taskIndex += 1
       return
     }
     this.reader ??= new FoldFactReader(this.snapshot, this.rules, this.tabSize)
@@ -407,22 +408,22 @@ export class IndentationFoldIndex {
       task.pending = []
     }
     if (task.row !== task.afterEnd) return
-    if (this.#installTask(task)) this.#taskIndex += 1
+    if (this.installTask(task)) this.taskIndex += 1
   }
 
-  #installTask(task: ReadTask): boolean {
+  private installTask(task: ReadTask): boolean {
     const oldCount = task.beforeEnd - task.beforeStart
     const newCount = task.afterEnd - task.afterStart
     if (oldCount === newCount && this.tree) {
-      return this.#replaceSameRows(task)
+      return this.replaceSameRows(task)
     }
-    const prefix = this.#sliceBlocks(0, task.afterStart)
+    const prefix = this.sliceBlocks(0, task.afterStart)
     const total = this.tree?.rows ?? 0
-    const suffix = this.#sliceBlocks(task.afterStart + oldCount, total)
+    const suffix = this.sliceBlocks(task.afterStart + oldCount, total)
     this.blocks = prefix.concat(task.blocks, suffix)
-    this.#rebuilt += task.blocks.length
-    this.#topologyChanged = true
-    this.#directoryChanged = true
+    this.rebuilt += task.blocks.length
+    this.topologyChanged = true
+    this.directoryChanged = true
     this.metadata = {
       kind: 'tree',
       builder: new FoldBlockTreeBuilder(this.blocks, () => -1),
@@ -431,7 +432,7 @@ export class IndentationFoldIndex {
     return false
   }
 
-  #replaceSameRows(task: ReadTask): boolean {
+  private replaceSameRows(task: ReadTask): boolean {
     task.replacements ??= taskFacts(task)
     const targetRow = task.afterStart + task.installedRows
     const location = locateFoldBlock(this.tree!, targetRow, 'row')
@@ -439,13 +440,13 @@ export class IndentationFoldIndex {
       task.afterEnd - targetRow,
       location.block.facts.facts.length - (targetRow - location.row),
     )
-    this.#replaceFacts(location.index, targetRow - location.row, count, task.replacements)
+    this.replaceFacts(location.index, targetRow - location.row, count, task.replacements)
     task.installedRows += count
-    this.#processedBlocks += 1
+    this.processedBlocks += 1
     return task.afterStart + task.installedRows === task.afterEnd
   }
 
-  #replaceFacts(
+  private replaceFacts(
     blockIndex: number,
     start: number,
     count: number,
@@ -463,14 +464,14 @@ export class IndentationFoldIndex {
     const next = { ...old, facts: nextFacts, analyzed: old.analyzed && !semanticChange }
     this.blocks[blockIndex] = next
     this.tree = updateFoldBlockTree(this.tree!, blockIndex, next, (left, right) =>
-      this.#compareLines(left, right),
+      this.compareLines(left, right),
     )
-    this.#topologyChanged ||= semanticChange
-    if (semanticChange) this.#noteDirty(blockIndex)
-    this.#rebuilt += 1
+    this.topologyChanged ||= semanticChange
+    if (semanticChange) this.noteDirty(blockIndex)
+    this.rebuilt += 1
   }
 
-  #sliceBlocks(start: number, end: number): IndentationBlock[] {
+  private sliceBlocks(start: number, end: number): IndentationBlock[] {
     if (start === end || !this.tree) return []
     const first = locateFoldBlock(this.tree, start, 'row')
     const last = locateFoldBlock(this.tree, end - 1, 'row')
@@ -485,48 +486,48 @@ export class IndentationFoldIndex {
     return result
   }
 
-  #finishFacts(): void {
+  private finishFacts(): void {
     this.reader = null
     this.tasks = []
-    if (!this.#topologyChanged) {
+    if (!this.topologyChanged) {
       this.phase = 'ready'
       this.reused = true
       return
     }
-    if (this.#directoryChanged || this.directory.size === 0) {
+    if (this.directoryChanged || this.directory.size === 0) {
       this.metadata = { kind: 'directory', index: 0, directory: new Map() }
       return
     }
-    this.#beginBottom()
+    this.beginBottom()
   }
 
-  #beginBottom(): void {
-    this.#bottomIndex = this.#dirtyLast
-    this.bottom = this.blocks[this.#dirtyLast + 1]?.above ?? EMPTY_STACK
+  private beginBottom(): void {
+    this.bottomIndex = this.dirtyLast
+    this.bottom = this.blocks[this.dirtyLast + 1]?.above ?? EMPTY_STACK
     this.phase = 'bottom'
   }
 
-  #advanceMetadata(work: FoldMetadataWork): void {
+  private advanceMetadata(work: FoldMetadataWork): void {
     this.metadataSteps += 1
-    if (work.kind === 'directory') return this.#advanceDirectory(work)
+    if (work.kind === 'directory') return this.advanceDirectory(work)
     if (!work.builder.step()) return
     this.tree = work.builder.result
     this.metadata = null
     if (work.resume === 'task') {
-      this.#taskIndex += 1
+      this.taskIndex += 1
       return
     }
-    this.#beginBottom()
+    this.beginBottom()
   }
 
-  #advanceDirectory(work: Extract<FoldMetadataWork, { kind: 'directory' }>): void {
+  private advanceDirectory(work: Extract<FoldMetadataWork, { kind: 'directory' }>): void {
     const block = this.blocks[work.index]
     if (!block) {
       this.directory = work.directory
       this.metadata = {
         kind: 'tree',
         builder: new FoldBlockTreeBuilder(this.blocks, (left, right) =>
-          this.#compareLines(left, right),
+          this.compareLines(left, right),
         ),
         resume: 'bottom',
       }
@@ -539,52 +540,52 @@ export class IndentationFoldIndex {
       end: block.facts.startSlot + block.facts.facts.length,
     })
     work.directory.set(block.facts.owner, locations)
-    if (!block.analyzed) this.#noteDirty(work.index)
+    if (!block.analyzed) this.noteDirty(work.index)
     work.index += 1
   }
 
-  #noteDirty(index: number): void {
-    this.#dirtyFirst = Math.min(this.#dirtyFirst, index)
-    this.#dirtyLast = Math.max(this.#dirtyLast, index)
+  private noteDirty(index: number): void {
+    this.dirtyFirst = Math.min(this.dirtyFirst, index)
+    this.dirtyLast = Math.max(this.dirtyLast, index)
   }
 
-  #compareLines(left: FoldLineReference, right: FoldLineReference): number {
+  private compareLines(left: FoldLineReference, right: FoldLineReference): number {
     return this.position(left).row - this.position(right).row
   }
 
-  #beginAcceptance(): void {
-    if (this.#candidateLast < 0) {
+  private beginAcceptance(): void {
+    if (this.candidateLast < 0) {
       this.phase = 'ready'
       return
     }
-    this.#acceptIndex = this.#candidateFirst
-    this.accepted = this.blocks[this.#candidateFirst - 1]?.outgoing ?? null
+    this.acceptIndex = this.candidateFirst
+    this.accepted = this.blocks[this.candidateFirst - 1]?.outgoing ?? null
     this.phase = 'accept'
   }
 
-  *#analyzeBottom(): Generator<void, void> {
-    if (this.#bottomIndex < 0) {
-      this.#beginAcceptance()
+  private *analyzeBottom(): Generator<void, void> {
+    if (this.bottomIndex < 0) {
+      this.beginAcceptance()
       return
     }
-    const index = this.#bottomIndex--
+    const index = this.bottomIndex--
     const block = this.blocks[index]!
     if (block.analyzed && (yield* sameIndentationStack(this.bottom, block.below))) {
       this.bottom = block.above!
-      if (index <= this.#dirtyFirst) this.#beginAcceptance()
+      if (index <= this.dirtyFirst) this.beginAcceptance()
       return
     }
     const incoming = this.bottom
     const candidates: IndentationRegion[] = []
     for (let row = block.facts.facts.length - 1; row >= 0; row -= 1) {
-      const work = this.#consumeLine(block.facts, row, candidates)
+      const work = this.consumeLine(block.facts, row, candidates)
       if (work) yield* work
     }
-    this.#propagation += block.facts.facts.length
+    this.propagation += block.facts.facts.length
     const converged = yield* sameIndentationStack(this.bottom, block.above)
     if (converged) this.bottom = block.above!
-    this.#candidateFirst = Math.min(this.#candidateFirst, index)
-    this.#candidateLast = Math.max(this.#candidateLast, index)
+    this.candidateFirst = Math.min(this.candidateFirst, index)
+    this.candidateLast = Math.max(this.candidateLast, index)
     this.blocks[index] = {
       ...block,
       below: incoming,
@@ -592,10 +593,10 @@ export class IndentationFoldIndex {
       candidates: candidates.reverse(),
       analyzed: false,
     }
-    if (converged && index <= this.#dirtyFirst) this.#beginAcceptance()
+    if (converged && index <= this.dirtyFirst) this.beginAcceptance()
   }
 
-  #consumeLine(
+  private consumeLine(
     block: FoldFactBlock,
     index: number,
     folds: IndentationRegion[],
@@ -617,11 +618,11 @@ export class IndentationFoldIndex {
       this.bottom = stackNode(fact.indent, line, line, marker.parent)
       return
     }
-    if (this.bottom.indent > fact.indent) return this.#consumeDedent(fact.indent, line, folds)
-    this.#finishIndent(fact.indent, line)
+    if (this.bottom.indent > fact.indent) return this.consumeDedent(fact.indent, line, folds)
+    this.finishIndent(fact.indent, line)
   }
 
-  *#consumeDedent(
+  private *consumeDedent(
     indent: number,
     line: FoldLineReference,
     folds: IndentationRegion[],
@@ -633,10 +634,10 @@ export class IndentationFoldIndex {
     const end = this.bottom.endAbove
     if (this.position(end).row - 1 > this.position(line).row)
       folds.push({ start: line, end, endBefore: true, type: 'indent' })
-    this.#finishIndent(indent, line)
+    this.finishIndent(indent, line)
   }
 
-  #finishIndent(indent: number, line: FoldLineReference): void {
+  private finishIndent(indent: number, line: FoldLineReference): void {
     if (this.bottom.indent === indent) {
       this.bottom = stackNode(indent, line, this.bottom.line, this.bottom.parent)
       return
@@ -644,38 +645,38 @@ export class IndentationFoldIndex {
     this.bottom = stackNode(indent, line, line, this.bottom)
   }
 
-  *#acceptBlock(): Generator<void, void> {
-    if (this.#acceptIndex === this.blocks.length) {
+  private *acceptBlock(): Generator<void, void> {
+    if (this.acceptIndex === this.blocks.length) {
       this.phase = 'ready'
       return
     }
-    const index = this.#acceptIndex++
+    const index = this.acceptIndex++
     const block = this.blocks[index]!
     if (block.analyzed && (yield* sameAcceptedStack(this.accepted, block.incoming))) {
       this.accepted = block.outgoing
-      if (index >= this.#candidateLast) this.phase = 'ready'
+      if (index >= this.candidateLast) this.phase = 'ready'
       return
     }
     const incoming = this.accepted
     const accepted: IndentationRegion[] = []
     for (const fold of block.candidates) {
-      const work = this.#acceptFold(fold, accepted)
+      const work = this.acceptFold(fold, accepted)
       if (work) yield* work
     }
-    this.#propagation += block.facts.facts.length
+    this.propagation += block.facts.facts.length
     const converged = yield* sameAcceptedStack(this.accepted, block.outgoing)
     if (converged) this.accepted = block.outgoing
-    this.#publishBlock(index, {
+    this.publishBlock(index, {
       ...block,
       incoming,
       outgoing: this.accepted,
       accepted,
       analyzed: true,
     })
-    if (converged && index >= this.#candidateLast) this.phase = 'ready'
+    if (converged && index >= this.candidateLast) this.phase = 'ready'
   }
 
-  #acceptFold(
+  private acceptFold(
     fold: IndentationRegion,
     accepted: IndentationRegion[],
   ): Generator<void, void> | undefined {
@@ -683,11 +684,11 @@ export class IndentationFoldIndex {
     const end = this.endRow(fold)
     if (end <= start) return
     if (this.accepted && this.endRow(this.accepted.fold) <= start)
-      return this.#expireAncestors(fold, accepted, start, end)
-    this.#finishAcceptedFold(fold, accepted, end)
+      return this.expireAncestors(fold, accepted, start, end)
+    this.finishAcceptedFold(fold, accepted, end)
   }
 
-  *#expireAncestors(
+  private *expireAncestors(
     fold: IndentationRegion,
     accepted: IndentationRegion[],
     start: number,
@@ -697,25 +698,29 @@ export class IndentationFoldIndex {
       this.accepted = this.accepted.parent
       yield
     }
-    this.#finishAcceptedFold(fold, accepted, end)
+    this.finishAcceptedFold(fold, accepted, end)
   }
 
-  #finishAcceptedFold(fold: IndentationRegion, accepted: IndentationRegion[], end: number): void {
+  private finishAcceptedFold(
+    fold: IndentationRegion,
+    accepted: IndentationRegion[],
+    end: number,
+  ): void {
     if (this.accepted && end > this.endRow(this.accepted.fold)) return
     accepted.push(fold)
     this.accepted = { fold, parent: this.accepted }
   }
 
-  #publishBlock(index: number, block: IndentationBlock): void {
+  private publishBlock(index: number, block: IndentationBlock): void {
     const maxEnd = block.accepted.reduce<FoldLineReference | null>(
       (max, fold) =>
-        maximumFoldLine(max, fold.end, (left, right) => this.#compareLines(left, right)),
+        maximumFoldLine(max, fold.end, (left, right) => this.compareLines(left, right)),
       null,
     )
     const next = { ...block, maxEnd }
     this.blocks[index] = next
     this.tree = updateFoldBlockTree(this.tree!, index, next, (left, right) =>
-      this.#compareLines(left, right),
+      this.compareLines(left, right),
     )
   }
 

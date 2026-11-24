@@ -296,23 +296,35 @@ function admitConfiguration(
       errors.push(`Missing configured project ${key}`)
   }
 }
+// Timing runs in the Tree-sitter browser project, run by hand rather than by ordinary CI.
+const treeSitterDiagnostics = [
+  {
+    file: 'test/native-profile.browser.test.ts',
+    owner: 'manual native-profile',
+    reason: 'Five-run native parser timing diagnostic, not ordinary correctness.',
+  },
+  {
+    file: 'test/range-query-profile.browser.test.ts',
+    owner: 'manual bench:range',
+    reason: 'Range highlight worker timing benchmark, not ordinary correctness.',
+  },
+] as const
 function classifyNativeProfile(projects: Project[]): Project[] {
   return projects.flatMap((project) => {
     if (project.directory !== 'packages/tree-sitter' || project.engine !== 'chromium')
       return [project]
-    const diagnostic = 'test/native-profile.browser.test.ts'
-    return [
-      { ...project, files: project.files.filter((file) => file !== diagnostic) },
-      {
+    const diagnosticFiles = treeSitterDiagnostics.map(({ file }) => file as string)
+    const ordinary = {
+      ...project,
+      files: project.files.filter((file) => !diagnosticFiles.includes(file)),
+    }
+    return [ordinary].concat(
+      treeSitterDiagnostics.map(({ file, owner, reason }) => ({
         ...project,
-        files: [diagnostic],
-        policy: {
-          kind: 'diagnostic',
-          owner: 'manual native-profile',
-          reason: 'Five-run native parser timing diagnostic, not ordinary correctness.',
-        },
-      },
-    ]
+        files: [file],
+        policy: { kind: 'diagnostic' as const, owner, reason },
+      })),
+    )
   })
 }
 function unclassifiedConfigurations(

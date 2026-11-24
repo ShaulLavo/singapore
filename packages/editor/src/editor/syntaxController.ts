@@ -234,7 +234,7 @@ export class EditorSyntaxController {
     key: 'editor.syntax.document',
     taskClass: 'background-derived',
   })
-  readonly #rangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
+  private readonly rangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
     key: 'editor.syntax.visibleRange',
     taskClass: 'viewport-derived',
   })
@@ -929,7 +929,7 @@ export class EditorSyntaxController {
     if (!uncoveredRange) return
     const pending = this.#pendingVisibleRange
     if (
-      this.#rangeRequests.isActive() &&
+      this.rangeRequests.isActive() &&
       pending?.documentVersion === documentVersion &&
       pending.contentVersion === this.#syntaxContentVersion &&
       syntaxRangeCoverage(uncoveredRange, [pending.range]) === 'full'
@@ -942,7 +942,7 @@ export class EditorSyntaxController {
     }
 
     this.#scheduleSyntaxRangeRequest(
-      this.#rangeRequests,
+      this.rangeRequests,
       documentVersion,
       uncoveredRange,
       options,
@@ -959,7 +959,7 @@ export class EditorSyntaxController {
     if (!this.options.getSession()) return false
     if (!this.#canQueryCurrentSyntaxRange()) return false
     if (!range || syntaxRangeCoverage(range, this.#cachedSyntaxRanges) === 'full') return false
-    if (this.#rangeRequests.isActive()) {
+    if (this.rangeRequests.isActive()) {
       this.#pendingPrefetch = {
         contentVersion: this.#syntaxContentVersion,
         documentVersion,
@@ -1032,7 +1032,7 @@ export class EditorSyntaxController {
     if (!retained) return
     this.#unsubscribeProducedSyntax = retained.onDidProduceSyntax(() => {
       if (this.retainedSyntax !== retained) return
-      this.#rangeRequests.cancel()
+      this.rangeRequests.cancel()
       this.#prefetchRangeRequests.cancel()
       this.#warmRangeRequests.cancel()
       this.#pendingPrefetch = null
@@ -1279,7 +1279,7 @@ export class EditorSyntaxController {
     this.#unsubscribeProducedSyntax = null
     this.stoppedWarm = null
     this.#syntaxRequests.cancel()
-    this.#rangeRequests.cancel()
+    this.rangeRequests.cancel()
     this.#prefetchRangeRequests.cancel()
     this.#warmRangeRequests.cancel()
     this.#pendingPrefetch = null
@@ -1338,7 +1338,7 @@ export class EditorSyntaxController {
       return false
     }
 
-    this.#rangeRequests.cancel()
+    this.rangeRequests.cancel()
     this.#applyCachedSyntaxFolds(range)
     this.options.adoptTokens(this.#currentTokens)
     return true
@@ -1767,7 +1767,7 @@ export class EditorSyntaxController {
     if (!this.options.getSession()) return false
     if (!this.#canQueryCurrentSyntaxRange()) return false
     if (!this.#canWarmSyntax()) return false
-    if (this.#rangeRequests.isActive()) return false
+    if (this.rangeRequests.isActive()) return false
     return !this.#prefetchRangeRequests.isActive()
   }
 

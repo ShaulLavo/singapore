@@ -153,13 +153,13 @@ function tokenLinesEqual(left: readonly ThemedToken[], right: readonly ThemedTok
 export class IncrementalShikiTokenizer implements IncrementalTokenizer {
   private code: string
   private lines: LineState[]
-  #untokenized = 0
+  private untokenized = 0
   private readonly tokenize: TokenizeLineFn
-  readonly #statesEqual: StatesEqualFn
+  private readonly statesEqual: StatesEqualFn
 
   public constructor(tokenizeLine: TokenizeLineFn, statesEqual: StatesEqualFn, code?: string) {
     this.tokenize = tokenizeLine
-    this.#statesEqual = statesEqual
+    this.statesEqual = statesEqual
     this.code = ''
     this.lines = []
 
@@ -170,8 +170,8 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     const { from, to, text } = edit
     const newCode = this.code.slice(0, from) + text + this.code.slice(to)
 
-    const start = this.#offsetToLine(from)
-    const end = this.#offsetToLine(to)
+    const start = this.offsetToLine(from)
+    const end = this.offsetToLine(to)
 
     // Splice the edit into the affected lines, separators included: an edit may split a CRLF.
     const startLine = this.lines[start.line]
@@ -184,7 +184,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
     // Retokenize edited lines using the grammar state before the first affected line
     const initialState = start.line === 0 ? undefined : this.lines[start.line - 1]?.endState
-    const retokenized = this.#tokenizeLines(editedLines, initialState)
+    const retokenized = this.tokenizeLines(editedLines, initialState)
 
     // Walk forward through old suffix lines until grammar state stabilizes
     const oldSuffixStart = end.line + 1
@@ -194,7 +194,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     for (let i = oldSuffixStart; i < this.lines.length; i++) {
       const oldLine = this.lines[i]!
 
-      if (this.#statesEqual(state, this.lines[i - 1]?.endState)) break
+      if (this.statesEqual(state, this.lines[i - 1]?.endState)) break
 
       const result = this.tokenize(oldLine.text, state)
       retokenized.push(lineState(oldLine, result))
@@ -205,7 +205,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     const fromOffset = from - start.col
     const oldEndOffset = lineOffset(this.lines, stableAt)
     this.code = newCode
-    this.#replaceLines(start.line, stableAt, retokenized)
+    this.replaceLines(start.line, stableAt, retokenized)
 
     return {
       fromLine: start.line,
@@ -228,7 +228,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
   }
 
   /** The line holding `offset`, where a column may fall inside that line's separator. */
-  #offsetToLine(offset: number): { line: number; col: number } {
+  private offsetToLine(offset: number): { line: number; col: number } {
     let remaining = offset
     const last = this.lines.length - 1
 
@@ -259,7 +259,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     const prefix = this.lines.slice(0, startLine)
     const previousTail = previousLength === 0 ? '' : (this.lines[previousLength - 1]?.text ?? '')
     const suffixLines = splitLines(previousTail + chunk)
-    const nextTail = this.#tokenizeLines(
+    const nextTail = this.tokenizeLines(
       suffixLines,
       startLine === 0 ? undefined : prefix[startLine - 1]?.endState,
     )
@@ -267,7 +267,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     const fromOffset = lineOffset(this.lines, startLine)
     const oldEndOffset = this.code.length
     this.code += chunk
-    this.#replaceLines(startLine, previousLength, nextTail)
+    this.replaceLines(startLine, previousLength, nextTail)
 
     return {
       fromLine: startLine,
@@ -330,10 +330,10 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
           previousLine &&
           sameSource(previousLine, line) &&
           tokenLinesEqual(tokenizedLine.tokens, previousLine.tokens) &&
-          this.#statesEqual(tokenizedLine.endState, previousLine.endState)
+          this.statesEqual(tokenizedLine.endState, previousLine.endState)
         ) {
           this.code = code
-          this.#replaceLines(prefixLength, previousIndex, rebuiltMiddle)
+          this.replaceLines(prefixLength, previousIndex, rebuiltMiddle)
           const nextDocument = this.lines
 
           return {
@@ -352,7 +352,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
     const oldEndOffset = this.code.length
     this.code = code
-    this.#replaceLines(prefixLength, previousLength, rebuiltMiddle)
+    this.replaceLines(prefixLength, previousLength, rebuiltMiddle)
 
     return {
       fromLine: prefixLength,
@@ -368,7 +368,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     const previousLength = this.lines.length
     const oldEndOffset = this.code.length
     this.code = code
-    this.#replaceLines(0, previousLength, this.#tokenizeLines(splitLines(code)))
+    this.replaceLines(0, previousLength, this.tokenizeLines(splitLines(code)))
 
     return {
       fromLine: 0,
@@ -385,14 +385,14 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
   }
 
   public untokenizedLineCount(): number {
-    return this.#untokenized
+    return this.untokenized
   }
 
   // Every line replacement goes through here so the plain-line count follows the current text.
-  #replaceLines(start: number, end: number, next: readonly LineState[]): void {
+  private replaceLines(start: number, end: number, next: readonly LineState[]): void {
     for (let index = start; index < end; index++)
-      if (this.lines[index]?.untokenized) this.#untokenized--
-    for (const line of next) if (line.untokenized) this.#untokenized++
+      if (this.lines[index]?.untokenized) this.untokenized--
+    for (const line of next) if (line.untokenized) this.untokenized++
     this.lines = this.lines.slice(0, start).concat(next, this.lines.slice(end))
   }
 
@@ -413,7 +413,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     return { sourceUnits: this.code.length, lineCount: this.lines.length, tokenCount }
   }
 
-  #tokenizeLines(lines: readonly SourceLine[], initialState?: unknown): LineState[] {
+  private tokenizeLines(lines: readonly SourceLine[], initialState?: unknown): LineState[] {
     const tokenized: LineState[] = []
     let previousState = initialState
 

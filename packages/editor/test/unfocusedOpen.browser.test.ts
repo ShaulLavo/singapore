@@ -86,6 +86,57 @@ it('opens a document in an unfocused editor without reading layout, and draws th
   expect(caretTransform(host)).not.toBe(warmCaret)
 })
 
+it('renders a scroll that leaves an unfocused caret off screen in one frame', async () => {
+  const { editor, host } = mountEditor()
+  editor.setText(Array.from({ length: 2000 }, (_value, index) => `line ${index}`).join('\n'))
+  editor.setSelection(0)
+  await nextFrame()
+  await nextFrame()
+  const scroller = host.querySelector<HTMLElement>('.editor-virtualized')!
+  const requestFrame = window.requestAnimationFrame
+  const cancelFrame = window.cancelAnimationFrame
+  const frame = () => new Promise((resolve) => requestFrame.call(window, resolve))
+  // Frames the editor has asked for and that have not run yet.
+  const pending = new Set<number>()
+  window.requestAnimationFrame = (callback) => {
+    const id = requestFrame.call(window, (time) => {
+      pending.delete(id)
+      callback(time)
+    })
+    pending.add(id)
+    return id
+  }
+  window.cancelAnimationFrame = (id) => {
+    pending.delete(id)
+    cancelFrame.call(window, id)
+  }
+  restores.push(() => {
+    window.requestAnimationFrame = requestFrame
+    window.cancelAnimationFrame = cancelFrame
+  })
+  // Read right after the render that recycles the rows has written them.
+  let pendingAfterRender: number | null = null
+  const observer = new MutationObserver(() => {
+    pendingAfterRender ??= pending.size
+  })
+  observer.observe(scroller, { subtree: true, childList: true, characterData: true })
+  restores.push(() => observer.disconnect())
+
+  scroller.scrollTop = 20_000
+  await frame()
+  await frame()
+  await frame()
+
+  const rows = Array.from(
+    host.querySelectorAll('.editor-virtualized-row'),
+    (row) => row.textContent,
+  )
+  expect(rows).not.toContain('line 0')
+  expect(rows.length).toBeGreaterThan(0)
+  expect(visibleCarets(host)).toHaveLength(0)
+  expect(pendingAfterRender).toBe(0)
+})
+
 it('draws an unfocused editor caret in the next frame', async () => {
   const { editor, host } = mountEditor()
   const session = createDocumentSession('alpha\nbeta\n')
