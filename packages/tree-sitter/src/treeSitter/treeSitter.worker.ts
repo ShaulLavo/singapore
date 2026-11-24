@@ -2693,7 +2693,9 @@ const carryReusableLayer = async (
   const layerChanged = reusable.layer.ranges.some((range) => {
     return rangeIntersectsChangedRanges(range, changedRanges)
   })
-  if (!layerChanged && reusable.keepsShape) {
+  // A kept tree still reads its text through the old parse's source; it reads the new one instead.
+  if (!layerChanged && reusable.keepsShape && canRebindTreeSource(reusable.layer.tree)) {
+    rebindReusedTreeSource(reusable.layer.tree, options.source, reusable.layer.ranges)
     reusable.state = 'consumed'
     return reusable.layer
   }
