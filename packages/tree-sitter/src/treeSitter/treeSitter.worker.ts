@@ -2,7 +2,7 @@ import { editReusableTree } from './reuse'
 import { REVIEW_BATCH_YIELD_RANGES } from './reviewBatch'
 import { parseProjectedTree } from './projection'
 import { TREE_SITTER_BOOTSTRAP_UNITS } from './source'
-import { queryStaysInRootChildren } from './injectionLocality'
+import { injectionsStayInRootChildren } from './injectionLocality'
 import {
   SLICE_CAPTURE_LIMIT,
   SLICE_GRAMMAR_LIMIT,
@@ -1087,7 +1087,7 @@ const editDocument = async (
     const injectionRanges = enclosingRanges(
       changedRanges.concat(editedRanges(request.inputEdits, source.length)),
       [reusableTree, rootLayer.tree],
-      injectionsStayInRootChildren(runtime, rootLayer.tree.rootNode),
+      runtimeInjectionsStayInRootChildren(runtime, rootLayer.tree.rootNode),
     )
     const degraded: TreeSitterDegradedState[] = []
     const markdown = await prepareMdxMarkdown(request, source, rootLayer)
@@ -2100,11 +2100,12 @@ const enclosingSpan = (
 const injectionScopes = new WeakMap<Runtime, boolean>()
 
 /** Whether the language's injection matches each stay inside one child of `root`. */
-const injectionsStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
+const runtimeInjectionsStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
   const known = injectionScopes.get(runtime)
   if (known !== undefined) return known
+  const query = ensureQuery(runtime, 'injection')
   const source = runtime.descriptor.injectionQuerySource ?? ''
-  const stays = queryStaysInRootChildren(source, root.type)
+  const stays = query !== null && injectionsStayInRootChildren(query, source, root.type)
   injectionScopes.set(runtime, stays)
   return stays
 }

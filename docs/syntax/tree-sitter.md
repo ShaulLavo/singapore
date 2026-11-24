@@ -77,8 +77,10 @@ again for a warmed or prefetched range beyond the shown rows.
 An edit looks for injections only in the root's changed ranges and the edit itself, each grown to
 the smallest node holding it. When that node is the root, the range grows to the top-level nodes
 it touches, but only for a language whose injection query keeps every match inside one top-level
-node (`queryStaysInRootChildren`); a query with sibling patterns, or one naming the root or a
-wildcard, can pair a changed statement with a distant one and is scanned over the whole document.
+node (`injectionsStayInRootChildren`): every compiled pattern must be rooted, which rules out
+sibling groups and quantified alternations, and its root may be neither the document's root type
+nor a wildcard. Any other query can pair a changed statement with a distant one and is scanned
+over the whole document.
 Injection layers outside those ranges keep their edited trees, reading the new text, when every
 edit ends on a row above them, and are reparsed when an edit moved the column they start at.
 

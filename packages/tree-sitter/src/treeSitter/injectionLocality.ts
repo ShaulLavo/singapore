@@ -1,8 +1,35 @@
+/** The compiled query's own account of how each pattern is shaped. */
+export type CompiledPatternShapes = {
+  patternCount(): number
+  isPatternRooted(patternIndex: number): boolean
+  isPatternNonLocal(patternIndex: number): boolean
+}
+
 /**
- * Whether every match of a query lies inside one child of the root: no pattern names the root's
- * node type or a wildcard as its outermost node, and none is a group of sibling patterns. An edit
- * can then look for injections in the root children it touches; any other query may pair a node
- * the edit changed with one far away, and is scanned over the whole document.
+ * Whether every match of a query lies inside one child of the root. An edit can then look for
+ * injections in the root children it touches; any other query may pair a node the edit changed
+ * with one far away, and is scanned over the whole document.
+ *
+ * The compiled query decides the shape: every pattern must have a single root node, which rules
+ * out sibling groups and quantified alternations however they are written. The source decides
+ * what that root node may be: neither the document's root type nor a wildcard. Anything the
+ * source check cannot read counts as reaching across the document.
+ */
+export function injectionsStayInRootChildren(
+  query: CompiledPatternShapes,
+  source: string,
+  rootType: string,
+): boolean {
+  for (let index = 0; index < query.patternCount(); index++) {
+    if (!query.isPatternRooted(index) || query.isPatternNonLocal(index)) return false
+  }
+  return queryStaysInRootChildren(source, rootType)
+}
+
+/**
+ * The source half of `injectionsStayInRootChildren`: no pattern names the root's node type or a
+ * wildcard as its outermost node, and none is a group of sibling patterns. Quantifiers are not
+ * read here; the compiled query's rootedness covers them.
  */
 export function queryStaysInRootChildren(source: string, rootType: string): boolean {
   const items = parseQuery(source)

@@ -167,18 +167,34 @@ browserTest.each(['full', 'range'] as const)(
   },
 )
 
-// A query that pairs nodes in different top-level statements: an edit to one of them can end a
+// Queries that pair nodes in different top-level statements: an edit to one of them can end a
 // match whose injected text lies in a statement the edit never touched.
-const SIBLING_INJECTION = String.raw`
+const SPANNING_INJECTIONS = [
+  {
+    name: 'sibling patterns',
+    query: String.raw`
 ((expression_statement (identifier) @_name)
   (expression_statement (string (string_fragment) @injection.content))
   (#eq? @_name "inject")
-  (#set! injection.language "regex"))
-`
+  (#set! injection.language "regex"))`,
+    text: 'inject;\nnoop;\nspace;\n"ab+";\n',
+    edit: { from: 0, to: 12, text: 'other_;\nnext' },
+  },
+  {
+    name: 'a quantified alternation',
+    query: String.raw`
+([(comment) @trigger
+  (expression_statement (string (string_fragment) @injection.content))]+
+ (#any-match? @trigger "^// inject")
+ (#set! injection.language "regex"))`,
+    text: '// inject\n// spacer\n' + '// away\n'.repeat(30) + '"ab+";\n',
+    edit: { from: 0, to: 19, text: '// other!\n// newpad\n' },
+  },
+] as const
 
-browserTest(
-  'drops an injection whose match spanning top-level statements an edit ended',
-  async () => {
+browserTest.each(SPANNING_INJECTIONS)(
+  'drops an injection whose match through $name spanning top-level statements an edit ended',
+  async ({ query, text, edit }) => {
     const backend = new TreeSitterWorkerClient()
     clients.add(backend)
     const languageResolver = new TreeSitterLanguageRegistry()
@@ -191,7 +207,7 @@ browserTest(
         ...contribution,
         load: async () => ({
           ...(contribution.load ? await contribution.load() : contribution),
-          injectionQuerySource: SIBLING_INJECTION,
+          injectionQuerySource: query,
         }),
       })
     }
@@ -201,12 +217,11 @@ browserTest(
       backend,
       syntaxMode: 'full',
     } as const
-    const text = 'inject;\nnoop;\nspace;\n"ab+";\n'
     const document = createDocumentSession(text)
     const session = createTreeDocument({ ...options, documentId: 'sibling.ts', text })
     const initial = await session.run()
     expect(initial.injections.map((injection) => injection.languageId)).toEqual(['regex'])
-    const change = document.applyEdits([{ from: 0, to: 12, text: 'other_;\nnext' }])
+    const change = document.applyEdits([edit])
     const actual = await session.edit(change.edits)
     const fresh = createTreeDocument({
       ...options,
