@@ -288,8 +288,6 @@ export class EditorSyntaxController {
     readonly range: EditorSyntaxRange
   } | null = null
   #pendingPrefetch: PendingSyntaxPrefetch | null = null
-  /** The range of the last look-ahead scheduled; on its way while that request is active. */
-  #prefetchRange: EditorSyntaxRange | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   #warmGeneration = 0
 
@@ -970,22 +968,7 @@ export class EditorSyntaxController {
       }
       return true
     }
-    // A look-ahead on its way that overlaps this window stays: replacing it would cancel work that
-    // is still useful, and a scroll turning back and forth would never let one land. The newest
-    // window is asked for once it lands, if it is still not covered. A far jump replaces it.
-    const active = this.#prefetchRange
-    if (this.#prefetchRangeRequests.isActive() && active && syntaxRangesIntersect(active, range)) {
-      if (!sameSyntaxRange(active, range))
-        this.#pendingPrefetch = {
-          contentVersion: this.#syntaxContentVersion,
-          documentVersion,
-          options,
-          range,
-        }
-      return true
-    }
 
-    this.#prefetchRange = range
     this.#scheduleSyntaxRangeRequest(
       this.#prefetchRangeRequests,
       documentVersion,
@@ -1338,11 +1321,7 @@ export class EditorSyntaxController {
         if (applied && kind === 'visible' && this.#foldsCoverViewport()) {
           if (!this.#flushPendingPrefetch()) this.#flushPendingWarm()
         }
-        // A window that came in while this look-ahead was on its way goes next, then warming.
-        if (applied && kind === 'prefetch') {
-          if (this.#pendingPrefetch) this.#flushPendingPrefetch()
-          else this.#flushPendingWarm()
-        }
+        if (applied && kind === 'prefetch') this.#flushPendingWarm()
       }),
       fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) =>
         this.#recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration),
