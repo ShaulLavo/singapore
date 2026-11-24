@@ -166,6 +166,29 @@ describe('typing before the first highlight', () => {
     expect(editor.getState().initialHighlightStatus).toBe('loading')
   })
 
+  it('skips the debounce for the first key only, so a burst does not ask once per key', async () => {
+    const analysed: number[] = []
+    open((read, signal) => {
+      analysed.push(read.text.length)
+      return new Promise((_resolve, reject) =>
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+      )
+    })
+    await vi.waitFor(() => expect(analysed).toEqual([3]))
+
+    type('x')
+    type('y')
+    type('z')
+
+    // The first key asks at once. The two after it go to the debounce, which coalesces them into
+    // one request; the scheduler is stubbed here, so that one never runs and nothing more is
+    // analysed.
+    expect(scheduled.filter((work) => work.key === 'editor.syntaxRefresh')).toHaveLength(2)
+    await vi.waitFor(() => expect(analysed).toEqual([3, 4]))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(analysed).toEqual([3, 4])
+  })
+
   it('debounces again once the first highlight has landed', async () => {
     open(async () => createEmptySyntaxResult())
     await vi.waitFor(() => expect(editor.getState().initialHighlightStatus).not.toBe('loading'))

@@ -36,16 +36,40 @@ describe('the first highlight of a document', () => {
     fixture.answer(0, colored(1))
     await vi.waitFor(() => expect(fixture.asked).toEqual([rows, VISIBLE]))
 
-    // Colors are on screen from the first answer; folds wait for the range that covers the view.
+    // Colors are on screen from the first answer. The document's highlight is not settled by it:
+    // the answer that covers the visible range is still on its way, and so are the folds.
     expect(fixture.adopted).toEqual([1])
-    expect(fixture.syntax.initialHighlightStatus).toBe('painted')
+    expect(fixture.syntax.initialHighlightStatus).toBe('loading')
+    expect(fixture.syntax.status).toBe('loading')
     expect(fixture.folds).toEqual([])
 
     fixture.answer(1, { ...colored(3), folds: [fold()] })
     await vi.waitFor(() => expect(fixture.folds).toEqual([1]))
 
+    expect(fixture.syntax.initialHighlightStatus).toBe('painted')
     expect(fixture.syntax.status).toBe('ready')
     expect(fixture.asked).toEqual([rows, VISIBLE])
+  })
+
+  it('leaves the visible range to the request that superseded this one', async () => {
+    const rows = { startIndex: 0, endIndex: 540 }
+    const fixture = controller(rows)
+
+    fixture.syntax.refresh(1, null, { delayMs: 0 })
+    await vi.waitFor(() => expect(fixture.asked).toEqual([rows]))
+    // A newer request, as an edit makes, while the first one's rows are still on their way.
+    fixture.syntax.refresh(1, null, { delayMs: 0 })
+    await vi.waitFor(() => expect(fixture.asked).toEqual([rows, rows]))
+
+    fixture.answer(0, colored(1))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The superseded request stops there. It does not go on to ask for the range around its
+    // rows, which would be a second, wider query for text nobody is waiting on.
+    expect(fixture.asked).toEqual([rows, rows])
+
+    fixture.answer(1, colored(1))
+    await vi.waitFor(() => expect(fixture.asked).toEqual([rows, rows, VISIBLE]))
   })
 
   it('asks once when the rows on screen are nearly the whole visible range', async () => {

@@ -38,6 +38,8 @@ type PendingRequest = {
   readonly cleanup: () => void
   readonly runtimeSessionId: string | null
   readonly cancellationFlag: Int32Array | null
+  /** The caller cancels this request through its own signal. */
+  readonly owned: boolean
   readonly payload: TreeSitterWorkerRequestPayload
   readonly resolve: (result: TreeSitterWorkerResult) => void
   readonly reject: (error: Error) => void
@@ -221,21 +223,6 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     }
   }
 
-  /**
-   * Creates the worker and starts loading the parser runtime without waiting for either, so both
-   * are under way while the caller builds its view. A failure is reported by the first request.
-   */
-  public start(): void {
-    try {
-      if (!this.startWorker() || !this.initPromise) return
-      void this.trackClientTask(this.initPromise).catch(() => undefined)
-    } catch {
-      // Best effort: a worker that cannot be constructed here (a `SecurityError` from the
-      // constructor or the host's factory) is constructed again by the first document's request,
-      // which reports the failure through the usual syntax path.
-    }
-  }
-
   public registerLanguages(languages: readonly TreeSitterLanguageDescriptor[]): Promise<void> {
     return this.trackClientTask(this.finishRegisterLanguages(languages))
   }
@@ -246,9 +233,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const nextLanguages = this.unregisteredLanguages(languages)
     if (nextLanguages.length === 0) return
 
-    // Not held back until the parser runtime has loaded: the worker starts downloading a grammar
-    // when it is registered, and on a cold worker that overlaps the runtime's own download.
-    const handle = this.startWorker()
+    const handle = await this.ensureWorkerReady()
     if (!handle) return
 
     await this.postRequest({ type: 'registerLanguages', languages: nextLanguages })
@@ -717,23 +702,15 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return handle
   }
 
-  /** The worker with its parser runtime load posted; requests sent now queue behind that load. */
-  private startWorker(): Worker | null {
-    const handle = this.getWorker()
-    if (!handle || this.initPromise) return handle
-
-    this.initPromise = this.postRequest({ type: 'init' }).then(() => {
-      if (this.worker === handle) this.lifecycle = 'ready'
-    })
-    // Reported to whoever waits in `ensureWorkerReady`; a caller that only started the worker
-    // learns of a failed load from its own request.
-    void this.initPromise.catch(() => undefined)
-    return handle
-  }
-
   private async ensureWorkerReady(): Promise<Worker | null> {
-    const handle = this.startWorker()
+    const handle = this.getWorker()
     if (!handle) return null
+
+    if (!this.initPromise) {
+      this.initPromise = this.postRequest({ type: 'init' }).then(() => {
+        if (this.worker === handle) this.lifecycle = 'ready'
+      })
+    }
 
     await this.initPromise
     if (this.lifecycle === 'disposing' || this.lifecycle === 'disposed') return null
@@ -767,6 +744,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
         cleanup: () => signal?.removeEventListener('abort', abort),
         runtimeSessionId: runtimeSessionIdForPayload(payload),
         cancellationFlag: cancellationFlagForPayload(payload),
+        owned: signal !== undefined,
         payload,
         resolve,
         reject,
@@ -797,11 +775,13 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     payload: TreeSitterRangeDocumentRequest,
     signal?: AbortSignal,
   ): Promise<TreeSitterWorkerResult> {
-    return this.postRequest(
-      this.withCancellation(this.cancelPreviousRangeRequests(payload.runtimeSessionId), payload),
-      false,
-      signal,
-    )
+    // A caller with a signal cancels its own query when it is superseded. Cancelling every earlier
+    // query here would also stop another caller's query that is still wanted, such as look-ahead
+    // while each scroll step asks for its rows, and it would be asked for again.
+    const cancellation = signal
+      ? this.createCancellationFlag()
+      : this.cancelPreviousRangeRequests(payload.runtimeSessionId)
+    return this.postRequest(this.withCancellation(cancellation, payload), false, signal)
   }
 
   private cancelPreviousDocumentRequests(runtimeSessionId: string): Int32Array | null {
@@ -818,7 +798,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const cancellationFlag = this.createCancellationFlag()
     for (const pending of this.pendingRequests.values()) {
       if (pending.runtimeSessionId !== runtimeSessionId) continue
-      if (pending.payload.type !== 'queryRange') continue
+      if (pending.payload.type !== 'queryRange' || pending.owned) continue
       if (pending.cancellationFlag) Atomics.store(pending.cancellationFlag, 0, 1)
     }
 

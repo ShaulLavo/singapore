@@ -36,91 +36,13 @@ const DESCRIPTORS: Record<string, TreeSitterLanguageDescriptor> = {
 }
 
 describe('injected language registration', () => {
-  it('registers its language when it is created, before the first analysis', async () => {
+  it('keeps declared injection assets unloaded until the worker requests them', async () => {
     const registered: string[][] = []
-    createSession('html', registered)
-
-    await flushPromises()
-
-    // The editor asks for the first analysis after it has built the document's view. The
-    // grammar is already registered, and downloading, by then.
-    expect(registered).toEqual([['html']])
-  })
-
-  it('starts loading the grammars its language can inject as soon as the language is known', async () => {
-    const registered: string[][] = []
-    const resolved: string[] = []
-    const session = createTreeDocument({
-      documentId: 'preload',
-      languageId: 'container',
-      languageResolver: {
-        resolveTreeSitterLanguage: async (id) => {
-          resolved.push(id)
-          return DESCRIPTORS[id] ?? null
-        },
-      },
-      backend: recordingBackend(registered),
-      text: '',
-    })
-
-    await flushPromises()
-
-    // No document was parsed, so the worker asked for nothing. The grammar the language declares
-    // it can inject is registered behind the language itself, and only that one: what the
-    // injected grammar can inject in turn is left to the parse that finds it.
-    expect(resolved).toEqual(['container', 'embedded'])
-    expect(registered).toEqual([['container'], ['embedded']])
-    session.dispose()
-  })
-
-  it('does not hold the first analysis for a grammar it is loading ahead', async () => {
-    const registered: string[][] = []
-    let release!: () => void
-    const held = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const session = createTreeDocument({
-      documentId: 'preload-held',
-      languageId: 'container',
-      languageResolver: {
-        resolveTreeSitterLanguage: async (id) => {
-          if (id === 'embedded') await held
-          return DESCRIPTORS[id] ?? null
-        },
-      },
-      backend: recordingBackend(registered),
-      text: '',
-    })
+    const session = createSession('container', registered)
 
     await session.run()
+
     expect(registered).toEqual([['container']])
-
-    release()
-    await flushPromises()
-    expect(registered).toEqual([['container'], ['embedded']])
-    session.dispose()
-  })
-
-  it('analyses the document when a grammar it loads ahead cannot be loaded', async () => {
-    const registered: string[][] = []
-    const session = createTreeDocument({
-      documentId: 'preload-failed',
-      languageId: 'container',
-      languageResolver: {
-        resolveTreeSitterLanguage: async (id) => {
-          if (id === 'embedded') throw new Error('asset offline')
-          return DESCRIPTORS[id] ?? null
-        },
-      },
-      backend: recordingBackend(registered),
-      text: '',
-    })
-
-    // Nothing in the document needs the grammar, so its failure is nobody's problem.
-    await expect(session.run()).resolves.toBeDefined()
-    await flushPromises()
-    expect(registered).toEqual([['container']])
-    session.dispose()
   })
 
   it('registers only the document language when nothing is injected', async () => {
@@ -217,8 +139,7 @@ it('does not register or parse a delayed injection after disposal', async () => 
   release(descriptor('astro'))
   await refresh
   expect(parses).toBe(1)
-  // The language and the grammar it declares it can inject; not the one the document asked for.
-  expect(registered).toEqual([['container'], ['embedded']])
+  expect(registered).toEqual([['container']])
 })
 
 it('shares a delayed language load with the newer document version', async () => {
@@ -268,7 +189,7 @@ it('shares a delayed language load with the newer document version', async () =>
   expect(loads).toBe(1)
   expect(session.runtime.getResult()).toBe(latest)
   expect(latest.projection.snapshot.length).toBe(session.buffer.getTextSnapshot().length)
-  expect(registered).toEqual([['container'], ['embedded'], ['astro']])
+  expect(registered).toEqual([['container'], ['astro']])
   session.dispose()
 })
 

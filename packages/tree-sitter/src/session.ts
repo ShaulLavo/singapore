@@ -111,9 +111,6 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     this.backend = options.backend ?? new TreeSitterWorkerClient()
     this.onFirstParse = options.onFirstParse
     this.result = this.createEmptyResult({ length: this.initialLength, snapshotVersion: 0 })
-    // The editor schedules the first analysis after it has built the document's view. The
-    // grammar's queries and its download start now, so they load while that view is built.
-    if (this.languageResolver) void this.ensureLanguageRegistered().catch(() => undefined)
   }
 
   public get foldingSupport(): EditorSyntaxFoldingSupport {
@@ -564,32 +561,8 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     this.currentFoldingSupport = descriptor.foldQuerySource?.trim() ? 'supported' : 'unsupported'
 
     if (this.disposed) return false
-    this.preloadInjectedLanguages(descriptor)
     await this.backend.registerLanguages([descriptor])
     return true
-  }
-
-  /**
-   * Starts loading the grammars this language's injections can name (documentation comments and
-   * regular expressions for TypeScript) as soon as the language itself is known, in parallel
-   * with the document's first parse. That parse then usually finds them registered and their
-   * download under way, and adds their layers in one pass.
-   *
-   * Nothing waits for this, and nothing about readiness changes: a grammar that is late, or that
-   * fails to load here, is asked for by the parse that needs it, exactly as before.
-   */
-  private preloadInjectedLanguages(descriptor: TreeSitterLanguageDescriptor): void {
-    const ids = descriptor.injectionDependencies ?? []
-    if (ids.length === 0) return
-    void this.registerPreloadedLanguages(ids).catch(() => undefined)
-  }
-
-  private async registerPreloadedLanguages(ids: readonly string[]): Promise<void> {
-    const loads = await Promise.allSettled(ids.map((id) => this.requestedLanguage(id)))
-    if (this.disposed) return
-    const descriptors = loads.flatMap((load) => (load.status === 'fulfilled' ? load.value : []))
-    // One message for all of them: each registration waits for the worker's answer.
-    if (descriptors.length > 0) await this.backend.registerLanguages(descriptors)
   }
 
   private async registerMissingLanguages(
@@ -599,20 +572,18 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     let loaded = false
     for (const id of new Set(languageIds)) {
       if (this.disposed || !this.isCurrentSnapshotVersion(version)) return false
-      const descriptors = await this.requestedLanguage(id)
+      let pending = this.pendingLanguages.get(id)
+      if (!pending) {
+        pending = this.resolveRequestedLanguage(id)
+        this.pendingLanguages.set(id, pending)
+      }
+      const descriptors = await pending
       if (this.disposed || !this.isCurrentSnapshotVersion(version)) return false
       if (descriptors.length === 0) continue
       await this.backend.registerLanguages(descriptors)
       loaded = true
     }
     return loaded
-  }
-
-  /** One resolution per language for the session, shared by the preload and the parse path. */
-  private requestedLanguage(id: string): Promise<readonly TreeSitterLanguageDescriptor[]> {
-    const pending = this.pendingLanguages.get(id) ?? this.resolveRequestedLanguage(id)
-    this.pendingLanguages.set(id, pending)
-    return pending
   }
 
   private async resolveRequestedLanguage(

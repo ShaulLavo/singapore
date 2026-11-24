@@ -5191,8 +5191,9 @@ export class Editor {
 
     // The debounce keeps colors that are on screen from being recomputed on every key. Before the
     // document's first highlight there are none, and waiting only adds the debounce to the time
-    // the text stays uncolored when a key arrives while the grammar is still loading.
-    if (this.syntax.awaitingFirstHighlight) {
+    // the text stays uncolored when a key arrives while the grammar is still loading. Only the
+    // first such key skips it: the ones after it in a burst are debounced and coalesced as usual.
+    if (this.syntax.claimUndebouncedRefresh()) {
       measureEditorPerformance('editor.refreshSyntax', () =>
         this.refreshSyntax(documentVersion, change, { delayMs: 0 }),
       )

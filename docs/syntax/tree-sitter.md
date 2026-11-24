@@ -49,15 +49,6 @@ The main thread may render syntax results, but it must not synchronously parse o
 
 Each parse result is tied to a document snapshot/version. Consumers must be able to reject syntax results whose base snapshot is older than the visible document state.
 
-### Start-up
-
-Everything on the way to a document's first colors starts as early as its inputs are known. None of it changes what an answer means or when it is complete:
-
-- A syntax plugin starts its provider's worker when an editor activates it, which is before the editor builds its view. The worker script and the parser runtime load while that view is built. The start is best effort: a worker that cannot be constructed there is constructed again by the first document's request, which reports the failure.
-- A syntax session resolves its language when it is created, and registers it with the worker without waiting for the parser runtime. The worker starts downloading and compiling a grammar when it is registered, so on a cold worker the grammar and the runtime download together. Both are compiled while they stream, which lets a browser reuse the compiled code from its HTTP cache.
-- The grammars a language declares it can inject (`injectionDependencies`: documentation comments and regular expressions for TypeScript) are resolved and registered as soon as the language is known, in parallel with the first parse. See [Injections](#injections).
-- A key typed before the first colors is not debounced. The debounce protects colors that are on screen, and there are none yet.
-
 ### Long requests
 
 A page without cross-origin isolation has no shared memory, so it cannot interrupt a running worker. The worker therefore never runs long without returning to its message loop:
@@ -78,6 +69,14 @@ The session numbers its range requests. Each caller is answered with the range i
 4. Tree-sitter incrementally reparses against `S+1`.
 5. Queries run for invalidated or visible ranges first.
 6. Query results are emitted as syntax decorations or structural ranges tagged with their base snapshot.
+
+### Range requests while scrolling
+
+Each viewport change asks for the visible rows' uncached text and for a look-ahead window around them: 64,000 characters in the scroll direction and 32,000 behind (up to 192,000 ahead on a fast scroll). A newer look-ahead replaces the older one for the view, which ignores the older answer, but the older query keeps running: when the scroll turns back, its answer is cached for the next window, and a request for the same window joins it. Only an edit or disposal stops it.
+
+A query for shown rows or a background tile that every caller has left is never sent to the worker. One already running stays joinable for 150 ms for a caller asking for the same range again; after that, or as soon as another range is asked for, it is cancelled, and a query that was waiting for the complete analysis is not sent again once that lands. A caller's query is never cancelled because another caller's query started.
+
+Cancelling a query already posted to the worker stops it mid-query only where shared cancellation flags are available (a cross-origin-isolated page). Without them, the worker finishes the query and its answer is dropped. Not sending a query, or not sending it again, works everywhere.
 
 Open implementation details:
 
@@ -102,7 +101,9 @@ A range-mode editor asks for the text it shows, one range at a time, and keeps t
 
 Answers carried through an edit only stand in for the new parse. Its first answer replaces them, and what they covered is asked for again when it is shown.
 
-A document with no colors yet is asked for the rows on screen first, and for the visible range (those rows plus the text kept ready around them) right after. The first answer paints tokens only; folds, brackets and injected spans come with the answer that covers the visible range, as before. The extra request is skipped when the rows on screen are within 4,096 characters of the visible range.
+A document with no colors yet is asked for the rows on screen first, and for the visible range (those rows plus the text kept ready around them) right after. The first answer only puts tokens on screen. It does not settle the document's highlight: the status stays `loading`, no initial-paint event is sent, and folds, brackets and injected spans are left alone until the answer that covers the visible range arrives, as before. A request that a newer one supersedes while its rows are on their way does not go on to ask for the range around them. The extra request is skipped when the rows on screen are within 4,096 characters of the visible range.
+
+The first edit that arrives while a document has no colors yet skips the typing debounce, which exists to protect colors that are on screen. Only that one does: the edits after it are debounced and coalesced as usual, so a burst of keys before the first colors asks for syntax twice, not once per key.
 
 The trim removes tokens only while the painted store is made of range answers alone. After an edit, a newer analysis, or tokens installed by a host, it removes none.
 
@@ -158,8 +159,6 @@ Fold ranges should cross into the display transform layer as anchor-backed range
 Language injections are part of the syntax system, not a separate tokenizer path.
 
 Injected parse trees must retain parent snapshot identity and produce highlights/decorations in buffer coordinates so rendering and selection stay unified.
-
-A document's first answer includes its injected layers, and waits for the grammars they need. To keep that wait short, a session starts loading the grammars its language declares it can inject as soon as the language is known, without waiting for a parse to ask: the first parse then usually finds them registered and their download under way, and adds their layers in one pass instead of answering, loading and parsing again. Only the declared grammars are loaded ahead, not the ones those can inject in turn. Nothing waits for the load, and a grammar that is late or fails to load is asked for by the parse that needs it, as before. Any other injected grammar (a Markdown fence's language) still loads on demand.
 
 ## Acceptance Criteria
 

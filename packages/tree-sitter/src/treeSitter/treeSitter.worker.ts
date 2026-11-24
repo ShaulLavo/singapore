@@ -280,36 +280,12 @@ const createErrorMessage = (error: unknown): string => {
 const ensureParserRuntime = async (): Promise<void> => {
   if (parserInitPromise) return parserInitPromise
 
-  parserInitPromise = initializeParserRuntime().catch((error) => {
+  parserInitPromise = Parser.init({ locateFile: () => parserWasmUrl }).catch((error) => {
     parserInitPromise = null
     throw error
   })
   return parserInitPromise
 }
-
-const initializeParserRuntime = async (): Promise<void> => {
-  const compiled = await compileStreamedWasm(parserWasmUrl)
-  await Parser.init(compiled ? { wasmBinary: compiled } : { locateFile: () => parserWasmUrl })
-}
-
-/**
- * A Wasm binary compiled while it downloads, which lets a browser reuse its compiled code from the
- * HTTP cache, and lets a grammar's download start before the parser runtime that links it is ready.
- * Null where that is unavailable or fails; the caller then loads the binary the plain way, which
- * reports the error.
- */
-const compileStreamedWasm = async (wasmUrl: string): Promise<WebAssembly.Module | null> => {
-  if (typeof WebAssembly.compileStreaming !== 'function' || runsInNode()) return null
-  try {
-    return await WebAssembly.compileStreaming(fetch(wasmUrl))
-  } catch {
-    return null
-  }
-}
-
-// Node reads grammars from file paths, which `fetch` does not accept.
-const runsInNode = (): boolean =>
-  Boolean((globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node)
 
 const registerLanguages = (descriptors: readonly TreeSitterLanguageDescriptor[]): void => {
   for (const descriptor of descriptors) registerLanguage(descriptor)
@@ -325,7 +301,6 @@ const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
 
   if (!existing) {
     languageRegistryVersion += 1
-    streamGrammar(normalized)
     return
   }
   const unchanged = languageDescriptorsEqual(existing, normalized)
@@ -334,26 +309,6 @@ const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
 
   disposeRuntimeForLanguage(normalized.id)
   disposeCachedSnapshotsForLanguage(normalized.id)
-  streamGrammar(normalized)
-}
-
-// A language is registered because a document or an injection is about to use it, and that
-// request arrives a few messages later (the document's text is sent first). Its grammar, the
-// largest download on the way to the first highlight, starts here instead of with that request.
-const streamedGrammars = new Map<string, Promise<WebAssembly.Module | null>>()
-
-const streamGrammar = ({ id, wasmUrl }: TreeSitterLanguageDescriptor): void => {
-  // Markdown's grammars are loaded by its own support module, never through a runtime here, so
-  // a compilation started for it would stay in the map unused.
-  if (id === 'markdown' || streamedGrammars.has(wasmUrl)) return
-  streamedGrammars.set(wasmUrl, compileStreamedWasm(wasmUrl))
-}
-
-/** The grammar's streamed compilation, handed over once so the module is not retained here. */
-const takeStreamedGrammar = (wasmUrl: string): Promise<WebAssembly.Module | null> => {
-  const streamed = streamedGrammars.get(wasmUrl) ?? compileStreamedWasm(wasmUrl)
-  streamedGrammars.delete(wasmUrl)
-  return streamed
 }
 
 /**
@@ -428,16 +383,12 @@ const ensureRuntime = async (languageId: TreeSitterLanguageId): Promise<Runtime>
 }
 
 const createRuntime = async (languageId: TreeSitterLanguageId): Promise<Runtime> => {
-  // Started before the parser runtime is awaited, so on a cold worker both download together.
-  const registered = languageDescriptors.get(languageId)
-  const streamed = registered ? takeStreamedGrammar(registered.wasmUrl) : null
   await ensureParserRuntime()
 
   const descriptor = languageDescriptors.get(languageId)
   if (!descriptor) throw new Error(`Tree-sitter language "${languageId}" is not registered`)
 
-  const compiled = descriptor === registered ? await streamed : null
-  const language = compiled ? Language.loadSync(compiled) : await Language.load(descriptor.wasmUrl)
+  const language = await Language.load(descriptor.wasmUrl)
   const parser = new Parser()
   parser.setLanguage(language)
 
@@ -4516,7 +4467,6 @@ const disposeAll = (): void => {
   markdownDocuments.clear()
   sourceReader.dispose()
   languageDescriptors.clear()
-  streamedGrammars.clear()
   for (const sliceLanguageId of sliceRuntimes.keys()) disposeSliceLanguage(sliceLanguageId)
   sliceGrammars.clear()
   languageDescriptorOrder.length = 0
