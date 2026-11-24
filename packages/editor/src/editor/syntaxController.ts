@@ -163,8 +163,6 @@ type PendingSyntaxWarm = {
 type CachedSyntaxFoldRange = {
   readonly range: EditorSyntaxRange
   readonly folds: readonly FoldRange[]
-  /** The answer's brackets; none once an edit is projected through it, until a new answer. */
-  readonly brackets: readonly BracketInfo[]
   readonly result: EditorSyntaxResult
   readonly snapshot: DocumentTextSnapshot
   /** The parts of `range` that no later answer has covered. */
@@ -246,12 +244,6 @@ export class EditorSyntaxController {
     | { readonly kind: 'full' }
     | { readonly kind: 'range'; readonly range: EditorSyntaxRange }
     | null = null
-  // Only bracket arrays: holding the answers would keep their records alive after the range cache
-  // drops them.
-  #joinedBrackets: {
-    readonly sources: readonly (readonly BracketInfo[])[]
-    readonly brackets: readonly BracketInfo[]
-  } | null = null
   #cachedSyntaxRanges: readonly EditorSyntaxRange[] = []
   #cachedSyntaxFoldRanges: readonly CachedSyntaxFoldRange[] = []
   readonly #syntaxRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
@@ -956,9 +948,6 @@ export class EditorSyntaxController {
     this.#foldCoverage = null
     this.#parsedSyntaxContentVersion = null
     this.#projectSyntaxRangeCache(change)
-    // An edit can change which brackets pair, so there are none until its answer lands: Jump to
-    // Bracket and the match highlight do nothing for that moment rather than pair the wrong ones.
-    this.#currentBrackets = []
     if (this.#retainedHighlighter) {
       this.#refreshHighlightTokens(this.options.getDocumentVersion(), change, { delayMs: 0 })
     }
@@ -1925,13 +1914,6 @@ export class EditorSyntaxController {
     return mergeSyntaxRangeTokens(this.#currentTokens, store, range)
   }
 
-  /**
-   * Readies the range from the answers that cover it: the newest answer covering it alone, or
-   * else every answer meeting it. Their folds repaint it and their brackets are joined into one
-   * list; the answers meeting a covered range join without a hole, and a match pairs brackets by
-   * scanning the list, so the joined list pairs as one answer's would. The range is `ready` only
-   * when none of those answers is degraded, because a degraded answer may lack its brackets.
-   */
   #applyCachedSyntaxFolds(range: EditorSyntaxRange): void {
     const folds = cachedSyntaxFoldsForRange(
       range,
@@ -1940,39 +1922,10 @@ export class EditorSyntaxController {
     )
     if (!folds) return
 
-    const cache = this.#cachedSyntaxFoldRanges
-    const covering = cache.findLast(
-      (cached) => syntaxRangeCoverage(range, [cached.range]) === 'full',
-    )
-    const answers = covering
-      ? [covering]
-      : cache.filter((cached) => syntaxRangesIntersect(cached.range, range))
     this.#foldCoverage = { kind: 'range', range }
-    this.syntaxStatus = answers.some((answer) => answer.result.degraded) ? 'degraded' : 'ready'
-    this.#currentBrackets = this.#joinBrackets(answers.map((answer) => answer.brackets))
+    this.syntaxStatus = 'ready'
     this.options.setSyntaxFolds(folds)
     this.options.notifyViewUpdate()
-  }
-
-  /**
-   * One bracket per offset, the newest answer's winning. The join is kept while the same lists
-   * meet the range, as they do across a scroll.
-   */
-  #joinBrackets(sources: readonly (readonly BracketInfo[])[]): readonly BracketInfo[] {
-    if (sources.length === 1) return sources[0]!
-    const joined = this.#joinedBrackets
-    if (
-      joined?.sources.length === sources.length &&
-      joined.sources.every((source, index) => source === sources[index])
-    )
-      return joined.brackets
-    const byIndex = new Map<number, BracketInfo>()
-    for (const source of sources) {
-      for (const bracket of source) byIndex.set(bracket.index, bracket)
-    }
-    const brackets = Array.from(byIndex.values()).sort((left, right) => left.index - right.index)
-    this.#joinedBrackets = { sources, brackets }
-    return brackets
   }
 
   #rememberSyntaxRange(
@@ -1986,7 +1939,6 @@ export class EditorSyntaxController {
       result,
       snapshot,
       folds: result.folds,
-      brackets: result.brackets,
       newestRanges: [range],
     }
     this.#cachedSyntaxRanges = appendCachedSyntaxRange(this.#cachedSyntaxRanges, range)
@@ -2000,7 +1952,6 @@ export class EditorSyntaxController {
 
   #clearSyntaxRangeCache(): void {
     this.#lastRangeTrim = null
-    this.#joinedBrackets = null
     this.#rangeTokenOwner = null
     this.rangeCopyOwner = null
     this.#rangeScopeOwner = null
@@ -2567,7 +2518,6 @@ const projectCachedSyntaxFoldRanges = (
       range: nextRange,
       newestRanges: projectCachedSyntaxRanges(range.newestRanges, edit, documentLength),
       folds: projectFoldRangesThroughInsertion(range.folds, edit, documentLength),
-      brackets: [],
     })
   }
   return projected
