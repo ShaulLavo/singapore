@@ -1,17 +1,15 @@
-import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
 import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
+import { runTempDir } from '../../scripts/run-temp-dir.ts'
 
 const require = createRequire(import.meta.url)
 const packageDir = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(packageDir, '../..')
-// One fixed directory, reused by every run, so runs never accumulate temp directories.
-const screenshotDirectory = resolve(tmpdir(), 'singapore-tree-sitter-screenshots')
-mkdirSync(screenshotDirectory, { recursive: true })
+// A directory owned by this run, removed when it exits. Workers that load the config reuse it.
+const screenshotDirectory = runTempDir('tree-sitter-screenshots')
 const languagePackageDir = resolve(packageDir, '../tree-sitter-languages')
 const servedDependencyRoots = uniqueItems(
   [
