@@ -77,13 +77,23 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-v3-${{ runner.os }}-${{ steps.playwright.outputs.platform }}-${{ steps.playwright.outputs.editor }}-${{ steps.playwright.outputs.site }}
 
+      # The system packages come from cached files, so a slow package mirror cannot stall the job.
+      - name: Install Playwright system packages
+        if: *code
+        uses: ./.github/actions/playwright-deps
+        with:
+          playwright: packages/editor/node_modules/.bin/playwright
+          browsers: chromium chromium-headless-shell firefox webkit
+
       # The editor's browser projects also need the headless shell. The site uses a
-      # different Playwright release for build-time capture.
+      # different Playwright release for build-time capture, and its Chromium needs no
+      # packages beyond the editor's, which the last line checks.
       - name: Install Playwright browsers
         if: *code
         run: |
-          packages/editor/node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell firefox webkit
-          site/node_modules/.bin/playwright install --with-deps chromium
+          packages/editor/node_modules/.bin/playwright install chromium chromium-headless-shell firefox webkit
+          site/node_modules/.bin/playwright install chromium
+          site/node_modules/.bin/playwright install-deps --dry-run chromium
 
       # Typecheck and test reuse these builds through Turbo. Cap build and check
       # concurrency at the four CPUs on the hosted runner.

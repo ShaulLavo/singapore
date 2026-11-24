@@ -1,0 +1,78 @@
+name: Playwright system packages
+description: Installs the Linux packages Playwright browsers need from cached .deb files, and falls back to apt only when the cache is cold.
+
+inputs:
+  playwright:
+    description: Path to the Playwright CLI, relative to the repository root.
+    required: true
+  browsers:
+    description: Space-separated browsers whose system packages are needed.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The package list depends on the Playwright release and the browsers. The runner image
+    # version is part of the key because the saved files are only valid on the image they were
+    # downloaded for: a newer image can ship newer libraries that older files would downgrade.
+    - name: Compute the package cache key
+      id: key
+      shell: bash
+      env:
+        PLAYWRIGHT: ${{ inputs.playwright }}
+        BROWSERS: ${{ inputs.browsers }}
+      run: |
+        . /etc/os-release
+        : "${ID:?}" "${VERSION_ID:?}"
+        version=$("$PLAYWRIGHT" --version | cut -d ' ' -f 2)
+        printf 'key=%s\n' "playwright-debs-v1-${ID}-${VERSION_ID}-${RUNNER_ARCH}-${ImageVersion:-unknown}-${version:?}-${BROWSERS// /-}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the package cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/playwright-debs
+        key: ${{ steps.key.outputs.key }}
+
+    # Installing the saved files needs no network. `install-deps --dry-run` then asks apt what
+    # is still missing, so a cold or unusable cache falls through to the real install, which
+    # downloads from the mirror and keeps the downloaded files for the save step.
+    - name: Install system packages
+      id: install
+      shell: bash
+      env:
+        PLAYWRIGHT: ${{ inputs.playwright }}
+        BROWSERS: ${{ inputs.browsers }}
+      run: |
+        debs="$HOME/.cache/playwright-debs"
+        if compgen -G "$debs/*.deb" > /dev/null; then
+          sudo dpkg -i "$debs"/*.deb || echo "::warning::Cached system packages did not install; using apt."
+        fi
+        # shellcheck disable=SC2086 # BROWSERS is a list of words.
+        if "$PLAYWRIGHT" install-deps --dry-run $BROWSERS; then
+          echo "Playwright system packages are in place."
+          exit 0
+        fi
+        # apt stamps downloaded files with the mirror's date, so compare listings, not times.
+        before=$(mktemp)
+        after=$(mktemp)
+        sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' | sort > "$before"
+        printf 'APT::Keep-Downloaded-Packages "true";\n' | sudo tee /etc/apt/apt.conf.d/99keep-downloaded-packages > /dev/null
+        # shellcheck disable=SC2086
+        "$PLAYWRIGHT" install-deps $BROWSERS
+        sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' | sort > "$after"
+        mkdir -p "$debs"
+        comm -13 "$before" "$after" | sudo xargs -r cp -t "$debs"
+        sudo chown -R "$(id -u):$(id -g)" "$debs"
+        count=$(find "$debs" -name '*.deb' | wc -l)
+        echo "Kept $count downloaded packages for the cache."
+        if [ "$count" -gt 0 ]; then
+          echo "downloaded=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    # Save right away, so a later failing step cannot lose the files.
+    - name: Save the package cache
+      if: steps.install.outputs.downloaded == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/playwright-debs
+        key: ${{ steps.key.outputs.key }}
