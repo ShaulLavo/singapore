@@ -16,8 +16,10 @@ import {
 } from '../src/editor/documentAnalysis'
 import { EditorSyntaxController } from '../src/editor/syntaxController'
 import { EditorPluginHost } from '../src/plugins'
+import { findBracketMatchAtCaret } from '../src/editor/bracketMatching'
 import {
   createEmptySyntaxResult,
+  type BracketInfo,
   type EditorSyntaxProvider,
   type EditorSyntaxRange,
   type EditorSyntaxResult,
@@ -547,7 +549,7 @@ describe('syntax range contributor lifetime', () => {
   it('keeps the tokens of an answer that stays cached through a newer analysis', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'cached-colors' })
-    // Each answer is the only one to report its fold, so it stays cached while that fold is shown.
+    // The frame the view moves to still shows the end of the earlier answer, so it stays cached.
     const answers = rangeAnswers('own')
     const replaced = replaceableAnalysis(answers.query)
     const view = createView(buffer, analysis, replaced.provider, firstFrame)
@@ -565,7 +567,7 @@ describe('syntax range contributor lifetime', () => {
       view.setRange(left)
       releaseRefresh()
       await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(3))
-      view.setRange({ startIndex: 30, endIndex: 50 })
+      view.setRange({ startIndex: 25, endIndex: 50 })
       releaseAnswer()
       await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(30)))
       view.setRange(left)
@@ -1107,3 +1109,212 @@ function createView(
     },
   }
 }
+
+describe('syntax readiness for the rows on screen', () => {
+  // The document's brackets: an answer reports the ones inside the range it was asked for.
+  const documentBrackets: readonly BracketInfo[] = [
+    { index: 2, char: '(', depth: 1 },
+    { index: 42, char: ')', depth: 0 },
+  ]
+  const green = (start: number) => ({ start, end: start + 1, style: { color: 'green' } })
+  const red = (start: number) => ({ start, end: start + 1, style: { color: 'red' } })
+  const answer = (
+    range: EditorSyntaxRange,
+    extra: Partial<EditorSyntaxResult> = {},
+  ): EditorSyntaxResult => ({
+    ...createEmptySyntaxResult({ requestedRanges: [range] }),
+    tokens: EditorTokenStore.fromTokens([green(range.startIndex)]),
+    brackets: documentBrackets.filter(
+      (bracket) => range.startIndex <= bracket.index && bracket.index < range.endIndex,
+    ),
+    ...extra,
+  })
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 50))
+
+  it('readies a frame two answers cover together with the brackets of both', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'joined-brackets' })
+    const query = vi.fn(async (range: EditorSyntaxRange) => answer(range))
+    const view = createView(buffer, analysis, structuralProvider(query), {
+      startIndex: 0,
+      endIndex: 40,
+    })
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      view.setRange({ startIndex: 20, endIndex: 60 })
+      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      // Only the rows no answer covered were asked for, and the frame's brackets pair across both.
+      expect(query.mock.calls.map(([range]) => range)).toEqual([
+        { startIndex: 0, endIndex: 40 },
+        { startIndex: 40, endIndex: 60 },
+      ])
+      expect(view.syntax.brackets.map((bracket) => bracket.index)).toEqual([2, 42])
+      expect(findBracketMatchAtCaret(view.syntax.brackets, 42)).toMatchObject({
+        openOffset: 2,
+        closeOffset: 42,
+      })
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('keeps the accepted viewport when a look-ahead over it lands late', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'late-look-ahead' })
+    const gate = Promise.withResolvers<void>()
+    const query = vi.fn(async (range: EditorSyntaxRange) => {
+      if (range.endIndex - range.startIndex <= 60)
+        return answer(range, { tokens: EditorTokenStore.fromTokens([green(30)]) })
+      await gate.promise
+      return answer(range, { tokens: EditorTokenStore.fromTokens([red(30), red(100)]) })
+    })
+    const view = createView(buffer, analysis, structuralProvider(query), {
+      startIndex: 20,
+      endIndex: 50,
+    })
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      view.syntax.prefetchVisibleRange(1, { startIndex: 0, endIndex: 200 }, { delayMs: 0 })
+      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+      gate.resolve()
+      // The look-ahead fills in around the viewport and leaves the viewport's colors alone.
+      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(red(100)))
+      expect(view.syntax.tokens.toTokens()).toContainEqual(green(30))
+      expect(view.syntax.tokens.toTokens()).not.toContainEqual(red(30))
+      // A copy takes the colors the screen shows.
+      expect(view.syntax.copyTokens.toTokens()).toEqual([green(30), red(100)])
+      // The look-ahead may still take over the brackets: the same parse reports the shown ones alike.
+      expect(view.syntax.brackets.map((bracket) => bracket.index)).toContain(42)
+      expect(view.syntax.status).toBe('ready')
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it.each([
+    ['a look-ahead', 250],
+    ['a background tile', 70_000],
+  ] as const)('keeps syntax ready when %s fails', async (_name, lines) => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(lines))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'optional-failure' })
+    const query = vi.fn(async (range: EditorSyntaxRange) => {
+      if (range.endIndex - range.startIndex > 60) throw new Error('optional request failed')
+      return answer(range)
+    })
+    const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      // A large document warms a tile on its own; a small one is asked for a look-ahead.
+      if (lines < 1000)
+        view.syntax.prefetchVisibleRange(1, { startIndex: 0, endIndex: 300 }, { delayMs: 0 })
+      await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+      await settle()
+      expect(view.syntax.status).toBe('ready')
+      expect(view.syntax.initialHighlightStatus).toBe('painted')
+      expect(view.syntax.brackets.map((bracket) => bracket.index)).toEqual([2])
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('settles a viewport the provider cannot answer as degraded without asking again', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'range-unavailable' })
+    let unavailable = false
+    const query = vi.fn(async (range: EditorSyntaxRange) =>
+      unavailable
+        ? createEmptySyntaxResult({
+            requestedRanges: [range],
+            degraded: { kind: 'range-unavailable', message: 'test' },
+          })
+        : answer(range),
+    )
+    const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(view.syntax.brackets).not.toEqual([])
+      unavailable = true
+      view.setRange({ startIndex: 300, endIndex: 340 })
+      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+      await settle()
+      expect(view.syntax.status).toBe('degraded')
+      expect(query).toHaveBeenCalledTimes(2)
+      // The brackets of the frame it left do not stand in for the shown rows.
+      expect(view.syntax.brackets).toEqual([])
+      // Nothing was accepted for the rows, so a later answer that has them fills them in.
+      unavailable = false
+      view.syntax.prefetchVisibleRange(1, { startIndex: 280, endIndex: 400 }, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(view.syntax.tokens.toTokens()).toContainEqual(green(280))
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('moves the brackets through edits before their answer lands', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(250))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'edited-brackets' })
+    let hold = false
+    const query = vi.fn((range: EditorSyntaxRange) =>
+      hold ? new Promise<EditorSyntaxResult>(() => undefined) : Promise.resolve(answer(range)),
+    )
+    const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(view.syntax.brackets.map((bracket) => bracket.index)).toEqual([2])
+      hold = true
+      const change = typeText(view, buffer, { from: 0, to: 0, text: 'z' })
+      view.syntax.refresh(1, change, { delayMs: 0 })
+      expect(view.syntax.brackets.map((bracket) => bracket.index)).toEqual([3])
+      // Jump to Bracket reads this list, so it must point into the edited text.
+      typeText(view, buffer, { from: 2, to: 4, text: '' })
+      expect(view.syntax.brackets).toEqual([])
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('does not keep off-screen answers for folds that span the frame', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(2500))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'spanning-folds' })
+    let fold = 0
+    // Every answer reports its own fold over the whole frame, as no real one does.
+    const query = vi.fn(async (range: EditorSyntaxRange) =>
+      answer(range, {
+        folds: [
+          { startIndex: 0, endIndex: 4000 + fold++, startLine: 0, endLine: 2000, type: 'scope' },
+        ],
+      }),
+    )
+    const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      for (let step = 0; step < 40; step++) {
+        const range = { startIndex: 1000 + step * 50, endIndex: 1040 + step * 50 }
+        view.syntax.prefetchVisibleRange(1, range, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(step + 2))
+      }
+      await settle()
+      view.publish()
+      // The frame's own answer, and the newest look-ahead, whose colors a copy takes.
+      expect(analysis.inspectRetention().entries[0]!.cachedRangeCount).toBe(2)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+})
