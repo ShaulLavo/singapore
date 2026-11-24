@@ -4555,11 +4555,15 @@ export class Editor {
     this.publishSyntaxDisplayDemand()
     this.updateSyntaxScrollTracking()
     const visibleRange = this.visibleSyntaxRange()
+    const lookAhead = this.visibleSyntaxPrefetchRange()
+    // Before the viewport's own request, so after a far jump the worker is not still busy with
+    // look-ahead text beside the old place when the new place is asked for.
+    this.syntax.retireLookAheadOutside(this.syntaxLookAheadReach(lookAhead))
     this.syntax.refreshVisibleRange(this.documentVersion, {
       delayMs: 0,
       range: visibleRange,
     })
-    this.syntax.prefetchVisibleRange(this.documentVersion, this.visibleSyntaxPrefetchRange(), {
+    this.syntax.prefetchVisibleRange(this.documentVersion, lookAhead, {
       delayMs: VISIBLE_SYNTAX_SCROLL_DELAY_MS,
     })
     this.syntax.warmSyntaxAroundRange(this.documentVersion, visibleRange, {
@@ -4623,6 +4627,22 @@ export class Editor {
     return this.syntaxRangeAroundMountedRows(before, after)
   }
 
+  /**
+   * The look-ahead window for either scroll direction. Look-ahead work inside it stays useful when
+   * the reader turns around, so only work outside it, beside a place jumped away from, is retired.
+   */
+  private syntaxLookAheadReach(window: EditorSyntaxRange | null): EditorSyntaxRange | null {
+    const around = this.syntaxRangeAroundMountedRows(
+      VISIBLE_SYNTAX_LEAD_CHARS,
+      VISIBLE_SYNTAX_LEAD_CHARS,
+    )
+    if (!around || !window) return around ?? window
+    return {
+      startIndex: Math.min(around.startIndex, window.startIndex),
+      endIndex: Math.max(around.endIndex, window.endIndex),
+    }
+  }
+
   private syntaxRangeAroundMountedRows(before: number, after: number): EditorSyntaxRange | null {
     if (this.view.isProvisional) {
       const range = this.view.preparedVisibleRange()
@@ -4654,7 +4674,9 @@ export class Editor {
 
     const delta = scrollTop - previousScrollTop
     this.syntaxScrollDeltaPx = Math.abs(delta)
-    this.syntaxScrollDirection = syntaxScrollDirection(delta)
+    // A viewport change without movement (a resize, a repeated notification) keeps the direction,
+    // so the look-ahead window does not flip to both sides and ask for text behind the reader.
+    if (delta !== 0) this.syntaxScrollDirection = syntaxScrollDirection(delta)
   }
 
   private visibleSyntaxLeadChars(

@@ -360,6 +360,72 @@ describe('active range retention', () => {
     },
   )
 
+  it('cancels a replaced query in the provider before its replacement is sent', async () => {
+    // The Tree-sitter session waits for the complete analysis before answering a range the preview
+    // cannot, then sends it again unless its signal was aborted. A replaced query must not be.
+    const buffer = createEditorTextBuffer('x'.repeat(100))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'replaced-range' })
+    const parser = provider()
+    parser.ranges.mockImplementation(() => new Promise<EditorSyntaxResult>(() => undefined))
+    const lease = analysis.borrowStructural({
+      provider: parser.provider,
+      languageId: 'typescript',
+    })!
+    const snapshot = buffer.getTextSnapshot()
+    setRetainedSyntaxDisplayDemand(
+      lease,
+      { kind: 'frame', snapshot, ranges: [{ startIndex: 0, endIndex: 10 }] },
+      [],
+    )
+    const signalOf = (call: number) =>
+      (parser.ranges.mock.calls[call] as unknown[])[1] as AbortSignal
+    const first = new AbortController()
+    void lease
+      .queryRange({ startIndex: 20, endIndex: 40 }, { signal: first.signal })
+      .catch(() => {})
+    await vi.waitFor(() => expect(parser.ranges).toHaveBeenCalledTimes(1))
+    first.abort()
+    void lease
+      .queryRange({ startIndex: 40, endIndex: 60 }, { signal: new AbortController().signal })
+      .catch(() => {})
+    await vi.waitFor(() => expect(parser.ranges).toHaveBeenCalledTimes(2))
+    expect(signalOf(0).aborted).toBe(true)
+    expect(signalOf(1).aborted).toBe(false)
+    analysis.dispose()
+  })
+
+  it('releases the provider work of a query every caller left without waiting for another query', async () => {
+    const buffer = createEditorTextBuffer('x'.repeat(100))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'abandoned-range' })
+    const parser = provider()
+    const gate = deferred<EditorSyntaxResult>()
+    parser.ranges.mockImplementationOnce(() => gate.promise)
+    const lease = analysis.borrowStructural({
+      provider: parser.provider,
+      languageId: 'typescript',
+    })!
+    const snapshot = buffer.getTextSnapshot()
+    setRetainedSyntaxDisplayDemand(
+      lease,
+      { kind: 'frame', snapshot, ranges: [{ startIndex: 0, endIndex: 10 }] },
+      [],
+    )
+    const abort = new AbortController()
+    const asked = lease.queryRange({ startIndex: 50, endIndex: 60 }, { signal: abort.signal })
+    const rejected = expect(asked).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.waitFor(() => expect(parser.ranges).toHaveBeenCalledTimes(1))
+    const providerSignal = (parser.ranges.mock.calls[0] as unknown[])[1] as AbortSignal
+    abort.abort()
+    await rejected
+    // Briefly joinable for a caller asking for the same range again, then released.
+    expect(providerSignal.aborted).toBe(false)
+    await vi.waitFor(() => expect(providerSignal.aborted).toBe(true), { timeout: 2_000 })
+    await vi.waitFor(() =>
+      expect(analysis.inspectRetention().entries[0]!.pendingRangeCount).toBe(0),
+    )
+    analysis.dispose()
+  })
+
   it.each(['unmanaged', 'unknown', 'foreign', 'stale', 'preparation'] as const)(
     'preserves %s protection',
     async (mode) => {

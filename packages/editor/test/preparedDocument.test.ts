@@ -1473,7 +1473,7 @@ describe('prepared editor documents', () => {
     container.remove()
   })
 
-  it('queries only the uncovered visible range after partial structural adoption', async () => {
+  it('asks once for the visible range after partial structural adoption', async () => {
     const text = Array.from({ length: 200 }, (_, index) => `const value${index} = ${index};`).join(
       '\n',
     )
@@ -1538,14 +1538,18 @@ describe('prepared editor documents', () => {
       },
     )
 
+    // The adopted answer covers only part of the visible range, so the shown rows get one answer
+    // of their own, asked for once and from the same runtime.
     await vi.waitFor(() => expect(structuralSession.queryRange).toHaveBeenCalledTimes(2))
     expect(structuralSession.queryRange).toHaveBeenLastCalledWith(
       expect.objectContaining({ endIndex: expect.any(Number) }),
       expect.any(AbortSignal),
     )
-    const uncoveredRange = vi.mocked(structuralSession.queryRange!).mock.calls.at(-1)?.[0]
-    expect(uncoveredRange?.startIndex).toBe(5)
-    expect(uncoveredRange?.endIndex).toBeGreaterThan(5)
+    const visibleRange = vi.mocked(structuralSession.queryRange!).mock.calls.at(-1)?.[0]
+    expect(visibleRange?.startIndex).toBe(0)
+    expect(visibleRange?.endIndex).toBeGreaterThan(5)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(structuralSession.queryRange).toHaveBeenCalledTimes(2)
     expect(structuralProviderOpenRuntime).toHaveBeenCalledOnce()
     editor.dispose()
     container.remove()

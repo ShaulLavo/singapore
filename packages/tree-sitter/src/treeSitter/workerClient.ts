@@ -38,6 +38,8 @@ type PendingRequest = {
   readonly cleanup: () => void
   readonly runtimeSessionId: string | null
   readonly cancellationFlag: Int32Array | null
+  /** The caller cancels this request through its own signal. */
+  readonly owned: boolean
   readonly payload: TreeSitterWorkerRequestPayload
   readonly resolve: (result: TreeSitterWorkerResult) => void
   readonly reject: (error: Error) => void
@@ -742,6 +744,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
         cleanup: () => signal?.removeEventListener('abort', abort),
         runtimeSessionId: runtimeSessionIdForPayload(payload),
         cancellationFlag: cancellationFlagForPayload(payload),
+        owned: signal !== undefined,
         payload,
         resolve,
         reject,
@@ -772,11 +775,13 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     payload: TreeSitterRangeDocumentRequest,
     signal?: AbortSignal,
   ): Promise<TreeSitterWorkerResult> {
-    return this.postRequest(
-      this.withCancellation(this.cancelPreviousRangeRequests(payload.runtimeSessionId), payload),
-      false,
-      signal,
-    )
+    // A caller with a signal cancels its own query when it is superseded. Cancelling every earlier
+    // query here would also stop look-ahead queries still wanted while each scroll step asks for
+    // its rows, and they would be asked for again on every step.
+    const cancellation = signal
+      ? this.createCancellationFlag()
+      : this.cancelPreviousRangeRequests(payload.runtimeSessionId)
+    return this.postRequest(this.withCancellation(cancellation, payload), false, signal)
   }
 
   private cancelPreviousDocumentRequests(runtimeSessionId: string): Int32Array | null {
@@ -793,7 +798,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const cancellationFlag = this.createCancellationFlag()
     for (const pending of this.pendingRequests.values()) {
       if (pending.runtimeSessionId !== runtimeSessionId) continue
-      if (pending.payload.type !== 'queryRange') continue
+      if (pending.payload.type !== 'queryRange' || pending.owned) continue
       if (pending.cancellationFlag) Atomics.store(pending.cancellationFlag, 0, 1)
     }
 

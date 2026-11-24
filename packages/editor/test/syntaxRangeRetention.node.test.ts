@@ -224,9 +224,7 @@ describe('syntax range contributor lifetime', () => {
       return {
         ...createEmptySyntaxResult({ requestedRanges: [range] }),
         records: { languageId: 'typescript', data: new Uint32Array(16) },
-        tokens: EditorTokenStore.fromTokens([
-          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
-        ]),
+        tokens: EditorTokenStore.fromTokens(rangeTokens(range)),
         folds: [
           { startIndex: 0, endIndex: 400, startLine: 0, endLine: 199, type: 'scope' as const },
         ],
@@ -270,12 +268,13 @@ describe('syntax range contributor lifetime', () => {
         )
       }
       await new Promise((resolve) => setTimeout(resolve, 50))
+      // One answer for each frame shown, each asked for once.
       expect(ranges.mock.calls.map(([range]) => [range.startIndex, range.endIndex])).toEqual([
         [0, 20],
         [0, 20],
-        [20, 40],
-        [40, 60],
-        [60, 80],
+        [0, 40],
+        [0, 60],
+        [0, 80],
       ])
     } finally {
       view.dispose()
@@ -298,9 +297,7 @@ describe('syntax range contributor lifetime', () => {
       return {
         ...createEmptySyntaxResult({ requestedRanges: [range] }),
         records: { languageId: 'typescript', data: new Uint32Array(16) },
-        tokens: EditorTokenStore.fromTokens([
-          { start: range.startIndex, end: range.startIndex + 1, style: { color: 'range' } },
-        ]),
+        tokens: EditorTokenStore.fromTokens(rangeTokens(range)),
         folds: [
           { startIndex: 0, endIndex: 400, startLine: 0, endLine: 199, type: 'scope' as const },
         ],
@@ -361,9 +358,9 @@ describe('syntax range contributor lifetime', () => {
       await growFrame(view, [40, 60, 80])
       expect(answers.calls().slice(1)).toEqual([
         [0, 20],
-        [20, 40],
-        [40, 60],
-        [60, 80],
+        [0, 40],
+        [0, 60],
+        [0, 80],
       ])
     } finally {
       view.dispose()
@@ -398,8 +395,8 @@ describe('syntax range contributor lifetime', () => {
         [0, 20],
         [0, 20],
         [0, 40],
-        [40, 60],
-        [60, 80],
+        [0, 60],
+        [0, 80],
       ])
     } finally {
       view.dispose()
@@ -437,9 +434,9 @@ describe('syntax range contributor lifetime', () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
       expect(answers.calls()).toEqual([
         [0, 20],
-        [20, 40],
-        [40, 60],
-        [60, 80],
+        [0, 40],
+        [0, 60],
+        [0, 80],
       ])
       expect(view.syntax.tokens).toBe(tokens)
     } finally {
@@ -471,7 +468,7 @@ describe('syntax range contributor lifetime', () => {
       await vi.waitFor(() => expect(answers.query).toHaveBeenCalledTimes(3))
       view.setRange({ startIndex: 30, endIndex: 50 })
       releaseAnswer()
-      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(30)))
+      await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(40)))
       view.setRange(left)
       view.syntax.refreshVisibleRange(1, { delayMs: 0 })
       await new Promise((resolve) => setTimeout(resolve, 50))
@@ -818,6 +815,17 @@ const rangeToken = (startIndex: number) => ({
 })
 
 /**
+ * A token every 20 characters inside the answered range, as a parser answers the same text the
+ * same way whichever range asked for it.
+ */
+const rangeTokens = (range: EditorSyntaxRange) => {
+  const tokens: ReturnType<typeof rangeToken>[] = []
+  const first = Math.ceil(range.startIndex / 20) * 20
+  for (let start = first; start < range.endIndex; start += 20) tokens.push(rangeToken(start))
+  return tokens
+}
+
+/**
  * Range answers with one token at the start of the range. `shared` answers all report the same
  * wide fold, as bounded-slice answers do, so none keeps a fold of its own once a neighbour
  * arrives. `own` answers each report a fold nobody else does.
@@ -834,7 +842,7 @@ function rangeAnswers(folds: 'shared' | 'own') {
     return {
       ...createEmptySyntaxResult({ requestedRanges: [range] }),
       records: { languageId: 'typescript', data: new Uint32Array(16) },
-      tokens: EditorTokenStore.fromTokens([rangeToken(range.startIndex)]),
+      tokens: EditorTokenStore.fromTokens(rangeTokens(range)),
       folds: [
         {
           startIndex,

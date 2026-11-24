@@ -156,6 +156,15 @@ type CachedSyntaxFoldRange = {
   readonly snapshot: DocumentTextSnapshot
   /** The parts of `range` that no later answer has covered. */
   readonly newestRanges: readonly EditorSyntaxRange[]
+  /** Fetched beside the viewport; only its token colors are used, as a provisional paint. */
+  readonly lookAhead: boolean
+}
+
+/** The text kept ready beside the viewport while scrolling, and the request on the way for it. */
+type SyntaxLookAhead = {
+  readonly snapshot: DocumentTextSnapshot
+  readonly window: EditorSyntaxRange
+  readonly request: EditorSyntaxRange | null
 }
 
 type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
@@ -290,6 +299,9 @@ export class EditorSyntaxController {
     readonly range: EditorSyntaxRange
   } | null = null
   private pendingPrefetch: PendingSyntaxPrefetch | null = null
+  private lookAhead: SyntaxLookAhead | null = null
+  /** The look-ahead window for either scroll direction, from the last viewport change. */
+  private lookAheadReach: EditorSyntaxRange | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   private warmGeneration = 0
 
@@ -350,7 +362,9 @@ export class EditorSyntaxController {
       syntaxRangeListsIntersect(cached.newestRanges, ranges),
     )
     const foldContributors = activeFoldContributors(oldCache, ranges)
-    const retained = new Set(newestContributors.concat(foldContributors))
+    const retained = new Set(
+      newestContributors.concat(foldContributors, newestLookAheadAnswers(oldCache, ranges)),
+    )
     const scope = this.rangeScopeOwner
     const copy =
       this.rangeCopyOwner?.store === this.copyTokens ? this.rangeCopyOwner.contributor : null
@@ -371,8 +385,12 @@ export class EditorSyntaxController {
       (covered, cached) => appendCachedSyntaxRange(covered, cached.range),
       [],
     )
+    // Look-ahead answers leave as the reader moves on; that is not a reason to stop warming.
     const discardedOffDemand = oldCache.filter(
-      (cached) => !retained.has(cached) && !syntaxRangeListsIntersect([cached.range], ranges),
+      (cached) =>
+        !cached.lookAhead &&
+        !retained.has(cached) &&
+        !syntaxRangeListsIntersect([cached.range], ranges),
     )
     const removed =
       nextCache.length !== oldCache.length || !sameSyntaxRanges(this.cachedSyntaxRanges, coverage)
@@ -924,32 +942,38 @@ export class EditorSyntaxController {
 
     const range = options.range ?? this.options.getVisibleSyntaxRange()
     if (!range) return
-    if (this.repaintCachedVisibleSyntaxRange(range)) return
+    // The shown rows come from one answer for the visible range: its tokens, brackets, folds and
+    // copy colors. Cached pieces, look-ahead included, only paint provisional colors meanwhile.
+    if (this.visibleAnswerCovers(range)) {
+      this.repaintCachedVisibleSyntaxRange(range)
+      return
+    }
+    this.options.adoptTokens(this.currentTokens)
     if (!this.canQueryCurrentSyntaxRange()) return
 
-    const uncoveredRange = firstUncoveredSyntaxRange(range, this.cachedSyntaxRanges)
-    if (!uncoveredRange) return
     const pending = this.pendingVisibleRange
     if (
       this.rangeRequests.isActive() &&
       pending?.documentVersion === documentVersion &&
       pending.contentVersion === this.syntaxContentVersion &&
-      syntaxRangeCoverage(uncoveredRange, [pending.range]) === 'full'
+      syntaxRangeCoverage(range, [pending.range]) === 'full'
     )
       return
     this.pendingVisibleRange = {
       documentVersion,
       contentVersion: this.syntaxContentVersion,
-      range: uncoveredRange,
+      range,
     }
 
-    this.scheduleSyntaxRangeRequest(
-      this.rangeRequests,
-      documentVersion,
-      uncoveredRange,
-      options,
-      'visible',
-    )
+    this.scheduleSyntaxRangeRequest(this.rangeRequests, documentVersion, range, options, 'visible')
+  }
+
+  /** Whether the last answer that covered the viewport, for this text, covers `range` too. */
+  private visibleAnswerCovers(range: EditorSyntaxRange): boolean {
+    const owner = this.rangeScopeOwner
+    if (!owner || owner.snapshot !== this.options.getSession()?.getTextSnapshot()) return false
+    if (this.parsedSyntaxContentVersion !== this.syntaxContentVersion) return false
+    return syntaxRangeCoverage(range, [owner.range]) === 'full'
   }
 
   prefetchVisibleRange(
@@ -960,7 +984,16 @@ export class EditorSyntaxController {
     if (!this.syntaxSession?.queryRange) return false
     if (!this.options.getSession()) return false
     if (!this.canQueryCurrentSyntaxRange()) return false
-    if (!range || syntaxRangeCoverage(range, this.cachedSyntaxRanges) === 'full') return false
+    const snapshot = this.options.getSession()?.getTextSnapshot()
+    if (!range || !snapshot) return false
+    const active = this.activeLookAheadRequest(snapshot)
+    this.lookAhead = { snapshot, window: range, request: active }
+    const missing = lookAheadGap(
+      range,
+      this.options.getVisibleSyntaxRange(),
+      this.cachedSyntaxRanges,
+    )
+    if (!missing) return false
     if (this.rangeRequests.isActive()) {
       this.pendingPrefetch = {
         contentVersion: this.syntaxContentVersion,
@@ -970,14 +1003,78 @@ export class EditorSyntaxController {
       }
       return true
     }
+    // One look-ahead on the way at a time. Replacing one still inside the reach would throw its
+    // work away for a range a few rows longer, or, when the scroll turns back and forth, for the
+    // other side and back again with neither landing. The rest is asked for after it lands.
+    if (active && syntaxRangesIntersect(active, this.lookAheadReach ?? range)) return true
 
+    this.lookAhead = { snapshot, window: range, request: missing }
     this.scheduleSyntaxRangeRequest(
       this.prefetchRangeRequests,
       documentVersion,
-      range,
+      missing,
       options,
       'prefetch',
     )
+    return true
+  }
+
+  /**
+   * Records how far look-ahead work stays useful around the shown rows (the window for either
+   * scroll direction) and cancels a look-ahead still on the way outside it, so a far jump's own
+   * request does not wait behind work for the place it left. Turning around keeps it.
+   */
+  retireLookAheadOutside(reach: EditorSyntaxRange | null): void {
+    this.lookAheadReach = reach
+    const lookAhead = this.lookAhead
+    if (!lookAhead?.request || !this.prefetchRangeRequests.isActive()) return
+    if (reach && syntaxRangesIntersect(lookAhead.request, reach)) return
+    this.prefetchRangeRequests.cancel()
+    this.pendingPrefetch = null
+    this.lookAhead = { ...lookAhead, request: null }
+  }
+
+  /** Asks for the window's next uncached part, such as the other side of the viewport. */
+  private continueLookAhead(documentVersion: number, options: EditorSyntaxRefreshOptions): boolean {
+    const lookAhead = this.lookAhead
+    if (!lookAhead || lookAhead.snapshot !== this.options.getSession()?.getTextSnapshot())
+      return false
+    return this.prefetchVisibleRange(documentVersion, lookAhead.window, options)
+  }
+
+  private activeLookAheadRequest(snapshot: DocumentTextSnapshot): EditorSyntaxRange | null {
+    const lookAhead = this.lookAhead
+    if (!lookAhead || lookAhead.snapshot !== snapshot) return null
+    return this.prefetchRangeRequests.isActive() ? lookAhead.request : null
+  }
+
+  /**
+   * A look-ahead answer adds its token colors for text beside the viewport, and nothing else: the
+   * brackets, folds, copy colors and readiness of the shown rows stay with the visible answer.
+   */
+  private applyLookAheadResult(
+    loadResult: EditorSyntaxLoadResult,
+    documentVersion: number,
+    configurationGeneration: number,
+  ): boolean {
+    const range = loadResult.range
+    const snapshot = this.options.getSession()?.getTextSnapshot()
+    if (loadResult.skipApply || !range || !snapshot) return false
+    if (!syntaxResultCoversRange(loadResult.result, range)) return false
+    if (documentVersion !== this.options.getDocumentVersion()) return false
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return false
+    if (loadResult.contentVersion !== this.syntaxContentVersion) return false
+    if (this.parsedSyntaxContentVersion !== this.syntaxContentVersion) return false
+    this.rememberSyntaxRange(range, loadResult.result, true)
+    const owned =
+      this.rangeTokenOwner?.store === this.currentTokens &&
+      this.rangeTokenOwner.snapshot === snapshot
+    if (this.highlighterSession || !owned) return true
+    const tokens = this.syntaxTokensForResult(loadResult.result.tokens, range)
+    // The visible answer's copy colors stay; empty if they no longer describe this text.
+    const copy = this.copyTokens
+    this.rangeTokenOwner = { store: tokens, snapshot }
+    this.setTokens(tokens, true, copy)
     return true
   }
 
@@ -1316,16 +1413,24 @@ export class EditorSyntaxController {
         this.loadSyntaxRangeResult(range, kind, { contentVersion, signal }),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.range.apply', (result, startedAt) => {
+        if (kind === 'prefetch') {
+          const applied = this.applyLookAheadResult(
+            result,
+            documentVersion,
+            configurationGeneration,
+          )
+          if (applied && !this.continueLookAhead(documentVersion, options)) this.flushPendingWarm()
+          return
+        }
         const applied = this.applySyntaxResult(
           result,
           documentVersion,
           startedAt,
           configurationGeneration,
         )
-        if (applied && kind === 'visible' && this.foldsCoverViewport()) {
+        if (applied && this.foldsCoverViewport()) {
           if (!this.flushPendingPrefetch()) this.flushPendingWarm()
         }
-        if (applied && kind === 'prefetch') this.flushPendingWarm()
       }),
       fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) =>
         this.recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration),
@@ -1808,6 +1913,7 @@ export class EditorSyntaxController {
   private rememberSyntaxRange(
     range: EditorSyntaxRange,
     result: EditorSyntaxResult,
+    lookAhead = false,
   ): CachedSyntaxFoldRange | null {
     const snapshot = this.options.getSession()?.getTextSnapshot()
     if (!snapshot) return null
@@ -1817,6 +1923,7 @@ export class EditorSyntaxController {
       snapshot,
       folds: result.folds,
       newestRanges: [range],
+      lookAhead,
     }
     this.cachedSyntaxRanges = appendCachedSyntaxRange(this.cachedSyntaxRanges, range)
     const previous = this.cachedSyntaxFoldRanges.map((cached) => ({
@@ -1833,6 +1940,7 @@ export class EditorSyntaxController {
     this.rangeCopyOwner = null
     this.rangeScopeOwner = null
     this.foldCoverage = null
+    this.lookAhead = null
     this.cachedSyntaxRanges = []
     this.cachedSyntaxFoldRanges = []
   }
@@ -1855,6 +1963,8 @@ export class EditorSyntaxController {
       change.snapshot.length,
       change.textSnapshot,
     )
+    // The window is recomputed at the next viewport change; a request on the way is stale.
+    this.lookAhead = null
   }
 
   private applyHighlightResult(
@@ -2574,6 +2684,87 @@ const firstUncoveredSyntaxRange = (
 
   return { startIndex: cursor, endIndex: range.endIndex }
 }
+
+/** The newest look-ahead answer entirely before the shown text and the newest entirely after it. */
+const newestLookAheadAnswers = (
+  cache: readonly CachedSyntaxFoldRange[],
+  shown: readonly EditorSyntaxRange[],
+): readonly CachedSyntaxFoldRange[] => {
+  const first = shown[0]
+  const last = shown.at(-1)
+  if (!first || !last) return []
+  const lookAhead = cache.filter((cached) => cached.lookAhead)
+  const before = lookAhead.findLast((cached) => cached.range.endIndex <= first.startIndex)
+  const after = lookAhead.findLast((cached) => cached.range.startIndex >= last.endIndex)
+  return [before, after].filter((cached): cached is CachedSyntaxFoldRange => cached !== undefined)
+}
+
+const lastUncoveredSyntaxRange = (
+  range: EditorSyntaxRange,
+  cachedRanges: readonly EditorSyntaxRange[],
+): EditorSyntaxRange | null => {
+  let cursor = range.endIndex
+  for (let index = cachedRanges.length - 1; index >= 0; index -= 1) {
+    const cachedRange = cachedRanges[index]!
+    if (cachedRange.startIndex >= cursor) continue
+    if (cachedRange.endIndex <= range.startIndex) break
+    if (cachedRange.endIndex < cursor) {
+      return { startIndex: Math.max(range.startIndex, cachedRange.endIndex), endIndex: cursor }
+    }
+
+    cursor = cachedRange.startIndex
+    if (cursor <= range.startIndex) return null
+  }
+
+  return { startIndex: range.startIndex, endIndex: cursor }
+}
+
+/**
+ * The uncached text of the look-ahead window to ask for next, or null while enough of it is cached.
+ * A side of the viewport is asked for again only once less than half of it is cached next to the
+ * viewport, and then only its uncached part, so a scroll asks for each stretch of text about once
+ * instead of asking for the whole window on every step.
+ */
+const lookAheadGap = (
+  window: EditorSyntaxRange,
+  visible: EditorSyntaxRange | null,
+  cachedRanges: readonly EditorSyntaxRange[],
+): EditorSyntaxRange | null => {
+  const after = {
+    startIndex: clampIndex(visible?.endIndex ?? window.startIndex, window),
+    endIndex: window.endIndex,
+  }
+  const before = {
+    startIndex: window.startIndex,
+    endIndex: clampIndex(visible?.startIndex ?? window.startIndex, window),
+  }
+  const afterGap = lookAheadSideGap(after, firstUncoveredSyntaxRange(after, cachedRanges), 'after')
+  const beforeGap = lookAheadSideGap(
+    before,
+    lastUncoveredSyntaxRange(before, cachedRanges),
+    'before',
+  )
+  // The longer side is the scroll direction's lead; it goes first.
+  if (syntaxRangeSize(after) >= syntaxRangeSize(before)) return afterGap ?? beforeGap
+  return beforeGap ?? afterGap
+}
+
+const lookAheadSideGap = (
+  side: EditorSyntaxRange,
+  gap: EditorSyntaxRange | null,
+  direction: 'before' | 'after',
+): EditorSyntaxRange | null => {
+  if (!gap || syntaxRangeSize(side) === 0 || syntaxRangeSize(gap) === 0) return null
+  const cachedNextToViewport =
+    direction === 'after' ? gap.startIndex - side.startIndex : side.endIndex - gap.endIndex
+  return cachedNextToViewport * 2 >= syntaxRangeSize(side) ? null : gap
+}
+
+const clampIndex = (index: number, range: EditorSyntaxRange): number =>
+  Math.max(range.startIndex, Math.min(index, range.endIndex))
+
+const syntaxRangeSize = (range: EditorSyntaxRange): number =>
+  Math.max(0, range.endIndex - range.startIndex)
 
 const compareSyntaxRanges = (left: EditorSyntaxRange, right: EditorSyntaxRange): number =>
   left.startIndex - right.startIndex || left.endIndex - right.endIndex

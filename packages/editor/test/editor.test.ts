@@ -729,6 +729,15 @@ function hasLongSyntaxRange(ranges: readonly EditorSyntaxRange[]): boolean {
   return ranges.some((range) => rangeLength(range) > 200000)
 }
 
+function rangesCover(ranges: readonly EditorSyntaxRange[], target: EditorSyntaxRange): boolean {
+  let cursor = target.startIndex
+  for (const range of ranges.toSorted((left, right) => left.startIndex - right.startIndex)) {
+    if (range.startIndex > cursor) break
+    cursor = Math.max(cursor, range.endIndex)
+  }
+  return cursor >= target.endIndex
+}
+
 function selectionRanges(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('.editor-virtualized-selection-range')]
 }
@@ -6455,6 +6464,109 @@ describe('Editor', () => {
       await vi.waitFor(() => expect(ranges.some((range) => range.startIndex > 0)).toBe(true))
     })
 
+    it('asks the look-ahead only for text it has no answer for', async () => {
+      editor.addPlugin(
+        createSyntaxPlugin(() =>
+          createMockSyntaxRuntime({
+            analyze: async () => createSyntaxResult([]),
+            queryRange: async () => createSyntaxResult([]),
+          }),
+        ),
+      )
+      const text = Array.from(
+        { length: 60000 },
+        (_value, index) => `const line${index} = ${index};`,
+      ).join('\n')
+      editor.setText(text, { languageId: 'typescript' })
+      await flushSyntaxDebounce()
+      // Each look-ahead ask is checked against what the view has cached at that moment.
+      const syntax = syntaxControllerFrom(editor)
+      const loadRange = Reflect.get(syntax, 'loadSyntaxRangeResult').bind(syntax)
+      const lookAheads: EditorSyntaxRange[] = []
+      const overlaps: string[] = []
+      Reflect.set(syntax, 'loadSyntaxRangeResult', (...args: unknown[]) => {
+        const [range, source] = args as [EditorSyntaxRange, string]
+        if (source === 'prefetch') {
+          lookAheads.push(range)
+          const cached: readonly EditorSyntaxRange[] = Reflect.get(syntax, 'cachedSyntaxRanges')
+          for (const answered of cached) {
+            if (answered.startIndex < range.endIndex && range.startIndex < answered.endIndex)
+              overlaps.push(
+                `${range.startIndex}-${range.endIndex} over ${answered.startIndex}-${answered.endIndex}`,
+              )
+          }
+        }
+        return loadRange(...args)
+      })
+      for (let step = 1; step <= 30; step++) {
+        editor.setScrollPosition({ top: step * 2400, left: 0 })
+        await flushSyntaxDebounce()
+      }
+      expect(lookAheads.length).toBeGreaterThan(0)
+      expect(overlaps).toEqual([])
+    }, 20_000)
+
+    it('stops the old look-ahead before a far jump asks for its destination', async () => {
+      const asked: {
+        range: EditorSyntaxRange
+        signal?: AbortSignal
+        /** Which earlier asks were already cancelled when this one reached the provider. */
+        earlierAborted: boolean[]
+      }[] = []
+      // Answers for the shown rows arrive; larger asks (look-ahead, background tiles) are held.
+      let hold = false
+      editor.addPlugin(
+        createSyntaxPlugin(() =>
+          createMockSyntaxRuntime({
+            analyze: async () => createSyntaxResult([]),
+            queryRange: (range, signal) => {
+              const earlierAborted = asked.map((ask) => ask.signal?.aborted === true)
+              asked.push({ range, signal, earlierAborted })
+              if (!hold || range.endIndex - range.startIndex < 60000)
+                return Promise.resolve(createSyntaxResult([]))
+              return new Promise<EditorSyntaxResult>(() => undefined)
+            },
+          }),
+        ),
+      )
+      const text = Array.from(
+        { length: 60000 },
+        (_value, index) => `const line${index} = ${index};`,
+      ).join('\n')
+      editor.setText(text, { languageId: 'typescript' })
+      await flushSyntaxUntilSettled(() => asked.length)
+      // Which asks were look-ahead, by the controller's own label for them.
+      const syntax = syntaxControllerFrom(editor)
+      const loadRange = Reflect.get(syntax, 'loadSyntaxRangeResult').bind(syntax)
+      const lookAheadKeys = new Set<string>()
+      Reflect.set(syntax, 'loadSyntaxRangeResult', (...args: unknown[]) => {
+        const [range, source] = args as [EditorSyntaxRange, string]
+        if (source === 'prefetch') lookAheadKeys.add(`${range.startIndex}-${range.endIndex}`)
+        return loadRange(...args)
+      })
+      hold = true
+      editor.setScrollPosition({ top: 1200000, left: 0 })
+      const lookAheadAsked = () =>
+        asked.findLastIndex(({ range }) =>
+          lookAheadKeys.has(`${range.startIndex}-${range.endIndex}`),
+        )
+      await vi.waitFor(() => expect(lookAheadAsked()).toBeGreaterThanOrEqual(0))
+      const lookAhead = lookAheadAsked()
+      expect(asked[lookAhead]!.signal?.aborted).toBe(false)
+      // Turning around keeps it: the reader may come straight back.
+      editor.setScrollPosition({ top: 1199400, left: 0 })
+      await flushSyntaxDebounce()
+      expect(asked[lookAhead]!.signal?.aborted).toBe(false)
+      const before = asked.length
+      // A jump far behind it, beyond where a look-ahead for either direction would reach.
+      editor.setScrollPosition({ top: 600000, left: 0 })
+      await vi.waitFor(() => expect(asked.length).toBeGreaterThan(before))
+      const destination = asked[before]!
+      const old = asked[lookAhead]!.range
+      expect(destination.range.endIndex).toBeLessThan(old.startIndex)
+      expect(destination.earlierAborted[lookAhead]).toBe(true)
+    })
+
     it('keeps syntax prefetch behind the visible range query', async () => {
       const ranges: EditorSyntaxRange[] = []
       const pendingRanges: Deferred<EditorSyntaxResult>[] = []
@@ -6690,13 +6802,13 @@ describe('Editor', () => {
       const syntax = syntaxControllerFrom(editor)
 
       expect(scrolledRanges.some((range) => range.startIndex > enclosingStart)).toBe(true)
+      // The visible answer and the look-ahead beside it cover the span together.
       expect(
-        scrolledRanges.some(
-          (range) => range.startIndex <= enclosingStart && range.endIndex >= currentToken.end,
-        ),
+        rangesCover(scrolledRanges, { startIndex: enclosingStart, endIndex: currentToken.end }),
       ).toBe(true)
       expect(tokens).toEqual([enclosingToken, currentToken])
-      expect(syntax.copyTokens.toTokens()).toEqual([enclosingToken, currentToken])
+      // Copy colors come from the visible answer; the look-ahead only paints.
+      expect(syntax.copyTokens.toTokens()).toEqual([currentToken])
       expect(syntax.renderDataReady).toBe(true)
       expect(editor.getState().syntaxStatus).toBe('ready')
       const currentPaint = tokenHighlightRanges().find(
@@ -6770,16 +6882,20 @@ describe('Editor', () => {
         )
         await flushSyntaxUntilSettled(() => ranges.mock.calls.length)
         const ids = analysis.inspectRetention().entries.map((entry) => entry.runtimeSessionId)
+        // The viewport's answer and the look-ahead beside it stay; the warmed tile was retired.
         expect(
           analysis.inspectRetention().entries.find((entry) => entry.family === 'structural')
             ?.cachedRangeCount,
-        ).toBe(1)
+        ).toBe(2)
         const before = ranges.mock.calls.length
         ranges.mockImplementation(() => new Promise<EditorSyntaxResult>(() => undefined))
         attach()
         await flushSyntaxUntilSettled(() => ranges.mock.calls.length)
 
-        expect(ranges).toHaveBeenCalledTimes(before)
+        // The shown rows are not asked for again; at most the optional look-ahead beside them is.
+        const shownAnswer = ranges.mock.calls[0]![0]
+        const askedAgain = ranges.mock.calls.slice(before).map(([range]) => range)
+        expect(askedAgain.every((range) => range.startIndex >= shownAnswer.endIndex)).toBe(true)
         expect(openStructural).toHaveBeenCalledTimes(1)
         expect(analysis.inspectRetention().entries.map((entry) => entry.runtimeSessionId)).toEqual(
           ids,
