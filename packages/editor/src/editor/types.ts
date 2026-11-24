@@ -129,6 +129,10 @@ export type EditorChangeHandler = (state: EditorState, change: DocumentSessionCh
 
 export type EditorOptions = {
   readonly documentKey?: string | null
+  /**
+   * A paint from `captureSnapshot()`, shown until the document is live. Needs
+   * `createPaintSnapshotPlugin()` in `plugins`; without it the snapshot is ignored.
+   */
   readonly snapshot?: string | null
   /** Hold saved paint while projections settle; reveal a hidden host before setting ready. */
   readonly presentationReady?: boolean

@@ -405,6 +405,228 @@ describe('tree-sitter worker internals', () => {
   })
 })
 
+describe('range queries that run in slices', () => {
+  const { collectFolds, flattenLayerSlices, rangeSlices } = __treeSitterWorkerInternalsForTests
+  type SliceLayer = Parameters<typeof flattenLayerSlices>[0]
+  type SliceResult = Parameters<typeof flattenLayerSlices>[2]
+  type QueryRange = { readonly startIndex: number; readonly endIndex: number }
+
+  const LENGTH = 40_000
+  // Starts inside the first identifier and ends inside the last statement, so both ends cut a node.
+  const range = { startIndex: 50, endIndex: LENGTH - 30 }
+  // Pauses before every slice: the clock never says "not yet".
+  const alwaysDue = (isCurrent: () => boolean = () => true) => ({
+    isCurrent,
+    get resumedAt() {
+      return Number.NEGATIVE_INFINITY
+    },
+    set resumedAt(_value: number) {},
+  })
+
+  const positioned = (current: TestNode): TestNode =>
+    Object.assign(current, {
+      startPosition: { row: Math.floor(current.startIndex / 40), column: 0 },
+      endPosition: { row: Math.floor(current.endIndex / 40), column: 0 },
+    })
+
+  // Statements of 100 units, each `(` identifier `)`. A comment and a string cross the first two
+  // slice boundaries (8,192 and 16,384), and one block wraps every statement.
+  const fixture = () => {
+    const statements: TestNode[] = []
+    const identifiers: TestNode[] = []
+    for (let start = 0; start < LENGTH; start += 100) {
+      const identifier = node('identifier', start + 2, start + 90)
+      identifiers.push(identifier)
+      statements.push(
+        positioned(
+          Object.assign(node('statement', start, start + 100), {
+            children: [node('(', start), identifier, node(')', start + 95)],
+          }),
+        ),
+      )
+    }
+    const crossing = [node('comment', 8_100, 8_300), node('string', 16_301, 16_499)]
+    const block = positioned(Object.assign(node('block', 0, LENGTH), { children: statements }))
+    const root = Object.assign(node('program', 0, LENGTH), { children: [block] })
+    const captured = identifiers.concat(crossing)
+    const asked: string[] = []
+    // Like tree-sitter, answers with every node of a match that touches the range, including
+    // nodes of that match outside it.
+    const near = (current: TestNode, asks: QueryRange): boolean =>
+      current.startIndex < asks.endIndex + 150 && current.endIndex > asks.startIndex - 150
+    const highlight = {
+      captures: (_root: Node, asks: QueryRange) => {
+        asked.push(`highlight:${asks.startIndex}`)
+        return captured
+          .filter((current) => near(current, asks))
+          .map((current) => ({ name: current.type, node: current }))
+      },
+      captureRanges: (_root: Node, asks: QueryRange) => {
+        asked.push(`highlight:${asks.startIndex}`)
+        return captured
+          .filter((current) => near(current, asks))
+          .map(({ type, startIndex, endIndex }) => ({ name: type, startIndex, endIndex }))
+      },
+    } as unknown as Query
+    const fold = {
+      matches: (_root: Node, asks: QueryRange) =>
+        [block]
+          .concat(statements)
+          .filter((current) => near(current, asks))
+          .map((current) => ({ captures: [{ name: 'fold', node: current }] })),
+    } as unknown as Query
+    const base = highlightedRuntime(highlight)
+    const runtime = {
+      ...base,
+      descriptor: { ...base.descriptor, foldQuerySource: '(block) @fold' },
+      foldQuery: fold,
+    } as unknown as Parameters<typeof collectFolds>[1]
+    const tree = fakeTree(root)
+    const layer = {
+      id: 'root',
+      key: 'root',
+      kind: 'root',
+      parentId: null,
+      parentLanguageId: null,
+      languageId: 'typescript',
+      depth: 0,
+      tree,
+      ranges: [treeSitterRange(0, LENGTH)],
+    } as SliceLayer
+    return { asked, layer, runtime, tree }
+  }
+
+  const emptyResult = (): SliceResult => ({
+    captures: [],
+    folds: [],
+    brackets: [],
+    errors: [],
+    injections: [],
+    degraded: [],
+    tokens: [],
+  })
+
+  const bySpan = <T extends QueryRange>(items: readonly T[]): T[] =>
+    items.toSorted((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
+
+  const options = { range, includeHighlights: true, includeCaptures: true }
+
+  it('reports exactly what one query over the whole range reports', async () => {
+    const { layer, runtime, tree } = fixture()
+    const slices = rangeSlices(layer, range)
+    const sliced = emptyResult()
+
+    await flattenLayerSlices(layer, runtime, sliced, cancellationContext(), {
+      options,
+      pacing: alwaysDue(),
+      slices,
+    })
+
+    expect(slices.length).toBeGreaterThan(3)
+    const whole = cancellationContext()
+    const captures = collectCaptures(tree, runtime, whole, range)
+    expect(captures.length).toBeGreaterThan(300)
+    expect(bySpan(sliced.captures)).toEqual(bySpan(captures))
+    expect(bySpan(sliced.folds)).toEqual(bySpan(collectFolds(tree, runtime, whole, range)))
+    expect({ brackets: sliced.brackets, errors: sliced.errors }).toEqual(
+      collectTreeData(tree, range),
+    )
+  })
+
+  it('returns to the event loop between slices', async () => {
+    const { asked, layer, runtime } = fixture()
+    const slices = rangeSlices(layer, range)
+    let finished = false
+    const flatten = flattenLayerSlices(layer, runtime, emptyResult(), cancellationContext(), {
+      options,
+      pacing: alwaysDue(),
+      slices,
+    }).then(() => {
+      finished = true
+    })
+
+    // Microtasks alone cannot carry it past a pause: each pause waits for a task of its own, which
+    // is where a message queued behind the query gets its turn.
+    await settleMicrotasks()
+    expect(finished).toBe(false)
+    expect(asked).toEqual([])
+
+    await flatten
+    expect(asked).toHaveLength(slices.length)
+  })
+
+  it('stops without touching the tree again once its snapshot was released', async () => {
+    const { asked, layer, runtime } = fixture()
+    let current = true
+    const flatten = flattenLayerSlices(layer, runtime, emptyResult(), cancellationContext(), {
+      options,
+      pacing: alwaysDue(() => current),
+      slices: rangeSlices(layer, range),
+    })
+    // Released while the query is paused for the first time, before any slice has been asked.
+    current = false
+
+    await expect(flatten).rejects.toThrow('Tree-sitter request cancelled')
+    expect(asked).toEqual([])
+  })
+
+  it('never ends a slice inside a token, so one long token is matched by one slice', async () => {
+    // `const NAME = 1` where the name alone is longer than twelve slices.
+    const name = node('identifier', 6, 100_006)
+    const root = Object.assign(node('program', 0, 100_020), {
+      children: [node('const', 0, 5), name, node('=', 100_007), node('number', 100_009)],
+    })
+    const reported: number[] = []
+    const highlight = {
+      captures: (_root: Node, asks: QueryRange) => {
+        if (name.startIndex >= asks.endIndex || name.endIndex <= asks.startIndex) return []
+        reported.push(asks.startIndex)
+        return [{ name: 'constant', node: name }]
+      },
+      captureRanges: (_root: Node, asks: QueryRange) => {
+        if (name.startIndex >= asks.endIndex || name.endIndex <= asks.startIndex) return []
+        reported.push(asks.startIndex)
+        return [{ name: 'constant', startIndex: name.startIndex, endIndex: name.endIndex }]
+      },
+    } as unknown as Query
+    const tree = fakeTree(root)
+    const layer = {
+      id: 'root',
+      key: 'root',
+      kind: 'root',
+      parentId: null,
+      parentLanguageId: null,
+      languageId: 'typescript',
+      depth: 0,
+      tree,
+      ranges: [treeSitterRange(0, 100_020)],
+    } as SliceLayer
+    const whole = { startIndex: 0, endIndex: 100_020 }
+    const slices = rangeSlices(layer, whole)
+    const sliced = emptyResult()
+
+    await flattenLayerSlices(
+      layer,
+      highlightedRuntime(highlight) as unknown as Parameters<typeof collectFolds>[1],
+      sliced,
+      cancellationContext(),
+      { options: { ...options, range: whole }, pacing: alwaysDue(), slices },
+    )
+
+    // The first slice runs to the end of the name instead of stopping 8,192 units in, and the
+    // slices still cover the whole range without a gap.
+    expect(slices[0]).toEqual({ startIndex: 0, endIndex: 100_006 })
+    expect(slices.at(-1)!.endIndex).toBe(100_020)
+    for (const [index, slice] of slices.entries())
+      expect(slice.startIndex).toBe(index === 0 ? 0 : slices[index - 1]!.endIndex)
+    // Each time a slice reports the name, the query has run its predicates over all of its text.
+    expect(reported).toEqual([0])
+    expect(sliced.captures).toEqual([
+      { startIndex: 6, endIndex: 100_006, captureName: 'constant', languageId: 'typescript' },
+    ])
+  })
+})
+
 const sourceCleanup: Array<() => void> = []
 afterEach(() => {
   for (const dispose of sourceCleanup.splice(0)) dispose()
@@ -419,6 +641,11 @@ const messageSource: DocumentWorkerReadReference = {
   point: { segment: 'worker-fixture', revision: 0, textVersion: 0 },
   readId: 'worker-fixture',
 }
+/** Runs every microtask that is pending or queued by one, without letting a task in. */
+async function settleMicrotasks(): Promise<void> {
+  for (let turn = 0; turn < 1_000; turn++) await Promise.resolve()
+}
+
 function inputFromText(text: string) {
   const reader = new DocumentWorkerReader()
   const { identity, point } = messageSource
@@ -476,10 +703,31 @@ function nestedNode(depth: number): TestNode {
 
 function fakeTree(root: TestNode, hasError = true): Tree {
   Object.defineProperty(root, 'hasError', { value: hasError, configurable: true })
+  Object.defineProperty(root, 'descendantForIndex', {
+    value: (index: number) => smallestNodeAt(root, index),
+    configurable: true,
+  })
   return {
     rootNode: root,
     walk: () => new FakeTreeCursor(root),
   } as unknown as Tree
+}
+
+/** The smallest node that contains `index`, as `Node.descendantForIndex` answers. */
+function smallestNodeAt(root: TestNode, index: number) {
+  let current = root
+  for (;;) {
+    const child = current.children.find(
+      (candidate) => candidate.startIndex <= index && candidate.endIndex > index,
+    )
+    if (!child) break
+    current = child
+  }
+  return {
+    startIndex: current.startIndex,
+    endIndex: current.endIndex,
+    childCount: current.children.length,
+  }
 }
 
 function highlightedRuntime(query: Query): Parameters<typeof collectCaptures>[1] {
@@ -675,6 +923,70 @@ describe('parse document reuse', () => {
       expect(deleted).toEqual(['root'])
     },
   )
+
+  it('waits for a round without a new request before it frees a closed document', async () => {
+    const { waitForQuiet } = __treeSitterWorkerInternalsForTests
+    // A document opened in place of the closed one sends three requests, one per round.
+    let received = 0
+    let rounds = 0
+    const round = async () => {
+      rounds += 1
+      if (rounds <= 3) received += 1
+    }
+
+    await waitForQuiet(() => received, round, 100)
+
+    expect(rounds).toBe(4)
+  })
+
+  it('frees a closed document after a bounded wait when requests never stop', async () => {
+    const { waitForQuiet } = __treeSitterWorkerInternalsForTests
+    let received = 0
+    let rounds = 0
+
+    await waitForQuiet(
+      () => received,
+      async () => {
+        rounds += 1
+        received += 1
+      },
+      7,
+    )
+
+    expect(rounds).toBe(7)
+  })
+
+  it('forgets a closed document at once and frees its trees after the wait', async () => {
+    const runtimeSessionId = 'runtime-release'
+    const freed: string[] = []
+    const document = fakeParsedDocument(10, freed)
+    const injected = Array.from({ length: 4 }, (_, index) => ({
+      ...document.layers[0]!,
+      id: `injection-${index}`,
+      kind: 'injection' as const,
+      tree: { delete: () => freed.push(`injection-${index}`) } as unknown as Tree,
+    }))
+    replaceCachedDocument(runtimeSessionId, {
+      ...document,
+      layers: document.layers.concat(injected),
+    })
+
+    const released = __treeSitterWorkerInternalsForTests.releaseDocument(runtimeSessionId)
+    // Nothing is freed in the request's own turn: whatever is queued behind it goes first. The
+    // document is gone for every request from this moment on.
+    await settleMicrotasks()
+    expect(freed).toEqual([])
+    expect(
+      await reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(10), {
+        startedAt: 0,
+        budgetMs: Infinity,
+        flag: null,
+      }),
+    ).toBeNull()
+
+    await released
+    expect(freed).toEqual(['root', 'injection-0', 'injection-1', 'injection-2', 'injection-3'])
+  })
 
   it('drops the same-version snapshot before reparsing when content length differs', async () => {
     const runtimeSessionId = 'runtime-length-mismatch'

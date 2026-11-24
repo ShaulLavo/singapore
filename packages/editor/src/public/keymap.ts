@@ -23,11 +23,11 @@ export type {
   EditorKeymapNodeOptions,
 } from '../editor/hotkeys'
 export {
-  EDITOR_COMMANDS,
-  editorCommandDeclaration,
+  EDITOR_COMMAND_IDS,
   editorCommandMutates,
   isEditorCommandId,
 } from '../editor/commandCatalog'
+export { EDITOR_COMMANDS, editorCommandDeclaration } from '../editor/commandText'
 export type {
   EditorAnyCommandId,
   EditorCommandCategory,

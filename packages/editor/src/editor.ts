@@ -28,6 +28,9 @@ export {
 } from './mergeConflictPlugin'
 export type { EditorFindFeature } from './editor/findFeature'
 export { Editor } from './editor/Editor'
+// Here, not in `./paint`: that entry shows saved paint without loading the editor.
+export { createPaintSnapshotPlugin } from './paintSnapshotPlugin'
+export { EDITOR_PAINT_SNAPSHOT_FEATURE_ID } from './editor/paintSnapshotSupport'
 export { createEditorPreparedDocument } from './editor/preparedDocument'
 export type {
   CreateEditorPreparedDocumentOptions,
@@ -210,7 +213,8 @@ export type {
   EditorAnalysisRangeInterest,
 } from './editor/documentAnalysis'
 
-export { editorCommandMutates, editorCommandDeclaration } from './editor/commandCatalog'
+export { editorCommandMutates } from './editor/commandCatalog'
+export { editorCommandDeclaration } from './editor/commandText'
 
 export type { DocumentRead, DocumentRevision } from './editor/documentDelivery'
 export type { EditorStructuralOperation, EditorHighlighterOperation } from './document/operations'

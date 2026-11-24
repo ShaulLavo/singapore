@@ -17,6 +17,7 @@ import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/
 import type { EditorHighlighterProvider } from '../src/syntax/highlighter'
 import type { EditorInitialPaintEvent } from '../src/plugins'
 import type { EditorPerformanceDiagnostic } from '../src/editor/performanceDiagnostics'
+import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
 import '@singapore-editor/core/style.css'
 
 test.each(['typescript', 'markdown'] as const)(
@@ -119,6 +120,7 @@ test.each(['typescript', 'markdown'] as const)(
       editor = new Editor(container, {
         onInitialPaint: (event) => events.push(event),
         plugins: [
+          createPaintSnapshotPlugin(),
           {
             activate: (context) => [
               context.registerSyntaxProvider(structural),
@@ -193,7 +195,10 @@ test.each(['typescript', 'markdown'] as const)(
       try {
         await expect.poll(() => pendingLoads).toBe(1)
         pendingEditor = new Editor(pendingHost, {
-          plugins: [{ activate: (context) => context.registerHighlighter(pendingProvider) }],
+          plugins: [
+            createPaintSnapshotPlugin(),
+            { activate: (context) => context.registerHighlighter(pendingProvider) },
+          ],
         })
         pendingEditor.attachSession(createEditorBufferSession(pendingBuffer), {
           analysis: pendingAnalysis,

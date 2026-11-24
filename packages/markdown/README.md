@@ -14,7 +14,7 @@ npm install @singapore-editor/core @singapore-editor/markdown @singapore-editor/
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
-import { markdown } from '@singapore-editor/tree-sitter-languages'
+import { markdown } from '@singapore-editor/tree-sitter-languages/markdown'
 import {
   createMarkdownAuthoringPlugin,
   createMarkdownPreviewPlugin,

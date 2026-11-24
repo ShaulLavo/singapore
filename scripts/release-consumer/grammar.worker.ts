@@ -1,11 +1,8 @@
 import * as highlighting from '@singapore-editor/highlighting'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
-import {
-  JAVASCRIPT_TREE_SITTER_LANGUAGE,
-  TYPESCRIPT_TREE_SITTER_LANGUAGE,
-  javaScript,
-  typeScript,
-} from '@singapore-editor/tree-sitter-languages'
+import { javaScript } from '@singapore-editor/tree-sitter-languages/javascript'
+import { tsx } from '@singapore-editor/tree-sitter-languages/tsx'
+import { typeScript } from '@singapore-editor/tree-sitter-languages/typescript'
 import { TREE_SITTER_LANGUAGE_METADATA } from '@singapore-editor/tree-sitter-languages/metadata'
 import { createTestPluginContext } from '@singapore-editor/core/testing'
 import type { EditorSyntaxProvider } from '@singapore-editor/core/syntax'
@@ -118,17 +115,10 @@ async function qualify() {
     const assets = contribution.load ? await contribution.load() : contribution
     queries += await qualifyAssets(contribution.id, assets)
   }
-  for (const contribution of [JAVASCRIPT_TREE_SITTER_LANGUAGE, TYPESCRIPT_TREE_SITTER_LANGUAGE]) {
-    const assets = contribution.load ? await contribution.load() : contribution
-    queries += await qualifyAssets(contribution.id, assets)
-  }
-  queries += await qualifyPlugin(
-    javaScript({ jsx: true }),
-    'javascript',
-    'const node = <div>Hello</div>;',
-  )
-  queries += await qualifyPlugin(typeScript({ tsx: true }), 'tsx')
-  return { catalog: ids, simpleVariants: 4, queries }
+  queries += await qualifyPlugin(javaScript(), 'javascript', 'const node = <div>Hello</div>;')
+  queries += await qualifyPlugin(typeScript(), 'typescript')
+  queries += await qualifyPlugin(tsx(), 'tsx')
+  return { catalog: ids, simpleVariants: 3, queries }
 }
 
 qualify().then(

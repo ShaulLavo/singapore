@@ -19,7 +19,7 @@ import capturesSource from '../../editor/src/syntax/captures.ts?raw'
 import frameworksMarkdown from '../../../site/src/content/docs/docs/guides/frameworks.md?raw'
 import designMarkdown from '../../textbuffer/docs/design.md?raw'
 
-const { collectCaptures } = __treeSitterWorkerInternalsForTests
+const { collectCaptures, flattenLayerSlices, rangeSlices } = __treeSitterWorkerInternalsForTests
 
 type SyntaxRange = { readonly startIndex: number; readonly endIndex: number }
 type LoadedLanguage = {
@@ -31,7 +31,14 @@ type Layer = {
   readonly depth: number
   readonly tree: Tree
   readonly loaded: LoadedLanguage
+  /** The regions an injected tree covers; empty for the root. */
+  readonly ranges: readonly Range[]
 }
+type SliceLayer = Parameters<typeof flattenLayerSlices>[0]
+type SliceRuntime = Parameters<typeof flattenLayerSlices>[1]
+type SliceResult = Parameters<typeof flattenLayerSlices>[2]
+// The worker answers a range longer than this in slices.
+const SLICE_UNITS = 8_192
 
 const languages = new Map<string, Promise<LoadedLanguage>>()
 const trees: Tree[] = []
@@ -113,6 +120,7 @@ describe('range highlight captures', () => {
         expect(layers.some((layer) => layer.languageId === id && layer.depth > 0)).toBe(true)
 
       let compared = 0
+      let slicedRanges = 0
       for (const range of rangesAcross(text.length)) {
         const reference: TreeSitterCapture[] = []
         const actual: TreeSitterCapture[] = []
@@ -129,8 +137,12 @@ describe('range highlight captures', () => {
           appendWithDepth(actual, next, layer.depth)
         }
         expect(packedTokens(actual)).toEqual(packedTokens(reference))
+        if (range.endIndex - range.startIndex > SLICE_UNITS)
+          slicedRanges += await expectSlicedAnswerMatches(highlighted, range)
       }
       expect(compared).toBeGreaterThan(1_000)
+      // Markdown has no highlight query of its own, and its fences are shorter than a slice.
+      if (languageId !== 'markdown') expect(slicedRanges).toBeGreaterThan(0)
     },
   )
 
@@ -193,6 +205,15 @@ describe('range highlight captures', () => {
       compared += expected.length
     }
     expect(compared).toBeGreaterThan(0)
+
+    // The same shapes repeated past one slice, answered slice by slice.
+    const long = (QUERY_SHAPE_SOURCE + '\n').repeat(Math.ceil((3 * SLICE_UNITS) / text.length))
+    const layer = { languageId: 'javascript', depth: 0, tree: parseWith(loaded, long), loaded }
+    const sliced = await expectSlicedAnswerMatches([{ ...layer, ranges: [] }], {
+      startIndex: 0,
+      endIndex: long.length,
+    })
+    expect(sliced).toBe(1)
   })
 })
 
@@ -215,6 +236,81 @@ const everyWindow = (length: number): SyntaxRange[] => {
   }
 
   return ranges
+}
+
+/**
+ * A long range is answered slice by slice, each capture kept by the slice holding its start. The
+ * worker's sliced answer must equal the reference run over the same slices with the same rule.
+ * Returns 1 when some layer was cut into more than one slice.
+ */
+const expectSlicedAnswerMatches = async (
+  layers: readonly Layer[],
+  range: SyntaxRange,
+): Promise<number> => {
+  const reference: TreeSitterCapture[] = []
+  const actual: TreeSitterCapture[] = []
+  let sliced = 0
+  for (const layer of layers) {
+    const sliceLayer = toSliceLayer(layer)
+    const slices = rangeSlices(sliceLayer, range)
+    if (slices.length > 1) sliced = 1
+    const runtime = highlightRuntime(layer.loaded)
+    const result = emptySliceResult()
+    await flattenLayerSlices(sliceLayer, runtime, result, cancellationContext(), {
+      options: { range, includeHighlights: true, includeCaptures: true },
+      pacing: { isCurrent: () => true, resumedAt: performance.now() },
+      slices,
+    })
+    appendItemsTo(actual, result.captures)
+    for (const [sliceIndex, slice] of slices.entries()) {
+      const expected = referenceRangeCaptures(
+        layer.tree,
+        runtime.highlightQuery!,
+        layer.languageId,
+        slice,
+      ).filter((capture) => ownedBySlice(capture, slice, sliceIndex))
+      appendWithDepth(reference, expected, layer.depth)
+    }
+  }
+  reference.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
+  actual.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
+  expect(actual, `sliced ${range.startIndex}-${range.endIndex}`).toEqual(reference)
+  expect(packedTokens(actual)).toEqual(packedTokens(reference))
+  return sliced
+}
+
+/** The worker's rule: the first slice keeps what reaches into it, later slices what starts in them. */
+const ownedBySlice = (capture: SyntaxRange, slice: SyntaxRange, sliceIndex: number): boolean => {
+  if (capture.startIndex >= slice.endIndex) return false
+  if (sliceIndex === 0) return capture.endIndex > slice.startIndex
+  return capture.startIndex >= slice.startIndex
+}
+
+const toSliceLayer = (layer: Layer): SliceLayer =>
+  ({
+    id: layer.languageId,
+    key: layer.languageId,
+    kind: layer.depth === 0 ? 'root' : 'injection',
+    parentId: null,
+    parentLanguageId: null,
+    languageId: layer.languageId,
+    depth: layer.depth,
+    tree: layer.tree,
+    ranges: layer.ranges,
+  }) as unknown as SliceLayer
+
+const emptySliceResult = (): SliceResult => ({
+  captures: [],
+  folds: [],
+  brackets: [],
+  errors: [],
+  injections: [],
+  degraded: [],
+  tokens: [],
+})
+
+const appendItemsTo = (target: TreeSitterCapture[], items: readonly TreeSitterCapture[]): void => {
+  for (const item of items) target.push(item)
 }
 
 const appendWithDepth = (
@@ -245,14 +341,23 @@ const rangesAcross = (length: number): SyntaxRange[] => {
   return ranges
 }
 
-const highlightRuntime = (loaded: LoadedLanguage): Parameters<typeof collectCaptures>[1] => {
+/** One runtime per language, as the worker keeps; the sliced path also runs its fold query. */
+const highlightRuntime = (loaded: LoadedLanguage): SliceRuntime => {
   const cached = runtimes.get(loaded)
   if (cached) return cached
-  const runtime = { descriptor: loaded.descriptor, language: loaded.language, highlightQuery: null }
+  const runtime = {
+    descriptor: loaded.descriptor,
+    language: loaded.language,
+    parser: parser.current,
+    highlightQuery: null,
+    foldQuery: null,
+    injectionQuery: null,
+    mergeUnitQuery: null,
+  } as unknown as SliceRuntime
   runtimes.set(loaded, runtime)
   return runtime
 }
-const runtimes = new Map<LoadedLanguage, Parameters<typeof collectCaptures>[1]>()
+const runtimes = new Map<LoadedLanguage, SliceRuntime>()
 
 const cancellationContext = (): Parameters<typeof collectCaptures>[2] => ({
   startedAt: performance.now(),
@@ -289,7 +394,7 @@ const parseWith = (loaded: LoadedLanguage, text: string, includedRanges?: Range[
  */
 const parseLayers = async (languageId: string, text: string): Promise<Layer[]> => {
   const loaded = await loadLanguage(languageId)
-  const root: Layer = { languageId, depth: 0, tree: parseWith(loaded, text), loaded }
+  const root: Layer = { languageId, depth: 0, tree: parseWith(loaded, text), loaded, ranges: [] }
   if (languageId === 'markdown') return [root].concat(await fenceLayers(loaded, root.tree, text))
   return [root].concat(await injectionLayers(root, text))
 }
@@ -318,7 +423,7 @@ const injectionLayers = async (parent: Layer, text: string): Promise<Layer[]> =>
     const loaded = await loadLanguage(languageId)
     ranges.sort((left, right) => left.startIndex - right.startIndex)
     const tree = parseWith(loaded, text, ranges)
-    layers.push({ languageId: loaded.descriptor.id, depth: parent.depth + 1, tree, loaded })
+    layers.push({ languageId: loaded.descriptor.id, depth: parent.depth + 1, tree, loaded, ranges })
   }
 
   return layers
@@ -341,11 +446,13 @@ const fenceLayers = async (
       const languageId = info.text.trim().split(/\s/)[0]!.toLowerCase()
       const loaded = await loadLanguage(languageId).catch(() => null)
       if (!loaded) continue
+      const ranges = [rangeOf(content)]
       const fence: Layer = {
         languageId: loaded.descriptor.id,
         depth: 1,
-        tree: parseWith(loaded, text, [rangeOf(content)]),
+        tree: parseWith(loaded, text, ranges),
         loaded,
+        ranges,
       }
       layers.push(fence)
       appendLayers(layers, await injectionLayers(fence, text))

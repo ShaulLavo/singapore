@@ -15,6 +15,7 @@ import {
   type MarkdownHeadings,
 } from '../../markdown/src/headings'
 import type { EditorPlugin } from '../src/plugins'
+import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
 import { createTreeSitterLanguagePlugin } from '../../tree-sitter/src/index'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
 import '../src/style.css'
@@ -133,7 +134,7 @@ function mount(text: string, markdown: boolean, family: string, dark: boolean) {
     lineHeight: 22,
     tabSize: 4,
     gutterScroll: 'content' as const,
-    plugins: [createLineGutterPlugin(), plugin],
+    plugins: [createLineGutterPlugin(), plugin, createPaintSnapshotPlugin()],
     cursorLineHighlight: { rowBackground: false, gutterNumber: false, gutterBackground: false },
     theme: {
       type: dark ? ('dark' as const) : ('light' as const),
@@ -831,6 +832,7 @@ it.each([false, true])(
       plugins: [
         createLineGutterPlugin(),
         createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS),
+        createPaintSnapshotPlugin(),
       ],
     })
     item.editor = editor

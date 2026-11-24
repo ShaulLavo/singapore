@@ -610,6 +610,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
 
   public disposeDocument(runtimeSessionId: string): void {
     this.cancelRuntimeRequests(runtimeSessionId)
+    this.announceClose(runtimeSessionId)
     const precedingTasks = [...(this.runtimeTasks.get(runtimeSessionId) ?? [])]
     const disposal = Promise.allSettled(precedingTasks).then(async () => {
       if (!this.worker) return
@@ -617,6 +618,20 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
       await this.postRequest({ type: 'disposeDocument', runtimeSessionId }, false)
     })
     void this.trackRuntimeTask(runtimeSessionId, disposal).catch(() => undefined)
+  }
+
+  /**
+   * The close below is posted once the session's requests have settled, so that none of them
+   * arrives after it. A request that is still running would never hear of it: the cancellation
+   * flags need shared memory, which a page without cross-origin isolation does not have. This
+   * goes out at once, and the worker stops the session's running request at its next pause.
+   */
+  private announceClose(runtimeSessionId: string): void {
+    // Only a session with work under way has anything to stop; that includes a request that is
+    // about to be posted, which then arrives after this and is refused.
+    if (!this.worker || !this.runtimeTasks.has(runtimeSessionId)) return
+    const announced = this.postRequest({ type: 'closeRuntimeSession', runtimeSessionId }, false)
+    void this.trackClientTask(announced).catch(() => undefined)
   }
 
   public async awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
@@ -1014,6 +1029,7 @@ function languageDescriptorSignature(language: TreeSitterLanguageDescriptor): st
   const signature = JSON.stringify({
     aliases: sortedItems(language.aliases),
     extensions: sortedItems(language.extensions),
+    extraWasmUrls: language.extraWasmUrls,
     foldQuerySource: language.foldQuerySource,
     highlightQuerySource: language.highlightQuerySource,
     id: language.id,

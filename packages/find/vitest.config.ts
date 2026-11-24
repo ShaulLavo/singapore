@@ -10,6 +10,9 @@ export default defineConfig({
           environment: 'happy-dom',
           include: ['test/**/*.test.ts'],
           exclude: ['test/**/*.browser.test.ts'],
+          // A hang cap, not a speed judgment: the oracle and property tests are
+          // CPU-heavy and their duration depends on how busy the machine is.
+          testTimeout: 120_000,
         },
       },
       {

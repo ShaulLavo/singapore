@@ -7,6 +7,7 @@ import {
   type DocumentRead,
 } from '@singapore-editor/core/editor'
 import { waitForDocumentWork } from '@singapore-editor/core/internal/document-worker'
+import { createPaintSnapshotPlugin } from '@singapore-editor/core/editor'
 import type { EditorInitialPaintEvent, EditorPlugin } from '@singapore-editor/core/extensions'
 import {
   createDocumentSession,
@@ -229,6 +230,21 @@ describe('useEditor', () => {
     mounted.render({ documentKey: 'a.ts', document })
 
     expect(mounted.controller.materializeFullText()).toBe('alpha')
+    mounted.dispose()
+  })
+
+  it('shows a pending snapshot once a rerender adds the paint snapshot plugin', () => {
+    const snapshot = captureSavedPaint('saved text')
+    const options = { documentKey: 'a.ts', document: null, snapshot }
+    const mounted = mountSnapshotEditor(options, false)
+    const instance = mounted.controller.getEditor()
+    expect(instance?.getPresentationState()).toBe('empty')
+
+    mounted.render({ ...options, plugins: [paintSnapshots] })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(instance?.getPresentationState()).toBe('provisional')
+    expect(mounted.host.textContent).toContain('saved text')
     mounted.dispose()
   })
 
@@ -1382,13 +1398,27 @@ async function flushInitialPaintCallbacks(): Promise<void> {
   await new Promise<void>((resolve) => queueMicrotask(resolve))
 }
 
-function mountSnapshotEditor(options: ReactEditorOptions): MountedEditor {
+const paintSnapshots = createPaintSnapshotPlugin()
+const withPaintSnapshots = (options: ReactEditorOptions): ReactEditorOptions => ({
+  ...options,
+  plugins: (options.plugins ?? []).concat([paintSnapshots]),
+})
+
+/** Mounts with the paint snapshot plugin added to every render, unless `paint` is false. */
+function mountSnapshotEditor(options: ReactEditorOptions, paint = true): MountedEditor {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(80)
   // Paint admission compares the outer box, which happy-dom otherwise reports as 0 by 0.
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(320)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(80)
-  const mounted = mountReactEditor(options)
+  const withPaint = paint ? withPaintSnapshots : (next: ReactEditorOptions) => next
+  const inner = mountReactEditor(withPaint(options))
+  const mounted: MountedEditor = {
+    controller: inner.controller,
+    host: inner.host,
+    render: (next) => inner.render(withPaint(next)),
+    dispose: () => inner.dispose(),
+  }
   const editor = mounted.controller.getEditor()
   const view: unknown = editor && Reflect.get(editor, 'view')
   if (
