@@ -339,6 +339,7 @@ export class VirtualizedTextView {
   private atomicRenderDepth = 0
   private atomicRenderPending = false
   private flushingAtomicRender = false
+  private reportingViewportChange = false
   private applyingEdit = false
   private contentHeight = -1
   private readonly onContentHeightChange: ((height: number) => void) | null
@@ -963,7 +964,9 @@ export class VirtualizedTextView {
     }
     // Markers alone move no row: cached syntax folds arrive for every scrolled range, and a full
     // render here repeated the scroll's row, token and caret work on each step. Syntax scheduling
-    // still hears about the new markers through the viewport report.
+    // still hears about the new markers through the viewport report — unless one is running now:
+    // the cached folds of a scroll are applied from inside the scroll's own report, which goes on
+    // past this point with the same rows, and reporting again re-ran all of it once per step.
     if (
       !view.disposed &&
       !view.provisional &&
@@ -972,7 +975,7 @@ export class VirtualizedTextView {
       !this.applyingEdit
     ) {
       updateMountedFoldMarkers(view)
-      this.reportViewportChange()
+      if (!this.reportingViewportChange) this.reportViewportChange()
       return
     }
 
@@ -1919,9 +1922,14 @@ export class VirtualizedTextView {
     const previousPaintOffsetY = view.viewport.paintOffsetY
     updateSpacerHeight(view, snapshot)
     if (view.viewport.paintOffsetY !== previousPaintOffsetY) rebaseCaretPaint(view)
-    updateSpacerWidth(view, snapshot.viewportWidth)
+    // An edit resets the width scan; the row pass below rescans and writes the width. Writing it
+    // here from the reset value shrank the document to the viewport and grew it back on every key
+    // that deferred its render: two wasted writes to the element every mounted row is sized by.
+    const contentWidthKnown = view.contentWidth > 0
+    if (contentWidthKnown) updateSpacerWidth(view, snapshot.viewportWidth)
     const key = rowsKey(view, snapshot)
     if (key === view.lastRenderedRowsKey) {
+      if (!contentWidthKnown) updateSpacerWidth(view, snapshot.viewportWidth)
       this.reportViewportChange()
       this.flushPendingReveal()
       return
@@ -1941,7 +1949,13 @@ export class VirtualizedTextView {
 
   private reportViewportChange(): void {
     if (this.view.disposed || this.flushingAtomicRender) return
-    this.view.onViewportChange?.()
+    const wasReporting = this.reportingViewportChange
+    this.reportingViewportChange = true
+    try {
+      this.view.onViewportChange?.()
+    } finally {
+      this.reportingViewportChange = wasReporting
+    }
   }
 
   private synchronizeScrollPaint(
