@@ -178,9 +178,10 @@ it('waits for the complete tree near the end of the prefix when the prefix has a
   const line = 'const answer: number = 42;\n'
   const doc = document('const = ;\n' + line.repeat(50_000))
   await doc.run()
-  // With the full lookahead parsed, an error that does not touch the range is no obstacle.
+  // An error above the range waits too, even with the full lookahead parsed: it can be the opener
+  // of a comment or string whose recovery reads the range as code.
   const early = { startIndex: line.length * 100, endIndex: line.length * 110 }
-  expect((await doc.runtime.queryRange(early)).projection.analysis?.kind).toBe('partial')
+  expect((await doc.runtime.queryRange(early)).projection.analysis?.kind).toBe('full')
   // Near the end of the prefix the lookahead is cut short, and any error waits.
   const late = { startIndex: line.length * 2100, endIndex: line.length * 2110 }
   expect((await doc.runtime.queryRange(late)).projection.analysis?.kind).toBe('full')

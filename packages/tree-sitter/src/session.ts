@@ -150,13 +150,18 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     source: DocumentWorkerReadReference,
     signal?: AbortSignal,
   ): Promise<EditorSyntaxResult> {
-    if (this.analysedRead !== read) this.background?.controller.abort()
     const changed = this.analysedRead
       ? this.source.changesBetween(this.analysedRead.revision, read.revision)
       : null
+    // The same text: a pending complete analysis still answers it, for this newest read.
     if (this.parsedSnapshotVersion > 0 && changed?.edits?.length === 0) {
       this.analysedRead = read
       return this.result
+    }
+    if (this.analysedRead !== read) {
+      // An edit's answer can be partial too; its complete analysis is a new one.
+      this.background?.controller.abort()
+      this.background = null
     }
     if (
       this.parsedSnapshotVersion > 0 &&
@@ -261,7 +266,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
           ...this.result,
           degraded: { kind: 'request-failed', message: String(error) },
         }
-        this.notifyResults(read, this.result)
+        this.notifyResults(this.analysedRead ?? read, this.result)
       },
     )
     this.background = { controller, promise }
@@ -292,6 +297,9 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       const result = await this.parseCompleteLanguages(payload, version, signal)
       signal.throwIfAborted()
       if (this.disposed || this.snapshotVersion !== version || !result) return
+      // A revision that left the text alone replaced the read and kept this analysis; the answer
+      // is published for the newest read, which is the one listeners still wait on.
+      const latest = this.analysedRead ?? read
       if (
         result.analysis?.kind === 'cancelled' &&
         this.result.projection.analysis?.kind === 'partial'
@@ -303,11 +311,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
             analysis: { ...this.result.projection.analysis, background: result.analysis },
           },
         }
-        this.notifyResults(read, this.result)
+        this.notifyResults(latest, this.result)
         return
       }
-      const next = this.updateFromTreeSitterResult(result, version, read)
-      this.notifyResults(read, next)
+      const next = this.updateFromTreeSitterResult(result, version, latest)
+      this.notifyResults(latest, next)
     } finally {
       await prepared.dispose()
     }
