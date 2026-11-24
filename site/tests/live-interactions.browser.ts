@@ -206,9 +206,12 @@ for (const engine of ['chromium', 'webkit'] as const) {
               )
               .toEqual(['(', ')'])
             const caret = example.locator('.editor-virtualized-caret-layer')
-            expect(await caret.evaluate((node) => getComputedStyle(node).animationName)).toBe(
-              'editor-virtualized-caret-blink',
-            )
+            // The caret blinks: its layer reaches the hidden half of a blink.
+            await expect
+              .poll(() =>
+                caret.evaluate((node) => node.hasAttribute('data-editor-caret-blink-off')),
+              )
+              .toBe(true)
             await example.screenshot({ path: join(evidence, `${engine}-${width}-bracket.png`) })
           } finally {
             await context.close()
