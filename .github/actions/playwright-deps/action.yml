@@ -33,8 +33,8 @@ runs:
         path: ~/.cache/playwright-debs
         key: ${{ steps.key.outputs.key }}
 
-    # The saved files go through apt's resolver, which needs no network when they are complete,
-    # and a failed attempt is repaired before anything else runs. Success is decided afterwards
+    # The saved files are installed with dpkg, which needs no network, and a failed attempt is
+    # repaired before anything else runs. Success is decided afterwards
     # by `ready`: dpkg reports no half-installed package and Playwright finds nothing missing.
     # A cold or unusable cache falls through to the real install, which is time-limited so a slow
     # mirror fails with a clear message, and which keeps the downloaded files for the save step.
@@ -61,7 +61,8 @@ runs:
         }
 
         if compgen -G "$debs/*.deb" > /dev/null; then
-          if ! sudo apt-get install -y --no-install-recommends "$debs"/*.deb; then
+          # dpkg, not apt: apt downloads again from the mirror even for files it was handed.
+          if ! sudo dpkg -i "$debs"/*.deb; then
             echo "::warning::Cached system packages did not install; repairing before using apt."
             sudo dpkg --configure -a || true
             sudo timeout "$limit" apt-get install -f -y || true
