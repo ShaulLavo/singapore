@@ -2305,5 +2305,302 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('does not mark an unqueried Markdown viewport degraded when an older overlapping query returns a terminal partial', async () => {
+      const buffer = createEditorTextBuffer('# heading\n'.repeat(20))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'md-old-overlap-fail' })
+      let resolveHeld: ((result: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 10 && range.endIndex === 30) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            resolveHeld = resolve
+          })
+        }
+        return answerFor(range, {
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex]),
+          },
+        })
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 20,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Scroll to [10, 30) and hold the authoritative Markdown query in flight.
+        view.setRange({ startIndex: 10, endIndex: 30 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveHeld).not.toBeNull())
+
+        // Scroll further to [15, 35) before the held [10, 30) query fails with a terminal partial.
+        view.setRange({ startIndex: 15, endIndex: 35 })
+        resolveHeld!({
+          ...createEmptySyntaxResult({ requestedRanges: [{ startIndex: 10, endIndex: 30 }] }),
+          degraded: { kind: 'request-failed', message: 'stale-records-failed' },
+          projection: {
+            ...createEmptySyntaxResult({ requestedRanges: [{ startIndex: 10, endIndex: 30 }] })
+              .projection,
+            analysis: { kind: 'partial', coveredRange: { startIndex: 10, endIndex: 30 } },
+          },
+        })
+
+        // [15, 35) was never queried by [10, 30); controller must query [15, 35) and settle ready.
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(query.mock.calls.some(([r]) => r.startIndex === 15 && r.endIndex === 35)).toBe(true)
+        expect(view.records()?.data).toEqual(new Uint32Array([15, 35]))
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('clears degraded ranges from the shared cache on explicit retry of a healthy prepared view', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prepared-shared-degraded-retry',
+      })
+      let bHealthy = false
+      const rangeA: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const rangeB: EditorSyntaxRange = { startIndex: 100, endIndex: 120 }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 100 && !bHealthy) {
+          return answerFor(range, {
+            degraded: { kind: 'request-failed', message: 'shared-degraded-B' },
+          })
+        }
+        return answerFor(range)
+      })
+      const provider = structuralProvider(query)
+
+      // Prepare range A and adopt it in prepared view A.
+      const retainedA = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeCaptures: false,
+        includeHighlights: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      await retainedA.refreshBase()
+      const readyA = await retainedA.queryRange(rangeA)
+
+      const sessionA = createEditorBufferSession(buffer)
+      const pluginHostA = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRangeA = rangeA
+      const syntaxA = new EditorSyntaxController({
+        pluginHost: pluginHostA,
+        getSession: () => sessionA,
+        getDocumentId: () => 'prepared-shared-degraded-retry',
+        getCurrentSessionDocumentId: () => 'prepared-shared-degraded-retry',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRangeA,
+        getMountedSyntaxRange: () => currentRangeA,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: retainedA.runtimeSessionId,
+          provider,
+          configurationTag: [],
+          session: retainedA,
+          range: rangeA,
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(readyA),
+          readyResult: readyA,
+          dispose: () => retainedA.dispose(),
+        },
+      }
+      // Second view B retains degraded range B in the shared StructuralEntry cache.
+      const viewB = createView(buffer, analysis, provider, rangeB)
+      try {
+        syntaxA.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-shared-degraded-retry',
+            languageId: 'typescript',
+            snapshot: sessionA.getSnapshot(),
+            textSnapshot: sessionA.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntaxA.adoptPreparedReadyResults(prepared)
+        expect(syntaxA.status).toBe('ready')
+
+        viewB.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewB.syntax.status).toBe('degraded'))
+        expect(query.mock.calls.filter(([r]) => r.startIndex === 100)).toHaveLength(1)
+
+        // Provider recovers; explicit retry on prepared view A must clear degraded range B from shared cache.
+        bHealthy = true
+        syntaxA.refresh(1, null, { delayMs: 0 })
+
+        currentRangeA = rangeB
+        syntaxA.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntaxA.status).toBe('ready'))
+        expect(query.mock.calls.filter(([r]) => r.startIndex === 100)).toHaveLength(2)
+      } finally {
+        viewB.dispose()
+        syntaxA.dispose()
+        pluginHostA.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('preserves parseId on prepared adoption so the first narrow edit promotes adopted and scrolled strips without requerying', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(140))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prepared-first-edit-promote',
+      })
+      let snapshotVersion = 0
+      const baseAnalyze = vi.fn(async (read: { readonly text: { readonly length: number } }) => {
+        const previousVersion = snapshotVersion
+        snapshotVersion += 1
+        const base = createEmptySyntaxResult({
+          snapshot: {
+            documentId: 'prepared-first-edit-promote',
+            length: read.text.length,
+            version: snapshotVersion,
+          },
+        })
+        if (previousVersion === 0) return base
+        return {
+          ...base,
+          projection: {
+            ...base.projection,
+            invalidation: {
+              baseSnapshotVersion: previousVersion,
+              snapshotVersion,
+              ranges: [{ startIndex: 95, endIndex: 110 }],
+            },
+          },
+        }
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange) => answerFor(range))
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: baseAnalyze,
+          canQueryRange: () => true,
+          queryRange: query,
+        })),
+      }
+      const range0: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeCaptures: false,
+        includeHighlights: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      await retained.refreshBase()
+      const ready0 = await retained.queryRange(range0)
+
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = range0
+      let textVersion = 0
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'prepared-first-edit-promote',
+        getCurrentSessionDocumentId: () => 'prepared-first-edit-promote',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => textVersion,
+        getVisibleSyntaxRange: () => currentRange,
+        getMountedSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: retained.runtimeSessionId,
+          provider,
+          configurationTag: [],
+          session: retained,
+          range: range0,
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(ready0),
+          readyResult: ready0,
+          dispose: () => retained.dispose(),
+        },
+      }
+      try {
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-first-edit-promote',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntax.adoptPreparedReadyResults(prepared)
+        expect(syntax.status).toBe('ready')
+
+        // Scroll to [10, 30) -> caches only the uncovered [20, 30) strip.
+        currentRange = { startIndex: 10, endIndex: 30 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        const queriesBeforeEdit = query.mock.calls.length
+        expect(queriesBeforeEdit).toBe(2)
+
+        // Edit at offset 100 with narrow invalidation [95, 110); both [0, 20) and [20, 30) must promote!
+        const editChange = session.applyEdits([{ from: 100, to: 100, text: 'Z' }])
+        textVersion += 1
+        syntax.acceptChange(editChange)
+        syntax.refresh(1, editChange, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        expect(baseAnalyze).toHaveBeenCalledTimes(2)
+        expect(query.mock.calls.length).toBe(queriesBeforeEdit)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

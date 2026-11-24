@@ -1091,11 +1091,15 @@ const editDocument = async (
     const editMs = nowMs() - editStart
     const parseStart = nowMs()
     let ownsReusableTree = true
+    let rootTree: Tree | null = null
+    let builtDocument: ParsedDocument | null = null
+    let cachedNewDocument = false
     let parsedDocument: ParsedDocument
     let changedRanges: readonly TreeSitterSyntaxRange[]
     let invalidation: TreeSitterParseInvalidation
+    let parseMs: number
     try {
-      const rootTree = stagesSlowEdit(request)
+      rootTree = stagesSlowEdit(request)
         ? parseEditOrStage(request, runtime, source, { reusableTree, oldDocument: cached }, context)
         : runWorkerPhase('parse root', () =>
             measurePhase(context, 'parseRoot', () =>
@@ -1122,16 +1126,24 @@ const editDocument = async (
         },
         context,
       )
-      parsedDocument = edited.parsedDocument
+      builtDocument = edited.parsedDocument
       changedRanges = edited.changedRanges
       invalidation = edited.invalidation
+      parseMs = nowMs() - parseStart
+      assertNotCancelled(context)
+      assertRuntimeSessionActive(request.runtimeSessionId)
+      replaceCachedDocument(request.runtimeSessionId, builtDocument)
+      cachedNewDocument = true
+      parsedDocument = builtDocument
+    } catch (error) {
+      if (!cachedNewDocument) {
+        if (builtDocument) disposeCachedSnapshot(builtDocument)
+        else rootTree?.delete()
+      }
+      throw error
     } finally {
       if (ownsReusableTree) reusableTree.delete()
     }
-    const parseMs = nowMs() - parseStart
-    assertNotCancelled(context)
-    assertRuntimeSessionActive(request.runtimeSessionId)
-    replaceCachedDocument(request.runtimeSessionId, parsedDocument)
     if (request.resultMode === 'parseOnly') {
       return {
         ...parseAckResult(

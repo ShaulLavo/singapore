@@ -150,6 +150,9 @@ export type EditorRetainedSyntaxSession = Omit<EditorSyntaxSession, 'queryRange'
   onDidProduceSyntax(listener: () => void): () => void
   setDisplayDemand(demand: EditorAnalysisDisplayDemand): void
   refreshBase(options?: { readonly forceRetry?: boolean }): Promise<EditorRetainedSyntaxBase>
+  currentParseId(): number | null
+  clearDegradedOrPartialRanges(): void
+  hasDegradedOrFailedBase(): boolean
   invalidationStepsSince(
     fromParseId: number,
   ): readonly IncrementalInvalidationStep<EditorSyntaxResult>[] | null
@@ -1210,6 +1213,21 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return this.currentReady()
   }
 
+  currentParseId(): number | null {
+    const state = this.read()
+    if (state.kind !== 'ready' || !this.lastBase) return null
+    return this.lastBase.snapshot === this.buffer.getTextSnapshot() ? this.lastBase.parseId : null
+  }
+
+  hasDegradedOrFailedBase(): boolean {
+    const state = this.read()
+    return (
+      state.kind === 'failed' ||
+      (state.kind === 'ready' &&
+        (isTerminalIncompleteSyntaxResult(state.result) || state.result.degraded !== null))
+    )
+  }
+
   clearDegradedOrPartialRanges(): void {
     for (const [key, cached] of this.ranges) {
       if (
@@ -1904,6 +1922,11 @@ function structuralLease(
       entry.setDisplayDemand(lease.signal, next)
     },
     refreshBase: (options) => lease.wait(() => refreshBase(options)),
+    currentParseId: () => (lease.signal.aborted ? null : entry.currentParseId()),
+    clearDegradedOrPartialRanges: () => {
+      if (!lease.signal.aborted) entry.clearDegradedOrPartialRanges()
+    },
+    hasDegradedOrFailedBase: () => (lease.signal.aborted ? false : entry.hasDegradedOrFailedBase()),
     invalidationStepsSince: (fromParseId) =>
       lease.signal.aborted ? null : entry.invalidationStepsSince(fromParseId),
     get foldingSupport() {

@@ -1069,7 +1069,7 @@ export class EditorSyntaxController {
       {
         contentVersion: guard.contentVersion,
         parseGeneration: guard.parseGeneration,
-        parseId: null,
+        parseId: this.retainedSyntax?.currentParseId() ?? null,
         baseResult: structural.result,
         range: canRange ? adoptedRange : null,
         result: structural.result,
@@ -1097,7 +1097,7 @@ export class EditorSyntaxController {
       {
         contentVersion: guard.contentVersion,
         parseGeneration: guard.parseGeneration,
-        parseId: null,
+        parseId: this.retainedSyntax.currentParseId(),
         baseResult: ready.result,
         range: cachedRange,
         result: ready.result,
@@ -1325,12 +1325,15 @@ export class EditorSyntaxController {
     const explicitRetry = change === null
     const retryDegradedPrepared =
       explicitRetry &&
-      (this.#parseState.kind === 'error' || this.#publishedScope?.degraded === true)
+      (this.#parseState.kind === 'error' ||
+        this.#publishedScope?.degraded === true ||
+        this.retainedSyntax?.hasDegradedOrFailedBase() === true)
     if (explicitRetry) {
       this.#unavailableRanges = []
       this.#unavailableEmptyRange = null
       this.#unavailableRecordsRange = null
       this.#pruneDegradedAndPartialRangeEntries()
+      this.retainedSyntax?.clearDegradedOrPartialRanges()
     }
 
     this.options.log?.({
@@ -1722,7 +1725,7 @@ export class EditorSyntaxController {
       {
         contentVersion: guard.contentVersion,
         parseGeneration: guard.parseGeneration,
-        parseId: null,
+        parseId: this.retainedSyntax?.currentParseId() ?? null,
         baseResult: result,
         range,
         result,
@@ -2937,9 +2940,9 @@ export class EditorSyntaxController {
     if (!visible) return { gaps: [], emptyGap: false, recordsGap: false }
     const recordsGap =
       this.#needsAuthoritativeRecordsQuery(visible) &&
-      (range.endIndex <= range.startIndex
+      (visible.endIndex <= visible.startIndex
         ? sameSyntaxRange(range, visible)
-        : syntaxRangesIntersect(range, visible))
+        : syntaxRangeCoverage(visible, [range]) === 'full')
     if (visible.endIndex <= visible.startIndex) {
       return {
         gaps: [],
@@ -3411,22 +3414,20 @@ export class EditorSyntaxController {
       return { kind: 'incomplete' }
     }
 
-    // 1. Honor terminal authoritative records failure.
-    if (this.#isRecordsUnavailableFor(visibleRange)) {
-      this.#publishedScope = {
-        kind: 'range',
-        range: visibleRange,
-        degraded: true,
-        unavailable: true,
-      }
-      this.#settleDegradedHighlight(options.configurationGeneration)
-      return { kind: 'settled-degraded' }
-    }
-
-    // 2. Check full complete coverage of the viewport.
+    // 1. Check full complete coverage of the viewport.
     if (this.#rangeCoveredByComplete(visibleRange)) {
       const composed = this.#composeViewportScope(visibleRange)
       if (composed.kind === 'needs-authoritative-records-query') {
+        if (this.#isRecordsUnavailableFor(visibleRange)) {
+          this.#publishedScope = {
+            kind: 'range',
+            range: visibleRange,
+            degraded: true,
+            unavailable: true,
+          }
+          this.#settleDegradedHighlight(options.configurationGeneration)
+          return { kind: 'settled-degraded' }
+        }
         return { kind: 'needs-authoritative-records-query' }
       }
 
