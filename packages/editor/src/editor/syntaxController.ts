@@ -80,6 +80,8 @@ export type EditorSyntaxControllerOptions = {
   getLanguageId(): EditorSyntaxLanguageId | null
   getSession(): DocumentSession | null
   getVisibleSyntaxRange(): EditorSyntaxRange | null
+  /** Just the rows on screen, without the text kept ready around them for scrolling. */
+  getMountedSyntaxRange?(): EditorSyntaxRange | null
   adoptTokens(tokens: EditorTokenStore): void
   clearSyntaxFolds(): void
   setSyntaxFolds(folds: readonly FoldRange[]): void
@@ -129,9 +131,18 @@ type EditorSyntaxLoadResult = {
   readonly skipApply?: boolean
   readonly suppressWarm?: boolean
   readonly updatesDocument?: boolean
+  /** The rows on screen, asked for ahead of the visible range that is already on its way. */
+  readonly firstRows?: boolean
 }
 
 type EditorSyntaxLoadSource = 'full' | 'visible' | 'prefetch' | 'warm'
+
+/**
+ * A document with no colors yet is asked for the rows on screen before the full visible range,
+ * when that leaves at least this much text for the second request. A smaller difference is not
+ * worth a second answer.
+ */
+const FIRST_ROWS_MIN_SAVED_CHARS = 4_096
 
 type PendingSyntaxPrefetch = {
   readonly contentVersion: number
@@ -213,6 +224,7 @@ export class EditorSyntaxController {
   #pendingInitialHighlightThemeTerminal: PendingInitialHighlightThemeTerminal | null = null
   #highlighterThemePending = false
   #lastInitialHighlightTerminalStatus: SettledHighlightStatus | null = 'plain'
+  #undebouncedRefreshClaimed = false
   private syntaxSession: EditorSyntaxSession | null = null
   #syntaxSessionIncludesCaptures = false
   #highlighterSession: EditorHighlighterSession | null = null
@@ -463,6 +475,25 @@ export class EditorSyntaxController {
     return this.#initialHighlightState
   }
 
+  /**
+   * The document has a syntax or highlighter session and none of its results has landed yet, so no
+   * colors are on screen for an edit to leave stale.
+   */
+  get awaitingFirstHighlight(): boolean {
+    return this.#lastInitialHighlightTerminalStatus === null
+  }
+
+  /**
+   * True once per document, for the first edit that arrives while nothing is colored yet: that
+   * one skips the typing debounce. The edits after it are debounced and coalesced as usual, so
+   * a burst of keys before the first colors asks for syntax twice, not once per key.
+   */
+  claimUndebouncedRefresh(): boolean {
+    if (!this.awaitingFirstHighlight || this.#undebouncedRefreshClaimed) return false
+    this.#undebouncedRefreshClaimed = true
+    return true
+  }
+
   get copyTokens(): EditorTokenStore {
     if (
       this.#acceptedTokensDocumentVersion !== this.options.getDocumentVersion() ||
@@ -624,6 +655,7 @@ export class EditorSyntaxController {
         : 'plain'
     this.#lastInitialHighlightTerminalStatus =
       this.#initialHighlightState === 'plain' ? 'plain' : null
+    this.#undebouncedRefreshClaimed = false
     if (this.#retainedHighlighter) {
       this.refreshHighlighterTheme(false)
     }
@@ -1382,8 +1414,8 @@ export class EditorSyntaxController {
       delayMs,
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: syntaxWorkTags(documentVersion, contentVersion, 'full'),
-      run: traceEditorPerformanceTask('editor.syntax.structural.request', () =>
-        this.#loadSyntaxResult(contentVersion),
+      run: traceEditorPerformanceTask('editor.syntax.structural.request', (signal: AbortSignal) =>
+        this.#loadSyntaxResult(contentVersion, documentVersion, configurationGeneration, signal),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) =>
         this.#applySyntaxResult(result, documentVersion, startedAt, configurationGeneration),
@@ -1447,15 +1479,68 @@ export class EditorSyntaxController {
     })
   }
 
-  #loadSyntaxResult(contentVersion: number): Promise<EditorSyntaxLoadResult> {
+  #loadSyntaxResult(
+    contentVersion: number,
+    documentVersion: number,
+    configurationGeneration: number,
+    signal: AbortSignal,
+  ): Promise<EditorSyntaxLoadResult> {
     if (!this.syntaxSession) return Promise.reject(new Error('No syntax session'))
     return this.#loadSyntaxBaseResult().then((result) => {
       if (this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange()) {
-        return this.#loadCurrentSyntaxRangeResult({ contentVersion, updatesDocument: true })
+        const version = { contentVersion, documentVersion, configurationGeneration }
+        return this.#paintFirstRows(version, signal).then(() => {
+          // A newer request took this one's place while the rows were on their way. The range
+          // around them is that request's to ask for, not a second one from here.
+          if (signal.aborted) throw new DOMException('Syntax request was superseded', 'AbortError')
+          return this.#loadCurrentSyntaxRangeResult({ contentVersion, updatesDocument: true })
+        })
       }
 
       return { contentVersion, range: null, result, source: 'full', updatesDocument: true }
     })
+  }
+
+  /**
+   * The first colors of a document: asks for only the rows on screen and paints their tokens. The
+   * visible range, which also covers the text around those rows and carries folds and brackets,
+   * is asked for right after, as it always was, and it is that answer which settles the
+   * document's highlight. A failure here is left to that request to report.
+   */
+  async #paintFirstRows(
+    version: {
+      readonly contentVersion: number
+      readonly documentVersion: number
+      readonly configurationGeneration: number
+    },
+    signal: AbortSignal,
+  ): Promise<void> {
+    const range = this.#firstRowsRange()
+    if (!range || signal.aborted) return
+
+    const firstRows = await this.loadSyntaxRangeResult(range, 'visible', {
+      contentVersion: version.contentVersion,
+      updatesDocument: true,
+    }).catch(() => null)
+    if (!firstRows || signal.aborted) return
+
+    this.#applySyntaxResult(
+      { ...firstRows, firstRows: true, suppressWarm: true },
+      version.documentVersion,
+      nowMs(),
+      version.configurationGeneration,
+    )
+  }
+
+  #firstRowsRange(): EditorSyntaxRange | null {
+    if (!this.awaitingFirstHighlight || this.#highlighterSession) return null
+
+    const rows = this.options.getMountedSyntaxRange?.()
+    const visible = this.options.getVisibleSyntaxRange()
+    if (!rows || !visible) return null
+
+    const saved = visible.endIndex - visible.startIndex - (rows.endIndex - rows.startIndex)
+    return saved >= FIRST_ROWS_MIN_SAVED_CHARS ? rows : null
   }
 
   #loadSyntaxBaseResult(): Promise<EditorSyntaxResult> {
@@ -1591,7 +1676,9 @@ export class EditorSyntaxController {
     // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
     // window that does not cover the viewport would pair brackets across the part it never parsed
     // and report the rest of the document as being in the host language.
-    const applyScopeFacts = this.#shouldApplySyntaxFolds(loadResult)
+    // The first rows are a head start on the tokens and nothing else: the visible-range answer
+    // that follows them is the one that carries scope facts and settles the highlight.
+    const applyScopeFacts = !loadResult.firstRows && this.#shouldApplySyntaxFolds(loadResult)
     // Ahead of the tokens, because adopting them is the only notification this pass sends the view
     // contributions: a bracket list assigned after it is a parse late to everyone reading the
     // snapshot, and on a document nobody touches after opening it that means never.
@@ -1619,11 +1706,9 @@ export class EditorSyntaxController {
       this.#rangeTokenOwner =
         contributor && canOwnRanges ? { store: nextTokens, snapshot: contributor.snapshot } : null
       this.rangeCopyOwner = contributor ? { store: copyTokens, contributor } : null
-      this.#commitInitialHighlightStatus(
-        status,
-        () => this.setTokens(nextTokens, true, copyTokens),
-        configurationGeneration,
-      )
+      const paint = (): void => this.setTokens(nextTokens, true, copyTokens)
+      if (loadResult.firstRows) this.#paintAheadOfSettlement(paint, configurationGeneration)
+      else this.#commitInitialHighlightStatus(status, paint, configurationGeneration)
     }
     if (
       !this.#highlighterSession &&
@@ -1658,7 +1743,8 @@ export class EditorSyntaxController {
         status: this.status,
       },
     })
-    if (!this.usesFallbackFolds && !this.#foldsCoverViewport()) {
+    // After the first rows, the request for the visible range around them is already under way.
+    if (!loadResult.firstRows && !this.usesFallbackFolds && !this.#foldsCoverViewport()) {
       this.refreshVisibleRange(documentVersion, { delayMs: 0 })
     }
     this.options.notifyChange(null)
@@ -2222,6 +2308,16 @@ export class EditorSyntaxController {
       () => this.options.notifyViewUpdate(),
       configurationGeneration,
     )
+  }
+
+  /**
+   * Puts tokens on screen without settling the document's highlight: the status stays `loading`
+   * and no initial-paint event is sent, because the answer that covers the visible range is
+   * still on its way.
+   */
+  #paintAheadOfSettlement(paint: () => void, configurationGeneration: number): void {
+    if (configurationGeneration !== this.#initialHighlightConfigurationGeneration) return
+    paint()
   }
 
   #commitInitialHighlightStatus(

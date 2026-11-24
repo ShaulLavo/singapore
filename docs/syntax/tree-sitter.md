@@ -119,6 +119,10 @@ A range-mode editor asks for the text it shows, one range at a time, and keeps t
 
 Answers carried through an edit only stand in for the new parse. Its first answer replaces them, and what they covered is asked for again when it is shown.
 
+A document with no colors yet is asked for the rows on screen first, and for the visible range (those rows plus the text kept ready around them) right after. The first answer only puts tokens on screen. It does not settle the document's highlight: the status stays `loading`, no initial-paint event is sent, and folds, brackets and injected spans are left alone until the answer that covers the visible range arrives, as before. A request that a newer one supersedes while its rows are on their way does not go on to ask for the range around them. The extra request is skipped when the rows on screen are within 4,096 characters of the visible range.
+
+The first edit that arrives while a document has no colors yet skips the typing debounce, which exists to protect colors that are on screen. Only that one does: the edits after it are debounced and coalesced as usual, so a burst of keys before the first colors asks for syntax twice, not once per key.
+
 The trim removes tokens only while the painted store is made of range answers alone. After an edit, a newer analysis, or tokens installed by a host, it removes none.
 
 ### Read-only slices
