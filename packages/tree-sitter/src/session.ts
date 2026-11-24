@@ -150,7 +150,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     source: DocumentWorkerReadReference,
     signal?: AbortSignal,
   ): Promise<EditorSyntaxResult> {
-    if (this.analysedRead !== read) this.background?.controller.abort()
+    if (this.analysedRead !== read) {
+      // An edit's answer can be partial too; its complete analysis is a new one.
+      this.background?.controller.abort()
+      this.background = null
+    }
     const changed = this.analysedRead
       ? this.source.changesBetween(this.analysedRead.revision, read.revision)
       : null

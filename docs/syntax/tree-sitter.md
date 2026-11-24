@@ -84,9 +84,19 @@ over the whole document.
 Injection layers outside those ranges keep their edited trees, reading the new text, when every
 edit ends on a row above them, and are reparsed when an edit moved the column they start at.
 
-An edit answers only with its complete reparse. Answering the visible range from a parse of part
-of the text was tried and dropped: no cut point is safe for an LR grammar, since a block comment
-can run past any lookahead and a call's `(` can follow its name by any number of lines.
+An edit answers with its complete reparse, with one exception that reuses the open. Answering the
+visible range from a parse of a window around the edit was tried and dropped: no window that
+starts mid-file is safe for an LR grammar, since a block comment can run past any lookahead and a
+call's `(` can follow its name by any number of lines.
+
+The exception is a document that opened viewport first. There an edit that starts inside the
+bootstrap prefix gets one parse slice (8 ms) for its incremental reparse. An edit that needs more,
+such as a backtick or `/*` that changes how the rest of the file reads, is staged the way an open
+is: the edit answers partial, visible ranges inside the prefix are colored from a prefix parse
+that starts at offset zero (with the same lookahead and error rules as at open), and the complete
+analysis resumes the paused incremental reparse and carries the old snapshot's injection layers.
+An edit made before that complete analysis lands is analysed like an open, from a fresh prefix and
+a parse from scratch.
 
 ### Range requests while scrolling
 

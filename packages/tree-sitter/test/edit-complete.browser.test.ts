@@ -114,6 +114,63 @@ browserTest('follows every partial answer to an edit with the complete one', asy
   expect(last.projection.analysis?.kind).not.toBe('partial')
 })
 
+// Deleting the backtick in front of TAIL turns every string in the file back into code and every
+// code span back into a string: the reparse reads the whole file, many parse slices long.
+async function openFlipped(documentId: string, text = '`' + TAIL) {
+  const buffer = createDocumentSession(text)
+  const { document, backend } = rangeDocument(documentId, text)
+  await document.run()
+  await settle(document, text.length)
+  return { document, backend, buffer }
+}
+
+function rootCaptures(result: EditorSyntaxResult) {
+  return result.captures.filter((capture) => !capture.injectionDepth)
+}
+
+browserTest(
+  'answers an edit that reparses the whole file from the text above the screen',
+  async () => {
+    const { document, buffer } = await openFlipped('flip.ts')
+    const change = buffer.applyEdits([{ from: 0, to: 1, text: '' }])
+    const answered = await document.edit(change.edits)
+    expect(answered.projection.analysis?.kind).toBe('partial')
+
+    const visible = { startIndex: 0, endIndex: 2_000 }
+    const preview = await document.runtime.queryRange(visible)
+    expect(preview.projection.analysis?.kind).toBe('partial')
+    const { document: fresh } = rangeDocument('flip-fresh.ts', TAIL)
+    await fresh.run()
+    await settle(fresh, TAIL.length)
+    const expected = await fresh.runtime.queryRange(visible)
+    expect(rootCaptures(preview)).toEqual(rootCaptures(expected))
+    fresh.dispose()
+
+    // The complete analysis replaces the preview, injected languages included.
+    await settle(document, TAIL.length)
+    await expectFresh(await document.runtime.queryRange(visible), TAIL, visible)
+  },
+)
+
+browserTest('answers a small edit to a large file completely', async () => {
+  const { document, buffer } = await openFlipped('small.ts', TAIL)
+  const change = buffer.applyEdits([{ from: 0, to: 0, text: 'debugger;\n' }])
+  const answered = await document.edit(change.edits)
+  expect(answered.projection.analysis?.kind).toBe('full')
+})
+
+browserTest('completes an edit made while a slow edit before it is still partial', async () => {
+  const { document, buffer } = await openFlipped('typing.ts')
+  const first = buffer.applyEdits([{ from: 0, to: 1, text: '' }])
+  expect((await document.edit(first.edits)).projection.analysis?.kind).toBe('partial')
+  const second = buffer.applyEdits([{ from: 0, to: 0, text: 'const typed = 1\n' }])
+  await document.edit(second.edits)
+  const text = 'const typed = 1\n' + TAIL
+  await settle(document, text.length)
+  const visible = { startIndex: 0, endIndex: 2_000 }
+  await expectFresh(await document.runtime.queryRange(visible), text, visible)
+})
+
 function tokenValues(result: EditorSyntaxResult) {
   return 'toTokens' in result.tokens ? result.tokens.toTokens() : result.tokens
 }
