@@ -86,6 +86,9 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     readonly controller: AbortController
     readonly promise: Promise<void>
   } | null = null
+  // A slow edit answers before its reparse finishes. Its snapshot is partial, but later edits
+  // still apply to it incrementally rather than starting a new document.
+  private stagedEditVersion: number | null = null
   private readonly resultListeners = new Set<
     (read: DocumentRead, result: EditorSyntaxResult) => void
   >()
@@ -147,7 +150,10 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     source: DocumentWorkerReadReference,
     signal?: AbortSignal,
   ): Promise<EditorSyntaxResult> {
-    if (this.analysedRead !== read) this.background?.controller.abort()
+    if (this.analysedRead !== read) {
+      this.background?.controller.abort()
+      this.background = null
+    }
     const changed = this.analysedRead
       ? this.source.changesBetween(this.analysedRead.revision, read.revision)
       : null
@@ -159,7 +165,8 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       this.parsedSnapshotVersion > 0 &&
       changed?.edits &&
       this.analysedRead &&
-      this.result.projection.analysis?.kind !== 'partial'
+      (this.result.projection.analysis?.kind !== 'partial' ||
+        this.stagedEditVersion === this.parsedSnapshotVersion)
     ) {
       const payload = {
         documentId: this.documentId,
@@ -485,7 +492,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
         return this.parseRead(read, payload.source, signal)
       }
 
-      return this.updateFromTreeSitterResult(result, payload.snapshotVersion, read)
+      const next = this.updateFromTreeSitterResult(result, payload.snapshotVersion, read)
+      // The complete analysis starts once a range has been answered, as after a bootstrap: posting
+      // it now would cancel the visible range's query.
+      if (result.analysis?.kind === 'partial') this.stagedEditVersion = payload.snapshotVersion
+      return next
     } catch {
       signal?.throwIfAborted()
       if (this.disposed) return this.result

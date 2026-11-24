@@ -29,6 +29,55 @@ import { createEditorPreparedDocument } from '../src/editor/preparedDocument'
 import type { EditorHighlighterProvider } from '../src/syntax/highlighter'
 import type { TextEdit } from '../src/tokens'
 
+describe('syntax refresh after an edit', () => {
+  it('asks for the visible range first, at once after a pause and debounced within a burst', async () => {
+    vi.useFakeTimers()
+    const buffer = createEditorTextBuffer('x\n'.repeat(50_000))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'edit-refresh' })
+    const asked: string[] = []
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: async (range: EditorSyntaxRange) => {
+          asked.push(`${range.startIndex}-${range.endIndex}`)
+          return createEmptySyntaxResult({ requestedRanges: [range] })
+        },
+      })),
+    } satisfies EditorSyntaxProvider
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 512 })
+    const edit = (text: string) => {
+      const change = createEditorBufferSession(buffer).applyEdits([{ from: 0, to: 0, text }])
+      view.syntax.acceptChange(change)
+      view.syntax.refresh(1, change)
+    }
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.advanceTimersByTimeAsync(200)
+      // The last range asked for lies off screen, as warming leaves it.
+      view.syntax.prefetchVisibleRange(1, { startIndex: 60_000, endIndex: 61_000 }, { delayMs: 0 })
+      await vi.advanceTimersByTimeAsync(200)
+      expect(asked.at(-1)).toBe('60000-61000')
+
+      asked.length = 0
+      edit('a')
+      await vi.advanceTimersByTimeAsync(5)
+      expect(asked[0]).toBe('0-512')
+
+      asked.length = 0
+      edit('b')
+      await vi.advanceTimersByTimeAsync(5)
+      expect(asked).toEqual([])
+      await vi.advanceTimersByTimeAsync(100)
+      expect(asked[0]).toBe('0-512')
+    } finally {
+      view.dispose()
+      analysis.dispose()
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('syntax range contributor lifetime', () => {
   it.each(['disjoint', 'overlap'] as const)(
     'bounds forty %s publications through the public controller lifecycle',

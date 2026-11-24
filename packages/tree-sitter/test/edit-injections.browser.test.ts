@@ -120,11 +120,11 @@ browserTest.each(['full', 'range'] as const)(
     clients.add(backend)
     const scans: number[] = []
     const edit = backend.edit.bind(backend)
-    backend.edit = async (...args) => {
+    backend.edit = (async (...args: Parameters<typeof edit>) => {
       const result = await edit(...args)
       scans.push(result?.statistics?.injectionScanUnits ?? Number.NaN)
       return result
-    }
+    }) as typeof backend.edit
     const languageResolver = registry()
     const options = { languageId: 'typescript', languageResolver, backend, syntaxMode } as const
     const document = createDocumentSession(SOURCE)

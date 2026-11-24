@@ -1139,9 +1139,6 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
         pending.work = { kind: 'running', generation: this.generation }
         const current = this.readRange(range)
         if (current.kind === 'ready') return Promise.resolve(current.result)
-        // Asked for before an edit, it would answer text that no longer exists, and its answer is
-        // never admitted. Querying it anyway puts it ahead of the new text's visible range.
-        if (point !== this.buffer.getDocumentSyncPoint()) return Promise.reject(cancelled())
         queried = true
         return this.structuralSession.queryRange?.(range, signal) ?? this.current()
       }).then((result) => {
@@ -1576,14 +1573,22 @@ function structuralLease(
   const lease = entry.lease(signal)
   entry.registerDisplayDemand(lease.signal)
   let demand: EditorSyntaxRange | undefined
+  let shown: EditorAnalysisDisplayDemand | undefined
   const result = () => (demand ? entry.range(demand) : entry.current())
   const current = () => lease.wait(result)
-  const refresh = refreshRetainedAnalysis(entry, result)
+  // The last range asked for is often one warmed off screen. Asking for it again after an edit
+  // would hold the worker ahead of the visible range the caller asks for next.
+  const refresh = refreshRetainedAnalysis(entry, () =>
+    demand && !offFrame(demand, shown) ? entry.range(demand) : entry.current(),
+  )
   const retained: EditorRetainedSyntaxSession = {
     runtimeSessionId: entry.runtimeSessionId,
     onDidProduceSyntax: (listener) =>
       observeRetainedEvent(lease.signal, (next) => entry.onDidProduceSyntax(next), listener),
-    setDisplayDemand: (demand) => entry.setDisplayDemand(lease.signal, demand),
+    setDisplayDemand: (next) => {
+      shown = next
+      entry.setDisplayDemand(lease.signal, next)
+    },
     get foldingSupport() {
       return entry.structuralSession.foldingSupport
     },
@@ -1741,6 +1746,15 @@ function rangeKey(range: EditorSyntaxRange): string {
 function boundedRange(range: EditorSyntaxRange, length: number): EditorSyntaxRange {
   const startIndex = Math.max(0, Math.min(length, range.startIndex))
   return { startIndex, endIndex: Math.max(startIndex, Math.min(length, range.endIndex)) }
+}
+
+/** Whether a frame is known to be shown and `range` lies outside it. */
+function offFrame(
+  range: EditorSyntaxRange,
+  shown: EditorAnalysisDisplayDemand | undefined,
+): boolean {
+  if (shown?.kind !== 'frame') return false
+  return !shown.ranges.some((frame) => rangesIntersect(frame, range))
 }
 
 function rangesIntersect(left: EditorSyntaxRange, right: EditorSyntaxRange): boolean {

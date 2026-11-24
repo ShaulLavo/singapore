@@ -58,6 +58,22 @@ Each parse result is tied to a document snapshot/version. Consumers must be able
 5. Queries run for invalidated or visible ranges first.
 6. Query results are emitted as syntax decorations or structural ranges tagged with their base snapshot.
 
+The editor asks for the visible range as soon as the first edit after a pause is parsed; only the
+edits of a burst wait for the debounce. An edit looks for injections only in the root's changed
+ranges and the edit itself, each grown to the smallest node holding it, or to the top-level nodes
+it touches when that node is the root. Injection layers outside those ranges keep their edited
+trees when every edit ends on a row above them, and are reparsed when an edit moved the column they
+start at.
+
+A range-mode edit whose reparse outlasts its first 8 ms slice answers at once as partial, like a
+bootstrap, and the reparse continues in short slices. A range query for that snapshot is answered
+from a window parsed fresh with its injections: it starts at a top-level node that starts before
+the edit and the range, where the grammar is in its entry state, and runs the bootstrap lookahead
+past the range. The window is used only when no ERROR node from its cut reaches back into the
+range; otherwise the query waits for the reparse. An edit that arrives while the reparse runs
+continues from its basis with both edits. The complete analysis is that reparse, and its answer
+replaces the window's.
+
 Open implementation details:
 
 - exact Tree-sitter input adapter for piece-table reads
