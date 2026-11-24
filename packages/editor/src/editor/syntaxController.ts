@@ -968,12 +968,20 @@ export class EditorSyntaxController {
     this.scheduleSyntaxRangeRequest(this.rangeRequests, documentVersion, range, options, 'visible')
   }
 
-  /** Whether the last answer that covered the viewport, for this text, covers `range` too. */
+  /**
+   * Whether one answer for this text covers `range` whole: the last answer that covered the
+   * viewport, or a cached visible answer such as a prepared one. Look-ahead answers never count,
+   * and pieces are never joined to cover it.
+   */
   private visibleAnswerCovers(range: EditorSyntaxRange): boolean {
-    const owner = this.rangeScopeOwner
-    if (!owner || owner.snapshot !== this.options.getSession()?.getTextSnapshot()) return false
-    if (this.parsedSyntaxContentVersion !== this.syntaxContentVersion) return false
-    return syntaxRangeCoverage(range, [owner.range]) === 'full'
+    const snapshot = this.options.getSession()?.getTextSnapshot()
+    if (!snapshot || this.parsedSyntaxContentVersion !== this.syntaxContentVersion) return false
+    const covers = (answer: CachedSyntaxFoldRange | null) =>
+      answer !== null &&
+      !answer.lookAhead &&
+      answer.snapshot === snapshot &&
+      syntaxRangeCoverage(range, [answer.range]) === 'full'
+    return covers(this.rangeScopeOwner) || this.cachedSyntaxFoldRanges.some(covers)
   }
 
   prefetchVisibleRange(
