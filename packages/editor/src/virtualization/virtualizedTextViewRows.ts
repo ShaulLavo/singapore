@@ -2575,6 +2575,11 @@ function rowFreshness(
   if (row.metadata !== displayRowMetadata(displayRow)) return 'stale'
   const offsets = rowOffsetFreshness(row, displayRow)
   if (offsets === 'stale') return 'stale'
+  // A wrap segment draws facts read from its whole logical line — trailing whitespace, mixed-script
+  // warnings — which an edit to another segment changes without touching this one's text. The edit
+  // may sit in a segment that is not even mounted, so any edit since the row was written rebuilds it.
+  if (row.textRevision !== view.textRevision && isWrapSegment(view, item.index, displayRow))
+    return 'stale'
 
   const text = lineText(view, item.index)
   if (row.text !== text) return 'stale'
@@ -2593,6 +2598,18 @@ function rowFreshness(
   if (row.foldMarkerKey !== (foldMarker?.key ?? '')) return 'stale'
   if (row.foldCollapsed !== (foldMarker?.collapsed ?? false)) return 'stale'
   return offsets
+}
+
+/** Whether this display row is one of several a wrapped logical line spans. */
+function isWrapSegment(
+  view: VirtualizedTextViewInternal,
+  index: number,
+  displayRow: DisplayRow | undefined,
+): boolean {
+  if (!isDocumentTextDisplayRow(displayRow)) return false
+  if (displayRow.wrapSegment > 0) return true
+  const next = view.model.projection.getRowMetrics(index + 1)
+  return next?.source === 'document' && next.bufferRow === displayRow.bufferRow
 }
 
 function rowOffsetFreshness(

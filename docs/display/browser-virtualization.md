@@ -67,7 +67,10 @@ A row below the edit whose text is unchanged but whose source offsets moved by a
 keeps its DOM, and only its chunk offsets move. Every other row is rebuilt. The view's text
 revision is not part of the comparison, so one key rebuilds the edited row, not every mounted row.
 Inline-mapped and widget rows are always rebuilt when their offsets move, because their runs come
-from the inline map that the edit rebuilt.
+from the inline map that the edit rebuilt. A segment of a wrapped line is rebuilt after any edit,
+because it draws facts read from the whole line: trailing whitespace and mixed-script warnings.
+An edit to another segment, possibly one that is not mounted, can change those facts while this
+segment's own text stays the same.
 
 ### Horizontal Virtualization
 
