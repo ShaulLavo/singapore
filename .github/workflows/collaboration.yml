@@ -39,9 +39,14 @@ jobs:
         run: bun run --cwd packages/collaboration test
       - name: Verify the signaling broker
         run: bun run --cwd packages/collaboration test:server
+      - name: Install Chromium system packages
+        uses: ./.github/actions/playwright-deps
+        with:
+          playwright: packages/editor/node_modules/.bin/playwright
+          browsers: chromium
       - name: Install Chromium
         working-directory: packages/editor
-        run: ./node_modules/.bin/playwright install --with-deps chromium
+        run: ./node_modules/.bin/playwright install chromium
       - name: Verify native WebRTC, same-origin tabs and presence
         run: bun run --cwd packages/collaboration test:browser
       - name: Verify concurrent editor input and author undo
