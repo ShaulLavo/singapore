@@ -3617,7 +3617,7 @@
         {
           "kind": "type",
           "name": "CreateMergeConflictDocumentTextOptions",
-          "source": "packages/editor/src/mergeConflicts.ts",
+          "source": "packages/editor/src/mergeConflictDocument.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -4625,7 +4625,7 @@
         {
           "kind": "unknown",
           "name": "createMergeConflictDocumentText",
-          "source": "packages/editor/src/mergeConflicts.ts",
+          "source": "packages/editor/src/mergeConflictDocument.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -4638,6 +4638,12 @@
           "kind": "unknown",
           "name": "createOccurrenceHighlightPlugin",
           "source": "packages/editor/src/occurrenceHighlightPlugin.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createPaintSnapshotPlugin",
+          "source": "packages/editor/src/paintSnapshotPlugin.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -4678,6 +4684,12 @@
         },
         {
           "kind": "unknown",
+          "name": "EDITOR_PAINT_SNAPSHOT_FEATURE_ID",
+          "source": "packages/editor/src/editor/paintSnapshotSupport.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "Editor",
           "source": "packages/editor/src/editor/Editor.ts",
           "via": "packages/editor/src/editor.ts"
@@ -4685,7 +4697,7 @@
         {
           "kind": "unknown",
           "name": "editorCommandDeclaration",
-          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "source": "packages/editor/src/editor/commandText.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -4751,7 +4763,7 @@
         {
           "kind": "unknown",
           "name": "suspiciousCharacterRanges",
-          "source": "packages/editor/src/unicodeHighlight.ts",
+          "source": "packages/editor/src/suspiciousCharacterRanges.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -6112,14 +6124,20 @@
         },
         {
           "kind": "unknown",
-          "name": "EDITOR_COMMANDS",
+          "name": "EDITOR_COMMAND_IDS",
           "source": "packages/editor/src/editor/commandCatalog.ts",
           "via": "packages/editor/src/public/keymap.ts"
         },
         {
           "kind": "unknown",
+          "name": "EDITOR_COMMANDS",
+          "source": "packages/editor/src/editor/commandText.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorCommandDeclaration",
-          "source": "packages/editor/src/editor/commandCatalog.ts",
+          "source": "packages/editor/src/editor/commandText.ts",
           "via": "packages/editor/src/public/keymap.ts"
         },
         {

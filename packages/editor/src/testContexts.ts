@@ -69,7 +69,7 @@ export function createTestEditContributionContext(
     changesSinceDocumentSyncPoint: () => null,
     getSelections: () => [],
     focusEditor: () => undefined,
-    applyEdits: () => undefined,
+    applyEdits: () => false,
     startSnippetSession: () => undefined,
   }
   return { ...defaults, ...overrides }
@@ -86,7 +86,7 @@ export function createTestViewContributionContext(
   const defaults: EditorInternalViewContributionContext = {
     unstableEditor: null,
     getSelections: () => [],
-    applyEdits: () => undefined,
+    applyEdits: () => false,
     registerCommand: () => noDisposal,
     refreshInputs: () => undefined,
     registerTextGate: () => noDisposal,

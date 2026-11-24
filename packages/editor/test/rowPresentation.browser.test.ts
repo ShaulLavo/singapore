@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VirtualizedTextView } from '../src/virtualization'
 import type { SavedPaint } from '../src/editor/paintSnapshot'
+import { paintSnapshotSupport } from '../src/paintSnapshotPlugin'
 import '../src/style.css'
 import { Editor } from '../src/editor'
 import type { EditorViewContributionContext } from '../src/plugins'
@@ -200,7 +201,7 @@ describe('row presentation lifetime', () => {
       rows: [],
       layers: [],
     }
-    expect(view.restorePaint(paint)).toBe(true)
+    expect(view.restorePaint(paint, paintSnapshotSupport)).toBe(true)
     expect(handle.signal.aborted).toBe(true)
     expect(before).toBe('alpha')
     expect(connected).toBe(true)
