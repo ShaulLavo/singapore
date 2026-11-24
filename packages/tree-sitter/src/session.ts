@@ -93,9 +93,9 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     readonly hostTree: Promise<void>
   } | null = null
   /**
-   * The worker holds the whole tree of the current version, not only a large file's first part.
-   * Edits are applied to that tree, and every range is answered from it, whatever the state of
-   * the injected grammars.
+   * The worker holds a whole tree for this document, not only a large file's first part. Edits
+   * are applied to that tree whatever the state of the injected grammars, and it stays that tree
+   * while a worker is still reparsing it after an edit it has already answered as `partial`.
    */
   private hostTreeComplete = false
   /**
@@ -713,9 +713,13 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
   ): EditorSyntaxResult {
     this.injectionFailure = this.injectionFailureFor(result.missingLanguages)
     this.updateFromTreeSitterResult(result, payload.snapshotVersion, read)
-    if (!this.hostTreeComplete || !this.hasLoadableLanguages(result.missingLanguages))
-      return this.result
-    return this.awaitInjections(read)
+    if (this.hostTreeComplete && this.hasLoadableLanguages(result.missingLanguages))
+      return this.awaitInjections(read)
+    // A worker may answer an edit before its reparse has finished, from the part it has, and say
+    // `partial` itself. The tree stays the one edits are applied to; the complete analysis asks
+    // for the rest and publishes it, as it does for a large file's first part.
+    if (this.result.projection.analysis?.kind === 'partial') void this.startCompleteAnalysis()
+    return this.result
   }
 
   private reparseAfterIncrementalFailure(

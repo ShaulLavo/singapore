@@ -566,6 +566,54 @@ describe('the first answer and injected grammars', () => {
     session.dispose()
   })
 
+  it('keeps editing the tree while a worker is still reparsing an edit it answered as partial', async () => {
+    const registered: string[][] = []
+    const log: string[] = []
+    const backend: TreeSitterBackend = {
+      ...recordingBackend(registered),
+      parse: async (payload) => {
+        log.push(`parse of version ${payload.snapshotVersion}`)
+        return parsed(payload, [])
+      },
+      edit: async (payload) => {
+        log.push(`edit to version ${payload.snapshotVersion}`)
+        // Answered from the part around the edit; the reparse of the rest is still running.
+        return {
+          ...parsed(payload, []),
+          analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
+        }
+      },
+      queryRange: async (payload) => rangeAnswer(payload),
+    }
+    const session = createTreeDocument({
+      documentId: 'edit-window',
+      languageId: 'container',
+      text: 'plain text',
+      backend,
+      syntaxMode: 'range',
+      languageResolver: { resolveTreeSitterLanguage: async (id) => descriptor(id) },
+    })
+    const published: EditorSyntaxResult[] = []
+    session.runtime.subscribeResults((_read, result) => published.push(result))
+    expect(analysisOf(await session.run())).toBe('full')
+
+    // The second key arrives before the first one's reparse has answered. It is another edit of
+    // the same tree, not a parse from the start.
+    expect(analysisOf(await session.edit([{ from: 0, to: 0, text: 'a' }]))).toBe('partial')
+    expect(analysisOf(await session.edit([{ from: 0, to: 0, text: 'b' }]))).toBe('partial')
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+
+    // The complete analysis asks for the rest of the newest version and publishes it, once.
+    expect(analysisOf(published[0]!)).toBe('full')
+    expect(published[0]!.projection.snapshot.version).toBe(3)
+    expect(log.filter((entry) => entry.startsWith('edit'))).toEqual([
+      'edit to version 2',
+      'edit to version 3',
+    ])
+    expect(log.at(-1)).toBe('parse of version 3')
+    session.dispose()
+  })
+
   it('keeps a large file partial until its injected grammars are in, across an edit', async () => {
     const registered: string[][] = []
     const log: string[] = []
