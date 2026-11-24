@@ -88,6 +88,14 @@ An edit answers only with its complete reparse. Answering the visible range from
 of the text was tried and dropped: no cut point is safe for an LR grammar, since a block comment
 can run past any lookahead and a call's `(` can follow its name by any number of lines.
 
+### Range requests while scrolling
+
+Each viewport change asks for the visible rows' uncached text and for a look-ahead window around them: 64,000 characters in the scroll direction and 32,000 behind (up to 192,000 ahead on a fast scroll). A newer look-ahead replaces the older one for the view, which ignores the older answer, but the older query keeps running: when the scroll turns back, its answer is cached for the next window, and a request for the same window joins it. Only an edit or disposal stops it.
+
+A query for shown rows or a background tile that every caller has left is never sent to the worker. One already running stays joinable for 150 ms for a caller asking for the same range again; after that, or as soon as another range is asked for, it is cancelled, and a query that was waiting for the complete analysis is not sent again once that lands. A caller's query is never cancelled because another caller's query started.
+
+Cancelling a query already posted to the worker stops it mid-query only where shared cancellation flags are available (a cross-origin-isolated page). Without them, the worker finishes the query and its answer is dropped. Not sending a query, or not sending it again, works everywhere.
+
 Open implementation details:
 
 - exact Tree-sitter input adapter for piece-table reads

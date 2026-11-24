@@ -6455,6 +6455,43 @@ describe('Editor', () => {
       await vi.waitFor(() => expect(ranges.some((range) => range.startIndex > 0)).toBe(true))
     })
 
+    it('sends a look-ahead asked for again while on its way only once', async () => {
+      const asked: EditorSyntaxRange[] = []
+      const signals: (AbortSignal | undefined)[] = []
+      editor.addPlugin(
+        createSyntaxPlugin(() =>
+          createMockSyntaxRuntime({
+            analyze: async () => createSyntaxResult([]),
+            queryRange: (range, signal) => {
+              asked.push(range)
+              signals.push(signal)
+              // The shown rows are answered; the look-ahead stays on its way.
+              if (range.endIndex - range.startIndex < 100000)
+                return Promise.resolve(createSyntaxResult([]))
+              return new Promise<EditorSyntaxResult>(() => undefined)
+            },
+          }),
+        ),
+      )
+      const text = Array.from(
+        { length: 60000 },
+        (_value, index) => `const line${index} = ${index};`,
+      ).join('\n')
+      editor.setText(text, { languageId: 'typescript' })
+      await flushSyntaxUntilSettled(() => asked.length)
+      const syntax = syntaxControllerFrom(editor)
+      const lookAhead = { startIndex: 400000, endIndex: 650000 }
+      syntax.prefetchVisibleRange(1, lookAhead, { delayMs: 0 })
+      await vi.waitFor(() => expect(asked).toContainEqual(lookAhead))
+      const first = asked.findIndex((range) => range.startIndex === lookAhead.startIndex)
+      // The same window again: it joins the request on its way instead of sending it again.
+      syntax.prefetchVisibleRange(1, lookAhead, { delayMs: 0 })
+      await flushSyntaxDebounce()
+      const lookAheadAsks = asked.filter((range) => range.startIndex === lookAhead.startIndex)
+      expect(lookAheadAsks).toHaveLength(1)
+      expect(signals[first]?.aborted).toBe(false)
+    })
+
     it('keeps syntax prefetch behind the visible range query', async () => {
       const ranges: EditorSyntaxRange[] = []
       const pendingRanges: Deferred<EditorSyntaxResult>[] = []
@@ -6643,7 +6680,8 @@ describe('Editor', () => {
         (_value, index) => `const line${index} = ${index};`,
       ).join('\n')
       const initialToken = { start: 10, end: 15, style: { color: '#00ff00' } }
-      const enclosingStart = text.indexOf('const line10500 =') + 10
+      // Behind the viewport, inside the look-ahead's trailing side.
+      const enclosingStart = text.indexOf('const line11500 =') + 10
       const currentStart = text.indexOf('const line12500 =') + 10
       const enclosingToken = {
         start: enclosingStart,
@@ -6762,11 +6800,14 @@ describe('Editor', () => {
       }
       try {
         attach()
+        // A background tile beyond the look-ahead was asked for, then retired.
         await vi.waitFor(() =>
-          expect(ranges.mock.calls.map(([range]) => range)).toContainEqual({
-            startIndex: 240000,
-            endIndex: 360000,
-          }),
+          expect(
+            ranges.mock.calls.some(
+              ([range]) =>
+                range.startIndex % 120000 === 0 && range.endIndex - range.startIndex === 120000,
+            ),
+          ).toBe(true),
         )
         await flushSyntaxUntilSettled(() => ranges.mock.calls.length)
         const ids = analysis.inspectRetention().entries.map((entry) => entry.runtimeSessionId)

@@ -460,6 +460,158 @@ it('keeps painting frames while scrolling a large file after its preview is repl
   }
 }, 120_000)
 
+it('paints a scroll during the preview like the complete analysis, with bounded worker asks', async () => {
+  // Every range the worker is asked for, including asks repeated after the complete analysis.
+  const asked: EditorSyntaxRange[] = []
+  const queryRange = TreeSitterWorkerClient.prototype.queryRange
+  TreeSitterWorkerClient.prototype.queryRange = function (
+    this: TreeSitterWorkerClient,
+    ...args: Parameters<typeof queryRange>
+  ) {
+    asked.push(args[0].range)
+    return queryRange.apply(this, args)
+  }
+  const scrolled = scrollingEditor()
+  let settled: ReturnType<typeof scrollingEditor> | null = null
+  try {
+    const { editor, scroll } = scrolled
+    const text = generatedModule(50_000)
+    editor.setText(text, { languageId: 'typescript' })
+    const stuck = { timeout: 30_000 }
+    await expect.poll(() => editor.getState().initialHighlightStatus, stuck).toBe('painted')
+    const askedBeforeScroll = asked.length
+    // Scroll at frame pace from the first paint, while the complete analysis is still running.
+    // The frame cap only catches a stuck page; it judges no speed.
+    let stepsDuringPreview = 0
+    for (let step = 0; step < 60; step++) {
+      if (analysisKind(editor) === 'partial') stepsDuringPreview++
+      scroll.scrollTop += 600
+      expect(await frameOrTimeout(10_000)).toBe('frame')
+    }
+    expect(stepsDuringPreview).toBeGreaterThan(0)
+    await expect.poll(() => analysisKind(editor), stuck).toBe('full')
+    await expect.poll(() => editor.getState().syntaxStatus, stuck).toBe('ready')
+    await expect.poll(() => paintedRows(scrolled.host, scroll).length, stuck).toBeGreaterThan(0)
+    await workerIdle(asked)
+
+    // A guard against the look-ahead growing back: with its window at 250,000 characters ahead and
+    // asked for on every step, this kind of scroll asked for over ten million characters.
+    const scrollAsks = asked.slice(askedBeforeScroll)
+    const chars = scrollAsks.reduce((total, range) => total + range.endIndex - range.startIndex, 0)
+    expect(chars).toBeLessThan(6_000_000)
+
+    // The settled viewport is painted exactly as a view that waited for the complete analysis.
+    const scrollTop = scroll.scrollTop
+    const painted = paintedRows(scrolled.host, scroll)
+    expect(painted.length).toBeGreaterThan(0)
+    const brackets = shownBrackets(editor)
+    expect(brackets.length).toBeGreaterThan(0)
+    scrolled.dispose()
+    const reference = scrollingEditor()
+    settled = reference
+    reference.editor.setText(text, { languageId: 'typescript' })
+    await expect.poll(() => analysisKind(reference.editor), stuck).toBe('full')
+    reference.scroll.scrollTop = scrollTop
+    expect(await frameOrTimeout(10_000)).toBe('frame')
+    await expect.poll(() => reference.editor.getState().syntaxStatus, stuck).toBe('ready')
+    await expect.poll(() => paintedRows(reference.host, reference.scroll), stuck).toEqual(painted)
+    expect(shownBrackets(reference.editor)).toEqual(brackets)
+  } finally {
+    TreeSitterWorkerClient.prototype.queryRange = queryRange
+    scrolled.dispose()
+    settled?.dispose()
+  }
+}, 120_000)
+
+function scrollingEditor() {
+  const host = globalThis.document.createElement('div')
+  host.style.cssText = 'width:1200px;height:800px;display:flex;flex-direction:column'
+  globalThis.document.body.append(host)
+  const editor = new Editor(host, {
+    plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],
+  })
+  let disposed = false
+  return {
+    host,
+    editor,
+    scroll: editor['view'].scrollElement as HTMLElement,
+    dispose: () => {
+      if (disposed) return
+      disposed = true
+      editor.dispose()
+      host.remove()
+    },
+  }
+}
+
+function analysisKind(editor: Editor): string | undefined {
+  return editor['syntax']['syntaxSession']?.getResult().projection.analysis?.kind
+}
+
+/** Waits until no range has been asked for over a quiet half second. */
+async function workerIdle(asked: readonly EditorSyntaxRange[]): Promise<void> {
+  let count = -1
+  while (count !== asked.length) {
+    count = asked.length
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
+/**
+ * Each painted syntax token on a shown row: its row offset, column, text and the CSS declarations
+ * its highlight paints with. Editors name their highlights independently, so the declarations,
+ * not the names, are compared.
+ */
+function paintedRows(host: HTMLElement, scroll: HTMLElement): string[] {
+  const viewport = scroll.getBoundingClientRect()
+  const painted: string[] = []
+  for (const [name, highlight] of CSS.highlights) {
+    if (!name.startsWith('editor-shared-token-')) continue
+    for (const range of highlight) {
+      const node = (range as AbstractRange).startContainer
+      if (!host.contains(node)) continue
+      const element = node instanceof Element ? node : node.parentElement
+      if (!element) continue
+      const box = element.getBoundingClientRect()
+      if (box.height === 0 || box.bottom <= viewport.top || box.top >= viewport.bottom) continue
+      const { startOffset, endOffset, endContainer } = range as AbstractRange
+      const end = endContainer === node ? endOffset : undefined
+      const text = (node.textContent ?? '').slice(startOffset, end)
+      const top = Math.round(box.top - viewport.top)
+      painted.push(`${top}|${startOffset}|${text}|${highlightDeclarations(name)}`)
+    }
+  }
+  return painted.sort()
+}
+
+/**
+ * The brackets on the shown rows, by position. Depths count from the start of the answer that
+ * supplied them, so two views that asked for different ranges can number them differently.
+ */
+function shownBrackets(editor: Editor): string[] {
+  const rows = editor['view'].getState().mountedRows
+  const start: number = rows[0]?.startOffset ?? 0
+  const end: number = rows.at(-1)?.endOffset ?? 0
+  return editor['syntax'].brackets
+    .filter((bracket: { index: number }) => bracket.index >= start && bracket.index < end)
+    .map((bracket: { index: number; char: string }) => `${bracket.index}${bracket.char}`)
+}
+
+/** The declarations of every `::highlight(name)` rule on the page. */
+function highlightDeclarations(name: string): string {
+  const sheets = Array.from(globalThis.document.styleSheets).concat(
+    globalThis.document.adoptedStyleSheets,
+  )
+  const declarations: string[] = []
+  for (const sheet of sheets) {
+    for (const rule of Array.from(sheet.cssRules)) {
+      if (rule instanceof CSSStyleRule && rule.selectorText.includes(`::highlight(${name})`))
+        declarations.push(rule.style.cssText)
+    }
+  }
+  return declarations.length ? declarations.sort().join(' ') : `no rule for ${name}`
+}
+
 function generatedModule(lines: number): string {
   const out: string[] = []
   for (let line = 0; line < lines; line++) out.push(generatedLine(line))
