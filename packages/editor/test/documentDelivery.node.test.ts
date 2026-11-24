@@ -128,7 +128,10 @@ it('cancels computation waits independently of a shared source ACK and releases 
   createEditorBufferSession(buffer).applyText('!')
   const latest = delivery.current()!
   const peer = scope.source.prepareReader(external.transport, latest)
-  expect(external.commands.some((command) => command.kind === 'reset')).toBe(false)
+  // The first admission sent its source and pin with the (held, unrecorded) register; the peer
+  // waits for that admission and sends nothing of its own before it settles.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(external.commands.map((command) => command.kind)).toEqual(['reset', 'pin'])
   releaseRegister()
   const loan = await peer
   expect(loan?.reference.point.revision).toBe(latest.revision.point.revision)
@@ -246,6 +249,165 @@ it.each(['register', 'pin'] as const)(
     await delivery.dispose()
   },
 )
+
+// A worker running a long query in slices reads one queued message per slice, so each reply the
+// page waits for before sending the next command costs a slice.
+function heldEndpoint() {
+  const transport = endpoint()
+  const held: (() => void)[] = []
+  transport.connection.send = (command) => {
+    transport.commands.push(command)
+    const result = transport.reader.apply(command)
+    return new Promise((resolve) => {
+      held.push(() => resolve(result))
+    })
+  }
+  const releaseAll = async () => {
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      for (const release of held.splice(0)) release()
+    } while (held.length > 0)
+  }
+  return { ...transport, held, releaseAll }
+}
+
+it('sends register, source and pin before any of their replies arrive', async () => {
+  const buffer = createEditorTextBuffer('first line\nsecond line')
+  const delivery = new DocumentDelivery(buffer, 'pipelined.ts')
+  const scope = delivery.createScope()
+  const transport = heldEndpoint()
+  const first = scope.source.prepareReader(transport.transport, delivery.current()!)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(transport.commands.map((command) => command.kind)).toEqual(['register', 'reset', 'pin'])
+  await transport.releaseAll()
+  const loan = await first
+  expect(loan?.reference.point.revision).toBe(delivery.current()!.revision.point.revision)
+  const released = loan?.dispose()
+  await transport.releaseAll()
+  await released
+
+  createEditorBufferSession(buffer).applyText('!')
+  transport.commands.length = 0
+  const next = scope.source.prepareReader(transport.transport, delivery.current()!)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(transport.commands.map((command) => command.kind)).toEqual(['advance', 'pin'])
+  await transport.releaseAll()
+  const edited = await next
+  expect(edited?.reference.point.revision).toBe(delivery.current()!.revision.point.revision)
+  const unpinned = edited?.dispose()
+  await transport.releaseAll()
+  await unpinned
+  expect(transport.reader.inspect().pins).toBe(0)
+  scope.dispose()
+  delivery.dispose()
+})
+
+// Collects unhandled rejections while `run` executes and a few turns after it.
+async function unhandledRejectionsDuring(run: () => Promise<void>): Promise<unknown[]> {
+  const unhandled: unknown[] = []
+  const record = (reason: unknown) => unhandled.push(reason)
+  process.on('unhandledRejection', record)
+  try {
+    await run()
+    for (let turn = 0; turn < 5; turn++) await new Promise((resolve) => setTimeout(resolve, 0))
+  } finally {
+    process.off('unhandledRejection', record)
+  }
+  return unhandled
+}
+
+it('releases the pin sent with a source whose acknowledgement failed', async () => {
+  const delivery = new DocumentDelivery(createEditorTextBuffer('stable'), 'rejected.ts')
+  const scope = delivery.createScope()
+  const transport = endpoint()
+  const send = transport.connection.send
+  // The worker applies the reset, but its acknowledgement says otherwise.
+  transport.connection.send = (command, signal) => {
+    if (command.kind !== 'reset') return send(command, signal)
+    transport.commands.push(command)
+    transport.reader.apply(command)
+    return Promise.resolve({ kind: 'rejected', identity: command.identity, reason: 'base' })
+  }
+  const unhandled = await unhandledRejectionsDuring(async () => {
+    await expect(
+      scope.source.prepareReader(transport.transport, delivery.current()!),
+    ).rejects.toMatchObject({ code: 'DOCUMENT_SOURCE_ADMISSION' })
+  })
+  expect(unhandled).toEqual([])
+  expect(transport.commands.filter((command) => command.kind === 'unpin')).toHaveLength(1)
+  expect(transport.reader.inspect().pins).toBe(0)
+  scope.dispose()
+  delivery.dispose()
+})
+
+it('reports a failed pin to the caller while the source acknowledgement is still pending', async () => {
+  const delivery = new DocumentDelivery(createEditorTextBuffer('stable'), 'pin-failure.ts')
+  const scope = delivery.createScope()
+  const transport = endpoint()
+  const send = transport.connection.send
+  const failure = new TypeError('Controlled pin transport failure')
+  let acknowledge = () => {}
+  transport.connection.send = (command, signal) => {
+    if (command.kind === 'pin') return Promise.reject(failure)
+    if (command.kind !== 'reset') return send(command, signal)
+    const result = transport.reader.apply(command)
+    return new Promise((resolve) => {
+      acknowledge = () => resolve(result)
+    })
+  }
+  const unhandled = await unhandledRejectionsDuring(async () => {
+    const pending = scope.source.prepareReader(transport.transport, delivery.current()!)
+    const rejected = expect(pending).rejects.toBe(failure)
+    // The pin fails while the reset acknowledgement is held.
+    for (let turn = 0; turn < 3; turn++) await new Promise((resolve) => setTimeout(resolve, 0))
+    acknowledge()
+    await rejected
+  })
+  expect(unhandled).toEqual([])
+  scope.dispose()
+  expect(transport.reader.inspect()).toEqual({ documents: 0, reads: 0, pins: 0, sourceUnits: 0 })
+  delivery.dispose()
+})
+
+it('settles the cleanup unpin that scope disposal aborts', async () => {
+  const delivery = new DocumentDelivery(createEditorTextBuffer('stable'), 'aborted-unpin.ts')
+  const scope = delivery.createScope()
+  const transport = endpoint()
+  const send = transport.connection.send
+  const failure = new TypeError('Controlled reset acknowledgement failure')
+  let unpinSent = () => {}
+  const unpinning = new Promise<void>((resolve) => {
+    unpinSent = resolve
+  })
+  transport.connection.send = (command, signal) => {
+    if (command.kind === 'reset') {
+      transport.reader.apply(command)
+      return Promise.reject(failure)
+    }
+    if (command.kind !== 'unpin') return send(command, signal)
+    transport.commands.push(command)
+    unpinSent()
+    // Held until the scope's release aborts it.
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener(
+        'abort',
+        () => reject(new DOMException('Scope released', 'AbortError')),
+        { once: true },
+      )
+    })
+  }
+  const unhandled = await unhandledRejectionsDuring(async () => {
+    await expect(scope.source.prepareReader(transport.transport, delivery.current()!)).rejects.toBe(
+      failure,
+    )
+    await unpinning
+    scope.dispose()
+  })
+  expect(unhandled).toEqual([])
+  expect(transport.commands.filter((command) => command.kind === 'unpin')).toHaveLength(1)
+  expect(transport.reader.inspect()).toEqual({ documents: 0, reads: 0, pins: 0, sourceUnits: 0 })
+  delivery.dispose()
+})
 
 it('settles scope disposal while connection is unresolved', async () => {
   const delivery = new DocumentDelivery(createEditorTextBuffer('stable'), 'connect.ts')

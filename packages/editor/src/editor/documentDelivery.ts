@@ -366,58 +366,136 @@ export class DocumentDelivery {
     return receipt
   }
 
+  /**
+   * Registers, advances and pins in one go: the worker applies source commands in the order they
+   * are posted, so each is sent without waiting for the reply to the one before. While the worker
+   * runs a long range query in slices, every awaited reply would cost one slice before the next
+   * command is even read.
+   */
   private async prepareSource(
     endpoint: DocumentSourceEndpoint,
     progress: ReaderProgress,
     read: DocumentRead,
   ): Promise<PreparedDocumentWorkerRead | null> {
-    if (!progress.registered) {
-      const command: Extract<DocumentWorkerSourceCommand, { kind: 'register' }> = {
-        kind: 'register',
-        identity: progress.identity,
-      }
-      const result = await progress.connection.send(command, progress.cancellation.signal)
-      if (this.disposed) return null
-      if (result.kind !== 'registered') throw admissionFailure(command, result)
-      progress.registered = true
+    const registration = progress.registered ? null : this.registerSource(progress)
+    const source = this.sourceCommand(progress, read)
+    if (source === null) {
+      if (registration) await registration
+      return null
     }
-    if (read.revision.point !== this.buffer.getDocumentSyncPoint())
-      return this.pinRead(endpoint, progress, read)
-    if (progress.point === read.revision.point) return this.pinRead(endpoint, progress, read)
+    const applied = source ? progress.connection.send(source, progress.cancellation.signal) : null
+    const pin = this.sendPin(progress, read)
+    // Both replies are awaited only after the steps before them succeed; until then a transport
+    // failure must not surface as an unhandled rejection. The awaits below still see the error.
+    void applied?.catch(() => undefined)
+    void pin.catch(() => undefined)
+    // A pin whose source never arrived is released rather than left for the endpoint's release.
+    // The unpin fails only when the scope is being released, which drops the endpoint's pins.
+    const dropPin = () =>
+      void pin
+        .then((pinned) =>
+          pinned.result.kind === 'pinned' ? this.sendUnpin(progress, pinned) : undefined,
+        )
+        .catch(() => undefined)
+    let ready: boolean
+    try {
+      ready = await this.awaitSource(endpoint, progress, registration, source, applied, read)
+    } catch (error) {
+      dropPin()
+      throw error
+    }
+    if (!ready) {
+      dropPin()
+      return null
+    }
+    return this.pinRead(endpoint, progress, read, await pin)
+  }
+
+  private async awaitSource(
+    endpoint: DocumentSourceEndpoint,
+    progress: ReaderProgress,
+    registration: Promise<void> | null,
+    source: DocumentWorkerSourceCommand | undefined,
+    applied: Promise<DocumentWorkerSourceResult> | null,
+    read: DocumentRead,
+  ): Promise<boolean> {
+    if (registration) await registration
+    if (this.disposed) return false
+    if (!source || !applied) return true
+    return this.applySource(endpoint, progress, source, applied, read)
+  }
+
+  private async registerSource(progress: ReaderProgress): Promise<void> {
+    const command: Extract<DocumentWorkerSourceCommand, { kind: 'register' }> = {
+      kind: 'register',
+      identity: progress.identity,
+    }
+    const result = await progress.connection.send(command, progress.cancellation.signal)
+    if (this.disposed) return
+    if (result.kind !== 'registered') throw admissionFailure(command, result)
+    progress.registered = true
+  }
+
+  /**
+   * The command that brings the worker's source to `read`: undefined when it is there already or
+   * `read` is not the current text (the pin then finds it or imports it), null when `read` is gone.
+   */
+  private sourceCommand(
+    progress: ReaderProgress,
+    read: DocumentRead,
+  ): DocumentWorkerSourceCommand | null | undefined {
+    if (read.revision.point !== this.buffer.getDocumentSyncPoint()) return undefined
+    if (progress.point === read.revision.point) return undefined
     const text = this.snapshot(read)
     if (!text) return null
     const target = read.revision.point
     const changed =
       progress.point && this.buffer.changesBetweenDocumentSyncPoints(progress.point, target, null)
     const base = progress.point ? this.wirePoint(progress.point) : null
-    const command: DocumentWorkerSourceCommand =
-      changed?.edits && base
-        ? {
-            kind: 'advance',
-            identity: progress.identity,
-            base,
-            target: this.wirePoint(target),
-            edits: changed.edits,
-          }
-        : resetSource(progress.identity, base, this.wirePoint(target), text)
-    if (!(await this.applySource(endpoint, progress, command, target))) return null
-    return this.pinRead(endpoint, progress, read)
+    return changed?.edits && base
+      ? {
+          kind: 'advance',
+          identity: progress.identity,
+          base,
+          target: this.wirePoint(target),
+          edits: changed.edits,
+        }
+      : resetSource(progress.identity, base, this.wirePoint(target), text)
+  }
+
+  private sendPin(progress: ReaderProgress, read: DocumentRead): Promise<SentPin> {
+    const readId = `${this.documentId}:${++this.nextRead}`
+    const command: Extract<DocumentWorkerSourceCommand, { kind: 'pin' }> = {
+      kind: 'pin',
+      identity: progress.identity,
+      point: this.wirePoint(read.revision.point),
+      readId,
+    }
+    return progress.connection
+      .send(command, progress.cancellation.signal)
+      .then((result) => ({ command, readId, result }))
+  }
+
+  private sendUnpin(progress: ReaderProgress, pin: SentPin): Promise<void> {
+    if (progress.cancellation.signal.aborted) return Promise.resolve()
+    return progress.connection
+      .send(
+        { kind: 'unpin', identity: progress.identity, readId: pin.readId },
+        progress.cancellation.signal,
+      )
+      .then(() => undefined)
   }
 
   private async pinRead(
     endpoint: DocumentSourceEndpoint,
     progress: ReaderProgress,
     read: DocumentRead,
+    pinned: SentPin,
   ): Promise<PreparedDocumentWorkerRead | null> {
     const point = read.revision.point
-    const readId = `${this.documentId}:${++this.nextRead}`
-    let command: DocumentWorkerSourceCommand = {
-      kind: 'pin',
-      identity: progress.identity,
-      point: this.wirePoint(point),
-      readId,
-    }
-    let result = await progress.connection.send(command, progress.cancellation.signal)
+    const readId = pinned.readId
+    let command: DocumentWorkerSourceCommand = pinned.command
+    let result = pinned.result
     if (result.kind === 'rejected' && result.reason === 'unavailable') {
       const snapshot = this.snapshot(read)
       if (!snapshot) return null
@@ -447,11 +525,7 @@ export class DocumentDelivery {
       dispose: async () => {
         if (disposed) return
         disposed = true
-        if (progress.cancellation.signal.aborted) return
-        await progress.connection.send(
-          { kind: 'unpin', identity: progress.identity, readId },
-          progress.cancellation.signal,
-        )
+        await this.sendUnpin(progress, { command, readId, result })
       },
     }
   }
@@ -494,14 +568,21 @@ export class DocumentDelivery {
     endpoint: DocumentSourceEndpoint,
     progress: ReaderProgress,
     command: DocumentWorkerSourceCommand,
-    target: DocumentSyncPoint,
+    sent: Promise<DocumentWorkerSourceResult>,
+    read: DocumentRead,
   ): Promise<boolean> {
-    const result = await progress.connection.send(command, progress.cancellation.signal)
+    const result = await sent
     if (this.disposed || this.endpoints.get(endpoint) !== progress) return false
     if (result.kind !== 'applied') throw admissionFailure(command, result)
-    progress.point = target
+    progress.point = read.revision.point
     return true
   }
+}
+
+type SentPin = {
+  readonly command: DocumentWorkerSourceCommand
+  readonly readId: string
+  readonly result: DocumentWorkerSourceResult
 }
 
 function resetSource(
