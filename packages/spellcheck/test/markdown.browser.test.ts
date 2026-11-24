@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest'
-import { markdown } from '@singapore-editor/tree-sitter-languages'
+import { markdown } from '@singapore-editor/tree-sitter-languages/markdown'
 import { createSpellcheckPlugin } from '../src/plugin'
 import { disposeEditors, mountEditor, until } from './browserEditor'
 import { FakeChecker } from './fakeChecker'

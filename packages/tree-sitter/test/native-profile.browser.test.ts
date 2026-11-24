@@ -5,7 +5,7 @@ import {
   createPieceTableSnapshot,
   createDocumentTextSnapshot,
 } from '@singapore-editor/core/document'
-import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '../../tree-sitter-languages/src/index'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '../../tree-sitter-languages/src/typescript'
 import { resolveTreeSitterLanguageContribution } from '../src/treeSitter/registry'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { createTreeSitterEditPayload } from '../src/session'

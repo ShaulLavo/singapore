@@ -187,6 +187,14 @@ type RangeFlattenOptions = {
   readonly range: TreeSitterSyntaxRange
   readonly includeHighlights: boolean
   readonly includeCaptures: boolean
+  /** Runs a long range in slices that return to the message loop between them. */
+  readonly pacing?: RangePacing
+}
+
+type RangePacing = {
+  /** False once the queried snapshot was released while the query was paused. */
+  readonly isCurrent: () => boolean
+  resumedAt: number
 }
 
 type InjectionPlan = {
@@ -255,6 +263,9 @@ class SyntaxRequestCancelled extends Error {
   }
 }
 
+/** The snapshot a paced range query was reading was replaced or released while it was paused. */
+class RangeSnapshotReleased extends SyntaxRequestCancelled {}
+
 class UnsupportedSliceQuery extends Error {}
 
 const assertRuntimeSessionActive = (runtimeSessionId: string): void => {
@@ -321,8 +332,23 @@ let markdownSupport: MarkdownSupport | undefined
 // this worker and only Markdown and MDX documents use it, so it loads with the first of them.
 const loadMarkdown = async (): Promise<MarkdownSupport> => {
   const support = (markdownSupport ??= await import('./markdown'))
-  await support.initializeMarkdown()
+  await support.initializeMarkdown(markdownGrammarUrls())
   return support
+}
+
+// The Markdown and MDX registrations carry tree-sitter-md's grammars, so the worker itself
+// references none and apps without either never emit them.
+const markdownGrammarUrls = (): MarkdownSupportModule.MarkdownGrammarUrls => {
+  const markdown = languageDescriptors.get('markdown')
+  const urls = markdown
+    ? { markdown: markdown.wasmUrl, ...markdown.extraWasmUrls }
+    : languageDescriptors.get('mdx')?.extraWasmUrls
+  const grammar = urls?.['markdown']
+  const resolver = urls?.['resolver']
+  const math = urls?.['math']
+  if (!grammar || !resolver || !math)
+    throw new Error('Markdown needs a markdown or mdx language registered with its grammars')
+  return { grammar, resolver, math }
 }
 
 /** For code that reads a Markdown document, which only exists once `loadMarkdown` has settled. */
@@ -915,6 +941,9 @@ const reloadInjections = async (
   return document
 }
 
+const isCachedSnapshot = (documentId: string, snapshot: ParsedDocument): boolean =>
+  documentCaches.get(documentId)?.snapshots.includes(snapshot) ?? false
+
 const dropCachedDocument = (documentId: string, snapshot: ParsedDocument): void => {
   const cache = documentCaches.get(documentId)
   if (!cache) return
@@ -979,9 +1008,20 @@ const scheduleIdleReparse = (
   document: ParsedDocument,
   runtime: Runtime,
 ): void => {
-  // @justification Runs once after the parse answer is posted; it re-checks that the document is
-  // still cached and idle, so a late or stale callback does nothing.
-  setTimeout(() => reparseIdleDocument(runtimeSessionId, document, runtime), 0)
+  // @justification Runs after the parse answer is posted; it re-checks that the document is still
+  // cached and idle, so a late or stale callback does nothing.
+  setTimeout(() => {
+    if (!activeRuntimeTasks.has(runtimeSessionId)) {
+      reparseIdleDocument(runtimeSessionId, document, runtime)
+      return
+    }
+    // A range query that runs in slices is between two of them: the first highlight goes first,
+    // and the reparse is tried again once the session's requests have settled.
+    void awaitRuntimeTasks(runtimeSessionId).then(() => {
+      if (isCachedSnapshot(runtimeSessionId, document))
+        scheduleIdleReparse(runtimeSessionId, document, runtime)
+    })
+  }, 0)
 }
 
 const reparseIdleDocument = (
@@ -1416,14 +1456,32 @@ const queryDocumentRangeWithContext = async (
   request: TreeSitterRangeRequest,
   context: CancellationContext,
 ): Promise<TreeSitterRangeResult | undefined> => {
-  const cached = cachedDocumentForVersion(
-    request.runtimeSessionId,
-    request.languageId,
-    request.snapshotVersion,
-  )
-  if (!cached)
-    return (await queryStagedEditRange(request, context)) ?? queryBootstrapRange(request, context)
+  // A parse of the same text again (injected grammars that have just loaded) replaces the snapshot
+  // a paused query was reading. The query starts over on the replacement, a bounded number of times.
+  for (let attempt = 0; ; attempt += 1) {
+    const cached = cachedDocumentForVersion(
+      request.runtimeSessionId,
+      request.languageId,
+      request.snapshotVersion,
+    )
+    if (!cached)
+      return (await queryStagedEditRange(request, context)) ?? queryBootstrapRange(request, context)
+    try {
+      return await queryCachedDocumentRange(request, cached, context)
+    } catch (error) {
+      if (!(error instanceof RangeSnapshotReleased) || attempt >= RANGE_SNAPSHOT_RETRIES)
+        throw error
+    }
+  }
+}
 
+const RANGE_SNAPSHOT_RETRIES = 2
+
+const queryCachedDocumentRange = async (
+  request: TreeSitterRangeRequest,
+  cached: ParsedDocument,
+  context: CancellationContext,
+): Promise<TreeSitterRangeResult> => {
   const range = normalizedSyntaxRange(request.range, cached.size)
   const queryStart = nowMs()
   const result = await runAsyncWorkerPhase('flatten range', () =>
@@ -1431,6 +1489,10 @@ const queryDocumentRangeWithContext = async (
       range,
       includeHighlights: request.includeHighlights,
       includeCaptures: request.includeCaptures ?? true,
+      pacing: {
+        isCurrent: () => isCachedSnapshot(request.runtimeSessionId, cached),
+        resumedAt: queryStart,
+      },
     }),
   )
   assertNotCancelled(context)
@@ -3024,27 +3086,7 @@ const collectCaptures = (
   const rootNode = tree?.rootNode
   if (!rootNode) return []
 
-  const captures: TreeSitterCapture[] = []
-  if (range) {
-    const seen = new Set<string>()
-    const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
-      query.captures(rootNode, queryOptions(context, range)),
-    )
-    incrementCount(context, 'rawCaptures', queryCaptures.length)
-    const normalizeStart = nowMs()
-    assertNotCancelled(context)
-
-    for (const capture of queryCaptures) {
-      collectCapture(capture, captures, seen, runtime.descriptor.id, range)
-    }
-
-    context.measurements?.set(
-      'captureNormalization',
-      (context.measurements.get('captureNormalization') ?? 0) + nowMs() - normalizeStart,
-    )
-    incrementCount(context, 'uniqueCaptures', captures.length)
-    return captures
-  }
+  if (range) return collectRangeCaptures(rootNode, query, runtime, context, range)
 
   const bounded = captureLimit === undefined ? null : limitSliceQuery(context)
   const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
@@ -3060,11 +3102,78 @@ const collectCaptures = (
 
   // Stable sorting keeps accepted-match precedence within equal spans.
   queryCaptures.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
+  const captures = uniqueSpanCaptures(queryCaptures, runtime.descriptor.id)
+  incrementCount(context, 'uniqueCaptures', captures.length)
+  return captures
+}
+
+/**
+ * Range highlights keep tree-sitter's capture iterator, not the completed matches the full document
+ * reads. The two disagree: the iterator can emit a capture from a match it is sure will finish
+ * before it does, and it orders captures that share a span differently. Overlap resolution settles a
+ * tie between equally specific names by arrival order, so that order is part of the colours.
+ *
+ * Deduplication is a stable sort by span and a first-wins pass over each span. That is the same
+ * result as the string-keyed set this used to build, which cost a quarter to a half again on top
+ * of the query.
+ */
+const collectRangeCaptures = (
+  rootNode: Node,
+  query: Query,
+  runtime: HighlightRuntime,
+  context: CancellationContext,
+  range: TreeSitterSyntaxRange,
+): TreeSitterCapture[] => {
+  const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
+    query.captures(rootNode, queryOptions(context, range)),
+  )
+  incrementCount(context, 'rawCaptures', queryCaptures.length)
+  assertNotCancelled(context)
+
+  const captures = measurePhase(context, 'captureNormalization', () => {
+    const spans = capturedSpansInRange(queryCaptures, range)
+    spans.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
+    return uniqueSpanCaptures(spans, runtime.descriptor.id)
+  })
+  incrementCount(context, 'uniqueCaptures', captures.length)
+  return captures
+}
+
+type CapturedSpan = {
+  readonly name?: string
+  readonly startIndex: number
+  readonly endIndex: number
+}
+
+/** Reads each node's offsets once, so the sort compares numbers instead of crossing into Wasm. */
+const capturedSpansInRange = (
+  queryCaptures: readonly QueryCapture[],
+  range: TreeSitterSyntaxRange,
+): CapturedSpan[] => {
+  const spans: CapturedSpan[] = []
+  for (const capture of queryCaptures) {
+    const node = capture.node
+    if (!node) continue
+    const startIndex = node.startIndex
+    const endIndex = node.endIndex
+    if (!indexesIntersectRange(startIndex, endIndex, range)) continue
+    spans.push({ name: capture.name, startIndex, endIndex })
+  }
+
+  return spans
+}
+
+/** One capture per name per span, in order, from captures sorted by span. Empty spans paint nothing. */
+const uniqueSpanCaptures = (
+  sorted: readonly CapturedSpan[],
+  languageId: TreeSitterLanguageId,
+): TreeSitterCapture[] => {
+  const captures: TreeSitterCapture[] = []
   const lastSpanByName = new Map<string, number>()
   let span = 0
   let previousStart = -1
   let previousEnd = -1
-  for (const capture of queryCaptures) {
+  for (const capture of sorted) {
     const { startIndex, endIndex } = capture
     if (startIndex >= endIndex) continue
     if (startIndex !== previousStart || endIndex !== previousEnd) {
@@ -3075,10 +3184,9 @@ const collectCaptures = (
     const captureName = capture.name ?? ''
     if (lastSpanByName.get(captureName) === span) continue
     lastSpanByName.set(captureName, span)
-    captures.push({ startIndex, endIndex, captureName, languageId: runtime.descriptor.id })
+    captures.push({ startIndex, endIndex, captureName, languageId })
   }
 
-  incrementCount(context, 'uniqueCaptures', captures.length)
   return captures
 }
 
@@ -3117,28 +3225,6 @@ const collectFolds = (
   }
 
   return folds
-}
-
-const collectCapture = (
-  capture: QueryCapture,
-  captures: TreeSitterCapture[],
-  seen: Set<string>,
-  languageId: TreeSitterLanguageId,
-  range?: TreeSitterSyntaxRange,
-): void => {
-  const node = capture.node
-  if (!node) return
-
-  const startIndex = node.startIndex
-  const endIndex = node.endIndex
-  const captureName = capture.name ?? ''
-  const key = `${startIndex}:${endIndex}:${captureName}:${languageId}`
-  if (seen.has(key)) return
-  if (startIndex >= endIndex) return
-  if (range && !indexesIntersectRange(startIndex, endIndex, range)) return
-
-  seen.add(key)
-  captures.push({ startIndex, endIndex, captureName, languageId })
 }
 
 const collectMatchFolds = (
@@ -3483,6 +3569,7 @@ const flattenDocumentRange = async (
 
   for (const layer of document.layers) {
     if (!layerIntersectsSyntaxRange(layer, options.range)) continue
+    if (options.pacing) await pauseRangeQuery(context, options.pacing)
     await flattenLayerRange(layer, result, context, options)
   }
 
@@ -3548,6 +3635,15 @@ const flattenLayerRange = async (
 ): Promise<void> => {
   const runtime = await ensureRuntime(layer.languageId)
   await appendInjectedMarkdown(layer, result, options.range)
+  const pacing = options.pacing
+  // A grammar that was still loading let other requests run, and one of them may have replaced
+  // the snapshot this layer belongs to.
+  if (pacing && !pacing.isCurrent()) throw new RangeSnapshotReleased()
+  const slices = pacing ? rangeSlices(layer, options.range) : []
+  if (pacing && slices.length > 1) {
+    await flattenLayerSlices(layer, runtime, result, context, { options, pacing, slices })
+    return
+  }
   const treeData = runOptionalWorkerPhase(
     'collect range diagnostics',
     emptyTreeData(),
@@ -3578,6 +3674,171 @@ const flattenLayerRange = async (
   appendItems(result.brackets, treeData.brackets)
   appendItems(result.errors, treeData.errors)
   if (layer.kind !== 'root') result.injections.push(injectionInfoForLayer(layer))
+}
+
+// A page cannot interrupt a running worker without shared memory, which only cross-origin-isolated
+// pages have. A range of hundreds of thousands of units (look-ahead while scrolling, warm-up after
+// an edit) therefore runs in slices and returns to the message loop between them: a request queued
+// behind it, such as a newly opened document or the rows just scrolled into view, waits for one
+// slice, and a released document's query stops at its next slice.
+const RANGE_SLICE_UNITS = 8_192
+const RANGE_SLICE_BUDGET_MS = 8
+
+const rangeSliceDue = (pacing: RangePacing): boolean =>
+  nowMs() - pacing.resumedAt >= RANGE_SLICE_BUDGET_MS
+
+const pauseRangeQuery = async (
+  context: CancellationContext,
+  pacing: RangePacing,
+): Promise<void> => {
+  if (!rangeSliceDue(pacing)) return
+  await yieldWorker()
+  pacing.resumedAt = nowMs()
+  assertNotCancelled(context)
+  // Its trees are freed with the snapshot; nothing below may touch them again.
+  if (!pacing.isCurrent()) throw new RangeSnapshotReleased()
+}
+
+/** The part of `range` a layer covers, cut into slices short enough to run between messages. */
+const rangeSlices = (layer: ParsedLayer, range: TreeSitterSyntaxRange): TreeSitterSyntaxRange[] => {
+  const startIndex =
+    layer.kind === 'root'
+      ? range.startIndex
+      : Math.max(range.startIndex, minRangeStartIndex(layer.ranges))
+  const endIndex =
+    layer.kind === 'root'
+      ? range.endIndex
+      : Math.min(range.endIndex, maxRangeEndIndex(layer.ranges))
+  if (endIndex - startIndex <= RANGE_SLICE_UNITS) return [range]
+
+  const slices: TreeSitterSyntaxRange[] = []
+  for (let start = startIndex; start < endIndex;) {
+    const end = sliceEnd(layer.tree, start + RANGE_SLICE_UNITS, endIndex)
+    slices.push({ startIndex: start, endIndex: end })
+    start = end
+  }
+  return slices
+}
+
+/**
+ * Where a slice that would end at `boundary` ends: there, or at the end of the token it would cut.
+ * A node without children that crossed the boundary would be matched by every slice it reaches,
+ * and each of them would run its predicates over its whole text; a two-million-character
+ * identifier was read 245 times. A node with children still meets every slice it spans, which
+ * costs its matches again but reads no text unless a predicate is written on it.
+ */
+const sliceEnd = (tree: Tree, boundary: number, limit: number): number => {
+  if (boundary >= limit) return limit
+  const token = tree.rootNode.descendantForIndex(boundary)
+  if (!token || token.childCount > 0) return boundary
+  if (token.startIndex >= boundary || token.endIndex <= boundary) return boundary
+  return Math.min(limit, token.endIndex)
+}
+
+/**
+ * A node that crosses a slice boundary is reported by every slice it touches. The slice that
+ * contains its start keeps it; a node that starts before the range belongs to the first slice.
+ */
+const belongsToSlice = (
+  item: { readonly startIndex: number; readonly endIndex: number },
+  slice: TreeSitterSyntaxRange,
+  sliceIndex: number,
+): boolean => {
+  if (item.startIndex >= slice.endIndex) return false
+  if (sliceIndex === 0) return item.endIndex > slice.startIndex
+  return item.startIndex >= slice.startIndex
+}
+
+type LayerSlices = {
+  readonly options: RangeFlattenOptions
+  readonly pacing: RangePacing
+  readonly slices: readonly TreeSitterSyntaxRange[]
+}
+
+const flattenLayerSlices = async (
+  layer: ParsedLayer,
+  runtime: Runtime,
+  result: Writable<FlattenedDocument>,
+  context: CancellationContext,
+  { options, pacing, slices }: LayerSlices,
+): Promise<void> => {
+  // One walk over the whole range: a bracket's depth counts the brackets open since its start.
+  const treeData = await runOptionalAsyncWorkerPhase(
+    'collect range diagnostics',
+    emptyTreeData(),
+    result.degraded,
+    () => collectPacedTreeData(layer.tree, options.range, context, pacing),
+  )
+  const withCaptures = options.includeHighlights || options.includeCaptures
+  for (const [sliceIndex, slice] of slices.entries()) {
+    await pauseRangeQuery(context, pacing)
+    if (withCaptures) appendSliceCaptures(layer, runtime, result, context, { slice, sliceIndex })
+    const folds = runOptionalWorkerPhase(
+      'collect range folds',
+      [] as FoldRange[],
+      result.degraded,
+      () => collectFolds(layer.tree, runtime, context, slice),
+    )
+    appendItems(
+      result.folds,
+      folds.filter((fold) => belongsToSlice(fold, slice, sliceIndex)),
+    )
+  }
+  appendItems(result.brackets, treeData.brackets)
+  appendItems(result.errors, treeData.errors)
+  if (layer.kind !== 'root') result.injections.push(injectionInfoForLayer(layer))
+}
+
+const appendSliceCaptures = (
+  layer: ParsedLayer,
+  runtime: Runtime,
+  result: Writable<FlattenedDocument>,
+  context: CancellationContext,
+  { slice, sliceIndex }: { readonly slice: TreeSitterSyntaxRange; readonly sliceIndex: number },
+): void => {
+  const captures = runOptionalWorkerPhase(
+    'collect range highlights',
+    [] as readonly TreeSitterCapture[],
+    result.degraded,
+    () => collectCaptures(layer.tree, runtime, context, slice),
+  )
+  appendItems(
+    result.captures,
+    withInjectionDepth(
+      captures.filter((capture) => belongsToSlice(capture, slice, sliceIndex)),
+      layer.depth,
+    ),
+  )
+}
+
+const collectPacedTreeData = async (
+  tree: Tree,
+  range: TreeSitterSyntaxRange,
+  context: CancellationContext,
+  pacing: RangePacing,
+): Promise<Pick<TreeSitterParseResult, 'brackets' | 'errors'>> => {
+  const brackets: BracketInfo[] = []
+  const errors: TreeSitterError[] = []
+  const bracketStack: { char: string; index: number }[] = []
+  const visitors: TreeWalkVisitors = {
+    onBracket: (info) => brackets.push(info),
+    onError: (info) => errors.push(info),
+  }
+  const cursor = tree.walk()
+  try {
+    const hasErrors = tree.rootNode.hasError
+    for (;;) {
+      const finished = measurePhase(context, 'structuralWalk', () =>
+        walkTreeCursorRange(cursor, range, visitors, hasErrors, bracketStack, () =>
+          rangeSliceDue(pacing),
+        ),
+      )
+      if (finished) return { brackets, errors }
+      await pauseRangeQuery(context, pacing)
+    }
+  } finally {
+    cursor.delete()
+  }
 }
 
 const withInjectionDepth = (
@@ -3729,8 +3990,24 @@ const bridgeNewlineRange = (
 const sortCaptures = (captures: TreeSitterCapture[]): TreeSitterCapture[] =>
   captures.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
 
+// A total order: folds on the same lines are ordered by where they start and end, then by node
+// type. A range answered in slices reports them in another order than one answered whole, and a
+// sort that left ties in arrival order would pass that difference on.
 const sortFolds = (folds: FoldRange[]): FoldRange[] =>
-  folds.sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine)
+  folds.sort(
+    (a, b) =>
+      a.startLine - b.startLine ||
+      a.endLine - b.endLine ||
+      a.startIndex - b.startIndex ||
+      a.endIndex - b.endIndex ||
+      compareText(a.type, b.type) ||
+      compareText(a.languageId ?? '', b.languageId ?? ''),
+  )
+
+const compareText = (left: string, right: string): number => {
+  if (left === right) return 0
+  return left < right ? -1 : 1
+}
 
 const sortBrackets = (brackets: BracketInfo[]): BracketInfo[] =>
   brackets.sort((a, b) => a.index - b.index || a.depth - b.depth)
@@ -3784,26 +4061,37 @@ const collectTreeData = (
   return { brackets, errors }
 }
 
+/** How many nodes a paced walk visits between two looks at the clock. */
+const WALK_PAUSE_CHECK_NODES = 1_024
+
+/**
+ * Walks the nodes that intersect `range`. With `shouldPause` it returns false when asked to stop
+ * early, leaving the cursor on the next node and `bracketStack` as it stands: calling it again
+ * with both continues the same walk.
+ */
 const walkTreeCursorRange = (
   cursor: TreeCursor,
   range: TreeSitterSyntaxRange,
   visitors: TreeWalkVisitors,
   hasErrors: boolean,
-): void => {
-  const bracketStack: { char: string; index: number }[] = []
-
+  bracketStack: { char: string; index: number }[] = [],
+  shouldPause?: () => boolean,
+): boolean => {
+  let visited = 0
   while (true) {
+    visited += 1
+    if (shouldPause && visited % WALK_PAUSE_CHECK_NODES === 0 && shouldPause()) return false
     if (cursor.endIndex <= range.startIndex) {
-      if (!advanceCursorPastSubtree(cursor)) return
+      if (!advanceCursorPastSubtree(cursor)) return true
       continue
     }
     // Following subtrees start at or after this position in tree-sitter's source order.
-    if (cursor.startIndex >= range.endIndex) return
+    if (cursor.startIndex >= range.endIndex) return true
 
     collectCursorDiagnostics(cursor, visitors, bracketStack, hasErrors)
     if (cursor.gotoFirstChild()) continue
     if (advanceCursorPastSubtree(cursor)) continue
-    return
+    return true
   }
 }
 
@@ -4599,6 +4887,11 @@ const disposeCachedSnapshot = (snapshot: ParsedDocument): void => {
 }
 
 const disposeDocument = (runtimeSessionId: string): void => {
+  for (const snapshot of detachDocument(runtimeSessionId)) disposeCachedSnapshot(snapshot)
+}
+
+/** Forgets the document and returns its snapshots, which nothing can reach any more, to free. */
+const detachDocument = (runtimeSessionId: string): readonly ParsedDocument[] => {
   markRuntimeSessionDisposed(runtimeSessionId)
   disposeBootstrap(runtimeSessionId)
   // Its reparse sees the session disposed at its next slice and releases what it holds.
@@ -4608,12 +4901,69 @@ const disposeDocument = (runtimeSessionId: string): void => {
   markdownDocuments.get(runtimeSessionId)?.document.dispose()
   markdownDocuments.delete(runtimeSessionId)
   const cache = documentCaches.get(runtimeSessionId)
-  if (!cache) return
+  if (!cache) return []
 
-  for (const snapshot of cache.snapshots) disposeCachedSnapshot(snapshot)
   documentCaches.delete(runtimeSessionId)
   projectedDocuments.delete(runtimeSessionId)
+  return cache.snapshots
 }
+
+const DOCUMENT_RELEASE_BUDGET_MS = 4
+const DOCUMENT_RELEASE_QUIET_MS = 20
+const DOCUMENT_RELEASE_MAX_ROUNDS = 100
+let requestsReceived = 0
+
+/**
+ * Frees a closed document's trees once no request has arrived for a moment, and then a few
+ * milliseconds at a time. Freeing a large document takes tens of milliseconds, and the document
+ * opened in its place is queued right behind this request: its first colors need a handful of
+ * short requests, which now run before the release instead of after it. What follows them
+ * (the new document's complete parse, later range queries) runs between the releases.
+ */
+const releaseDocument = async (runtimeSessionId: string): Promise<undefined> => {
+  const snapshots = detachDocument(runtimeSessionId)
+  if (snapshots.length === 0) return undefined
+
+  await waitForQuiet(() => requestsReceived, releaseQuietRound, DOCUMENT_RELEASE_MAX_ROUNDS)
+  let resumedAt = nowMs()
+  for (const snapshot of snapshots) {
+    if (snapshot.projections) dropProjectedDocuments(snapshot.projections)
+    snapshot.mergeUnitTree?.delete()
+    for (const layer of snapshot.layers) {
+      disposeLayer(layer)
+      if (nowMs() - resumedAt < DOCUMENT_RELEASE_BUDGET_MS) continue
+      await yieldWorker()
+      resumedAt = nowMs()
+    }
+    snapshot.source.dispose()
+  }
+  return undefined
+}
+
+/**
+ * Resolves after the first round in which no request arrived, or after `rounds` of them: a worker
+ * that never goes quiet still gets to free memory. It counts arrivals and reads no clock, so it
+ * also ends in a test worker whose clock stands still.
+ */
+const waitForQuiet = async (
+  received: () => number,
+  round: () => Promise<void>,
+  rounds: number,
+): Promise<void> => {
+  for (let waited = 0; waited < rounds; waited += 1) {
+    const before = received()
+    await round()
+    if (received() === before) return
+  }
+}
+
+const releaseQuietRound = (): Promise<void> =>
+  new Promise((resolve) => {
+    // @justification One quiet round before a closed document is freed. A timer, not a posted
+    // message: it has to outlast the round trips between the requests of a document opened in
+    // its place. `waitForQuiet` bounds the rounds.
+    setTimeout(resolve, DOCUMENT_RELEASE_QUIET_MS)
+  })
 
 const markRuntimeSessionDisposed = (runtimeSessionId: string): void => {
   disposedRuntimeSessions.add(runtimeSessionId)
@@ -4703,6 +5053,7 @@ const normalizeLanguageDescriptor = (
   foldQuerySource: descriptor.foldQuerySource,
   injectionQuerySource: descriptor.injectionQuerySource,
   mergeUnitQuerySource: descriptor.mergeUnitQuerySource,
+  extraWasmUrls: descriptor.extraWasmUrls,
 })
 
 const moveLanguageToEnd = (languageId: TreeSitterLanguageId): void => {
@@ -4722,7 +5073,17 @@ const languageDescriptorsEqual = (
   left.highlightQuerySource === right.highlightQuerySource &&
   left.foldQuerySource === right.foldQuerySource &&
   left.injectionQuerySource === right.injectionQuerySource &&
-  left.mergeUnitQuerySource === right.mergeUnitQuerySource
+  left.mergeUnitQuerySource === right.mergeUnitQuerySource &&
+  sameWasmUrls(left.extraWasmUrls, right.extraWasmUrls)
+
+const sameWasmUrls = (
+  left: Readonly<Record<string, string>> | undefined,
+  right: Readonly<Record<string, string>> | undefined,
+): boolean => {
+  const leftKeys = Object.keys(left ?? {})
+  if (leftKeys.length !== Object.keys(right ?? {}).length) return false
+  return leftKeys.every((key) => left?.[key] === right?.[key])
+}
 
 const sameItems = (left: readonly string[], right: readonly string[]): boolean => {
   if (left.length !== right.length) return false
@@ -4837,6 +5198,7 @@ const executeRequest = async (
   request: TreeSitterWorkerRequest,
 ): Promise<TreeSitterWorkerResult> => {
   const { payload } = request
+  requestsReceived += 1
   if (payload.type === 'source') return Promise.resolve(sourceReader.apply(payload.command))
   if (payload.type === 'runtimeBarrier') {
     return awaitRuntimeTasks(payload.runtimeSessionId)
@@ -4846,12 +5208,20 @@ const executeRequest = async (
       payload.includeRetention ? inspectRetention() : undefined,
     )
   }
+  if (payload.type === 'closeRuntimeSession') {
+    // The close itself follows once the session's requests have settled. This reaches a request
+    // that is running in slices at its next pause, and stops it there.
+    markRuntimeSessionDisposed(payload.runtimeSessionId)
+    return Promise.resolve(undefined)
+  }
   if (payload.type === 'disposeDocument') {
     markRuntimeSessionDisposed(payload.runtimeSessionId)
-    return awaitRuntimeTasks(payload.runtimeSessionId).then(() => {
-      disposeDocument(payload.runtimeSessionId)
-      return undefined
-    })
+    const released = awaitRuntimeTasks(payload.runtimeSessionId).then(() =>
+      releaseDocument(payload.runtimeSessionId),
+    )
+    // An idle fence waits for the trees to be freed, as it did when this was one step.
+    trackWorkerTask(released)
+    return released
   }
   if (payload.type === 'dispose') {
     return awaitAllWorkerTasks().then(() => handleRequest(request))
@@ -5103,13 +5473,19 @@ export const __treeSitterWorkerInternalsForTests = {
   collectBracket,
   collectCaptures,
   collectError,
+  collectFolds,
   collectTreeData,
+  flattenLayerSlices,
+  rangeSlices,
+  sortFolds,
   appendItems,
   rangeSpan,
   readTreeSitterPieceTableInput,
   replaceCachedDocument,
   reusableParsedDocument,
   disposeDocument,
+  releaseDocument,
+  waitForQuiet,
   runCancellableRequest,
   assertNotCancelled,
   cancellationAnalysis,

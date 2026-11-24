@@ -118,6 +118,7 @@ async function buildJavaScript(): Promise<void> {
     logLevel: 'warn',
     plugins: [
       externalizeCssImports(),
+      inlineLanguageQueries(),
       emitBinaryAssets(),
       canonicalModuleWorkers(workerReferences),
     ],
@@ -149,6 +150,34 @@ async function buildJavaScript(): Promise<void> {
 // payloads by ~33% raw (~45% gzip / ~54% Brotli) and preventing `WebAssembly.instantiateStreaming`.
 // Emitting binary `?url` assets as real files keeps `new URL(..., import.meta.url)` resolvable in
 // Node, Bun, browsers, and downstream Vite consumers without embedding host paths in dist.
+// A language's assets module becomes one lazy chunk in an app. Its `?raw` query imports would stay
+// separate modules in dist, and a query two languages share (JavaScript highlights in TypeScript
+// and TSX) would then become a chunk of its own in an app that uses both. Inlining the text keeps
+// one fetch per language; the copies cost bytes only in the languages an app loads.
+function inlineLanguageQueries(): Plugin {
+  const rawImport = /^import (\w+) from '([^']+)\?raw'$/gm
+  return {
+    name: 'singapore-inline-language-queries',
+    enforce: 'pre',
+    async transform(code, id) {
+      if (!id.endsWith('.assets.generated.ts')) return null
+      const replacements = new Map<string, string>()
+      for (const [line, name, specifier] of code.matchAll(rawImport)) {
+        // Resolved as written, `?raw` included: a bare package path alone resolves as external.
+        const resolved = await this.resolve(`${specifier}?raw`, id, { skipSelf: true })
+        const file = resolved?.id.replace(/\?raw$/, '')
+        if (!file || resolved?.external) throw new Error(`Cannot resolve ${specifier} from ${id}`)
+        this.addWatchFile(file)
+        const text = await readFile(file, 'utf8')
+        replacements.set(line, `const ${name} = ${JSON.stringify(text)}`)
+      }
+      if (replacements.size === 0) return null
+      // One line for one line, so the module's other lines keep their positions.
+      return { code: code.replace(rawImport, (line) => replacements.get(line)!), map: null }
+    },
+  }
+}
+
 function emitBinaryAssets(): Plugin {
   const suffix = '?singapore-binary-url'
   const pattern = /\.(?:wasm|gz)\?url$/

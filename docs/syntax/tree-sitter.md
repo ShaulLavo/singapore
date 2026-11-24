@@ -49,6 +49,18 @@ The main thread may render syntax results, but it must not synchronously parse o
 
 Each parse result is tied to a document snapshot/version. Consumers must be able to reject syntax results whose base snapshot is older than the visible document state.
 
+### Long requests
+
+A page without cross-origin isolation has no shared memory, so it cannot interrupt a running worker. The worker therefore never runs long without returning to its message loop:
+
+- A range query against a parsed document runs in slices of about 8,192 units and yields between slices once 8 ms have passed. A request queued behind it (a newly opened document, rows just scrolled into view) waits for one slice. The answer is the same as one query over the whole range: a node that crosses a slice boundary is reported by the slice that contains its start, and brackets and errors come from one walk over the whole range that pauses and resumes. A query whose document was closed or edited meanwhile stops at its next slice. If its snapshot was replaced by another parse of the same text, it starts over on the replacement.
+- A slice never ends inside a token. A boundary that falls in one moves to the token's end, so a token longer than many slices (a minified line's string, a huge identifier) is matched, and its predicates are read, once and not once per slice.
+- Folds are listed in one order however the range was sliced: by lines, then by offsets, then by node type and language.
+- A close is announced to the worker at once, ahead of the session's unfinished requests, and the close itself follows when they have settled. Without shared memory the announcement is the only way a running query learns its document is gone.
+- A closed document is forgotten at once, and its trees are freed after the first 20 ms in which no request arrived, a few milliseconds at a time. The document opened in its place is queued right behind the close, and its first colors need a handful of short requests: they run before the release, and what follows them runs between its steps. The wait counts request arrivals, with a bound of 100 rounds.
+
+The session numbers its range requests. Each caller is answered with the range it asked for, and `getResult()` keeps the answer to the request made last, whichever reply arrives last.
+
 ## Incremental Parse Pipeline
 
 1. Worker receives an edit batch against snapshot `S`.

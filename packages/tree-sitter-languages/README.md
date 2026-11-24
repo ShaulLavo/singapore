@@ -14,7 +14,9 @@ npm install @singapore-editor/core @singapore-editor/tree-sitter-languages
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
-import { css, html, typeScript } from '@singapore-editor/tree-sitter-languages'
+import { css } from '@singapore-editor/tree-sitter-languages/css'
+import { html } from '@singapore-editor/tree-sitter-languages/html'
+import { typeScript } from '@singapore-editor/tree-sitter-languages/typescript'
 
 const host = document.createElement('div')
 host.style.height = '400px'
@@ -32,7 +34,7 @@ Tree-sitter and native Markdown parsing need Chromium 144, Firefox 145, Safari 2
 
 ## API highlights
 
-- `typeScript()` installs TypeScript syntax.
+- Each language has its own entry point (`/typescript`, `/tsx`, `/javascript`, `/html`, `/css`, `/json`, `/markdown`), so an app's build holds only the grammars it uses.
 - `TREE_SITTER_LANGUAGE_CONTRIBUTIONS`, from `@singapore-editor/tree-sitter-languages/catalog`, contains the bundled language set.
 - The `/metadata` entry lists language IDs and file extensions.
 

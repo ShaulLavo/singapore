@@ -377,18 +377,26 @@ describe('tree-sitter worker client language registration cache', () => {
     })
     await flushMicrotasks()
 
-    expect(worker.messages.map((message) => message.payload.type)).toEqual(['init'])
+    expect(worker.messages.map((message) => message.payload.type)).toEqual([
+      'init',
+      'closeRuntimeSession',
+    ])
     expect(idle).toBe(false)
 
     worker.resolveRequest(requestOfType(worker, 'init'))
     await flushMicrotasks()
-    expect(worker.messages.map((message) => message.payload.type)).toEqual(['init', 'parse'])
+    expect(worker.messages.map((message) => message.payload.type)).toEqual([
+      'init',
+      'closeRuntimeSession',
+      'parse',
+    ])
 
     worker.resolveRequest(requestOfType(worker, 'parse'), parseResult(1))
     await expect(parse).resolves.toMatchObject({ snapshotVersion: 1 })
     await flushMicrotasks()
     expect(worker.messages.map((message) => message.payload.type)).toEqual([
       'init',
+      'closeRuntimeSession',
       'parse',
       'disposeDocument',
     ])
@@ -399,6 +407,7 @@ describe('tree-sitter worker client language registration cache', () => {
     await flushMicrotasks()
     expect(worker.messages.map((message) => message.payload.type)).toEqual([
       'init',
+      'closeRuntimeSession',
       'parse',
       'disposeDocument',
       'runtimeBarrier',
@@ -408,6 +417,59 @@ describe('tree-sitter worker client language registration cache', () => {
     worker.resolveRequest(requestOfType(worker, 'runtimeBarrier'))
     await barrier
     expect(idle).toBe(true)
+  })
+
+  it('tells the worker a document closed while its query is still running', async () => {
+    FakeWorker.autoResolve = false
+    const client = await loadWorkerClient()
+    const snapshot = createPieceTableSnapshot('const answer = 1;')
+    const parse = client.parse(parsePayload(snapshot, 1))
+    const worker = fakeWorkerAt(0)
+    worker.resolveRequest(requestOfType(worker, 'init'))
+    await flushMicrotasks()
+    worker.resolveRequest(requestOfType(worker, 'parse'), parseResult(1))
+    await parse
+    const range = client.queryRange(rangePayload(1, 0, 5))
+    await flushMicrotasks()
+
+    client.disposeDocument('runtime-doc.ts')
+    await flushMicrotasks()
+
+    // The query has not answered. The close cannot wait for it: without shared memory the
+    // worker has no other way to learn that the query's document is gone.
+    expect(worker.messages.map((message) => message.payload.type).slice(2)).toEqual([
+      'queryRange',
+      'closeRuntimeSession',
+    ])
+
+    worker.resolveRequest(rangeRequests(worker)[0]!, rangeResult(1, 0, 5))
+    await range
+    await flushMicrotasks()
+    expect(worker.messages.map((message) => message.payload.type).slice(2)).toEqual([
+      'queryRange',
+      'closeRuntimeSession',
+      'disposeDocument',
+    ])
+  })
+
+  it('sends no close ahead of the disposal for a document with nothing running', async () => {
+    FakeWorker.autoResolve = false
+    const client = await loadWorkerClient()
+    const snapshot = createPieceTableSnapshot('const answer = 1;')
+    const parse = client.parse(parsePayload(snapshot, 1))
+    const worker = fakeWorkerAt(0)
+    worker.resolveRequest(requestOfType(worker, 'init'))
+    await flushMicrotasks()
+    worker.resolveRequest(requestOfType(worker, 'parse'), parseResult(1))
+    await parse
+    await flushMicrotasks()
+
+    client.disposeDocument('runtime-doc.ts')
+    await flushMicrotasks()
+
+    expect(worker.messages.map((message) => message.payload.type).slice(2)).toEqual([
+      'disposeDocument',
+    ])
   })
 })
 

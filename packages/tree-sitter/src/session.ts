@@ -70,6 +70,9 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
   private readonly syntaxMode: 'full' | 'range'
   private readonly backend: TreeSitterBackend
   private snapshotVersion = 0
+  /** Range requests issued, and the newest of them whose answer became `result`. */
+  private rangeRequests = 0
+  private publishedRangeRequest = 0
   private parsedSnapshotVersion = 0
   private analysedRead: DocumentRead | null = null
   private analysedSourceGeneration: number | null = null
@@ -361,6 +364,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       return this.createRangeUnavailableResult(range, 'Tree-sitter document has not been parsed')
     }
 
+    const request = ++this.rangeRequests
     let result = await this.backend.queryRange(
       {
         documentId: this.documentId,
@@ -412,26 +416,28 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     if (!result)
       return this.createRangeUnavailableResult(range, 'Complete syntax analysis is pending')
     const background = this.result.projection.analysis
-    const next = this.updateFromTreeSitterRangeResult(result, range)
-    if (next.projection.analysis?.kind === 'cancelled') return next
+    let answer = this.updateFromTreeSitterRangeResult(result, range, request)
+    if (answer.projection.analysis?.kind === 'cancelled') return answer
     if (
       background?.kind === 'partial' &&
       background.background &&
-      next.projection.analysis?.kind === 'partial'
+      answer.projection.analysis?.kind === 'partial'
     ) {
-      this.result = {
-        ...next,
+      const published = this.result === answer
+      answer = {
+        ...answer,
         projection: {
-          ...next.projection,
-          analysis: { ...next.projection.analysis, background: background.background },
+          ...answer.projection,
+          analysis: { ...answer.projection.analysis, background: background.background },
         },
       }
+      if (published) this.result = answer
     }
     if (result?.analysis?.kind === 'partial') {
       this.notifyFirstParse()
       void this.startCompleteAnalysis()
     }
-    return this.result
+    return answer
   }
 
   public canQueryRange(): boolean {
@@ -656,6 +662,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
   private updateFromTreeSitterRangeResult(
     result: TreeSitterRangeResult | undefined,
     range: EditorSyntaxRange,
+    request: number,
   ): EditorSyntaxResult {
     if (this.disposed) return this.result
     if (!result) return this.result
@@ -669,6 +676,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     )
     // A failed range operation does not retire the document's usable tree or colors.
     if (next.projection.analysis?.kind === 'cancelled') return next
+    // Answers can arrive out of order: a long range runs in slices, and a short one asked after
+    // it finishes first. Each caller gets its own answer; the session's result stays the answer
+    // to the newest request.
+    if (request < this.publishedRangeRequest) return next
+    this.publishedRangeRequest = request
     this.result = next
     return next
   }
