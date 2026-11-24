@@ -1,10 +1,8 @@
 import type { EditorPlugin } from '../plugins'
 import type { EditorHighlighterProvider } from '../syntax/highlighter'
 import type { EditorSyntaxLanguageId } from '../syntax/session'
-import {
-  defineHighlighterOperation,
-  type HighlighterOperationContext,
-} from '../editor/operationDefinitions'
+import type { HighlighterOperationContext } from '../editor/operationDefinitions'
+import { defineHighlighterOperation } from '../editor/syntaxOperations'
 import {
   createShikiWorkerOwner,
   createShikiDocumentOperation,

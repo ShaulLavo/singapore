@@ -1,4 +1,4 @@
-import { createEditorHighlighterOperation } from '../src/editor/operationDefinitions'
+import { createEditorHighlighterOperation } from '../src/editor/syntaxOperations'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { Editor } from '../src/editor/Editor'

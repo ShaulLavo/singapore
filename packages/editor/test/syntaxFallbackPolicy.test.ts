@@ -1,7 +1,7 @@
 import {
   createEditorHighlighterOperation,
   createEditorStructuralOperation,
-} from '../src/editor/operationDefinitions'
+} from '../src/editor/syntaxOperations'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEditorDocumentAnalysis } from '../src/editor/documentAnalysis'
 import { createEditorTextBuffer, createEditorBufferSession } from '../src/documentSession'

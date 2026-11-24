@@ -51,6 +51,7 @@ import {
   type ContributionEntry,
 } from './contributionOperation'
 import type { EditorStructuralOperation, EditorHighlighterOperation } from '../document/operations'
+import { installEditorSyntaxRuntime } from './syntaxRuntime'
 
 type EditorAnalysisConfigurationTag = readonly (string | number | boolean | null)[]
 export type EditorAnalysisDisplayDemand =
@@ -1360,6 +1361,7 @@ export function createEditorDocumentAnalysis(options: {
   readonly buffer: EditorTextBuffer
   readonly documentId: string
 }): EditorDocumentAnalysis {
+  installEditorDocumentAnalysis()
   const existing = analysisOwners.get(options.buffer)
   if (existing) {
     existing.explicit = true
@@ -1391,6 +1393,24 @@ export function acquireEditorDocumentAnalysis(options: {
       if (!retained.explicit && retained.views === 0) retained.analysis.dispose()
     },
   }
+}
+
+/** How an editor reaches document analysis without importing it; see `syntaxRuntime.ts`. */
+export type EditorDocumentAnalysisRuntime = {
+  readonly acquire: typeof acquireEditorDocumentAnalysis
+  readonly create: typeof createEditorDocumentAnalysis
+}
+
+/**
+ * Lets editors on the page give their documents an analysis. Called by every document operation, so
+ * an editor that never meets one does not carry this code.
+ */
+export function installEditorDocumentAnalysis(): void {
+  const runtime: EditorDocumentAnalysisRuntime = {
+    acquire: acquireEditorDocumentAnalysis,
+    create: createEditorDocumentAnalysis,
+  }
+  installEditorSyntaxRuntime('analysis', runtime)
 }
 
 function createAnalysis(options: {

@@ -1,7 +1,7 @@
 import {
   createEditorStructuralOperation,
   createEditorHighlighterOperation,
-} from '../src/editor/operationDefinitions'
+} from '../src/editor/syntaxOperations'
 import type {
   EditorStructuralOperationContext,
   EditorHighlighterOperationContext,

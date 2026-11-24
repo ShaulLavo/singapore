@@ -3,7 +3,7 @@ import type { EditorHighlighterOperationContext } from '../src/document/operatio
 import {
   createEditorStructuralOperation,
   createEditorHighlighterOperation,
-} from '../src/editor/operationDefinitions'
+} from '../src/editor/syntaxOperations'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Editor } from '../src/editor/Editor'

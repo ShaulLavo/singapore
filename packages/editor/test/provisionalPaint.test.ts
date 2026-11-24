@@ -1,4 +1,4 @@
-import { createEditorHighlighterOperation } from '../src/editor/operationDefinitions'
+import { createEditorHighlighterOperation } from '../src/editor/syntaxOperations'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { Editor } from '../src/editor/Editor'
 import { VirtualizedTextView } from '../src/virtualization'

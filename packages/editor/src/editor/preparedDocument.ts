@@ -18,7 +18,7 @@ import {
 import { IndentationFoldIndex } from './indentationFoldIndex'
 import { guessedTabSize } from './indentationGuess'
 import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
-import { fallbackFoldReason } from './syntaxController'
+import { fallbackFoldReason, installEditorSyntaxController } from './syntaxController'
 import { EditorWorkScheduler } from './workScheduler'
 
 export type EditorPreparedTagValue = string | number | boolean | null
@@ -143,6 +143,8 @@ export function createEditorPreparedDocument(
 ): EditorPreparedDocument {
   if (options.analysis.buffer !== options.buffer)
     throw new TypeError('Prepared analysis must reference the source buffer')
+  // The editor opens a prepared document through the full syntax controller.
+  installEditorSyntaxController()
   const contributionOwner = options.analysis.contributions.pin()
   if (!contributionOwner) throw new TypeError('Prepared analysis must have a live source')
   const snapshot = options.buffer.getSnapshot()

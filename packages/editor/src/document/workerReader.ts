@@ -471,11 +471,7 @@ function rejected(
   return { kind: 'rejected', identity, reason }
 }
 
-export {
-  defineDocumentOperation,
-  defineStructuralOperation,
-  defineHighlighterOperation,
-} from '../editor/operationDefinitions'
+export { defineDocumentOperation } from '../editor/operationDefinitions'
 export { acquireEditorDocumentAnalysis } from '../editor/documentAnalysis'
 export type {
   StructuralOperationContext,

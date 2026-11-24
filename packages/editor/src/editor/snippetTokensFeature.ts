@@ -3,7 +3,7 @@ import { type EditorDisposable } from './disposables'
 import type { EditorHighlighterProvider } from '../syntax/highlighter'
 import { createSnippetDocument } from '../syntax/snippetDocument'
 import type { EditorSyntaxLanguageId, EditorSyntaxProvider } from '../syntax/session'
-import { createEditorDocumentAnalysis } from './documentAnalysis'
+import { editorDocumentAnalysisRuntime } from './syntaxPipeline'
 import type { EditorToken } from '../tokens'
 
 export const EDITOR_SNIPPET_TOKENS_FEATURE_ID = 'editor.snippetTokens'
@@ -60,9 +60,13 @@ async function tokenizeSnippet(
   const structural = sources
     .flatMap((source) => (source.syntax ? [source.syntax] : []))
     .concat(pluginHost.getSyntaxProviders())
+  if (highlighters.length === 0 && structural.length === 0) return []
+  // Every provider is built on a document operation, and building one installs the analysis.
+  const runtime = editorDocumentAnalysisRuntime()
+  if (!runtime) throw new Error('Snippet tokens need the document analysis a provider installs')
   if (highlighters.length > 0) {
     const submitted = createSnippetDocument(text, 'as-submitted')
-    const analysis = createEditorDocumentAnalysis({ buffer: submitted.buffer, documentId })
+    const analysis = runtime.create({ buffer: submitted.buffer, documentId })
     try {
       for (const provider of highlighters) {
         const audience = analysis.contributions.createAudience()
@@ -81,7 +85,7 @@ async function tokenizeSnippet(
     }
   }
   const folded = createSnippetDocument(text, 'as-document')
-  const analysis = createEditorDocumentAnalysis({ buffer: folded.buffer, documentId })
+  const analysis = runtime.create({ buffer: folded.buffer, documentId })
   try {
     for (const provider of structural) {
       const audience = analysis.contributions.createAudience()

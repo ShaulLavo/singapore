@@ -1,4 +1,4 @@
-import { createEditorStructuralOperation } from '../../src/editor/operationDefinitions'
+import { createEditorStructuralOperation } from '../../src/editor/syntaxOperations'
 import type { EditorStructuralOperationContext } from '../../src/document/operations'
 import type { EditorPlugin } from '../../src/plugins'
 

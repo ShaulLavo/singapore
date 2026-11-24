@@ -64,7 +64,7 @@ export default defineConfig({
       '@singapore-editor/core/extensions': join(import.meta.dirname, 'src/public/extensions.ts'),
       '@singapore-editor/core/internal/document-worker': join(
         import.meta.dirname,
-        'src/document/workerReader.ts',
+        'src/document/workerEntry.ts',
       ),
     },
   },

@@ -31,9 +31,9 @@
   ],
   "exports": {
     "./internal/document-worker": {
-      "types": "./dist/document/workerReader.d.ts",
-      "import": "./dist/document/workerReader.js",
-      "default": "./dist/document/workerReader.js"
+      "types": "./dist/document/workerEntry.d.ts",
+      "import": "./dist/document/workerEntry.js",
+      "default": "./dist/document/workerEntry.js"
     },
     ".": {
       "types": "./dist/index.d.ts",
