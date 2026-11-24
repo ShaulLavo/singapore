@@ -67,7 +67,7 @@ export class EditorAnnouncer {
   private write(urgency: EditorAnnouncementUrgency, message: string): void {
     if (this.disposed) return
 
-    const regions = this.mountedRegions()
+    const regions = this.#mountedRegions()
     const [first, second] = urgency === 'assertive' ? regions.assertive : regions.polite
     // Whichever half is not already holding this message takes it, so a repeat arrives as a change
     // rather than as a write of what is already there. The other half is emptied because both of
@@ -82,7 +82,7 @@ export class EditorAnnouncer {
    * Built on the first thing there is to say. Most editors on a page never say anything, and four
    * nodes a host did not ask for and nothing ever writes to are four nodes it has to account for.
    */
-  private mountedRegions(): AnnouncementRegions {
+  #mountedRegions(): AnnouncementRegions {
     const existing = this.regions
     if (existing) return existing
 

@@ -70,7 +70,7 @@ class SourceRangeIndex {
     }
     if ((start === this.start && end === this.end) || this.end - this.start <= BLOCK_LENGTH) {
       return sliceNode(
-        this.materialize(text, tabSize),
+        this.#materialize(text, tabSize),
         start - this.start,
         end - this.start,
         tabSize,
@@ -95,12 +95,12 @@ class SourceRangeIndex {
     )
   }
 
-  private materialize(text: TextPage, tabSize: number): TextNode {
+  #materialize(text: TextPage, tabSize: number): TextNode {
     if (this.state.kind === 'measured') return this.state.node
     if (this.state.kind === 'split') {
       const node = branch(
-        this.state.left.materialize(text, tabSize),
-        this.state.right.materialize(text, tabSize),
+        this.state.left.#materialize(text, tabSize),
+        this.state.right.#materialize(text, tabSize),
         tabSize,
       )
       this.state = { kind: 'measured', node }

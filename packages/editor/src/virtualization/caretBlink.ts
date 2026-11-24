@@ -23,8 +23,8 @@ export class CaretBlink {
   private timer: ReturnType<typeof setTimeout> | null = null
   private deadline = 0
   /** Where the drawn carets were at the last update; null when none was drawn. */
-  private drawn: string | null = null
-  private restartRequested = false
+  #drawn: string | null = null
+  #restartRequested = false
 
   public constructor(
     private readonly layer: HTMLElement,
@@ -33,7 +33,7 @@ export class CaretBlink {
 
   /** The text changed: the next update starts a fresh blink even if no caret moved. */
   public requestRestart(): void {
-    this.restartRequested = true
+    this.#restartRequested = true
   }
 
   /**
@@ -43,14 +43,14 @@ export class CaretBlink {
    */
   public update(drawn: string | null): void {
     if (drawn === null) {
-      this.drawn = null
+      this.#drawn = null
       this.stop()
       return
     }
-    const changed = drawn !== this.drawn || this.restartRequested
-    this.drawn = drawn
-    this.restartRequested = false
-    if (changed) this.restart()
+    const changed = drawn !== this.#drawn || this.#restartRequested
+    this.#drawn = drawn
+    this.#restartRequested = false
+    if (changed) this.#restart()
   }
 
   /** No caret is on screen, or the view is gone: nothing to blink, and no timer left. */
@@ -60,7 +60,7 @@ export class CaretBlink {
     this.layer.removeAttribute(CARET_BLINK_OFF_ATTRIBUTE)
   }
 
-  private restart(): void {
+  #restart(): void {
     this.stop()
     this.deadline = this.now() + BLINK_DURATION_MS
     this.schedule()

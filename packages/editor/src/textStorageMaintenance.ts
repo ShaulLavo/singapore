@@ -47,11 +47,11 @@ function* maintainStorage(
 
 export class TextStorageMaintenance {
   private readonly scheduler = new EditorWorkScheduler()
-  private job: Generator<void, StorageMaintenanceResult> | null = null
-  private runMaxSliceMs = 0
-  private deletedUnits = 0
-  private piecesAfterPass = 0
-  private due = false
+  #job: Generator<void, StorageMaintenanceResult> | null = null
+  #runMaxSliceMs = 0
+  #deletedUnits = 0
+  #piecesAfterPass = 0
+  #due = false
   private stats: TextStorageMaintenanceStats = {
     completed: 0,
     cancelled: 0,
@@ -69,32 +69,33 @@ export class TextStorageMaintenance {
 
   // `force` is for events that release retained snapshots without deleting text.
   request(deletedUnits: number, force = false): void {
-    if (this.job) {
-      this.job = null
+    if (this.#job) {
+      this.#job = null
       this.stats.cancelled++
     }
-    this.deletedUnits += deletedUnits
-    this.due ||= force || this.deletedUnits >= DELETED_UNITS_BEFORE_MAINTENANCE || this.piecesGrew()
-    if (!this.due) return
+    this.#deletedUnits += deletedUnits
+    this.#due ||=
+      force || this.#deletedUnits >= DELETED_UNITS_BEFORE_MAINTENANCE || this.#piecesGrew()
+    if (!this.#due) return
     this.schedule(QUIET_DELAY_MS)
   }
 
-  private piecesGrew(): boolean {
-    const growth = this.current().pieceCount - this.piecesAfterPass
+  #piecesGrew(): boolean {
+    const growth = this.current().pieceCount - this.#piecesAfterPass
     return (
       growth >= PIECES_BEFORE_MAINTENANCE &&
-      growth >= this.piecesAfterPass * PIECE_GROWTH_BEFORE_MAINTENANCE
+      growth >= this.#piecesAfterPass * PIECE_GROWTH_BEFORE_MAINTENANCE
     )
   }
 
   resume(): void {
-    if (this.due && !this.job) this.schedule(QUIET_DELAY_MS)
+    if (this.#due && !this.#job) this.schedule(QUIET_DELAY_MS)
   }
 
   suspend(): void {
     this.scheduler.cancel('text-storage', 'detached')
-    if (this.job) this.stats.cancelled++
-    this.job = null
+    if (this.#job) this.stats.cancelled++
+    this.#job = null
   }
 
   getStats(): Readonly<TextStorageMaintenanceStats> {
@@ -111,8 +112,8 @@ export class TextStorageMaintenance {
       run: () => this.step(),
       apply: (result) => this.settle(result),
       fail: (error) => {
-        this.job = null
-        this.due = false
+        this.#job = null
+        this.#due = false
         console.error('[editor]', 'editor.buffer.reclamation_failed', error)
         recordEditorPerformanceDiagnostic('buffer.reclamation.failed', { error })
       },
@@ -120,22 +121,22 @@ export class TextStorageMaintenance {
   }
 
   private step(): StorageMaintenanceResult | null {
-    if (!this.job) {
-      this.job = maintainStorage(this.current(), this.snapshots)
-      this.runMaxSliceMs = 0
+    if (!this.#job) {
+      this.#job = maintainStorage(this.current(), this.snapshots)
+      this.#runMaxSliceMs = 0
     }
     const start = performance.now()
     for (let step = 0; step < STEPS_PER_SLICE; step++) {
-      const result = this.job.next()
-      this.recordSlice(performance.now() - start)
+      const result = this.#job.next()
+      this.#recordSlice(performance.now() - start)
       if (result.done) return result.value
       if (performance.now() - start >= SLICE_MS) return null
     }
     return null
   }
 
-  private recordSlice(ms: number): void {
-    this.runMaxSliceMs = Math.max(this.runMaxSliceMs, ms)
+  #recordSlice(ms: number): void {
+    this.#runMaxSliceMs = Math.max(this.#runMaxSliceMs, ms)
     this.stats.maxSliceMs = Math.max(this.stats.maxSliceMs, ms)
   }
 
@@ -144,10 +145,10 @@ export class TextStorageMaintenance {
       this.schedule(0)
       return
     }
-    this.job = null
-    this.due = false
-    this.deletedUnits = 0
-    this.piecesAfterPass = this.current().pieceCount
+    this.#job = null
+    this.#due = false
+    this.#deletedUnits = 0
+    this.#piecesAfterPass = this.current().pieceCount
     this.stats.completed++
     this.stats.chunks += result.chunks
     this.stats.codeUnits += result.codeUnits
@@ -155,7 +156,7 @@ export class TextStorageMaintenance {
     this.stats.tombstones += result.tombstones
     recordEditorPerformanceDiagnostic('buffer.reclamation', {
       ...result,
-      maxSliceMs: this.runMaxSliceMs,
+      maxSliceMs: this.#runMaxSliceMs,
     })
   }
 }

@@ -5799,7 +5799,7 @@ function coalescedPassChange(
 
 /** What one contribution registered; a registration arriving after release is undone at once. */
 class ContributionClaims {
-  private readonly claims = new Set<EditorDisposable>()
+  readonly #claims = new Set<EditorDisposable>()
   private released = false
 
   add(registration: EditorDisposable): EditorDisposable {
@@ -5808,17 +5808,17 @@ class ContributionClaims {
       return registration
     }
     const claim = disposableOnce(() => {
-      this.claims.delete(claim)
+      this.#claims.delete(claim)
       registration.dispose()
     })
-    this.claims.add(claim)
+    this.#claims.add(claim)
     return claim
   }
 
   release(): readonly EditorDisposable[] {
     this.released = true
-    const claims = Array.from(this.claims).reverse()
-    this.claims.clear()
+    const claims = Array.from(this.#claims).reverse()
+    this.#claims.clear()
     return claims
   }
 }

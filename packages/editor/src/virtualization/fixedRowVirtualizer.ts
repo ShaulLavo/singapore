@@ -158,34 +158,34 @@ export class FixedRowVirtualizer {
   private scrollLeft = 0
   private viewportWidth = 0
   private viewportHeight = 0
-  private viewportMeasured = false
-  private nativeScrollNeedsRestore = false
+  #viewportMeasured = false
+  #nativeScrollNeedsRestore = false
   private borderBoxWidth = 0
   private borderBoxHeight = 0
   private attached: AttachedScrollElement | null = null
-  private releaseViewportObservation: (() => void) | null = null
-  private nativeClip: PageViewportMetrics | null = null
-  private changeHandler: FixedRowVirtualizerChangeHandler | null = null
-  private scrollHandler: (() => void) | null = null
-  private scrollAnimationFrame: ScheduledFrame | null = null
-  private resizeAnimationFrame: ScheduledFrame | null = null
-  private readonly trailingScrollScheduler = new EditorWorkScheduler()
-  private pendingResizeMetrics: PendingResizeMetrics | null = null
-  private itemCache = new Map<number, FixedRowVirtualItem>()
-  private cachedRowHeight = DEFAULT_ROW_HEIGHT
-  private cachedRowGap = DEFAULT_ROW_GAP
-  private stableVirtualWindow: FixedRowVisibleRange | null = null
-  private logicalScrollProperties: LogicalScrollProperties | null = null
-  private provisionalScrollGeometry: {
+  #releaseViewportObservation: (() => void) | null = null
+  #nativeClip: PageViewportMetrics | null = null
+  #changeHandler: FixedRowVirtualizerChangeHandler | null = null
+  #scrollHandler: (() => void) | null = null
+  #scrollAnimationFrame: ScheduledFrame | null = null
+  #resizeAnimationFrame: ScheduledFrame | null = null
+  readonly #trailingScrollScheduler = new EditorWorkScheduler()
+  #pendingResizeMetrics: PendingResizeMetrics | null = null
+  #itemCache = new Map<number, FixedRowVirtualItem>()
+  #cachedRowHeight = DEFAULT_ROW_HEIGHT
+  #cachedRowGap = DEFAULT_ROW_GAP
+  #stableVirtualWindow: FixedRowVisibleRange | null = null
+  #logicalScrollProperties: LogicalScrollProperties | null = null
+  #provisionalScrollGeometry: {
     readonly scrollTop: number
     readonly scrollHeight: number
   } | null = null
-  private requestedScrollTop: number | null = null
+  #requestedScrollTop: number | null = null
 
   public constructor(options: FixedRowVirtualizerOptions) {
     this.options = normalizeOptions(options)
-    this.cachedRowHeight = this.options.rowHeight
-    this.cachedRowGap = this.options.rowGap
+    this.#cachedRowHeight = this.options.rowHeight
+    this.#cachedRowGap = this.options.rowGap
   }
 
   /**
@@ -194,14 +194,14 @@ export class FixedRowVirtualizer {
    * same pass, rather than rendering the old offset first and the new one after.
    */
   public requestScrollTop(value: number): void {
-    this.requestedScrollTop = Math.max(0, normalizeNumber(value))
+    this.#requestedScrollTop = Math.max(0, normalizeNumber(value))
   }
 
   public updateOptions(options: Partial<FixedRowVirtualizerOptions>): boolean {
-    const anchor = this.viewportAnchor()
+    const anchor = this.#viewportAnchor()
     const next = normalizeOptions({ ...denormalizeOptions(this.options), ...options }, this.options)
-    const requested = this.requestedScrollTop
-    this.requestedScrollTop = null
+    const requested = this.#requestedScrollTop
+    this.#requestedScrollTop = null
     const nextScrollTop = nextScrollTopForOptions(
       next,
       requested ?? anchoredScrollTop(anchor, next, this.scrollTop),
@@ -209,21 +209,21 @@ export class FixedRowVirtualizer {
     )
     if (sameNormalizedOptions(this.options, next) && nextScrollTop === this.scrollTop) return false
 
-    this.updateCacheForFixedRows(next.rowHeight, next.rowGap)
-    if (this.options.scrollMode !== next.scrollMode) this.stopViewportObservation()
+    this.#updateCacheForFixedRows(next.rowHeight, next.rowGap)
+    if (this.options.scrollMode !== next.scrollMode) this.#stopViewportObservation()
     this.options = next
     this.scrollTop = nextScrollTop
     if (next.scrollMode === 'content') this.scrollLeft = 0
-    this.stableVirtualWindow = null
-    this.syncAttachedScrollMode()
-    this.emitChange()
+    this.#stableVirtualWindow = null
+    this.#syncAttachedScrollMode()
+    this.#emitChange()
     // An unmeasured viewport has no end padding yet, so native scrolling would clamp the restore.
-    if (this.viewportHeight > 0) this.syncAttachedNativeScrollTop()
+    if (this.viewportHeight > 0) this.#syncAttachedNativeScrollTop()
     return true
   }
 
   public refresh(): void {
-    this.emitChange()
+    this.#emitChange()
   }
 
   public attachScrollElement(
@@ -232,25 +232,26 @@ export class FixedRowVirtualizer {
     options: FixedRowVirtualizerAttachOptions = {},
   ): void {
     this.detachScrollElement()
-    this.changeHandler = onChange ?? null
-    this.scrollHandler = options.onScroll ?? null
+    this.#changeHandler = onChange ?? null
+    this.#scrollHandler = options.onScroll ?? null
 
-    const onScroll = (): void => this.scheduleScrollSync()
-    const resizeObserver = createResizeObserver((entries) => this.syncFromResizeEntries(entries))
+    const onScroll = (): void => this.#scheduleScrollSync()
+    const resizeObserver = createResizeObserver((entries) => this.#syncFromResizeEntries(entries))
     const wheelScrollOwner = installNativeWheelScrollOwner(element, {
-      readScrollTop: () => this.logicalScrollProperties?.readNativeScrollTop() ?? element.scrollTop,
+      readScrollTop: () =>
+        this.#logicalScrollProperties?.readNativeScrollTop() ?? element.scrollTop,
       readScrollHeight: () =>
-        this.logicalScrollProperties?.readNativeScrollHeight() ?? element.scrollHeight,
+        this.#logicalScrollProperties?.readNativeScrollHeight() ?? element.scrollHeight,
       lineHeight: () => this.options.rowHeight,
       isEnabled: () =>
         this.options.scrollMode !== 'content' &&
-        this.viewportMeasured &&
+        this.#viewportMeasured &&
         this.options.enabled &&
-        !this.provisionalScrollGeometry &&
-        !this.isHidden() &&
-        !this.nativeScrollNeedsRestore,
+        !this.#provisionalScrollGeometry &&
+        !this.#isHidden() &&
+        !this.#nativeScrollNeedsRestore,
       canScrollVertically: () => this.options.scrollMode === 'virtualized',
-      onScrolled: () => this.scheduleScrollSync(),
+      onScrolled: () => this.#scheduleScrollSync(),
     })
     this.attached = {
       element,
@@ -260,10 +261,10 @@ export class FixedRowVirtualizer {
       observeNativeClip: options.observeNativeClip ?? false,
       scrollListenerAttached: false,
     }
-    this.syncAttachedScrollMode()
+    this.#syncAttachedScrollMode()
     resizeObserver?.observe(element)
     if (options.readInitialScrollPosition !== false && this.options.scrollMode === 'virtualized') {
-      this.syncScrollPositionFromElement()
+      this.#syncScrollPositionFromElement()
     }
   }
 
@@ -272,33 +273,33 @@ export class FixedRowVirtualizer {
     if (!attached) return
 
     attached.wheelScrollOwner.dispose()
-    this.stopViewportObservation()
-    this.disableAttachedScrollElement(attached)
+    this.#stopViewportObservation()
+    this.#disableAttachedScrollElement(attached)
     attached.resizeObserver?.disconnect()
-    this.clearPendingResizeSync()
-    this.cancelTrailingScrollEmit()
+    this.#clearPendingResizeSync()
+    this.#cancelTrailingScrollEmit()
     this.attached = null
-    this.scrollHandler = null
+    this.#scrollHandler = null
   }
 
   public dispose(): void {
     this.detachScrollElement()
-    this.trailingScrollScheduler.dispose()
-    this.changeHandler = null
-    this.itemCache.clear()
+    this.#trailingScrollScheduler.dispose()
+    this.#changeHandler = null
+    this.#itemCache.clear()
   }
 
   public setScrollMetrics(metrics: FixedRowScrollMetrics): void {
-    this.clearPendingResizeSync()
-    this.applyScrollMetrics(metrics)
+    this.#clearPendingResizeSync()
+    this.#applyScrollMetrics(metrics)
   }
 
   public hasMeasuredViewport(): boolean {
-    return this.viewportMeasured
+    return this.#viewportMeasured
   }
 
   public refreshPageViewport(): void {
-    this.synchronizePageViewport(false)
+    this.#synchronizePageViewport(false)
   }
 
   public pagePositionForRowOffset(
@@ -306,18 +307,18 @@ export class FixedRowVirtualizer {
     viewportHeight: number,
     alignment: number,
   ): number {
-    const geometry = this.scrollGeometry(viewportHeight)
+    const geometry = this.#scrollGeometry(viewportHeight)
     if (geometry.scrollHeight === geometry.nativeScrollHeight) return offset
     const position = clampScrollTopForGeometry(offset - alignment, geometry)
     return nativeScrollTopForLogical(position, geometry) + alignment
   }
 
-  private applyScrollMetrics(metrics: FixedRowScrollMetrics, viewportMeasured = true): void {
-    const nextViewportMeasured = this.viewportMeasured || viewportMeasured
-    const measurementChanged = nextViewportMeasured !== this.viewportMeasured
+  #applyScrollMetrics(metrics: FixedRowScrollMetrics, viewportMeasured = true): void {
+    const nextViewportMeasured = this.#viewportMeasured || viewportMeasured
+    const measurementChanged = nextViewportMeasured !== this.#viewportMeasured
     const nextViewportHeight = Math.max(0, normalizeNumber(metrics.viewportHeight))
     const restoreScrollPosition =
-      nextViewportHeight > 0 && (this.isHidden() || this.nativeScrollNeedsRestore)
+      nextViewportHeight > 0 && (this.#isHidden() || this.#nativeScrollNeedsRestore)
     const nextScrollLeft =
       this.options.scrollMode === 'content'
         ? 0
@@ -335,7 +336,7 @@ export class FixedRowVirtualizer {
       nextViewportHeight,
       metrics.viewportHeight,
     )
-    const nextScrollTop = this.normalizeScrollTopForMetrics(metrics.scrollTop, nextViewportHeight)
+    const nextScrollTop = this.#normalizeScrollTopForMetrics(metrics.scrollTop, nextViewportHeight)
     const viewportHeightChanged = nextViewportHeight !== this.viewportHeight
     if (
       !measurementChanged &&
@@ -364,39 +365,39 @@ export class FixedRowVirtualizer {
     this.scrollLeft = nextScrollLeft
     this.viewportWidth = nextViewportWidth
     this.viewportHeight = nextViewportHeight
-    this.viewportMeasured = nextViewportMeasured
+    this.#viewportMeasured = nextViewportMeasured
     this.borderBoxWidth = nextBorderBoxWidth
     this.borderBoxHeight = nextBorderBoxHeight
-    if (viewportHeightChanged) this.stableVirtualWindow = null
+    if (viewportHeightChanged) this.#stableVirtualWindow = null
     if (viewportBoxChanged && this.options.scrollMode === 'virtualized')
-      this.synchronizeNativeClip(false)
-    this.finishScrollMetrics(previousScrollTop, geometryChanged, restoreScrollPosition)
+      this.#synchronizeNativeClip(false)
+    this.#finishScrollMetrics(previousScrollTop, geometryChanged, restoreScrollPosition)
     if (this.scrollTop !== previousScrollTop || this.scrollLeft !== previousScrollLeft) {
-      this.scrollHandler?.()
+      this.#scrollHandler?.()
     }
   }
 
-  private finishScrollMetrics(
+  #finishScrollMetrics(
     previousScrollTop: number,
     geometryChanged: boolean,
     restoreScrollPosition: boolean,
   ): void {
     if (restoreScrollPosition) {
-      this.nativeScrollNeedsRestore = false
-      this.emitChange()
-      this.syncAttachedNativeScrollTop(true)
-      if (this.attached && !this.isHidden()) this.attached.element.scrollLeft = this.scrollLeft
+      this.#nativeScrollNeedsRestore = false
+      this.#emitChange()
+      this.#syncAttachedNativeScrollTop(true)
+      if (this.attached && !this.#isHidden()) this.attached.element.scrollLeft = this.scrollLeft
       return
     }
 
-    if (this.shouldEmitImmediately(previousScrollTop, geometryChanged)) {
+    if (this.#shouldEmitImmediately(previousScrollTop, geometryChanged)) {
       // Render the new scroll extent before a native write can be clamped to the old one.
-      this.emitChange()
-      this.syncAttachedNativeScrollTop()
+      this.#emitChange()
+      this.#syncAttachedNativeScrollTop()
       return
     }
-    this.syncAttachedNativeScrollTop()
-    this.scheduleTrailingScrollEmit()
+    this.#syncAttachedNativeScrollTop()
+    this.#scheduleTrailingScrollEmit()
   }
 
   /**
@@ -409,35 +410,35 @@ export class FixedRowVirtualizer {
    * still emit at once, and so does capped native scroll (huge files), where
    * the spacer transform derives from scrollTop on every change.
    */
-  private shouldEmitImmediately(previousScrollTop: number, geometryChanged: boolean): boolean {
+  #shouldEmitImmediately(previousScrollTop: number, geometryChanged: boolean): boolean {
     if (geometryChanged) return true
     if (this.scrollTop === previousScrollTop) return true
 
-    const geometry = this.scrollGeometry()
+    const geometry = this.#scrollGeometry()
     if (geometry.nativeScrollHeight !== geometry.scrollHeight) return true
-    return this.stableWindowWouldChange()
+    return this.#stableWindowWouldChange()
   }
 
-  private scheduleTrailingScrollEmit(): void {
-    this.trailingScrollScheduler.schedule({
+  #scheduleTrailingScrollEmit(): void {
+    this.#trailingScrollScheduler.schedule({
       key: TRAILING_SCROLL_EMIT_KEY,
       taskClass: 'visible-render',
       delayMs: TRAILING_SCROLL_EMIT_DELAY_MS,
       run: () => undefined,
-      apply: () => this.emitChange(),
+      apply: () => this.#emitChange(),
     })
   }
 
-  private cancelTrailingScrollEmit(): void {
-    this.trailingScrollScheduler.cancel(TRAILING_SCROLL_EMIT_KEY)
+  #cancelTrailingScrollEmit(): void {
+    this.#trailingScrollScheduler.cancel(TRAILING_SCROLL_EMIT_KEY)
   }
 
-  private stableWindowWouldChange(): boolean {
-    const currentWindow = this.stableVirtualWindow
+  #stableWindowWouldChange(): boolean {
+    const currentWindow = this.#stableVirtualWindow
     const deadband = stableWindowDeadband(this.overscan())
     if (!currentWindow || deadband === 0) return true
 
-    const visibleRange = this.getVisibleRange()
+    const visibleRange = this.#getVisibleRange()
     return !stableWindowContainsVisibleRange(
       currentWindow,
       visibleRange,
@@ -448,15 +449,15 @@ export class FixedRowVirtualizer {
 
   public getSnapshot(): FixedRowVirtualizerSnapshot {
     const snapshot = this.getViewportSnapshot()
-    return { ...snapshot, virtualItems: this.getVirtualItems(snapshot.visibleRange) }
+    return { ...snapshot, virtualItems: this.#getVirtualItems(snapshot.visibleRange) }
   }
 
   public getViewportSnapshot(): Omit<FixedRowVirtualizerSnapshot, 'virtualItems'> {
-    const visibleRange = this.getVisibleRange()
+    const visibleRange = this.#getVisibleRange()
     const totalSize = computeTotalSize(this.options)
-    const viewportHeight = this.snapshotViewportHeight(totalSize)
-    const scrollTop = this.snapshotScrollTop()
-    const geometry = this.scrollGeometry(viewportHeight, totalSize)
+    const viewportHeight = this.#snapshotViewportHeight(totalSize)
+    const scrollTop = this.#snapshotScrollTop()
+    const geometry = this.#scrollGeometry(viewportHeight, totalSize)
     return {
       scrollTop,
       scrollRow: scrollRowForViewport(this.options, visibleRange, scrollTop, totalSize),
@@ -474,15 +475,15 @@ export class FixedRowVirtualizer {
   }
 
   public get nativeOverlayOffset(): number {
-    return this.nativeClip?.top ?? 0
+    return this.#nativeClip?.top ?? 0
   }
 
   public getClippedViewportSnapshot(): Omit<FixedRowVirtualizerSnapshot, 'virtualItems'> {
     const snapshot = this.getViewportSnapshot()
-    const clip = this.nativeClip
+    const clip = this.#nativeClip
     if (!clip || snapshot.viewportHeight === 0) return snapshot
     const scrollTop = snapshot.scrollTop + clip.top
-    const visibleRange = this.getVisibleRange(scrollTop, clip.height)
+    const visibleRange = this.#getVisibleRange(scrollTop, clip.height)
     return {
       ...snapshot,
       scrollTop,
@@ -492,12 +493,12 @@ export class FixedRowVirtualizer {
     }
   }
 
-  private getVisibleRange(
+  #getVisibleRange(
     scrollTop = this.scrollTop,
     viewportHeight = this.viewportHeight,
   ): FixedRowVisibleRange {
-    if (this.isHidden()) return { start: 0, end: 0 }
-    if (this.isAllRowsMode()) return staticVisibleRange(this.options)
+    if (this.#isHidden()) return { start: 0, end: 0 }
+    if (this.#isAllRowsMode()) return staticVisibleRange(this.options)
 
     if (this.options.rowHeightIndex) {
       return computeVariableRowVisibleRange({
@@ -518,32 +519,32 @@ export class FixedRowVirtualizer {
     })
   }
 
-  private getVirtualItems(range: FixedRowVisibleRange): readonly FixedRowVirtualItem[] {
+  #getVirtualItems(range: FixedRowVisibleRange): readonly FixedRowVirtualItem[] {
     const count = this.options.count
     if (!this.options.enabled || count === 0 || range.start === range.end) {
-      this.itemCache.clear()
-      this.stableVirtualWindow = null
+      this.#itemCache.clear()
+      this.#stableVirtualWindow = null
       return []
     }
 
     const window = computeOverscannedRange(count, range, this.overscan())
-    const stableWindow = this.stableWindowForRange(range, window, count)
+    const stableWindow = this.#stableWindowForRange(range, window, count)
     if (this.options.rowHeightIndex)
       return collectVariableVirtualItems(this.options.rowHeightIndex, stableWindow)
 
-    this.pruneItemCache(stableWindow)
-    return this.collectVirtualItems(stableWindow)
+    this.#pruneItemCache(stableWindow)
+    return this.#collectVirtualItems(stableWindow)
   }
 
-  private stableWindowForRange(
+  #stableWindowForRange(
     visibleRange: FixedRowVisibleRange,
     desiredWindow: FixedRowVisibleRange,
     count: number,
   ): FixedRowVisibleRange {
-    const currentWindow = this.stableVirtualWindow
+    const currentWindow = this.#stableVirtualWindow
     const deadband = stableWindowDeadband(this.overscan())
     if (!currentWindow || deadband === 0) {
-      this.stableVirtualWindow = desiredWindow
+      this.#stableVirtualWindow = desiredWindow
       return desiredWindow
     }
 
@@ -551,14 +552,14 @@ export class FixedRowVirtualizer {
       return currentWindow
     }
 
-    this.stableVirtualWindow = desiredWindow
+    this.#stableVirtualWindow = desiredWindow
     return desiredWindow
   }
 
-  private collectVirtualItems(range: FixedRowVisibleRange): FixedRowVirtualItem[] {
+  #collectVirtualItems(range: FixedRowVisibleRange): FixedRowVirtualItem[] {
     const items: FixedRowVirtualItem[] = []
     for (let index = range.start; index < range.end; index += 1) {
-      items.push(this.getCachedVirtualItem(index))
+      items.push(this.#getCachedVirtualItem(index))
     }
 
     return items
@@ -572,50 +573,50 @@ export class FixedRowVirtualizer {
     return Math.max(this.options.overscan, viewportRows)
   }
 
-  private getCachedVirtualItem(index: number): FixedRowVirtualItem {
-    const existing = this.itemCache.get(index)
+  #getCachedVirtualItem(index: number): FixedRowVirtualItem {
+    const existing = this.#itemCache.get(index)
     if (existing) return existing
 
     const item = createVirtualItem(index, this.options.rowHeight, this.options.rowGap)
-    this.itemCache.set(index, item)
+    this.#itemCache.set(index, item)
     return item
   }
 
-  private pruneItemCache(range: FixedRowVisibleRange): void {
-    for (const index of this.itemCache.keys()) {
+  #pruneItemCache(range: FixedRowVisibleRange): void {
+    for (const index of this.#itemCache.keys()) {
       if (index >= range.start && index < range.end) continue
-      this.itemCache.delete(index)
+      this.#itemCache.delete(index)
     }
   }
 
-  private updateCacheForFixedRows(rowHeight: number, rowGap: number): void {
-    if (rowHeight === this.cachedRowHeight && rowGap === this.cachedRowGap) return
+  #updateCacheForFixedRows(rowHeight: number, rowGap: number): void {
+    if (rowHeight === this.#cachedRowHeight && rowGap === this.#cachedRowGap) return
 
-    this.cachedRowHeight = rowHeight
-    this.cachedRowGap = rowGap
-    this.itemCache.clear()
-    this.stableVirtualWindow = null
+    this.#cachedRowHeight = rowHeight
+    this.#cachedRowGap = rowGap
+    this.#itemCache.clear()
+    this.#stableVirtualWindow = null
   }
 
   public setProvisionalScrollGeometry(
     geometry: { readonly scrollTop: number; readonly scrollHeight: number } | null,
   ): void {
-    this.provisionalScrollGeometry = geometry
-    this.syncAttachedNativeScrollTop(true)
+    this.#provisionalScrollGeometry = geometry
+    this.#syncAttachedNativeScrollTop(true)
   }
 
-  private syncScrollPositionFromElement(): void {
+  #syncScrollPositionFromElement(): void {
     const element = this.attached?.element
     if (!element) return
 
-    const resizeMetrics = this.takePendingResizeMetrics()
+    const resizeMetrics = this.#takePendingResizeMetrics()
     const viewportHeight = resizeMetrics?.viewportHeight ?? this.viewportHeight
-    this.applyScrollMetrics(
+    this.#applyScrollMetrics(
       {
-        scrollTop: this.provisionalScrollGeometry
+        scrollTop: this.#provisionalScrollGeometry
           ? this.scrollTop
-          : this.logicalScrollTopFromNativeElement(viewportHeight),
-        scrollLeft: this.scrollLeftFromElement(viewportHeight),
+          : this.#logicalScrollTopFromNativeElement(viewportHeight),
+        scrollLeft: this.#scrollLeftFromElement(viewportHeight),
         borderBoxHeight: resizeMetrics?.borderBoxHeight ?? this.borderBoxHeight,
         borderBoxWidth: resizeMetrics?.borderBoxWidth ?? this.borderBoxWidth,
         viewportHeight,
@@ -625,7 +626,7 @@ export class FixedRowVirtualizer {
     )
   }
 
-  private syncFromResizeEntries(entries: readonly ResizeObserverEntry[]): void {
+  #syncFromResizeEntries(entries: readonly ResizeObserverEntry[]): void {
     const element = this.attached?.element
     if (!element) return
 
@@ -633,53 +634,53 @@ export class FixedRowVirtualizer {
     if (!entry) return
 
     const size = resizeEntrySize(entry)
-    if (size.content.height === 0) this.nativeScrollNeedsRestore = true
-    this.pendingResizeMetrics = {
-      scrollLeft: this.scrollLeftFromElement(size.content.height),
+    if (size.content.height === 0) this.#nativeScrollNeedsRestore = true
+    this.#pendingResizeMetrics = {
+      scrollLeft: this.#scrollLeftFromElement(size.content.height),
       borderBoxHeight: size.border.height,
       borderBoxWidth: size.border.width,
       viewportHeight: size.content.height,
       viewportWidth: size.content.width,
     }
-    this.scheduleResizeSync()
+    this.#scheduleResizeSync()
   }
 
-  private scheduleScrollSync(): void {
-    if (this.pendingResizeMetrics) this.cancelScheduledResizeSync()
-    if (this.scrollAnimationFrame !== null) return
+  #scheduleScrollSync(): void {
+    if (this.#pendingResizeMetrics) this.#cancelScheduledResizeSync()
+    if (this.#scrollAnimationFrame !== null) return
 
-    this.scrollAnimationFrame = scheduleFrame(() => {
-      this.scrollAnimationFrame = null
-      this.syncScrollPositionFromElement()
+    this.#scrollAnimationFrame = scheduleFrame(() => {
+      this.#scrollAnimationFrame = null
+      this.#syncScrollPositionFromElement()
     })
   }
 
-  private cancelScheduledScrollSync(): void {
-    if (this.scrollAnimationFrame === null) return
+  #cancelScheduledScrollSync(): void {
+    if (this.#scrollAnimationFrame === null) return
 
-    this.scrollAnimationFrame.cancel()
-    this.scrollAnimationFrame = null
+    this.#scrollAnimationFrame.cancel()
+    this.#scrollAnimationFrame = null
   }
 
-  private scheduleResizeSync(): void {
-    if (this.scrollAnimationFrame !== null) return
-    if (this.resizeAnimationFrame !== null) return
+  #scheduleResizeSync(): void {
+    if (this.#scrollAnimationFrame !== null) return
+    if (this.#resizeAnimationFrame !== null) return
 
-    this.resizeAnimationFrame = scheduleFrame(() => {
-      this.resizeAnimationFrame = null
-      this.flushPendingResizeMetrics()
+    this.#resizeAnimationFrame = scheduleFrame(() => {
+      this.#resizeAnimationFrame = null
+      this.#flushPendingResizeMetrics()
     })
   }
 
-  private flushPendingResizeMetrics(): void {
+  #flushPendingResizeMetrics(): void {
     if (this.options.scrollMode === 'content') {
       this.refreshPageViewport()
       return
     }
-    const resizeMetrics = this.takePendingResizeMetrics()
+    const resizeMetrics = this.#takePendingResizeMetrics()
     if (!resizeMetrics) return
 
-    this.applyScrollMetrics({
+    this.#applyScrollMetrics({
       scrollTop: this.scrollTop,
       scrollLeft: resizeMetrics.scrollLeft,
       borderBoxHeight: resizeMetrics.borderBoxHeight,
@@ -689,71 +690,71 @@ export class FixedRowVirtualizer {
     })
   }
 
-  private takePendingResizeMetrics(): PendingResizeMetrics | null {
-    const resizeMetrics = this.pendingResizeMetrics
+  #takePendingResizeMetrics(): PendingResizeMetrics | null {
+    const resizeMetrics = this.#pendingResizeMetrics
     if (!resizeMetrics) return null
 
-    this.pendingResizeMetrics = null
-    this.cancelScheduledResizeSync()
+    this.#pendingResizeMetrics = null
+    this.#cancelScheduledResizeSync()
     return resizeMetrics
   }
 
-  private clearPendingResizeSync(): void {
-    this.pendingResizeMetrics = null
-    this.cancelScheduledResizeSync()
+  #clearPendingResizeSync(): void {
+    this.#pendingResizeMetrics = null
+    this.#cancelScheduledResizeSync()
   }
 
-  private cancelScheduledResizeSync(): void {
-    if (this.resizeAnimationFrame === null) return
+  #cancelScheduledResizeSync(): void {
+    if (this.#resizeAnimationFrame === null) return
 
-    this.resizeAnimationFrame.cancel()
-    this.resizeAnimationFrame = null
+    this.#resizeAnimationFrame.cancel()
+    this.#resizeAnimationFrame = null
   }
 
-  private emitChange(): void {
-    this.cancelTrailingScrollEmit()
-    this.changeHandler?.(this.getSnapshot())
+  #emitChange(): void {
+    this.#cancelTrailingScrollEmit()
+    this.#changeHandler?.(this.getSnapshot())
   }
 
-  private scrollGeometry(
+  #scrollGeometry(
     viewportHeight = this.viewportHeight,
     totalSize?: number,
   ): FixedRowScrollGeometry {
     return scrollGeometryForOptions(this.options, viewportHeight, totalSize)
   }
 
-  private logicalScrollTopFromNativeElement(viewportHeight = this.viewportHeight): number {
-    if (this.isAllRowsMode()) return 0
+  #logicalScrollTopFromNativeElement(viewportHeight = this.viewportHeight): number {
+    if (this.#isAllRowsMode()) return 0
     if (
-      this.isHidden() ||
-      this.nativeScrollNeedsRestore ||
-      (this.viewportMeasured && viewportHeight === 0)
+      this.#isHidden() ||
+      this.#nativeScrollNeedsRestore ||
+      (this.#viewportMeasured && viewportHeight === 0)
     ) {
       return this.scrollTop
     }
 
     const nativeScrollTop =
-      this.logicalScrollProperties?.readNativeScrollTop() ?? this.attached?.element.scrollTop ?? 0
-    return logicalScrollTopForNative(nativeScrollTop, this.scrollGeometry(viewportHeight))
+      this.#logicalScrollProperties?.readNativeScrollTop() ?? this.attached?.element.scrollTop ?? 0
+    return logicalScrollTopForNative(nativeScrollTop, this.#scrollGeometry(viewportHeight))
   }
 
-  private scrollLeftFromElement(viewportHeight: number): number {
-    if (this.isHidden() || this.nativeScrollNeedsRestore || viewportHeight === 0) {
+  #scrollLeftFromElement(viewportHeight: number): number {
+    if (this.#isHidden() || this.#nativeScrollNeedsRestore || viewportHeight === 0) {
       return this.scrollLeft
     }
     return this.attached?.element.scrollLeft ?? this.scrollLeft
   }
 
-  private setScrollTopFromElement(value: number): void {
-    if (this.provisionalScrollGeometry) {
-      this.syncAttachedNativeScrollTop(true)
+  #setScrollTopFromElement(value: number): void {
+    if (this.#provisionalScrollGeometry) {
+      this.#syncAttachedNativeScrollTop(true)
       return
     }
-    if (this.isAllRowsMode()) return
+    if (this.#isAllRowsMode()) return
 
-    const resizeMetrics = this.takePendingResizeMetrics()
+    const resizeMetrics = this.#takePendingResizeMetrics()
     const viewportHeight = resizeMetrics?.viewportHeight ?? this.viewportHeight
-    this.applyScrollMetrics(
+    this.#applyScrollMetrics(
       {
         borderBoxHeight: resizeMetrics?.borderBoxHeight ?? this.borderBoxHeight,
         borderBoxWidth: resizeMetrics?.borderBoxWidth ?? this.borderBoxWidth,
@@ -766,58 +767,58 @@ export class FixedRowVirtualizer {
     )
   }
 
-  private syncAttachedNativeScrollTop(force = false): void {
-    if (this.options.scrollMode !== 'virtualized' || this.isHidden()) return
+  #syncAttachedNativeScrollTop(force = false): void {
+    if (this.options.scrollMode !== 'virtualized' || this.#isHidden()) return
 
-    const properties = this.logicalScrollProperties
+    const properties = this.#logicalScrollProperties
     if (!properties) return
 
     properties.writeNativeScrollTop(
-      this.provisionalScrollGeometry?.scrollTop ??
-        nativeScrollTopForLogical(this.scrollTop, this.scrollGeometry()),
+      this.#provisionalScrollGeometry?.scrollTop ??
+        nativeScrollTopForLogical(this.scrollTop, this.#scrollGeometry()),
       force,
     )
   }
 
-  private syncAttachedScrollMode(): void {
+  #syncAttachedScrollMode(): void {
     const attached = this.attached
     if (!attached) return
 
     if (this.options.scrollMode !== 'virtualized') {
-      this.disableAttachedScrollElement(attached)
+      this.#disableAttachedScrollElement(attached)
       if (this.options.scrollMode === 'content') {
-        this.releaseViewportObservation ??= observePageViewport(
+        this.#releaseViewportObservation ??= observePageViewport(
           attached.element,
           () => this.refreshPageViewport(),
-          () => this.synchronizePageViewport(true),
+          () => this.#synchronizePageViewport(true),
         )
-      } else this.stopViewportObservation()
+      } else this.#stopViewportObservation()
       return
     }
 
-    this.enableAttachedScrollElement(attached)
-    if (attached.observeNativeClip && !this.releaseViewportObservation) {
-      this.synchronizeNativeClip(false)
-      this.releaseViewportObservation = observePageViewport(
+    this.#enableAttachedScrollElement(attached)
+    if (attached.observeNativeClip && !this.#releaseViewportObservation) {
+      this.#synchronizeNativeClip(false)
+      this.#releaseViewportObservation = observePageViewport(
         attached.element,
-        () => this.updateNativeClip(false),
-        () => this.updateNativeClip(true),
+        () => this.#updateNativeClip(false),
+        () => this.#updateNativeClip(true),
         true,
       )
     }
   }
 
-  private stopViewportObservation(): void {
-    this.releaseViewportObservation?.()
-    this.releaseViewportObservation = null
-    this.nativeClip = null
+  #stopViewportObservation(): void {
+    this.#releaseViewportObservation?.()
+    this.#releaseViewportObservation = null
+    this.#nativeClip = null
   }
 
-  private updateNativeClip(hidden: boolean): void {
-    if (this.synchronizeNativeClip(hidden)) this.emitChange()
+  #updateNativeClip(hidden: boolean): void {
+    if (this.#synchronizeNativeClip(hidden)) this.#emitChange()
   }
 
-  private synchronizeNativeClip(hidden: boolean): boolean {
+  #synchronizeNativeClip(hidden: boolean): boolean {
     const attached = this.attached
     if (!attached?.observeNativeClip || this.viewportHeight === 0) return false
     const element = attached.element
@@ -825,65 +826,67 @@ export class FixedRowVirtualizer {
     const viewport = hidden ? { top: 0, height: 0 } : readPageViewport(element, this.viewportHeight)
     const clipped = viewport.top > 0 || viewport.height < this.viewportHeight
     const next = clipped ? viewport : null
-    if (next?.top === this.nativeClip?.top && next?.height === this.nativeClip?.height) return false
-    this.nativeClip = next
+    if (next?.top === this.#nativeClip?.top && next?.height === this.#nativeClip?.height)
+      return false
+    this.#nativeClip = next
     return true
   }
 
-  private synchronizePageViewport(hidden: boolean): void {
+  #synchronizePageViewport(hidden: boolean): void {
     const element = this.attached?.element
     if (!element || this.options.scrollMode !== 'content') return
-    const resize = this.takePendingResizeMetrics()
+    const resize = this.#takePendingResizeMetrics()
     const visible = hidden ? { top: 0, height: 0 } : readPageViewport(element)
-    this.applyScrollMetrics({
-      scrollTop: logicalScrollTopForNative(visible.top, this.scrollGeometry(visible.height)),
+    this.#applyScrollMetrics({
+      scrollTop: logicalScrollTopForNative(visible.top, this.#scrollGeometry(visible.height)),
       viewportHeight: visible.height,
       viewportWidth:
-        resize?.viewportWidth ?? (this.viewportMeasured ? this.viewportWidth : element.clientWidth),
+        resize?.viewportWidth ??
+        (this.#viewportMeasured ? this.viewportWidth : element.clientWidth),
       borderBoxHeight: resize?.borderBoxHeight ?? this.borderBoxHeight,
       borderBoxWidth: resize?.borderBoxWidth ?? this.borderBoxWidth,
     })
   }
 
-  private enableAttachedScrollElement(attached: AttachedScrollElement): void {
+  #enableAttachedScrollElement(attached: AttachedScrollElement): void {
     if (attached.scrollListenerAttached) return
 
-    this.logicalScrollProperties = installLogicalScrollProperties(attached.element, {
+    this.#logicalScrollProperties = installLogicalScrollProperties(attached.element, {
       getScrollHeight: () =>
-        this.provisionalScrollGeometry?.scrollHeight ?? this.scrollGeometry().scrollHeight,
-      getScrollTop: () => this.provisionalScrollGeometry?.scrollTop ?? this.scrollTop,
-      setScrollTop: (value) => this.setScrollTopFromElement(value),
+        this.#provisionalScrollGeometry?.scrollHeight ?? this.#scrollGeometry().scrollHeight,
+      getScrollTop: () => this.#provisionalScrollGeometry?.scrollTop ?? this.scrollTop,
+      setScrollTop: (value) => this.#setScrollTopFromElement(value),
     })
     attached.element.addEventListener('scroll', attached.onScroll, { passive: true })
     attached.scrollListenerAttached = true
   }
 
-  private disableAttachedScrollElement(attached: AttachedScrollElement): void {
+  #disableAttachedScrollElement(attached: AttachedScrollElement): void {
     if (attached.scrollListenerAttached) {
       attached.element.removeEventListener('scroll', attached.onScroll)
       attached.scrollListenerAttached = false
     }
 
-    this.logicalScrollProperties?.restore()
-    this.logicalScrollProperties = null
-    this.cancelScheduledScrollSync()
+    this.#logicalScrollProperties?.restore()
+    this.#logicalScrollProperties = null
+    this.#cancelScheduledScrollSync()
   }
 
-  private normalizeScrollTopForMetrics(scrollTop: number, viewportHeight: number): number {
-    if (this.isAllRowsMode()) return 0
+  #normalizeScrollTopForMetrics(scrollTop: number, viewportHeight: number): number {
+    if (this.#isAllRowsMode()) return 0
 
-    return normalizeScrollTopForMetrics(scrollTop, this.scrollGeometry(viewportHeight))
+    return normalizeScrollTopForMetrics(scrollTop, this.#scrollGeometry(viewportHeight))
   }
 
-  private snapshotViewportHeight(totalSize: number): number {
-    if (this.isHidden()) return 0
-    if (this.isAllRowsMode()) return totalSize
+  #snapshotViewportHeight(totalSize: number): number {
+    if (this.#isHidden()) return 0
+    if (this.#isAllRowsMode()) return totalSize
 
     return this.viewportHeight
   }
 
-  private snapshotScrollTop(): number {
-    if (this.isAllRowsMode()) return 0
+  #snapshotScrollTop(): number {
+    if (this.#isAllRowsMode()) return 0
 
     return this.scrollTop
   }
@@ -892,7 +895,7 @@ export class FixedRowVirtualizer {
    * Read before the new sizes are folded in, because adopting them rewrites the
    * very offsets the anchor is measured against.
    */
-  private viewportAnchor(): ViewportAnchor | null {
+  #viewportAnchor(): ViewportAnchor | null {
     if (
       this.options.scrollMode !== 'virtualized' ||
       this.scrollTop <= 0 ||
@@ -920,12 +923,12 @@ export class FixedRowVirtualizer {
     }
   }
 
-  private isAllRowsMode(): boolean {
+  #isAllRowsMode(): boolean {
     return this.options.scrollMode === 'static'
   }
 
-  private isHidden(): boolean {
-    return this.viewportMeasured && this.viewportHeight === 0
+  #isHidden(): boolean {
+    return this.#viewportMeasured && this.viewportHeight === 0
   }
 }
 

@@ -139,8 +139,8 @@ export function ghostTextInlineSpecs(ghost: GhostText): readonly InlineReplaceme
  * suggestion is free to offer another.
  */
 export class GhostTextSession {
-  private validForSnapshot: PieceTableSnapshot | null = null
-  private validForCaret: number | null = null
+  #validForSnapshot: PieceTableSnapshot | null = null
+  #validForCaret: number | null = null
   private ghost: GhostText | null = null
   private painted: GhostText | null = null
 
@@ -152,8 +152,8 @@ export class GhostTextSession {
     caret: number,
   ): boolean {
     const ghost = computeGhostText(source, suggestion, caret)
-    this.validForSnapshot = ghost ? snapshot : null
-    this.validForCaret = ghost ? caret : null
+    this.#validForSnapshot = ghost ? snapshot : null
+    this.#validForCaret = ghost ? caret : null
     this.ghost = ghost
     return ghost !== null
   }
@@ -210,13 +210,13 @@ export class GhostTextSession {
   }
 
   clear(): void {
-    this.validForSnapshot = null
-    this.validForCaret = null
+    this.#validForSnapshot = null
+    this.#validForCaret = null
     this.ghost = null
   }
 
   private current(snapshot: PieceTableSnapshot, caret: number | null): GhostText | null {
-    if (this.validForSnapshot !== snapshot || this.validForCaret !== caret) this.clear()
+    if (this.#validForSnapshot !== snapshot || this.#validForCaret !== caret) this.clear()
 
     return this.ghost
   }

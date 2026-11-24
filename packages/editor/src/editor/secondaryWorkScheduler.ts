@@ -27,7 +27,7 @@ export class EditorSecondaryWorkScheduler {
     // key and carries the burst's original deadline across the replacement,
     // which is what maxDelayMs is measured from. Cancelling here would reset it
     // on every keystroke.
-    const version = options.version ?? this.nextWorkVersion()
+    const version = options.version ?? this.#nextWorkVersion()
     const handle = this.scheduler.schedule({
       key: options.key,
       taskClass: 'background-derived',
@@ -37,8 +37,8 @@ export class EditorSecondaryWorkScheduler {
       tags: { version },
       isCurrent: (tags) => options.isCurrent?.(tags.version ?? version) ?? true,
       run: options.run,
-      apply: (_result, context) => this.clearScheduledHandle(options.key, context.token),
-      fail: (_error, context) => this.clearScheduledHandle(options.key, context.token),
+      apply: (_result, context) => this.#clearScheduledHandle(options.key, context.token),
+      fail: (_error, context) => this.#clearScheduledHandle(options.key, context.token),
     })
     this.scheduled.set(options.key, handle)
   }
@@ -63,14 +63,14 @@ export class EditorSecondaryWorkScheduler {
     this.scheduler.dispose()
   }
 
-  private clearScheduledHandle(key: string, token: number): void {
+  #clearScheduledHandle(key: string, token: number): void {
     const scheduled = this.scheduled.get(key)
     if (!scheduled || scheduled.token !== token) return
 
     this.scheduled.delete(key)
   }
 
-  private nextWorkVersion(): number {
+  #nextWorkVersion(): number {
     this.nextVersion += 1
     return this.nextVersion
   }
