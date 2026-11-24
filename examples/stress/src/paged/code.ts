@@ -1,6 +1,6 @@
 import '@singapore-editor/core/style.css'
 import { PagedDocument, type RangeSource } from '@singapore-editor/paged'
-import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages/typescript'
 import { PagedSyntax } from './syntax'
 import { PagedViewport } from './view'
 

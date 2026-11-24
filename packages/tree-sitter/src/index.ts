@@ -342,6 +342,7 @@ const inlineAssetSignature = (
     injectionQuerySource: contribution.injectionQuerySource,
     mergeUnitQuerySource: contribution.mergeUnitQuerySource,
     wasmUrl: contribution.wasmUrl,
+    extraWasmUrls: contribution.extraWasmUrls,
   }
 }
 

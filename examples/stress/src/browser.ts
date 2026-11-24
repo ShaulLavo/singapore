@@ -12,7 +12,7 @@ import {
 } from '@singapore-editor/core/document'
 import { createError } from '@singapore-editor/core/logging/evlog'
 import { createEditorFindPlugin } from '@singapore-editor/find'
-import { typeScript } from '@singapore-editor/tree-sitter-languages'
+import { typeScript } from '@singapore-editor/tree-sitter-languages/typescript'
 import '@singapore-editor/core/style.css'
 import '@singapore-editor/find/style.css'
 import { createInputLatencyProbe } from './inputLatency.ts'

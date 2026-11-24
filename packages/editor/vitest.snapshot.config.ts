@@ -1,18 +1,33 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { arch, cpus, release, tmpdir, type } from 'node:os'
+import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { arch, cpus, release, type } from 'node:os'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 import { browserTestResponses } from '../../scripts/browser-test-responses.ts'
+import { runTempDir } from '../../scripts/run-temp-dir.ts'
 import { workspaceRoot } from '../../scripts/workspace-root.ts'
 import {
   proveDocumentPaintFirstFrame,
   settleDocumentPaint,
 } from './test/env/document-paint-first-frame.ts'
 
-const evidence = mkdtempSync(join(tmpdir(), 'singapore-document-paint-'))
+// Each run works in its own temporary directory. On exit the report is copied to a fresh
+// directory under DOCUMENT_PAINT_OUT (default: bench-output/document-paint, gitignored), and only
+// when the run produced results, so metadata never sits beside another run's rows.
+const reportRoot =
+  process.env.DOCUMENT_PAINT_OUT ?? join(import.meta.dirname, 'bench-output/document-paint')
+const evidence = runTempDir('document-paint', (directory) => {
+  if (!existsSync(join(directory, 'results.json'))) return
+  const report = join(
+    reportRoot,
+    `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`,
+  )
+  mkdirSync(report, { recursive: true })
+  cpSync(directory, report, { recursive: true })
+  console.info('Document paint report', report)
+})
 const results: unknown[] = []
 const require = createRequire(import.meta.url)
 writeFileSync(
