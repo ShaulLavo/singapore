@@ -1,5 +1,5 @@
 name: Playwright system packages
-description: Installs the Linux packages Playwright browsers need from cached .deb files, and falls back to apt only when the cache is cold.
+description: Installs the Linux packages Playwright browsers need from cached .deb files, and falls back to a time-limited apt install when the cache is cold.
 
 inputs:
   playwright:
@@ -25,7 +25,7 @@ runs:
         . /etc/os-release
         : "${ID:?}" "${VERSION_ID:?}"
         version=$("$PLAYWRIGHT" --version | cut -d ' ' -f 2)
-        printf 'key=%s\n' "playwright-debs-v1-${ID}-${VERSION_ID}-${RUNNER_ARCH}-${ImageVersion:-unknown}-${version:?}-${BROWSERS// /-}" >> "$GITHUB_OUTPUT"
+        printf 'key=%s\n' "playwright-debs-v2-${ID}-${VERSION_ID}-${RUNNER_ARCH}-${ImageVersion:-unknown}-${version:?}-${BROWSERS// /-}" >> "$GITHUB_OUTPUT"
 
     - name: Restore the package cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -33,9 +33,11 @@ runs:
         path: ~/.cache/playwright-debs
         key: ${{ steps.key.outputs.key }}
 
-    # Installing the saved files needs no network. `install-deps --dry-run` then asks apt what
-    # is still missing, so a cold or unusable cache falls through to the real install, which
-    # downloads from the mirror and keeps the downloaded files for the save step.
+    # The saved files go through apt's resolver, which needs no network when they are complete,
+    # and a failed attempt is repaired before anything else runs. Success is decided afterwards
+    # by `ready`: dpkg reports no half-installed package and Playwright finds nothing missing.
+    # A cold or unusable cache falls through to the real install, which is time-limited so a slow
+    # mirror fails with a clear message, and which keeps the downloaded files for the save step.
     - name: Install system packages
       id: install
       shell: bash
@@ -44,21 +46,48 @@ runs:
         BROWSERS: ${{ inputs.browsers }}
       run: |
         debs="$HOME/.cache/playwright-debs"
+        limit=600
+
+        fail() {
+          echo "::error::$1"
+          exit 1
+        }
+
+        # Apt's simulation exits zero for a half-configured package, so check dpkg as well.
+        ready() {
+          [ -z "$(sudo dpkg --audit)" ] || return 1
+          # shellcheck disable=SC2086 # BROWSERS is a list of words.
+          "$PLAYWRIGHT" install-deps --dry-run $BROWSERS
+        }
+
         if compgen -G "$debs/*.deb" > /dev/null; then
-          sudo dpkg -i "$debs"/*.deb || echo "::warning::Cached system packages did not install; using apt."
+          if ! sudo apt-get install -y --no-install-recommends "$debs"/*.deb; then
+            echo "::warning::Cached system packages did not install; repairing before using apt."
+            sudo dpkg --configure -a || true
+            sudo timeout "$limit" apt-get install -f -y || true
+          fi
         fi
-        # shellcheck disable=SC2086 # BROWSERS is a list of words.
-        if "$PLAYWRIGHT" install-deps --dry-run $BROWSERS; then
+        if ready; then
           echo "Playwright system packages are in place."
           exit 0
         fi
+
         # apt stamps downloaded files with the mirror's date, so compare listings, not times.
         before=$(mktemp)
         after=$(mktemp)
         sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' | sort > "$before"
-        printf 'APT::Keep-Downloaded-Packages "true";\n' | sudo tee /etc/apt/apt.conf.d/99keep-downloaded-packages > /dev/null
+        printf '%s\n' 'APT::Keep-Downloaded-Packages "true";' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99playwright-deps > /dev/null
+        status=0
         # shellcheck disable=SC2086
-        "$PLAYWRIGHT" install-deps $BROWSERS
+        timeout --kill-after=30 "$limit" "$PLAYWRIGHT" install-deps $BROWSERS || status=$?
+        if [ "$status" -eq 124 ]; then
+          sudo pkill -x apt-get || true
+          sudo dpkg --configure -a || true
+          fail "Installing Playwright system packages did not finish in ${limit} seconds, so the package mirror is probably slow. Re-run the job when it recovers."
+        fi
+        [ "$status" -eq 0 ] || fail "Installing Playwright system packages failed with exit code ${status}."
+        ready || fail "Playwright system packages are still incomplete after the install."
+
         sudo find /var/cache/apt/archives -maxdepth 1 -name '*.deb' | sort > "$after"
         mkdir -p "$debs"
         comm -13 "$before" "$after" | sudo xargs -r cp -t "$debs"
@@ -69,9 +98,10 @@ runs:
           echo "downloaded=true" >> "$GITHUB_OUTPUT"
         fi
 
-    # Save right away, so a later failing step cannot lose the files.
+    # Save right away, so a later failing step cannot lose the files. Pull requests from forks
+    # restore the cache but never write it.
     - name: Save the package cache
-      if: steps.install.outputs.downloaded == 'true'
+      if: steps.install.outputs.downloaded == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/playwright-debs

@@ -85,15 +85,22 @@ jobs:
           playwright: packages/editor/node_modules/.bin/playwright
           browsers: chromium chromium-headless-shell firefox webkit
 
+      # The site pins a different Playwright release. Its Chromium needs nothing beyond the
+      # editor's packages today, so this step is quick; a release that adds one installs it.
+      - name: Install Playwright system packages for the site
+        if: *code
+        uses: ./.github/actions/playwright-deps
+        with:
+          playwright: site/node_modules/.bin/playwright
+          browsers: chromium
+
       # The editor's browser projects also need the headless shell. The site uses a
-      # different Playwright release for build-time capture, and its Chromium needs no
-      # packages beyond the editor's, which the last line checks.
+      # different Playwright release for build-time capture.
       - name: Install Playwright browsers
         if: *code
         run: |
           packages/editor/node_modules/.bin/playwright install chromium chromium-headless-shell firefox webkit
           site/node_modules/.bin/playwright install chromium
-          site/node_modules/.bin/playwright install-deps --dry-run chromium
 
       # Typecheck and test reuse these builds through Turbo. Cap build and check
       # concurrency at the four CPUs on the hosted runner.
