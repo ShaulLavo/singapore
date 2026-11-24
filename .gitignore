@@ -48,5 +48,8 @@ references/
 .vitest-attachments/
 __screenshots__/
 
+# Reports that `bench:paint` exports when a run finishes.
+bench-output/
+
 # Release artifacts
 release/

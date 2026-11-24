@@ -6,6 +6,7 @@
     "global.d.ts",
     "scripts/build-package.ts",
     "tsconfig.json",
+    "scripts/run-temp-dir.ts",
     "scripts/workspace-root*"
   ],
   "tasks": {
