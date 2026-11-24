@@ -718,15 +718,13 @@ function updateRow(
   snapshot: FixedRowVirtualizerSnapshot,
   updatePass: RowUpdatePass,
 ): void {
-  if (isRowCurrent(view, row, item, snapshot, updatePass)) {
-    const state = mountedRowUpdateState(view, row, updatePass)
-    updateCursorLineContentClass(view, row, state.cursorLine)
-    updateGutterRowElement(view, row, item, state)
-    if (view.disposed) return
-    updateMountedRowPaintFacts(row, state)
+  const freshness = rowFreshness(view, row, item, snapshot, updatePass)
+  if (freshness !== 'stale') {
+    updateUnchangedRow(view, row, item, updatePass, freshness)
     return
   }
 
+  rowRebuildCount += 1
   const state = rowUpdateState(view, item.index, updatePass)
 
   const replacing = rowContentChanged(row, state)
@@ -757,6 +755,25 @@ function updateRow(
   } finally {
     if (replacing && !view.disposed) completeRowPresentation(row.element)
   }
+}
+
+/** A row whose text, chunks and decorations stand: only per-pass facts like the caret line move. */
+function updateUnchangedRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  item: FixedRowVirtualItem,
+  updatePass: RowUpdatePass,
+  freshness: Exclude<RowFreshness, 'stale'>,
+): void {
+  if (freshness === 'shifted') {
+    rowShiftCount += 1
+    shiftRowOffsets(row, view.model.projection.getRow(item.index))
+  }
+  const state = mountedRowUpdateState(view, row, updatePass)
+  updateCursorLineContentClass(view, row, state.cursorLine)
+  updateGutterRowElement(view, row, item, state)
+  if (view.disposed) return
+  updateMountedRowPaintFacts(row, state)
 }
 
 function rowContentChanged(row: MountedVirtualizedTextRow, state: RowUpdateState): boolean {
@@ -800,6 +817,13 @@ export function updateMountedRowsAfterSameLineEdit(
   for (const item of items) {
     const row = view.rowElements.get(item.index)
     if (!row) continue
+    const freshness =
+      item.index === patch.rowIndex ? 'stale' : rowFreshness(view, row, item, snapshot, updatePass)
+    if (freshness !== 'stale') {
+      updateUnchangedRow(view, row, item, updatePass, freshness)
+      if (view.disposed) return editedRowPatchedInPlace
+      continue
+    }
     if (updateRowAfterSameLineEdit(view, row, item, patch, snapshot, updatePass)) {
       editedRowPatchedInPlace = true
     }
@@ -849,6 +873,7 @@ function updateRowAfterSameLineEdit(
   snapshot: FixedRowVirtualizerSnapshot,
   updatePass: RowUpdatePass,
 ): boolean {
+  rowRebuildCount += 1
   const state = rowUpdateState(view, item.index, updatePass)
 
   const replacing = rowContentChanged(row, state)
@@ -2517,45 +2542,112 @@ function isPrimaryTextRow(view: VirtualizedTextViewInternal, row: number): boole
   return displayRow.sourceStartColumn === 0
 }
 
-function isRowCurrent(
+/**
+ * How much of a mounted row an update has to redo. `current`: nothing it renders changed.
+ * `shifted`: the same text and paint, but an edit earlier in the document moved its source offsets,
+ * so only the offsets its chunks map to move. `stale`: rebuild it from the projection.
+ *
+ * Every input the row renders is compared here, so the view's text revision is not: an edit leaves
+ * the rows it did not reach mounted as they are, instead of putting every row back through the
+ * rebuild path on each key.
+ */
+type RowFreshness = 'current' | 'shifted' | 'stale'
+
+function rowFreshness(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   item: FixedRowVirtualItem,
   snapshot: FixedRowVirtualizerSnapshot,
   updatePass: RowUpdatePass,
-): boolean {
-  if (row.index !== item.index) return false
-  if (row.top !== item.start) return false
-  if (row.height !== item.size) return false
-  if (row.textRevision !== view.textRevision) return false
+): RowFreshness {
+  // A pooled or provisional slot has never been built from the projection.
+  if (row.textRevision < 0) return 'stale'
+  if (row.index !== item.index) return 'stale'
+  if (row.top !== item.start) return 'stale'
+  if (row.height !== item.size) return 'stale'
 
   const bufferRow = bufferRowForVirtualRow(view, item.index)
-  if (row.bufferRow !== bufferRow) return false
+  if (row.bufferRow !== bufferRow) return 'stale'
 
   const displayRow = view.model.projection.getRow(item.index)
-  if (row.source !== displayRowSource(displayRow)) return false
-  if (row.injectedTextRowId !== injectedTextRowId(displayRow)) return false
-  if (row.metadata !== displayRowMetadata(displayRow)) return false
-  // Rewrapping can move identical text to different source columns.
-  if (row.startOffset !== displayRow?.startOffset || row.endOffset !== displayRow?.endOffset)
-    return false
+  if (row.source !== displayRowSource(displayRow)) return 'stale'
+  if (row.injectedTextRowId !== injectedTextRowId(displayRow)) return 'stale'
+  if (row.metadata !== displayRowMetadata(displayRow)) return 'stale'
+  const offsets = rowOffsetFreshness(row, displayRow)
+  if (offsets === 'stale') return 'stale'
+  // A wrap segment draws facts read from its whole logical line — trailing whitespace, mixed-script
+  // warnings — which an edit to another segment changes without touching this one's text. The edit
+  // may sit in a segment that is not even mounted, so any edit since the row was written rebuilds it.
+  if (row.textRevision !== view.textRevision && isWrapSegment(view, item.index, displayRow))
+    return 'stale'
 
   const text = lineText(view, item.index)
-  if (row.text !== text) return false
+  if (row.text !== text) return 'stale'
   // Display text alone does not say what is behind it: a run that changed only how it paints — the
   // box it asks for, the node it renders — leaves every column of the row exactly where it was.
-  if (row.inlineMapping?.line !== inlineRowForDisplayRow(displayRow)) return false
+  if (row.inlineMapping?.line !== inlineRowForDisplayRow(displayRow)) return 'stale'
   if (
     row.chunkKey !==
     rowChunkKey(view, lineContent(view, item.index), snapshot, row.inlineMapping ?? null)
   )
-    return false
-  if (row.rowDecorationKey !== rowDecorationKey(view, item.index)) return false
+    return 'stale'
+  if (row.rowDecorationKey !== rowDecorationKey(view, item.index)) return 'stale'
 
   const primaryText = isDocumentTextDisplayRow(displayRow) && displayRow.sourceStartColumn === 0
   const foldMarker = primaryText ? updatePass.foldMarkers.get(bufferRow) : undefined
-  if (row.foldMarkerKey !== (foldMarker?.key ?? '')) return false
-  return row.foldCollapsed === (foldMarker?.collapsed ?? false)
+  if (row.foldMarkerKey !== (foldMarker?.key ?? '')) return 'stale'
+  if (row.foldCollapsed !== (foldMarker?.collapsed ?? false)) return 'stale'
+  return offsets
+}
+
+/** Whether this display row is one of several a wrapped logical line spans. */
+function isWrapSegment(
+  view: VirtualizedTextViewInternal,
+  index: number,
+  displayRow: DisplayRow | undefined,
+): boolean {
+  if (!isDocumentTextDisplayRow(displayRow)) return false
+  if (displayRow.wrapSegment > 0) return true
+  const next = view.model.projection.getRowMetrics(index + 1)
+  return next?.source === 'document' && next.bufferRow === displayRow.bufferRow
+}
+
+function rowOffsetFreshness(
+  row: MountedVirtualizedTextRow,
+  displayRow: DisplayRow | undefined,
+): RowFreshness {
+  if (!displayRow) return 'stale'
+  if (row.startOffset === displayRow.startOffset && row.endOffset === displayRow.endOffset)
+    return 'current'
+  // Rewrapping can move identical text to different source columns, which changes the span.
+  if (row.endOffset - row.startOffset !== displayRow.endOffset - displayRow.startOffset)
+    return 'stale'
+  // Inline runs and widgets are placed from the inline map, which an edit rebuilds; only plain text
+  // chunks are pure local spans that a uniform shift moves intact.
+  if (row.inlineMapping || row.textRenderMode === 'widget') return 'stale'
+  return 'shifted'
+}
+
+/** Moves a `shifted` row's chunks to its new source offsets; its DOM text is already right. */
+function shiftRowOffsets(row: MountedVirtualizedTextRow, displayRow: DisplayRow | undefined): void {
+  if (!displayRow) return
+  syncRowChunkOffsets(row, displayRow.startOffset, null)
+  const mutable = row as { startOffset: number; endOffset: number }
+  mutable.startOffset = displayRow.startOffset
+  mutable.endOffset = displayRow.endOffset
+}
+
+let rowRebuildCount = 0
+let rowShiftCount = 0
+
+/** Rows rebuilt from the projection and rows only shifted, since the last reset. Test probe. */
+export function getRowUpdateCounts(): { readonly rebuilt: number; readonly shifted: number } {
+  return { rebuilt: rowRebuildCount, shifted: rowShiftCount }
+}
+
+export function resetRowUpdateCounts(): void {
+  rowRebuildCount = 0
+  rowShiftCount = 0
 }
 
 function applyRowDecoration(

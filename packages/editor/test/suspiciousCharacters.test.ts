@@ -274,6 +274,27 @@ describe('suspicious character markers', () => {
     expect(markerKinds()).toEqual([])
   })
 
+  // The word is read out of the whole line, so an edit to one wrap segment can turn the letters of
+  // another, whose own text stayed exactly the same, into a mixed-script warning.
+  it('re-marks an unchanged wrap segment when an edit elsewhere in its word mixes scripts', () => {
+    const edited = 'городгородx'
+    mountWrappedView(edited, 64)
+    const fresh = markerOffsets().toSorted((left, right) => left - right)
+    for (const view of views.splice(0)) view.dispose()
+    expect(fresh.length).toBeGreaterThan(0)
+
+    const view = mountWrappedView('городгород', 64)
+    expect(view.getState().mountedRows.length).toBeGreaterThan(1)
+    expect(markerOffsets()).toEqual([])
+
+    view.applyEdit({ from: 10, to: 10, text: 'x' }, edited)
+
+    expect(markerOffsets().toSorted((left, right) => left - right)).toEqual(fresh)
+    // The marks land on the segment the edit did not touch, not only on the one it did.
+    const firstRowEnd = view.getState().mountedRows[0]!.endOffset
+    expect(fresh.some((offset) => offset < firstRowEnd)).toBe(true)
+  })
+
   // The window after the seam opens on the low half of the pair and reads back onto the high one,
   // so both windows have the same character to report and the marks stack.
   it('marks a character split across two mounted windows once', () => {
