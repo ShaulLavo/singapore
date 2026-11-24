@@ -7,14 +7,18 @@ import { readAll } from '../../editor/test/factories/snapshotText'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEditorTextBuffer } from '@singapore-editor/core/document'
 import { createEditorDocumentAnalysis } from '@singapore-editor/core/editor'
+import { defineStructuralOperation } from '@singapore-editor/core/internal/document-worker'
 import type { EditorSyntaxResult } from '@singapore-editor/core/syntax'
 import { RecordingWorker } from './factories/worker'
 
 import {
+  commitPreparedDocumentTransaction,
   createPieceTableSnapshot,
   createDocumentTextSnapshot,
+  prepareDocumentTransaction,
 } from '@singapore-editor/core/document'
 import { createTreeSitterSyntaxProvider, createTreeSitterWorkerOwner } from '../src/index.ts'
+import { TreeSitterSyntaxSession } from '../src/session.ts'
 import type { TreeSitterLanguageDescriptor } from '../src/treeSitter/registry.ts'
 import type { TreeSitterBackend } from '../src/treeSitter/workerClient.ts'
 
@@ -137,9 +141,11 @@ it('does not register or parse a delayed injection after disposal', async () => 
   const refresh = session.run()
   await requestedPromise
   session.dispose()
+  const parsedBeforeDisposal = parses
   release(descriptor('astro'))
   await refresh
-  expect(parses).toBe(1)
+  await flushPromises()
+  expect(parses).toBe(parsedBeforeDisposal)
   expect(registered).toEqual([['container']])
 })
 
@@ -192,30 +198,59 @@ it('shares a delayed language load with the newer document version', async () =>
   await vi.waitFor(() => expect(registered).toEqual([['container'], ['astro']]))
   await flushPromises()
   // The grammar arrives either before the newer version is parsed, whose answer then has it, or
-  // after, and is then published as that version's next result.
-  const latest = published.at(-1) ?? answered
+  // after, and is then published as that version's next result. Either way the complete result
+  // of the newest text was handed to someone.
+  const latest = session.runtime.getResult()
   expect(loads).toBe(1)
-  expect(session.runtime.getResult()).toBe(latest)
+  expect(latest.projection.analysis?.kind).toBe('full')
   expect(latest.projection.snapshot.length).toBe(session.buffer.getTextSnapshot().length)
+  expect(published.concat([answered])).toContain(latest)
   session.dispose()
 })
 
 describe('the first answer and injected grammars', () => {
-  const injectingBackend = (registered: string[][], parses: number[]): TreeSitterBackend => ({
-    ...recordingBackend(registered),
-    parse: async (payload) => {
-      parses.push(payload.snapshotVersion)
-      return {
-        documentId: payload.documentId,
-        languageId: payload.languageId,
-        snapshotVersion: payload.snapshotVersion,
-        status: 'parsed',
-        changedRanges: [],
-        missingLanguages: registered.some((ids) => ids.includes('astro')) ? [] : ['astro'],
+  // The document's injections need these until they are registered.
+  type Injecting = { needs: readonly string[] }
+
+  const injectingBackend = (
+    registered: string[][],
+    parses: number[],
+    document: Injecting = { needs: ['astro'] },
+  ): TreeSitterBackend => {
+    const missing = () => document.needs.filter((id) => !registered.some((ids) => ids.includes(id)))
+    const answer = (payload: {
+      documentId: string
+      languageId: string
+      snapshotVersion: number
+    }) => ({
+      documentId: payload.documentId,
+      languageId: payload.languageId,
+      snapshotVersion: payload.snapshotVersion,
+    })
+    return {
+      ...recordingBackend(registered),
+      parse: async (payload) => {
+        parses.push(payload.snapshotVersion)
+        return {
+          ...answer(payload),
+          status: 'parsed',
+          changedRanges: [],
+          missingLanguages: missing(),
+          timings: [],
+        }
+      },
+      queryRange: async (payload) => ({
+        ...answer(payload),
+        range: payload.range,
+        captures: [],
+        folds: [],
+        brackets: [],
+        errors: [],
+        injections: [],
         timings: [],
-      }
-    },
-  })
+      }),
+    }
+  }
 
   const delayedAstro = () => {
     let release!: () => void
@@ -230,6 +265,8 @@ describe('the first answer and injected grammars', () => {
       },
     }
   }
+
+  const analysisOf = (result: EditorSyntaxResult) => result.projection.analysis?.kind
 
   it('answers from the document grammar while an injected grammar is still loading', async () => {
     const registered: string[][] = []
@@ -246,22 +283,173 @@ describe('the first answer and injected grammars', () => {
     const published: EditorSyntaxResult[] = []
     session.runtime.subscribeResults((_read, result) => published.push(result))
 
-    // The injected grammar has not arrived, and the document's first answer does not wait for it.
+    // The injected grammar has not arrived, and the document's first answer does not wait for
+    // it. It says so: `partial`, as a large document's first screen does.
     const first = await session.run()
     expect(parses).toEqual([1])
     expect(registered).toEqual([['container']])
     expect(published).toEqual([])
+    expect(analysisOf(first)).toBe('partial')
+    const range = { startIndex: 0, endIndex: 8 }
+    expect(analysisOf(await session.runtime.queryRange(range))).toBe('partial')
 
     astro.release()
-    await session.runtime.injectedLanguagesLoaded()
+    await vi.waitFor(() => expect(published).toHaveLength(1))
 
-    // The same text is parsed again with the grammar registered, and published as a new result.
-    expect(published).toHaveLength(1)
+    // The same text is parsed again with the grammar registered, and published as the complete
+    // result.
     expect(registered).toEqual([['container'], ['astro']])
-    expect(parses).toEqual([1, 1])
-    expect(published[0]).not.toBe(first)
+    expect(new Set(parses)).toEqual(new Set([1]))
+    expect(analysisOf(published[0]!)).toBe('full')
     expect(session.runtime.getResult()).toBe(published[0])
+    expect(analysisOf(await session.runtime.queryRange(range))).toBe('full')
     session.dispose()
+  })
+
+  it('completes the first answer after a revision that leaves the text unchanged', async () => {
+    const registered: string[][] = []
+    const astro = delayedAstro()
+    const session = createTreeDocument({
+      documentId: 'same-text',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```',
+      backend: injectingBackend(registered, []),
+      syntaxMode: 'range',
+      languageResolver: astro.resolver,
+    })
+    const publishedAt: number[] = []
+    session.runtime.subscribeResults((read) => publishedAt.push(read.revision.point.revision))
+    expect(analysisOf(await session.run())).toBe('partial')
+
+    // A transaction whose net text is the same: a new revision, the same parse.
+    const committed = commitPreparedDocumentTransaction(
+      { buffer: session.buffer, sourceView: null },
+      prepareDocumentTransaction(session.buffer, [{ from: 0, to: 1, text: '`' }], 1, null),
+      { history: { kind: 'external-barrier', groupId: 'same-text' } },
+    )
+    expect(committed.status).toBe('logical-only')
+    expect(analysisOf(await session.run())).toBe('partial')
+
+    astro.release()
+    await vi.waitFor(() => expect(publishedAt.length).toBeGreaterThan(0))
+
+    // The grammar still arrives, and its result is published against the revision that is
+    // current now, which is the one a listener is waiting on.
+    expect(registered).toEqual([['container'], ['astro']])
+    expect(publishedAt.at(-1)).toBe(session.buffer.getRevision())
+    expect(analysisOf(session.runtime.getResult())).toBe('full')
+    session.dispose()
+  })
+
+  it('settles an edit that removes the injection without the grammar it was waiting for', async () => {
+    const registered: string[][] = []
+    const document: Injecting = { needs: ['astro'] }
+    const astro = delayedAstro()
+    const session = createTreeDocument({
+      documentId: 'removed',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```',
+      backend: injectingBackend(registered, [], document),
+      syntaxMode: 'range',
+      languageResolver: astro.resolver,
+    })
+    expect(analysisOf(await session.run())).toBe('partial')
+
+    // The fence goes; the grammar it needed is still loading and never arrives.
+    document.needs = []
+    const edited = await session.edit([{ from: 0, to: 3, text: '' }])
+
+    expect(analysisOf(edited)).toBe('full')
+    expect(analysisOf(session.runtime.getResult())).toBe('full')
+    expect(registered).toEqual([['container']])
+    session.dispose()
+  })
+
+  it('registers the grammars that load when another fails, and keeps reporting the failure', async () => {
+    const registered: string[][] = []
+    const parses: number[] = []
+    const session = createTreeDocument({
+      documentId: 'one-fails',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```\n```broken\n```',
+      backend: injectingBackend(registered, parses, { needs: ['astro', 'broken'] }),
+      syntaxMode: 'range',
+      languageResolver: {
+        resolveTreeSitterLanguage: async (id) => {
+          if (id === 'broken') throw new Error('asset offline')
+          return descriptor(id)
+        },
+      },
+    })
+    const published: EditorSyntaxResult[] = []
+    session.runtime.subscribeResults((_read, result) => published.push(result))
+    expect(analysisOf(await session.run())).toBe('partial')
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+
+    // The grammar that resolved is registered and the document is complete with it.
+    expect(registered).toEqual([['container'], ['astro']])
+    expect(analysisOf(published[0]!)).toBe('full')
+    const failure = {
+      kind: 'optional-phase-failed',
+      phase: 'load injected languages',
+      message: expect.stringContaining('asset offline'),
+    }
+    expect(published[0]!.degraded).toEqual(failure)
+
+    // The failure stays on what is asked of this revision, and on the next one, which is not
+    // held back or parsed twice for a grammar already known not to load.
+    const ranged = await session.runtime.queryRange({ startIndex: 0, endIndex: 8 })
+    expect(ranged.degraded).toEqual(failure)
+    const parsedBeforeEdit = parses.length
+    const edited = await session.edit([{ from: 0, to: 0, text: ' ' }])
+    await flushPromises()
+    expect(analysisOf(edited)).toBe('full')
+    expect(edited.degraded).toEqual(failure)
+    expect(parses).toHaveLength(parsedBeforeEdit + 1)
+    expect(published).toHaveLength(1)
+    session.dispose()
+  })
+
+  it('tells a retained range caller when the complete result replaces the first answer', async () => {
+    const registered: string[][] = []
+    const astro = delayedAstro()
+    const backend = injectingBackend(registered, [])
+    const buffer = createEditorTextBuffer('```astro\n<Card />\n```')
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'retained' })
+    const lease = analysis.borrowStructural({
+      languageId: 'container',
+      syntaxMode: 'range',
+      provider: {
+        operation: defineStructuralOperation(
+          (context) =>
+            new TreeSitterSyntaxSession({
+              ...context,
+              languageId: 'container',
+              languageResolver: astro.resolver,
+              backend,
+            }),
+        ),
+      },
+    })!
+    cleanup.push(() => {
+      lease.dispose()
+      analysis.dispose()
+    })
+    let produced = 0
+    lease.onDidProduceSyntax(() => {
+      produced += 1
+    })
+    const range = { startIndex: 0, endIndex: 8 }
+
+    // The range API's own answers carry the signal: `partial` until the grammars are in.
+    expect(analysisOf(await lease.refresh(buffer.getTextSnapshot()))).toBe('partial')
+    expect(analysisOf(await lease.queryRange(range))).toBe('partial')
+    expect(produced).toBe(0)
+
+    astro.release()
+    await vi.waitFor(() => expect(produced).toBe(1))
+
+    expect(analysisOf(await lease.queryRange(range))).toBe('full')
   })
 
   it('waits for injected grammars when the caller is given one complete answer', async () => {

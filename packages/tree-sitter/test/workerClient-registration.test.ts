@@ -142,6 +142,32 @@ describe('tree-sitter worker start', () => {
     expect(requestTypes(EchoWorker)).toEqual(['init'])
   })
 
+  it('registers the plugin when the worker cannot be constructed at activation', () => {
+    const owner = createTreeSitterWorkerOwner({
+      workerFactory: () => {
+        throw new DOMException('Worker construction is blocked', 'SecurityError')
+      },
+    })
+    const registered: string[] = []
+    const plugin = createTreeSitterSyntaxPlugin(
+      createTreeSitterSyntaxProvider({ workerOwner: owner }),
+    )
+
+    plugin.activate({
+      registerSyntaxProvider: () => {
+        registered.push('syntax')
+        return { dispose: () => undefined }
+      },
+      registerSelectionRangeProvider: () => {
+        registered.push('selection')
+        return { dispose: () => undefined }
+      },
+    } as unknown as EditorPluginContext)
+
+    // The first document's request constructs the worker again and reports the failure.
+    expect(registered).toEqual(['syntax', 'selection'])
+  })
+
   it('registers a language while the parser runtime is still loading', async () => {
     vi.stubGlobal('Worker', SlowRuntimeWorker)
     const client = new TreeSitterWorkerClient()

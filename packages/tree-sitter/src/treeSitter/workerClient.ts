@@ -226,8 +226,13 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
    * are under way while the caller builds its view. A failure is reported by the first request.
    */
   public start(): void {
-    if (this.startWorker() && this.initPromise) {
+    try {
+      if (!this.startWorker() || !this.initPromise) return
       void this.trackClientTask(this.initPromise).catch(() => undefined)
+    } catch {
+      // Best effort: a worker that cannot be constructed here (a `SecurityError` from the
+      // constructor or the host's factory) is constructed again by the first document's request,
+      // which reports the failure through the usual syntax path.
     }
   }
 

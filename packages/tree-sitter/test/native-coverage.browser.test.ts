@@ -505,8 +505,8 @@ browserTest.each([
 
 /**
  * The whole document's result. A range-mode session answers before injected grammars have
- * loaded and publishes their colors as a later result, so a caller that asks for a range itself
- * waits for them first.
+ * loaded: that answer says `partial`, and the complete one is published as a later result. A
+ * caller that asks for a range itself waits for the publication, as it does for a large file.
  */
 async function settledResult(
   document: { readonly runtime: TreeSitterSyntaxSession },
@@ -515,8 +515,28 @@ async function settledResult(
   length: number,
 ): Promise<EditorSyntaxResult> {
   if (syntaxMode !== 'range') return analysed
-  await document.runtime.injectedLanguagesLoaded()
-  return document.runtime.queryRange({ startIndex: 0, endIndex: length })
+  const range = { startIndex: 0, endIndex: length }
+  const first = await document.runtime.queryRange(range)
+  if (!awaitsCompleteAnalysis(first)) return first
+  await completeResult(document.runtime)
+  return document.runtime.queryRange(range)
+}
+
+function completeResult(runtime: TreeSitterSyntaxSession): Promise<void> {
+  if (!awaitsCompleteAnalysis(runtime.getResult())) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = runtime.subscribeResults((_read, result) => {
+      if (awaitsCompleteAnalysis(result)) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
+
+/** A partial result that its complete analysis has not answered yet, with a result or without. */
+function awaitsCompleteAnalysis(result: EditorSyntaxResult): boolean {
+  const analysis = result.projection.analysis
+  return analysis?.kind === 'partial' && !analysis.background
 }
 
 function assertPaint(

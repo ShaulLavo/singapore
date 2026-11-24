@@ -449,3 +449,44 @@ it('invalidates untouched fence reuse when a new language claims an existing nes
     true,
   )
 })
+
+it('keeps Markdown parsed and editable when a fence grammar cannot be loaded', async () => {
+  const typescript = await resolveTreeSitterLanguageContribution(
+    TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((contribution) => contribution.id === 'typescript')!,
+  )
+  // Not a Wasm module: the grammar fails to load each time a fence asks for it.
+  await client.registerLanguages([{ ...typescript, wasmUrl: 'data:application/wasm;base64,AAAA' }])
+  const broken = { ...identity, runtimeSessionId: 'broken-fence' }
+  const text = '**bold** heading\n\n```typescript\nconst value = 1\n```\n'
+  const document = sourceDocument(text)
+
+  const initial = await document.withRead((source) =>
+    client.parse({ ...broken, snapshotVersion: 1, source }),
+  )
+
+  expect(initial?.degraded?.map((state) => state.kind)).toEqual(['injection-failed'])
+  expect(spans(initial, Kind.Strong)).toEqual([[0, 8]])
+
+  const previous = document.delivery.current()!
+  const edit = { from: text.length, to: text.length, text: 'More **prose**.\n' }
+  document.view.applyEdits([edit])
+  const edited = await document.withRead((source) => {
+    const payload = createTreeSitterEditPayload({
+      ...broken,
+      previousSnapshotVersion: 1,
+      snapshotVersion: 2,
+      previousRead: previous.text,
+      source,
+      edits: [edit],
+    })
+    if (!payload) throw new TypeError('Expected broken-fence edit payload')
+    return client.edit(payload)
+  })
+
+  // The fence stays uncolored and reported; the Markdown around it is parsed as before.
+  expect(edited?.degraded?.map((state) => state.kind)).toEqual(['injection-failed'])
+  expect(spans(edited, Kind.Strong)).toEqual([
+    [0, 8],
+    [text.length + 5, text.length + 14],
+  ])
+})

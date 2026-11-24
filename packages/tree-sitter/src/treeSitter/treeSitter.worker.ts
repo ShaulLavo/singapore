@@ -325,7 +325,7 @@ const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
 
   if (!existing) {
     languageRegistryVersion += 1
-    streamGrammar(normalized.wasmUrl)
+    streamGrammar(normalized)
     return
   }
   const unchanged = languageDescriptorsEqual(existing, normalized)
@@ -334,7 +334,7 @@ const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
 
   disposeRuntimeForLanguage(normalized.id)
   disposeCachedSnapshotsForLanguage(normalized.id)
-  streamGrammar(normalized.wasmUrl)
+  streamGrammar(normalized)
 }
 
 // A language is registered because a document or an injection is about to use it, and that
@@ -342,8 +342,11 @@ const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
 // largest download on the way to the first highlight, starts here instead of with that request.
 const streamedGrammars = new Map<string, Promise<WebAssembly.Module | null>>()
 
-const streamGrammar = (wasmUrl: string): void => {
-  if (!streamedGrammars.has(wasmUrl)) streamedGrammars.set(wasmUrl, compileStreamedWasm(wasmUrl))
+const streamGrammar = ({ id, wasmUrl }: TreeSitterLanguageDescriptor): void => {
+  // Markdown's grammars are loaded by its own support module, never through a runtime here, so
+  // a compilation started for it would stay in the map unused.
+  if (id === 'markdown' || streamedGrammars.has(wasmUrl)) return
+  streamedGrammars.set(wasmUrl, compileStreamedWasm(wasmUrl))
 }
 
 /** The grammar's streamed compilation, handed over once so the module is not retained here. */
@@ -612,13 +615,13 @@ const parseMarkdownFences = async (
         carryMarkdownFenceDescendants(layers, reusable.layer.id, reusableLayers, document.source)
         continue
       }
-      const layer = await parseMarkdownFence(
+      const layer = await parseOptionalMarkdownFence(
         plan,
         document.source,
-        reusable,
-        reservedLayerIds,
+        { reusable, reservedLayerIds, degraded },
         context,
       )
+      if (!layer) continue
       layers.push(layer)
       await appendInjectionLayers(layers, layer, {
         readOnly: document.readOnly,
@@ -739,6 +742,29 @@ const rangesEqualWithPositions = (
       range.endPosition.column === other.endPosition.column
     )
   })
+
+/**
+ * A fence is optional work, like any other injection: one whose grammar cannot be loaded or
+ * parsed is reported as degraded and left to the Markdown colors, and the document still parses.
+ */
+const parseOptionalMarkdownFence = async (
+  plan: InjectionPlan,
+  source: TreeSitterPieceTableInput,
+  fence: {
+    readonly reusable: ReusableLayer | null
+    readonly reservedLayerIds: Set<string>
+    readonly degraded: TreeSitterDegradedState[]
+  },
+  context: CancellationContext,
+): Promise<ParsedLayer | null> => {
+  try {
+    return await parseMarkdownFence(plan, source, fence.reusable, fence.reservedLayerIds, context)
+  } catch (error) {
+    if (error instanceof SyntaxRequestCancelled) throw error
+    recordOptionalWorkerPhaseFailure('parse injection', error, fence.degraded, 'injection-failed')
+    return null
+  }
+}
 
 const parseMarkdownFence = async (
   plan: InjectionPlan,
