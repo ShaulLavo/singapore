@@ -39,7 +39,7 @@ import {
   type DocumentRead,
   type DocumentContributionScope,
 } from './documentDelivery'
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, type EditorScheduledWorkHandle } from './workScheduler'
 import type { DocumentSyncPoint } from './editChain'
 import {
   bindDocumentOperation,
@@ -747,6 +747,8 @@ class HighlighterAnalysisSession implements AnalysisSession<EditorHighlightResul
 type RetainedRangeContributor = {
   readonly range: EditorSyntaxRange
   readonly result: EditorSyntaxResult
+  /** Look-ahead the view could ask for again; kept only within the shared optional cap. */
+  readonly optional?: boolean
 }
 type ReadyRange = RetainedRangeContributor & { readonly point: DocumentSyncPoint }
 type PendingRangeQuery = {
@@ -759,6 +761,8 @@ type PendingRangeQuery = {
   /** Callers that can leave; a caller without a signal keeps the query for good. */
   holders: number
   pinned: boolean
+  /** The pending cancellation after the last caller left; cancelled when the query settles. */
+  release: EditorScheduledWorkHandle | null
   admission: 'cache' | 'return-only'
   work:
     | { readonly kind: 'queued'; readonly generation: number | null }
@@ -920,6 +924,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     const snapshot = this.buffer.getTextSnapshot()
     const intervals: EditorSyntaxRange[] = []
     const protectedSlots = new Set<ReadyRange>()
+    const optional = new Set<ReadyRange>()
     let fullyPinned = false
     for (const [signal, demand] of this.displayed) {
       if (
@@ -932,18 +937,63 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }
       intervals.push(...demand.ranges)
       const contributors = this.contributors.get(signal)
-      if (contributors) this.protectContributors(contributors, protectedSlots)
+      if (contributors)
+        this.protectContributors(
+          contributors.filter((contributor) => !contributor.optional),
+          protectedSlots,
+        )
       if (!contributors || demand.kind === 'preparation')
         this.protectIntersecting(demand.ranges, protectedSlots)
       this.protectLookup(demand.ranges, protectedSlots)
-      if (demand.lookAhead) this.protectContained(demand.lookAhead, protectedSlots)
+      this.collectOptional(contributors, demand.lookAhead, optional)
     }
+    // Before the answers kept only while a query is in flight: those must not count as covering an
+    // optional answer, or the answer and what covered it could both go once the query lands.
+    if (!fullyPinned) this.protectOptional(optional, protectedSlots)
     for (const waiter of this.queryWaiters.values()) {
       if (waiter.snapshot !== snapshot) continue
       intervals.push(waiter.range)
       this.protectLookup([waiter.range], protectedSlots)
     }
     return { intervals, protectedSlots, fullyPinned }
+  }
+
+  /** Optional look-ahead answers of one view: its optional contributors and answers in its window. */
+  private collectOptional(
+    contributors: readonly RetainedRangeContributor[] | undefined,
+    windows: readonly EditorSyntaxRange[] | undefined,
+    optional: Set<ReadyRange>,
+  ): void {
+    for (const contributor of contributors ?? []) {
+      if (!contributor.optional) continue
+      const slot = this.slotFor(contributor)
+      if (slot) optional.add(slot)
+    }
+    if (!windows?.length) return
+    for (const slot of this.ranges.values()) {
+      if (windows.some((window) => rangeContains(window, slot.range))) optional.add(slot)
+    }
+  }
+
+  /**
+   * Cache invariant (B): every view's optional look-ahead answers share one cap, newest first. An
+   * answer is skipped only when an answer that is kept contains it, so dropping a covered answer
+   * never also drops what covered it.
+   */
+  private protectOptional(optional: ReadonlySet<ReadyRange>, protectedSlots: Set<ReadyRange>) {
+    const order = Array.from(this.ranges.values())
+    const candidates = Array.from(optional).sort(
+      (left, right) => order.indexOf(right) - order.indexOf(left),
+    )
+    let kept = 0
+    for (const slot of candidates) {
+      if (kept >= LOOK_AHEAD_RETAINED_ANSWERS) return
+      if (protectedSlots.has(slot)) continue
+      const covered = [...protectedSlots].some((other) => containsMore(other.range, slot.range))
+      if (covered) continue
+      protectedSlots.add(slot)
+      kept++
+    }
   }
 
   private trimOptionalRanges(): void {
@@ -971,6 +1021,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     contributor: RetainedRangeContributor,
     protectedSlots: Set<ReadyRange>,
   ): void {
+    const slot = this.slotFor(contributor)
+    if (slot) protectedSlots.add(slot)
+  }
+
+  /** The cached answer holding a contributor's result, admitted again if it is still current. */
+  private slotFor(contributor: RetainedRangeContributor): ReadyRange | null {
     const snapshot = this.buffer.getTextSnapshot()
     const origin = this.resultOrigins.get(contributor.result)
     let cached = this.ranges.get(rangeKey(contributor.range))
@@ -986,10 +1042,10 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       origin.point === this.buffer.getDocumentSyncPoint() &&
       origin.generation === this.generation
     ) {
-      cached = { ...contributor, point: origin.point }
+      cached = { range: contributor.range, result: contributor.result, point: origin.point }
       this.ranges.set(rangeKey(contributor.range), cached)
     }
-    if (cached) protectedSlots.add(cached)
+    return cached ?? null
   }
 
   private protectIntersecting(
@@ -1005,23 +1061,6 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       )
         protectedSlots.add(cached)
     }
-  }
-
-  /**
-   * Keeps the newest few answers inside the look-ahead window. An answer another cached answer
-   * contains adds nothing, so it is never kept for the window.
-   */
-  private protectContained(
-    windows: readonly EditorSyntaxRange[],
-    protectedSlots: Set<ReadyRange>,
-  ): void {
-    const cached = Array.from(this.ranges.values())
-    const inWindow = cached.filter(
-      (slot) =>
-        windows.some((window) => rangeContains(window, slot.range)) &&
-        !cached.some((other) => other !== slot && containsMore(other.range, slot.range)),
-    )
-    for (const slot of inWindow.slice(-LOOK_AHEAD_RETAINED_ANSWERS)) protectedSlots.add(slot)
   }
 
   private protectLookup(
@@ -1119,6 +1158,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     this.contributors.clear()
     this.queryWaiters.clear()
     this.ranges.clear()
+    for (const query of this.queries.values()) query.release?.cancel()
     this.queries.clear()
     super.dispose()
   }
@@ -1174,6 +1214,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       cancellation,
       holders: 0,
       pinned: false,
+      release: null,
       admission: 'cache',
       work: { kind: 'queued', generation },
       promise: interruptible(
@@ -1207,6 +1248,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     this.retention.changed()
     void pending.promise
       .finally(() => {
+        pending.release?.cancel()
         if (this.queries.get(key) !== pending) return
         this.queries.delete(key)
         this.retention.changed()
@@ -1224,7 +1266,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   /** Cancels an orphan once its handoff time has passed, unless a caller has joined it since. */
   private readonly releaseOrphanLater = (query: PendingRangeQuery): void => {
     if (this.signal.aborted) return
-    this.scheduler.schedule({
+    query.release?.cancel()
+    query.release = this.scheduler.schedule({
       key: `${this.runtimeSessionId}:orphaned-range:${rangeKey(query.range)}`,
       taskClass: 'background-derived',
       delayMs: ORPHANED_QUERY_HANDOFF_MS,

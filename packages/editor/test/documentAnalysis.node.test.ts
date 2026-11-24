@@ -421,6 +421,37 @@ describe('active range retention', () => {
     analysis.dispose()
   })
 
+  it('caps optional look-ahead answers across views and keeps an answer until a kept one covers it', async () => {
+    const buffer = createEditorTextBuffer('x'.repeat(10_000))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'look-ahead-cap' })
+    const parser = provider()
+    const request = { provider: parser.provider, languageId: 'typescript' }
+    const left = analysis.borrowStructural(request)!
+    const right = analysis.borrowStructural(request)!
+    const snapshot = buffer.getTextSnapshot()
+    const frame = { startIndex: 0, endIndex: 10 }
+    const cached = () => analysis.inspectRetention().entries[0]!.cachedRangeCount
+    const answers: { range: EditorSyntaxRange; result: EditorSyntaxResult; optional: true }[] = []
+    for (let step = 0; step < 40; step++) {
+      const range = { startIndex: 1_000 + step * 100, endIndex: 1_050 + step * 100 }
+      answers.push({ range, result: await left.queryRange(range), optional: true })
+    }
+    // Two views each offering 20 look-ahead answers as optional contributors share one cap.
+    const demand = { kind: 'frame' as const, snapshot, ranges: [frame] }
+    setRetainedSyntaxDisplayDemand(left, demand, answers.slice(0, 20))
+    setRetainedSyntaxDisplayDemand(right, demand, answers.slice(20))
+    expect(cached()).toBeLessThanOrEqual(8)
+
+    // An answer inside the window stays when the answer containing it is not kept.
+    const lookAhead = [{ startIndex: 100, endIndex: 200 }]
+    setRetainedSyntaxDisplayDemand(left, { ...demand, lookAhead }, [])
+    setRetainedSyntaxDisplayDemand(right, { ...demand, lookAhead }, [])
+    await left.queryRange({ startIndex: 110, endIndex: 130 })
+    await left.queryRange({ startIndex: 90, endIndex: 300 })
+    expect(left.read({ startIndex: 110, endIndex: 130 }).kind).toBe('ready')
+    analysis.dispose()
+  })
+
   it.each(['unmanaged', 'unknown', 'foreign', 'stale', 'preparation'] as const)(
     'preserves %s protection',
     async (mode) => {

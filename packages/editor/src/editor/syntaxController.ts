@@ -162,6 +162,13 @@ type CachedSyntaxFoldRange = {
   readonly lookAhead: boolean
 }
 
+/** An answer this view asks the shared cache to keep; optional ones share a capped pool. */
+type RetainedSyntaxContributor = {
+  readonly range: EditorSyntaxRange
+  readonly result: EditorSyntaxResult
+  readonly optional: boolean
+}
+
 /** The text kept ready around the viewport while scrolling, and the active request for it. */
 type SyntaxLookAhead = {
   readonly snapshot: DocumentTextSnapshot
@@ -184,6 +191,9 @@ type PendingInitialHighlightThemeTerminal = {
 }
 
 const BACKGROUND_SYNTAX_TILE_CHARS = 120_000
+
+/** Look-ahead answers kept beyond those shown text needs; the shared cache applies the same cap. */
+const LOOK_AHEAD_RETAINED_ANSWERS = 8
 
 // Backoff before each retry of a failed highlight refresh. The last rung retries on a new
 // highlighter session; the failure after it is terminal.
@@ -305,6 +315,11 @@ export class EditorSyntaxController {
   private visibleFollowUp = false
   /** The text the brackets, injections and captures in effect were answered for. */
   private scopeCoverage: EditorSyntaxRange | 'full' | null = null
+  /** Shown rows whose request for one covering answer came back without one. */
+  private scopeSettled: {
+    readonly contentVersion: number
+    readonly range: EditorSyntaxRange
+  } | null = null
   private lookAhead: SyntaxLookAhead | null = null
   /** The look-ahead window for either scroll direction, from the last viewport change. */
   private lookAheadReach: EditorSyntaxRange | null = null
@@ -328,16 +343,32 @@ export class EditorSyntaxController {
     if (tokens !== this.currentTokens) this.options.adoptTokens(this.currentTokens)
   }
 
+  /**
+   * What this view needs the shared cache to keep. Look-ahead answers that are not the newest for
+   * shown text are optional: the shared cache keeps a capped number of those across every view.
+   */
   private rangeContributors(
     demand: EditorAnalysisDisplayDemand,
-  ): readonly CachedSyntaxFoldRange[] | null {
+  ): readonly RetainedSyntaxContributor[] | null {
     if (demand.kind !== 'frame' || demand.snapshot !== this.options.getSession()?.getTextSnapshot())
       return null
-    const contributors = this.cachedSyntaxFoldRanges.slice()
-    if (this.rangeCopyOwner?.store === this.copyTokens)
-      contributors.push(this.rangeCopyOwner.contributor)
-    if (this.rangeScopeOwner) contributors.push(this.rangeScopeOwner)
-    return contributors.filter((contributor) => contributor.snapshot === demand.snapshot)
+    const visible = this.options.getVisibleSyntaxRange()
+    const shown = visible ? appendCachedSyntaxRange(demand.ranges, visible) : demand.ranges
+    const owners = [this.rangeScopeOwner]
+    if (this.rangeCopyOwner?.store === this.copyTokens) owners.push(this.rangeCopyOwner.contributor)
+    const required = owners.filter((owner): owner is CachedSyntaxFoldRange => owner !== null)
+    return this.cachedSyntaxFoldRanges
+      .filter((cached) => !required.includes(cached))
+      .concat(required)
+      .filter((cached) => cached.snapshot === demand.snapshot)
+      .map((cached) => ({
+        range: cached.range,
+        result: cached.result,
+        optional:
+          !required.includes(cached) &&
+          cached.lookAhead &&
+          !syntaxRangeListsIntersect(cached.newestRanges, shown),
+      }))
   }
 
   private trimRangeCache(
@@ -370,11 +401,20 @@ export class EditorSyntaxController {
     // Every answer that is the newest for some shown text stays, whoever painted the tokens. The
     // view asks again for shown text without an answer, so dropping one of these would have it
     // asked for again on every frame.
-    const newestContributors = oldCache.filter(
-      (cached) =>
-        syntaxRangeListsIntersect(cached.newestRanges, ranges) ||
-        (cached.lookAhead && syntaxRangeListsIntersect(cached.newestRanges, lookAhead)),
+    const shownContributors = oldCache.filter((cached) =>
+      syntaxRangeListsIntersect(cached.newestRanges, ranges),
     )
+    // Cache invariant (B): beyond what shown text needs, at most a few look-ahead answers, the
+    // newest, and only those still the newest for some text in the window.
+    const lookAheadContributors = oldCache
+      .filter(
+        (cached) =>
+          cached.lookAhead &&
+          !shownContributors.includes(cached) &&
+          syntaxRangeListsIntersect(cached.newestRanges, lookAhead),
+      )
+      .slice(-LOOK_AHEAD_RETAINED_ANSWERS)
+    const newestContributors = shownContributors.concat(lookAheadContributors)
     const foldContributors = activeFoldContributors(oldCache, ranges)
     const retained = new Set(newestContributors.concat(foldContributors))
     const scope = this.rangeScopeOwner
@@ -439,9 +479,13 @@ export class EditorSyntaxController {
 
   get status(): EditorSyntaxStatus {
     if (this.syntaxStatus !== 'ready' && this.syntaxStatus !== 'degraded') return this.syntaxStatus
-    if (this.usesFallbackFolds) return this.syntaxStatus
-    if (this.foldsCoverViewport() && this.scopeCoversShownRows()) return this.syntaxStatus
-    return 'loading'
+    // Readiness invariant (A): folds cover the viewport, or the language uses fallback folds; and
+    // the brackets in effect come from one answer covering the shown rows, or the request for one
+    // settled without it, which is a terminal `degraded`, never `loading`.
+    if (!this.usesFallbackFolds && !this.foldsCoverViewport()) return 'loading'
+    const scope = this.scopeState()
+    if (scope === 'pending') return 'loading'
+    return scope === 'settled' ? 'degraded' : this.syntaxStatus
   }
 
   get usesFallbackFolds(): boolean {
@@ -493,9 +537,48 @@ export class EditorSyntaxController {
     return coverage !== null && this.rangeCoversShownRows(coverage)
   }
 
+  /**
+   * `covered`: one answer covering the shown rows supplied the brackets in effect. `settled`: the
+   * request for such an answer came back without one (over budget, unavailable), so the rows keep
+   * what cached pieces painted and nothing more is asked until they or the text change.
+   * `pending`: an answer covering them is still needed.
+   */
+  private scopeState(): 'covered' | 'settled' | 'pending' {
+    if (this.scopeCoversShownRows()) return 'covered'
+    const settled = this.scopeSettled
+    if (
+      settled?.contentVersion === this.syntaxContentVersion &&
+      this.rangeCoversShownRows(settled.range)
+    )
+      return 'settled'
+    return 'pending'
+  }
+
+  private shownSyntaxRange(): EditorSyntaxRange | null {
+    return this.options.getShownSyntaxRange?.() ?? this.options.getVisibleSyntaxRange()
+  }
+
+  /**
+   * After a visible answer lands or fails: if it was asked for the shown rows and they still have
+   * no answer covering them, asks once more for the shown rows alone, then settles.
+   */
+  private settleUnansweredScope(documentVersion: number, requested: EditorSyntaxRange): boolean {
+    if (documentVersion !== this.options.getDocumentVersion()) return false
+    if (this.scopeState() !== 'pending') return false
+    const shown = this.shownSyntaxRange()
+    if (!shown || syntaxRangeCoverage(shown, [requested]) !== 'full') return false
+    if (!sameSyntaxRange(shown, requested)) {
+      this.requestScopeFacts(documentVersion, shown, { delayMs: 0 }, true)
+      return this.rangeRequests.isActive()
+    }
+    this.scopeSettled = { contentVersion: this.syntaxContentVersion, range: shown }
+    this.options.notifyViewUpdate()
+    return false
+  }
+
   private rangeCoversShownRows(range: EditorSyntaxRange | null): boolean {
     if (!range) return true
-    const shown = this.options.getShownSyntaxRange?.() ?? this.options.getVisibleSyntaxRange()
+    const shown = this.shownSyntaxRange()
     return shown === null || syntaxRangeCoverage(shown, [range]) === 'full'
   }
 
@@ -1063,10 +1146,12 @@ export class EditorSyntaxController {
     documentVersion: number,
     range: EditorSyntaxRange,
     options: EditorSyntaxRefreshOptions,
+    retry = false,
   ): void {
-    if (this.scopeCoversShownRows() || !this.canQueryCurrentSyntaxRange()) return
+    if (this.scopeState() !== 'pending' || !this.canQueryCurrentSyntaxRange()) return
     const pending = this.pendingVisibleRange
     if (
+      !retry &&
       this.rangeRequests.isActive() &&
       pending?.documentVersion === documentVersion &&
       pending.contentVersion === this.syntaxContentVersion &&
@@ -1452,7 +1537,9 @@ export class EditorSyntaxController {
           startedAt,
           configurationGeneration,
         )
-        const followingUp = kind === 'visible' && this.askVisibleFollowUp()
+        const followingUp =
+          kind === 'visible' &&
+          (this.settleUnansweredScope(documentVersion, range) || this.askVisibleFollowUp())
         if (applied && kind === 'visible' && !followingUp && this.foldsCoverViewport()) {
           if (!this.flushPendingPrefetch()) this.flushPendingWarm()
         }
@@ -1461,7 +1548,8 @@ export class EditorSyntaxController {
       }),
       fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) => {
         this.recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration)
-        if (kind === 'visible') this.askVisibleFollowUp()
+        if (kind === 'visible' && !this.settleUnansweredScope(documentVersion, range))
+          this.askVisibleFollowUp()
       }),
     })
   }
@@ -1729,6 +1817,7 @@ export class EditorSyntaxController {
     if (applyScopeFacts) {
       this.rangeScopeOwner = contributor
       this.scopeCoverage = loadResult.range ?? 'full'
+      this.scopeSettled = null
       this.currentBrackets = result.brackets
       this.currentInjections = result.injections
     }
@@ -1790,7 +1879,10 @@ export class EditorSyntaxController {
         status: this.status,
       },
     })
-    if (!this.usesFallbackFolds && (!this.foldsCoverViewport() || !this.scopeCoversShownRows())) {
+    if (
+      (!this.usesFallbackFolds && !this.foldsCoverViewport()) ||
+      this.scopeState() === 'pending'
+    ) {
       this.refreshVisibleRange(documentVersion, { delayMs: 0 })
     }
     this.options.notifyChange(null)
@@ -1834,6 +1926,7 @@ export class EditorSyntaxController {
       this.cachedSyntaxFoldRanges = []
       this.foldCoverage = null
       this.scopeCoverage = null
+      this.scopeSettled = null
     }
     this.markSyntaxDocumentCurrent(contentVersion)
   }
@@ -1996,6 +2089,7 @@ export class EditorSyntaxController {
     this.rangeScopeOwner = null
     this.foldCoverage = null
     this.scopeCoverage = null
+    this.scopeSettled = null
     this.lookAhead = null
     this.cachedSyntaxRanges = []
     this.cachedSyntaxFoldRanges = []

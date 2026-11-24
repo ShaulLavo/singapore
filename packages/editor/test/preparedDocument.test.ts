@@ -1551,6 +1551,13 @@ describe('prepared editor documents', () => {
     const uncoveredRange = vi.mocked(structuralSession.queryRange!).mock.calls[1]?.[0]
     expect(uncoveredRange?.startIndex).toBe(5)
     expect(uncoveredRange?.endIndex).toBeGreaterThan(5)
+    // Then exactly one ask covering the shown rows from the start, and nothing after it settles.
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(structuralSession.queryRange).toHaveBeenCalledTimes(3)
+    const covering = vi.mocked(structuralSession.queryRange!).mock.calls[2]?.[0]
+    expect(covering?.startIndex).toBe(0)
+    expect(covering?.endIndex).toBeGreaterThanOrEqual(uncoveredRange?.endIndex ?? 0)
     expect(structuralProviderOpenRuntime).toHaveBeenCalledOnce()
     editor.dispose()
     container.remove()

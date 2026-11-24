@@ -448,6 +448,50 @@ describe('syntax range contributor lifetime', () => {
     }
   })
 
+  it('settles as degraded, not loading, when no answer can cover the shown rows', async () => {
+    const answered = (range: EditorSyntaxRange) =>
+      createEmptySyntaxResult({ requestedRanges: [range] })
+    // Only a range across offset 20, which the shown rows need, runs out of budget.
+    const query = vi.fn(async (range: EditorSyntaxRange) =>
+      range.startIndex < 20 && range.endIndex > 20 ? overBudget(range) : answered(range),
+    )
+    const { view, analysis } = await straddlingTwoAnswers(query)
+    try {
+      await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+      const asked = query.mock.calls.length
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(query).toHaveBeenCalledTimes(asked)
+      expect(view.syntax.status).toBe('degraded')
+      expect(view.syntax.renderDataReady).toBe(true)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('is loading while the shown rows wait for brackets, with fallback folds too', async () => {
+    const answered = (range: EditorSyntaxRange) =>
+      createEmptySyntaxResult({ requestedRanges: [range] })
+    let release: (() => void) | null = null
+    // The answer across offset 20, which the shown rows need, is held.
+    const query = vi.fn((range: EditorSyntaxRange) => {
+      if (!(range.startIndex < 20 && range.endIndex > 20)) return Promise.resolve(answered(range))
+      return new Promise<EditorSyntaxResult>((resolve) => {
+        release = () => resolve(answered(range))
+      })
+    })
+    const { view, analysis } = await straddlingTwoAnswers(query, 'unsupported')
+    try {
+      await vi.waitFor(() => expect(release).not.toBeNull())
+      expect(view.syntax.status).toBe('loading')
+      release!()
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
   it('keeps the tokens of an answer that stays cached through a newer analysis', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'cached-colors' })
@@ -863,14 +907,50 @@ function rangeAnswers(folds: 'shared' | 'own') {
 
 type RangeQuery = (range: EditorSyntaxRange) => Promise<EditorSyntaxResult>
 
-function structuralProvider(queryRange: RangeQuery): EditorSyntaxProvider {
+function structuralProvider(
+  queryRange: RangeQuery,
+  foldingSupport: 'supported' | 'unsupported' = 'supported',
+): EditorSyntaxProvider {
   return {
     operation: createEditorStructuralOperation(() => ({
       ...createEmptySyntaxRuntime(),
-      foldingSupport: 'supported' as const,
+      foldingSupport,
       queryRange,
     })),
   }
+}
+
+/** An answer that ran out of its budget before covering any of `range`. */
+function overBudget(range: EditorSyntaxRange): EditorSyntaxResult {
+  const result = createEmptySyntaxResult({ requestedRanges: [range] })
+  return {
+    ...result,
+    projection: {
+      ...result.projection,
+      analysis: {
+        kind: 'cancelled',
+        coveredRange: { startIndex: range.startIndex, endIndex: range.startIndex },
+        reason: 'budget',
+        elapsedMs: 0,
+        budgetMs: 0,
+      },
+    },
+  }
+}
+
+/** Shown rows 15 to 25 straddle two cached answers, 0 to 20 and 20 to 40. */
+async function straddlingTwoAnswers(
+  query: (range: EditorSyntaxRange) => Promise<EditorSyntaxResult>,
+  foldingSupport: 'supported' | 'unsupported' = 'supported',
+) {
+  const buffer = createEditorTextBuffer('x\n'.repeat(250))
+  const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'straddle' })
+  const view = createView(buffer, analysis, structuralProvider(query, foldingSupport), firstFrame)
+  view.syntax.refresh(1, null, { delayMs: 0 })
+  await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+  view.setRange({ startIndex: 15, endIndex: 40 })
+  view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+  return { view, analysis }
 }
 
 /** A provider whose complete analysis can publish over the answers already painted. */
