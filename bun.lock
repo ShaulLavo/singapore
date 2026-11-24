@@ -109,7 +109,7 @@
         "oxlint": "1.85.0",
         "typescript": "7.0.2",
         "vitest": "5.0.2",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#ded777638461e444b80bd8d361fb29cc5e45eb00",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
       },
     },
     "packages/diff": {
@@ -447,7 +447,7 @@
       "dependencies": {
         "@singapore-editor/core": "workspace:*",
         "tree-sitter-md": "github:ShaulLavo/tree-sitter-md#f02e277a34375f326572b4ade2602f44ac769005",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#ded777638461e444b80bd8d361fb29cc5e45eb00",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -499,7 +499,7 @@
         "oxlint": "1.85.0",
         "typescript": "7.0.2",
         "vitest": "5.0.2",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#ded777638461e444b80bd8d361fb29cc5e45eb00",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
       },
       "peerDependencies": {
         "@singapore-editor/core": "workspace:*",
@@ -589,7 +589,7 @@
     "@vitest/browser-playwright@5.0.2": "patches/@vitest%2Fbrowser-playwright@5.0.2.patch",
   },
   "overrides": {
-    "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#ded777638461e444b80bd8d361fb29cc5e45eb00",
+    "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
   },
   "catalog": {
     "@shaulavo/hotkeys": "^0.0.4",
@@ -2027,7 +2027,7 @@
 
     "web-namespaces": ["web-namespaces@2.0.1", "", {}, "sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ=="],
 
-    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#ded7776", {}, "ShaulLavo-tree-sitter-x-ded7776", "sha512-ITLwR/Uo3z3pZuqIGoa6zzmkIODgH6a9diWzAHpCj9Hce7oRhotV/fkgkFpTQhhY9J9WeTgq5EY/0CaISpwWxQ=="],
+    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#33a55c7", {}, "ShaulLavo-tree-sitter-x-33a55c7", "sha512-Ujnr04TVZW85BnGxkpf+UaDKtmfjppaOGD5xOo3QZjMqVbNA8TXnNrFWvFb9z/qJnT6RCsIZcDyS0eUNbMP4/g=="],
 
     "whatwg-mimetype": ["whatwg-mimetype@3.0.0", "", {}, "sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q=="],
 

@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Language, Parser, Query, type Node, type Range, type Tree } from 'web-tree-sitter'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
-// The runtime's own bundle: a large real JavaScript file with JSDoc and regex literals. The package
-// exports map hides it, so it is read by path.
-import javascriptSource from '../node_modules/web-tree-sitter/web-tree-sitter.js?raw'
+// The runtime's own unminified debug bundle: a large real JavaScript file with JSDoc and regex
+// literals (the release bundle is minified and has neither). It is read by path, as raw text.
+import javascriptSource from '../node_modules/web-tree-sitter/debug/web-tree-sitter.js?raw'
 import {
   packEditorTokens,
   treeSitterCapturesToEditorTokens,
