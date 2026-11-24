@@ -645,6 +645,49 @@ describe('Tree-sitter syntax capture conversion', () => {
     })
   })
 
+  it('re-runs a complete degraded parse on unchanged text instead of reusing the degraded result', async () => {
+    let parseCount = 0
+    const backend = {
+      generation: 1,
+      sourceEndpoint: createSourceEndpoint(),
+      disposeDocument: () => undefined,
+      edit: async () => undefined,
+      parse: async (payload) => {
+        parseCount += 1
+        if (parseCount === 1) {
+          return {
+            ...createParseAck(payload.snapshotVersion),
+            degraded: [
+              {
+                kind: 'optional-phase-failed' as const,
+                phase: 'collect highlights',
+                message: 'transient failure',
+              },
+            ],
+          }
+        }
+        return createParseAck(payload.snapshotVersion)
+      },
+      registerLanguages: async () => undefined,
+      select: async () => undefined,
+    } satisfies TreeSitterBackend
+    const session = createTreeDocument({
+      backend,
+      documentId: 'retry-degraded.ts',
+      languageId: 'typescript',
+      syntaxMode: 'range',
+      text: 'const a = 1;',
+    })
+
+    const first = await session.run()
+    expect(first.degraded?.kind).toBe('optional-phase-failed')
+    expect(parseCount).toBe(1)
+
+    const retried = await session.run()
+    expect(parseCount).toBe(2)
+    expect(retried.degraded).toBeNull()
+  })
+
   it('keeps large editor-path syntax results range-only', async () => {
     const parsePayloads: TreeSitterBackendParsePayload[] = []
     const rangePayloads: TreeSitterRangePayload[] = []

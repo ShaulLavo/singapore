@@ -2185,5 +2185,125 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('settles from the base result when range capability turns false while firstRows is in flight', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(3000))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'lose-range-mid-first' })
+      let allowRange = true
+      let resolveFirstRows: ((r: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        if (range.endIndex === 20) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            resolveFirstRows = resolve
+          })
+        }
+        return answerFor(range)
+      })
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query, { canQueryRange: () => allowRange }),
+        { startIndex: 0, endIndex: 5000 },
+        { mountedRange: () => ({ startIndex: 0, endIndex: 20 }) },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveFirstRows).not.toBeNull())
+
+        allowRange = false
+        resolveFirstRows!(answerFor({ startIndex: 0, endIndex: 20 }))
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.initialHighlightStatus).toBe('painted')
+        expect(view.syntax.renderDataReady).toBe(true)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('drops degraded ranges from the view cache on explicit retry even while viewing another healthy range', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'prune-degraded-retry' })
+      let bHealthy = false
+      const rangeA: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const rangeB: EditorSyntaxRange = { startIndex: 100, endIndex: 120 }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 100 && !bHealthy) {
+          return answerFor(range, {
+            degraded: { kind: 'request-failed', message: 'degraded-B' },
+          })
+        }
+        return answerFor(range)
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), rangeA)
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Load degraded range B as prefetch while on A, then verify B is degraded before retry.
+        view.syntax.prefetchVisibleRange(1, rangeB, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        await settle()
+
+        // Provider recovers; explicit retry on A must prune degraded B from both shared and view cache.
+        bHealthy = true
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await settle()
+
+        // Scroll to B -> must freshly query B and settle 'ready' (NOT replay degraded B!).
+        view.setRange(rangeB)
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(
+          query.mock.calls.filter(([r]) => r.startIndex === 100).length,
+        ).toBeGreaterThanOrEqual(2)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('settles to degraded when an authoritative Markdown records query over covered strips returns a terminal partial', async () => {
+      const buffer = createEditorTextBuffer('# heading\n'.repeat(40))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'md-terminal-partial' })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 20 && range.endIndex === 60) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'request-failed', message: 'records-failed' },
+            projection: {
+              ...createEmptySyntaxResult({ requestedRanges: [range] }).projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+          }
+        }
+        return answerFor(range, {
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex]),
+          },
+        })
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 40,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        view.syntax.prefetchVisibleRange(1, { startIndex: 40, endIndex: 100 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+
+        // Scroll to [20, 60) covered by [0, 40) U [40, 100) -> authoritative query returns terminal partial -> settles degraded!
+        view.setRange({ startIndex: 20, endIndex: 60 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.syntax.renderDataReady).toBe(true)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

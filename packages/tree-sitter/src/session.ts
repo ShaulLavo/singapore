@@ -155,12 +155,13 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     const changed = this.analysedRead
       ? this.source.changesBetween(this.analysedRead.revision, read.revision)
       : null
-    // The same text: a non-terminal complete or in-flight partial analysis still answers it,
-    // while terminal incomplete bases (budget-cancelled or request-failed) re-run fresh.
+    // The same text: a non-terminal, non-degraded complete or in-flight partial analysis still
+    // answers it, while terminal incomplete or degraded bases re-run fresh on explicit retry.
     if (
       this.parsedSnapshotVersion > 0 &&
       changed?.edits?.length === 0 &&
-      !isTerminalIncompleteSyntaxResult(this.baseResult)
+      !isTerminalIncompleteSyntaxResult(this.baseResult) &&
+      this.baseResult.degraded === null
     ) {
       this.analysedRead = read
       if (this.baseResult.projection.analysis?.kind !== 'partial') {
@@ -178,7 +179,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       }
       return this.baseResult
     }
-    if (this.analysedRead !== read || isTerminalIncompleteSyntaxResult(this.baseResult)) {
+    if (
+      this.analysedRead !== read ||
+      isTerminalIncompleteSyntaxResult(this.baseResult) ||
+      this.baseResult.degraded !== null
+    ) {
       // An edit's answer can be partial too; its complete analysis is a new one.
       this.background?.controller.abort()
       this.background = null

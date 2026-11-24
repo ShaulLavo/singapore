@@ -1323,10 +1323,14 @@ export class EditorSyntaxController {
     }
 
     const explicitRetry = change === null
+    const retryDegradedPrepared =
+      explicitRetry &&
+      (this.#parseState.kind === 'error' || this.#publishedScope?.degraded === true)
     if (explicitRetry) {
       this.#unavailableRanges = []
       this.#unavailableEmptyRange = null
       this.#unavailableRecordsRange = null
+      this.#pruneDegradedAndPartialRangeEntries()
     }
 
     this.options.log?.({
@@ -1341,10 +1345,7 @@ export class EditorSyntaxController {
     })
     const skipPreparedStructural =
       this.#syntaxContentVersion === this.#preparedStructuralContentVersion &&
-      !(
-        explicitRetry &&
-        (this.#parseState.kind === 'error' || this.#publishedScope?.degraded === true)
-      )
+      !retryDegradedPrepared
     if (!skipPreparedStructural) {
       this.#preparedStructuralContentVersion = null
       this.#refreshStructuralSyntax(documentVersion, change, options, explicitRetry)
@@ -2233,14 +2234,14 @@ export class EditorSyntaxController {
         throw new DOMException('Syntax request was superseded', 'AbortError')
       }
       const queryTarget = this.options.getVisibleSyntaxRange()
-      if (!queryTarget) {
+      if (!queryTarget || !this.syntaxSession?.queryRange || !this.#canProviderQuerySyntaxRange()) {
         return {
           contentVersion: guard.contentVersion,
           parseGeneration: guard.parseGeneration,
           parseId: base.parseId,
           baseResult: base.result,
           range: null,
-          result: this.syntaxSession?.getResult() ?? base.result,
+          result: base.result,
           source: 'full',
           updatesDocument: true,
           promotedEntries,
@@ -2253,6 +2254,19 @@ export class EditorSyntaxController {
           updatesDocument: true,
           signal,
         })
+        if (loaded.skipApply && !this.#canProviderQuerySyntaxRange()) {
+          return {
+            contentVersion: guard.contentVersion,
+            parseGeneration: guard.parseGeneration,
+            parseId: base.parseId,
+            baseResult: base.result,
+            range: null,
+            result: base.result,
+            source: 'full',
+            updatesDocument: true,
+            promotedEntries,
+          }
+        }
         return {
           ...loaded,
           parseId: base.parseId,
@@ -2588,6 +2602,9 @@ export class EditorSyntaxController {
       return false
     }
 
+    const partial = analysis?.kind === 'partial'
+    const terminalPartial = isTerminalIncompleteSyntaxResult(result)
+
     // Admit range entry according to strict disjoint ownership & copy-eligibility rules.
     const admitted = this.#admitRangeEntry(
       loadResult.range,
@@ -2597,11 +2614,18 @@ export class EditorSyntaxController {
       snapshot,
     )
     if (!admitted.admitted || !admitted.entry) {
+      // Even when a terminal partial claims no uncovered token strips (e.g. an authoritative
+      // Markdown records query over already-covered strips), still record its failure outcome so
+      // the viewport settles instead of staying in `loading`.
+      if (terminalPartial && !isOptional && !isFirstRows) {
+        this.#handleRequiredRangeFailure(loadResult.range, guard, {
+          preserveProvisionalPaint: true,
+        })
+        return true
+      }
       return false
     }
 
-    const partial = analysis?.kind === 'partial'
-    const terminalPartial = isTerminalIncompleteSyntaxResult(result)
     const visibleRange = this.options.getVisibleSyntaxRange()
 
     // Paint tokens & copy store (updating `rangeCopyOwner` BEFORE painting for `firstRows` provenance).
@@ -3896,6 +3920,36 @@ export class EditorSyntaxController {
   #nextWarmGeneration(): number {
     this.#warmGeneration += 1
     return this.#warmGeneration
+  }
+
+  #pruneDegradedAndPartialRangeEntries(): void {
+    const kept = this.#rangeEntries.filter(
+      (entry) => entry.result.degraded === null && !entry.tokensOnly,
+    )
+    if (kept.length === this.#rangeEntries.length) return
+    const keptSet = new Set(kept)
+    this.#rangeEntries = kept
+    this.#lastRangeTrim = null
+    if (this.#rangeScopeOwners.some((owner) => !keptSet.has(owner))) {
+      this.#rangeScopeOwners = this.#rangeScopeOwners.filter((owner) => keptSet.has(owner))
+      this.#publishedScope = null
+    } else if (this.#publishedScope?.degraded) {
+      this.#publishedScope = null
+    }
+    const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+    const rangeOwned =
+      !this.#highlighterSession &&
+      snapshot !== null &&
+      this.#rangeTokenOwner?.store === this.#currentTokens &&
+      this.#rangeTokenOwner.snapshot === snapshot
+    if (rangeOwned) {
+      const tokens = compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(kept))
+      this.#currentTokens = tokens
+      this.#rangeTokenOwner = { store: tokens, snapshot }
+      if (this.#copyOwner === 'range') {
+        this.#compactRangeCopyStore(kept, tokens)
+      }
+    }
   }
 
   #clearSyntaxRangeCache(): void {
