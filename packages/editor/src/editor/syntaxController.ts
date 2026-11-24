@@ -174,6 +174,10 @@ type PendingInitialHighlightThemeTerminal = {
 
 const BACKGROUND_SYNTAX_TILE_CHARS = 120_000
 
+// Quiet time after which an edit's colors are refreshed without the debounce. Typing keys come
+// closer together, so a typing burst refreshes once at its first key and then as debounced.
+const EDIT_PAUSE_MS = 250
+
 // Backoff before each retry of a failed highlight refresh. The last rung retries on a new
 // highlighter session; the failure after it is terminal.
 const HIGHLIGHT_RETRY_DELAYS_MS: readonly number[] = [100, 400]
@@ -290,6 +294,7 @@ export class EditorSyntaxController {
   #pendingPrefetch: PendingSyntaxPrefetch | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   #warmGeneration = 0
+  #lastStructuralEditRefreshAt = Number.NEGATIVE_INFINITY
 
   constructor(private readonly options: EditorSyntaxControllerOptions) {}
 
@@ -1372,7 +1377,7 @@ export class EditorSyntaxController {
     const configurationGeneration = this.#initialHighlightConfigurationGeneration
     this.#pendingSyntaxContentVersion = contentVersion
 
-    const delayMs = options.delayMs ?? syntaxRefreshDelay(change)
+    const delayMs = options.delayMs ?? this.#structuralRefreshDelay(change)
     this.#syntaxRequests.schedule({
       delayMs,
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
@@ -1393,6 +1398,20 @@ export class EditorSyntaxController {
         ),
       ),
     })
+  }
+
+  /**
+   * The worker reparses every edit as it arrives, so waiting only delays the colors. An edit after
+   * a pause is re-highlighted at once; the debounce spaces out the refreshes of typing, whose keys
+   * come closer together than the pause.
+   */
+  #structuralRefreshDelay(change: DocumentSessionChange | null): number {
+    const debounce = syntaxRefreshDelay(change)
+    if (debounce === 0) return 0
+    const now = nowMs()
+    const previous = this.#lastStructuralEditRefreshAt
+    this.#lastStructuralEditRefreshAt = now
+    return now - previous >= EDIT_PAUSE_MS ? 0 : debounce
   }
 
   #refreshHighlightTokens(

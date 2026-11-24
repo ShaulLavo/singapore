@@ -2,6 +2,7 @@ import { editReusableTree } from './reuse'
 import { REVIEW_BATCH_YIELD_RANGES } from './reviewBatch'
 import { parseProjectedTree } from './projection'
 import { TREE_SITTER_BOOTSTRAP_UNITS } from './source'
+import { injectionsStayInRootChildren } from './injectionLocality'
 import {
   SLICE_CAPTURE_LIMIT,
   SLICE_GRAMMAR_LIMIT,
@@ -1086,6 +1087,7 @@ const editDocument = async (
     const injectionRanges = enclosingRanges(
       changedRanges.concat(editedRanges(request.inputEdits, source.length)),
       [reusableTree, rootLayer.tree],
+      runtimeInjectionsStayInRootChildren(runtime, rootLayer.tree.rootNode),
     )
     const degraded: TreeSitterDegradedState[] = []
     const markdown = await prepareMdxMarkdown(request, source, rootLayer)
@@ -1111,16 +1113,19 @@ const editDocument = async (
     assertRuntimeSessionActive(request.runtimeSessionId)
     replaceCachedDocument(request.runtimeSessionId, parsedDocument)
     if (request.resultMode === 'parseOnly') {
-      return parseAckResult(
-        request,
-        changedRanges,
-        phaseTimings(context).concat([
-          { name: 'treeSitter.edit', durationMs: editMs },
-          { name: 'treeSitter.parse', durationMs: parseMs },
-        ]),
-        degraded,
-        parsedDocument.missingLanguages,
-      )
+      return {
+        ...parseAckResult(
+          request,
+          changedRanges,
+          phaseTimings(context).concat([
+            { name: 'treeSitter.edit', durationMs: editMs },
+            { name: 'treeSitter.parse', durationMs: parseMs },
+          ]),
+          degraded,
+          parsedDocument.missingLanguages,
+        ),
+        statistics: editStatistics(context),
+      }
     }
 
     const queryStart = nowMs()
@@ -1139,7 +1144,10 @@ const editDocument = async (
       documentId: request.documentId,
       snapshotVersion: request.snapshotVersion,
       languageId: request.languageId,
-      statistics: resultStatistics(parsedDocument, result, context),
+      statistics: {
+        ...resultStatistics(parsedDocument, result, context),
+        ...editStatistics(context),
+      },
       missingLanguages: parsedDocument.missingLanguages,
       captures: result.captures,
       folds: result.folds,
@@ -1357,6 +1365,11 @@ const resultStatistics = (
     (result.tokensPacked?.styleIds.byteLength ?? 0),
   rangeStart: range?.startIndex ?? 0,
   rangeEnd: range?.endIndex ?? document.size,
+})
+
+/** How much of the document an edit scanned for injections, in UTF-16 units. */
+const editStatistics = (context: CancellationContext): Readonly<Record<string, number>> => ({
+  injectionScanUnits: context.counts?.get('injectionScanUnits') ?? 0,
 })
 
 const measurePhase = <T>(context: CancellationContext, name: string, run: () => T): T => {
@@ -1774,6 +1787,8 @@ type InjectionGroup = Omit<PendingInjectionPlan, 'kind' | 'patternIndex' | 'rang
 
 type ReusableLayer = {
   readonly layer: ParsedLayer
+  /** The edits left its text and the column it starts at as they were; see `keepsLayerShape`. */
+  readonly keepsShape: boolean
   state: 'available' | 'consumed'
 }
 
@@ -1874,6 +1889,7 @@ const appendReusableLayer = (
   if (isStrictlyBeforeEdits(layer.ranges, inputEdits)) {
     reusableLayers.push({
       layer: { ...layer, tree: layer.tree.copy() },
+      keepsShape: true,
       state: 'available',
     })
     return
@@ -1882,8 +1898,33 @@ const appendReusableLayer = (
   const tree = editReusableTree(layer.tree, inputEdits)
   reusableLayers.push({
     layer: { ...layer, tree, ranges: tree.getIncludedRanges() },
+    keepsShape: keepsLayerShape(layer.ranges, inputEdits),
     state: 'available',
   })
+}
+
+/**
+ * Whether every edit comes after the layer or ends on a row above its first. Its text and the
+ * column it starts at are then unchanged, and its edited tree is the tree a fresh parse builds,
+ * moved. An edit on the layer's first row moves that column, which an indentation-sensitive
+ * scanner reads, so that layer is reparsed. Edits are checked in the old text's coordinates
+ * only: each must end before the one applied ahead of it.
+ */
+const keepsLayerShape = (
+  ranges: readonly TreeSitterRange[],
+  edits: ParseParsedDocumentOptions['inputEdits'],
+): boolean => {
+  const first = ranges[0]
+  if (!first) return false
+  const end = maxRangeEndIndex(ranges)
+  let previousStart = Number.POSITIVE_INFINITY
+  for (const edit of edits) {
+    if (edit.oldEndIndex > previousStart) return false
+    previousStart = edit.startIndex
+    if (edit.startIndex > end) continue
+    if (edit.oldEndPosition.row >= first.startPosition.row) return false
+  }
+  return true
 }
 
 const isStrictlyBeforeEdits = (
@@ -2023,20 +2064,51 @@ const recordLayerChanges = (
 // Changed ranges miss structure that moved without its first node changing: deleting a fence's
 // opening leaves the heading it becomes as the only change, and the fence's content turns into a
 // paragraph unreported. Each range grows to the smallest named node holding it in either tree.
+// When that node is the root and every injection match stays inside one root child, the range
+// grows to the root children it touches instead: a range across two top-level statements would
+// otherwise rescan the whole document.
 const enclosingRanges = (
   ranges: readonly TreeSitterSyntaxRange[],
   trees: readonly Tree[],
+  matchesStayInRootChildren = false,
 ): TreeSitterSyntaxRange[] =>
   ranges.map((range) => {
     let { startIndex, endIndex } = range
     for (const tree of trees) {
-      const node = tree.rootNode.namedDescendantForIndex(range.startIndex, range.endIndex)
-      if (!node) continue
-      startIndex = Math.min(startIndex, node.startIndex)
-      endIndex = Math.max(endIndex, node.endIndex)
+      const span = enclosingSpan(tree.rootNode, range, matchesStayInRootChildren)
+      if (!span) continue
+      startIndex = Math.min(startIndex, span.startIndex)
+      endIndex = Math.max(endIndex, span.endIndex)
     }
     return { startIndex, endIndex }
   })
+
+const enclosingSpan = (
+  root: Node,
+  range: TreeSitterSyntaxRange,
+  matchesStayInRootChildren: boolean,
+): TreeSitterSyntaxRange | null => {
+  const node = root.namedDescendantForIndex(range.startIndex, range.endIndex)
+  if (!node) return null
+  if (!matchesStayInRootChildren || node.id !== root.id) return node
+  const first = root.firstChildForIndex(range.startIndex)
+  if (!first) return null
+  const last = root.firstChildForIndex(Math.max(range.startIndex, range.endIndex - 1)) ?? first
+  return { startIndex: first.startIndex, endIndex: Math.max(range.endIndex, last.endIndex) }
+}
+
+const injectionScopes = new WeakMap<Runtime, boolean>()
+
+/** Whether the language's injection matches each stay inside one child of `root`. */
+const runtimeInjectionsStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
+  const known = injectionScopes.get(runtime)
+  if (known !== undefined) return known
+  const query = ensureQuery(runtime, 'injection')
+  const source = runtime.descriptor.injectionQuerySource ?? ''
+  const stays = query !== null && injectionsStayInRootChildren(query, source, root.type)
+  injectionScopes.set(runtime, stays)
+  return stays
+}
 
 /** Each edit's inserted text in the final document, widened by one unit to catch adjacency. */
 const editedRanges = (
@@ -2221,8 +2293,13 @@ const carryReusableLayer = async (
   const layerChanged = reusable.layer.ranges.some((range) => {
     return rangeIntersectsChangedRanges(range, changedRanges)
   })
-  // Reparsed, not kept: an edit before a layer still touches its first token's padding, and the
-  // kept tree then differs from what a fresh parse gives. An unchanged reparse is cheap.
+  // A kept tree still reads its text through the old parse's source; it reads the new one instead.
+  if (!layerChanged && reusable.keepsShape && canRebindTreeSource(reusable.layer.tree)) {
+    rebindReusedTreeSource(reusable.layer.tree, options.source, reusable.layer.ranges)
+    reusable.state = 'consumed'
+    return reusable.layer
+  }
+  // Reparsed when an edit moved the column it starts at. An unchanged reparse is cheap.
   if (!layerChanged) return reparseCarriedLayer(reusable, options)
 
   if (reusable.layer.kind !== 'combined-injection') return null
@@ -2382,6 +2459,7 @@ const findInjectionSpan = async (
   for (let startIndex = span.startIndex; startIndex < span.endIndex; startIndex += 262_144) {
     assertNotCancelled(context)
     const range = { startIndex, endIndex: Math.min(span.endIndex, startIndex + 262_144) }
+    incrementCount(context, 'injectionScanUnits', range.endIndex - range.startIndex)
     const matches = measurePhase(context, 'injectionDiscovery', () =>
       query.matches(parent.tree.rootNode, queryOptions(context, range)),
     )
@@ -2395,7 +2473,9 @@ const findInjectionSpan = async (
       results.seen,
     )
     if (results.matchSpans) appendItems(results.matchSpans, matches.map(injectionMatchSpan))
-    await yieldWorker()
+    // Between chunks only: a yield after the last one would put an edit's small scan behind
+    // whatever else is queued, for nothing.
+    if (range.endIndex < span.endIndex) await yieldWorker()
   }
 }
 

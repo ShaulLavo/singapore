@@ -70,6 +70,24 @@ The session numbers its range requests. Each caller is answered with the range i
 5. Queries run for invalidated or visible ranges first.
 6. Query results are emitted as syntax decorations or structural ranges tagged with their base snapshot.
 
+The editor asks for the visible range as soon as an edit after a 250 ms pause is parsed; the
+following keys of a typing burst wait for the debounce. Refreshing after an edit does not ask
+again for a warmed or prefetched range beyond the shown rows.
+
+An edit looks for injections only in the root's changed ranges and the edit itself, each grown to
+the smallest node holding it. When that node is the root, the range grows to the top-level nodes
+it touches, but only for a language whose injection query keeps every match inside one top-level
+node (`injectionsStayInRootChildren`): every compiled pattern must be rooted, which rules out
+sibling groups and quantified alternations, and its root may be neither the document's root type
+nor a wildcard. Any other query can pair a changed statement with a distant one and is scanned
+over the whole document.
+Injection layers outside those ranges keep their edited trees, reading the new text, when every
+edit ends on a row above them, and are reparsed when an edit moved the column they start at.
+
+An edit answers only with its complete reparse. Answering the visible range from a parse of part
+of the text was tried and dropped: no cut point is safe for an LR grammar, since a block comment
+can run past any lookahead and a call's `(` can follow its name by any number of lines.
+
 ### Range requests while scrolling
 
 Each viewport change asks for the visible rows' uncached text and for a look-ahead window around them: 64,000 characters in the scroll direction and 32,000 behind (up to 192,000 ahead on a fast scroll). A newer look-ahead replaces the older one for the view, which ignores the older answer, but the older query keeps running: when the scroll turns back, its answer is cached for the next window, and a request for the same window joins it. Only an edit or disposal stops it.
