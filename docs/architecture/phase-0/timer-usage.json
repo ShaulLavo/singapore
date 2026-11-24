@@ -327,7 +327,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 1996,
+      "line": 2002,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -335,7 +335,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 2005,
+      "line": 2011,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -343,7 +343,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1764,
+      "line": 1763,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -511,7 +511,7 @@
       "file": "packages/react/src/index.tsx",
       "id": "packages/react/src/index.tsx:queueMicrotask:021fec5f8c",
       "justification": "Defers the callback past StrictMode's synchronous replay; the incarnation, document and state guards drop it when the editor moved on, and no editor work is scheduled.",
-      "line": 618,
+      "line": 622,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -527,7 +527,7 @@
       "file": "packages/react/src/index.tsx",
       "id": "packages/react/src/index.tsx:queueMicrotask:95e4ae90ae",
       "justification": "Defers delivery until the mount survives React's synchronous StrictMode replay; the incarnation guard cancels disposed mounts, and no editor work is scheduled.",
-      "line": 575,
+      "line": 579,
       "snippet": "queueMicrotask(() => {"
     },
     {

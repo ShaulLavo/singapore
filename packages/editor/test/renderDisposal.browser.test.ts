@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import '../src/style.css'
 import { Editor } from '../src/editor/Editor'
+import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
 
 const releases: (() => void)[] = []
 
@@ -104,6 +105,7 @@ it.each(['throw', 'dispose'] as const)(
       height: 'content',
       lineHeight: 20,
       plugins: [
+        createPaintSnapshotPlugin(),
         {
           activate: (context) =>
             context.registerGutterContribution({

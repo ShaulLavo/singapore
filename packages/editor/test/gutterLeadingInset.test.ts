@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '../src/editor/Editor'
 import { decodePaintSnapshot } from '../src/editor/paintSnapshot'
+import { createPaintSnapshotPlugin, paintSnapshotSupport } from '../src/paintSnapshotPlugin'
 import type { EditorGutterContribution, EditorPlugin } from '../src/plugins'
 import { createEditorLoggingPlugin } from '../src/logging'
 import { setHighlightRegistry } from '../src/public/testing'
@@ -201,7 +202,7 @@ describe('gutter leading inset', () => {
     expect(paint).not.toBeNull()
     const view = mountView({ gutterContributions: [lane('probe')] })
 
-    expect(view.restorePaint(paint!)).toBe(false)
+    expect(view.restorePaint(paint!, paintSnapshotSupport)).toBe(false)
     expect(view.isProvisional).toBe(false)
     expect(inlineInset(view)).toBe('')
     expect(view.scrollElement.style.getPropertyValue('--editor-gutter-width')).toBe('24px')
@@ -221,9 +222,9 @@ describe('gutter leading inset', () => {
     })
 
     view.setSelection(0, 0)
-    expect(view.restorePaint(paint)).toBe(true)
+    expect(view.restorePaint(paint, paintSnapshotSupport)).toBe(true)
     expect(bandRows(view)).toHaveLength(1)
-    expect(view.restorePaint(paint)).toBe(true)
+    expect(view.restorePaint(paint, paintSnapshotSupport)).toBe(true)
     expect(bandRows(view)).toHaveLength(1)
     view.commitProvisionalPaint()
     expect(bandRows(view)).toEqual(['0'])
@@ -281,7 +282,7 @@ function mountEditor(options: ConstructorParameters<typeof Editor>[1] = {}): Edi
   const editor = new Editor(host, {
     documentKey: 'file-a',
     lineHeight: 20,
-    plugins: [lanePlugin('probe')],
+    plugins: [lanePlugin('probe'), createPaintSnapshotPlugin()],
     textMetrics: TEXT_METRICS,
     ...options,
   })

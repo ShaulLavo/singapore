@@ -301,13 +301,11 @@ describe('createPlugin view scope', () => {
     expect(first.dispatchCommand('test.align.run')).toBe(true)
     expect(second.dispatchCommand('test.align.run')).toBe(true)
     expect(ran).toEqual(['first', 'second'])
-    expect(first.getCommandDeclarations().some((entry) => entry.id === 'test.align.run')).toBe(true)
+    expect(first.getCommandIds().includes('test.align.run')).toBe(true)
 
     first.setPlugins([])
     expect(first.dispatchCommand('test.align.run')).toBe(false)
-    expect(first.getCommandDeclarations().some((entry) => entry.id === 'test.align.run')).toBe(
-      false,
-    )
+    expect(first.getCommandIds().includes('test.align.run')).toBe(false)
   })
 
   test('refuses a command id outside the plugin namespace or naming a built-in', () => {

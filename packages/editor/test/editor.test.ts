@@ -17,6 +17,7 @@ import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/sr
 import {
   createEditorLoggingPlugin,
   createMergeConflictPlugin,
+  EDITOR_MERGE_CONFLICT_FEATURE,
   Editor,
   type EditorChangeHandler,
   type EditorCommandId,
@@ -1716,10 +1717,16 @@ describe('Editor', () => {
       expect(editor.materializeFullText()).toBe(conflict + 'theirs\n')
     })
 
+    const mergeConflicts = () => {
+      editor.addPlugin(createMergeConflictPlugin())
+      return editor.getFeature(EDITOR_MERGE_CONFLICT_FEATURE)!
+    }
+
     it('reports conflict marker regions in the current document', () => {
+      const feature = mergeConflicts()
       editor.setText(['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'))
 
-      const conflicts = editor.getMergeConflicts()
+      const conflicts = feature.getConflicts()
 
       expect(conflicts).toHaveLength(1)
       expect(conflicts[0]).toMatchObject({
@@ -1729,23 +1736,36 @@ describe('Editor', () => {
     })
 
     it('resolves a conflict through the normal editor edit path', () => {
+      const feature = mergeConflicts()
       editor.setText(
         ['before', '<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'),
       )
 
-      expect(editor.resolveMergeConflict(0, 'theirs')).toBe(true)
+      expect(feature.resolveConflict(0, 'theirs')).toBe(true)
 
       expect(editor.materializeFullText()).toBe('before\ntheirs\n')
-      expect(editor.getMergeConflicts()).toEqual([])
+      expect(feature.getConflicts()).toEqual([])
       expect(editor.getState().canUndo).toBe(true)
     })
 
+    it('reports failure when a read-only editor refuses the resolution', () => {
+      const feature = mergeConflicts()
+      const text = ['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n')
+      editor.setText(text)
+      editor.setEditability('readonly')
+
+      expect(feature.resolveConflict(0, 'theirs')).toBe(false)
+      expect(feature.resolveAllConflicts('ours')).toBe(false)
+      expect(editor.materializeFullText()).toBe(text)
+    })
+
     it('returns false for absent conflicts or absent base sections', () => {
+      const feature = mergeConflicts()
       editor.setText(['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'))
 
-      expect(editor.resolveMergeConflict(2, 'ours')).toBe(false)
-      expect(editor.resolveMergeConflict(0, 'base')).toBe(false)
-      expect(editor.getMergeConflicts()).toHaveLength(1)
+      expect(feature.resolveConflict(2, 'ours')).toBe(false)
+      expect(feature.resolveConflict(0, 'base')).toBe(false)
+      expect(feature.getConflicts()).toHaveLength(1)
     })
 
     it('renders a lens line above the conflict that resolves it', () => {

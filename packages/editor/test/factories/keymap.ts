@@ -5,7 +5,8 @@ import {
   type KeymapEntry,
 } from '@shaulavo/hotkeys'
 import { baseEditorKeymap, defaultEditorPacks } from '../../src/keymap/presets'
-import { editorCommandDeclaration, isEditorCommandId } from '../../src/editor/commandCatalog'
+import { isEditorCommandId } from '../../src/editor/commandCatalog'
+import { editorCommandDeclaration } from '../../src/editor/commandText'
 
 export function defaultKeyBindings(platform: KeymapPlatform = detectPlatform()) {
   const base: readonly KeymapEntry[] = baseEditorKeymap[platform]

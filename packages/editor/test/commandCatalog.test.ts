@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EDITOR_COMMANDS } from '../src/editor/commandCatalog'
+import { EDITOR_COMMANDS } from '../src/editor/commandText'
 import { readonlyDiffPack } from '../src/keymap/presets'
 
 describe('editor command catalog', () => {
