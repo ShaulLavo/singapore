@@ -101,7 +101,9 @@ step scroll, unminified build, traced): the main thread was busy 1,195 ms with t
 370 ms with the timer, Paint events fell from 6,435 to a few hundred, input acknowledgement went
 from 3.0 s to 2.0 s, and wheel event to frame from 55 ms to 38 ms. Typing 18 keys into a 500-line
 file: 222 ms of main thread with the animation, 131 ms with the timer. The timer costs two
-restyles a second while a caret is drawn, and none when no caret is.
+restyles a second while a caret is drawn, and none when no caret is. An idle caret blinks for ten
+seconds after it last moved and then stays drawn (GTK's default), so an idle page is not woken
+forever and fake-timer test suites see a bounded timer chain.
 
 ## Reproduce
 
