@@ -1948,8 +1948,9 @@ const queryBootstrapRange = async (
   }
 }
 
-// A preview window longer than this waits for the complete reparse instead.
-const EDIT_PREVIEW_UNITS = 262_144
+// A preview window longer than this waits for the complete reparse instead: a shown range and its
+// lookahead fit, while warming far from the edit would parse most of a window for nothing.
+const EDIT_PREVIEW_UNITS = TREE_SITTER_BOOTSTRAP_UNITS
 
 // Errors that end this close past the range are the text's own, read the same way by the complete
 // reparse. One that runs on toward the window's cut may be recovery from the cut.

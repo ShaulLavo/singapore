@@ -1573,20 +1573,22 @@ function structuralLease(
   const lease = entry.lease(signal)
   entry.registerDisplayDemand(lease.signal)
   let demand: EditorSyntaxRange | undefined
-  let shown: EditorAnalysisDisplayDemand | undefined
+  let frame: readonly EditorSyntaxRange[] | undefined
   const result = () => (demand ? entry.range(demand) : entry.current())
   const current = () => lease.wait(result)
-  // The last range asked for is often one warmed off screen. Asking for it again after an edit
-  // would hold the worker ahead of the visible range the caller asks for next.
+  // The last range asked for is often one warmed off screen, or a prefetch reaching far past the
+  // shown rows. Asking for it again after an edit would hold the worker ahead of the visible range
+  // the caller asks for next, so only a range within the last shown frame is asked for again.
   const refresh = refreshRetainedAnalysis(entry, () =>
-    demand && !offFrame(demand, shown) ? entry.range(demand) : entry.current(),
+    demand && withinFrame(demand, frame) ? entry.range(demand) : entry.current(),
   )
   const retained: EditorRetainedSyntaxSession = {
     runtimeSessionId: entry.runtimeSessionId,
     onDidProduceSyntax: (listener) =>
       observeRetainedEvent(lease.signal, (next) => entry.onDidProduceSyntax(next), listener),
     setDisplayDemand: (next) => {
-      shown = next
+      // An edit briefly makes the demand unknown; the frame shown before it still applies.
+      if (next.kind === 'frame') frame = next.ranges
       entry.setDisplayDemand(lease.signal, next)
     },
     get foldingSupport() {
@@ -1748,13 +1750,13 @@ function boundedRange(range: EditorSyntaxRange, length: number): EditorSyntaxRan
   return { startIndex, endIndex: Math.max(startIndex, Math.min(length, range.endIndex)) }
 }
 
-/** Whether a frame is known to be shown and `range` lies outside it. */
-function offFrame(
+/** Whether `range` lies within a shown frame, or no frame has been shown yet. */
+function withinFrame(
   range: EditorSyntaxRange,
-  shown: EditorAnalysisDisplayDemand | undefined,
+  frame: readonly EditorSyntaxRange[] | undefined,
 ): boolean {
-  if (shown?.kind !== 'frame') return false
-  return !shown.ranges.some((frame) => rangesIntersect(frame, range))
+  if (!frame) return true
+  return frame.some((shown) => rangeContains(shown, range))
 }
 
 function rangesIntersect(left: EditorSyntaxRange, right: EditorSyntaxRange): boolean {

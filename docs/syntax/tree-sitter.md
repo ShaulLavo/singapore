@@ -58,8 +58,9 @@ Each parse result is tied to a document snapshot/version. Consumers must be able
 5. Queries run for invalidated or visible ranges first.
 6. Query results are emitted as syntax decorations or structural ranges tagged with their base snapshot.
 
-The editor asks for the visible range as soon as the first edit after a pause is parsed; only the
-edits of a burst wait for the debounce. An edit looks for injections only in the root's changed
+The editor asks for the visible range as soon as an edit after a 250 ms pause is parsed; the
+following keys of a typing burst wait for the debounce. Refreshing after an edit does not ask
+again for a warmed or prefetched range beyond the shown rows. An edit looks for injections only in the root's changed
 ranges and the edit itself, each grown to the smallest node holding it, or to the top-level nodes
 it touches when that node is the root. Injection layers outside those ranges keep their edited
 trees when every edit ends on a row above them, and are reparsed when an edit moved the column they

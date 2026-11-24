@@ -174,6 +174,10 @@ type PendingInitialHighlightThemeTerminal = {
 
 const BACKGROUND_SYNTAX_TILE_CHARS = 120_000
 
+// Quiet time after which an edit's colors are refreshed without the debounce. Typing keys come
+// closer together, so a typing burst refreshes once at its first key and then as debounced.
+const EDIT_PAUSE_MS = 250
+
 // Backoff before each retry of a failed highlight refresh. The last rung retries on a new
 // highlighter session; the failure after it is terminal.
 const HIGHLIGHT_RETRY_DELAYS_MS: readonly number[] = [100, 400]
@@ -1395,8 +1399,9 @@ export class EditorSyntaxController {
   }
 
   /**
-   * The worker reparses every edit as it arrives, so waiting only delays the colors. The first edit
-   * after a pause is re-highlighted at once; the debounce spaces out the refreshes of a burst.
+   * The worker reparses every edit as it arrives, so waiting only delays the colors. An edit after
+   * a pause is re-highlighted at once; the debounce spaces out the refreshes of typing, whose keys
+   * come closer together than the pause.
    */
   private structuralRefreshDelay(change: DocumentSessionChange | null): number {
     const debounce = syntaxRefreshDelay(change)
@@ -1404,7 +1409,7 @@ export class EditorSyntaxController {
     const now = nowMs()
     const previous = this.lastStructuralEditRefreshAt
     this.lastStructuralEditRefreshAt = now
-    return now - previous >= debounce ? 0 : debounce
+    return now - previous >= EDIT_PAUSE_MS ? 0 : debounce
   }
 
   private refreshHighlightTokens(
