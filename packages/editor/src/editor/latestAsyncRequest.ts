@@ -26,17 +26,17 @@ export type LatestAsyncRequestControllerOptions = {
 
 export class LatestAsyncRequest<T> {
   private readonly key: string
-  private readonly taskClass: EditorWorkTaskClass
+  readonly #taskClass: EditorWorkTaskClass
   private readonly scheduler: EditorWorkScheduler
-  private readonly ownsScheduler: boolean
+  readonly #ownsScheduler: boolean
   private handle: EditorScheduledWorkHandle | null = null
   private disposed = false
 
   constructor(options: LatestAsyncRequestControllerOptions = {}) {
     this.key = options.key ?? 'editor.latestAsyncRequest'
-    this.taskClass = options.taskClass ?? 'background-derived'
+    this.#taskClass = options.taskClass ?? 'background-derived'
     this.scheduler = options.scheduler ?? new EditorWorkScheduler()
-    this.ownsScheduler = !options.scheduler
+    this.#ownsScheduler = !options.scheduler
   }
 
   public isActive(): boolean {
@@ -51,7 +51,7 @@ export class LatestAsyncRequest<T> {
     // maxDelayMs relies on.
     this.handle = this.scheduler.schedule({
       key: this.key,
-      taskClass: options.taskClass ?? this.taskClass,
+      taskClass: options.taskClass ?? this.#taskClass,
       priority: options.priority,
       delayMs: normalizeDelay(options.delayMs),
       maxDelayMs: normalizeDelay(options.maxDelayMs),
@@ -72,7 +72,7 @@ export class LatestAsyncRequest<T> {
   public dispose(): void {
     this.disposed = true
     this.cancel()
-    if (this.ownsScheduler) this.scheduler.dispose()
+    if (this.#ownsScheduler) this.scheduler.dispose()
   }
 
   private apply(
@@ -81,7 +81,7 @@ export class LatestAsyncRequest<T> {
     token: number,
     startedAt: number,
   ) {
-    this.clearHandle(token)
+    this.#clearHandle(token)
     options.apply(result, startedAt)
   }
 
@@ -91,11 +91,11 @@ export class LatestAsyncRequest<T> {
     token: number,
     startedAt: number,
   ): void {
-    this.clearHandle(token)
+    this.#clearHandle(token)
     options.fail?.(error, startedAt)
   }
 
-  private clearHandle(token: number): void {
+  #clearHandle(token: number): void {
     if (this.handle?.token !== token) return
 
     this.handle = null

@@ -51,25 +51,25 @@ type TouchSelectionOptions = {
 
 /** Touch recognizes gestures; selection, word boundaries, painting and scrolling belong to the editor. */
 export class TouchSelectionController {
-  private gesture: TouchGesture | null = null
+  #gesture: TouchGesture | null = null
   private readonly scheduler = new EditorWorkScheduler()
-  private lastTap: {
+  #lastTap: {
     readonly x: number
     readonly y: number
     readonly time: number
     readonly count: number
   } | null = null
   private pointerType = 'mouse'
-  private pendingMousePress: boolean | null = null
-  private scrollFrame: ScheduledFrame | null = null
-  private endFrame: ScheduledFrame | null = null
-  private selectionState: { session: object; snapshot: object; selections: object } | null = null
+  #pendingMousePress: boolean | null = null
+  #scrollFrame: ScheduledFrame | null = null
+  #endFrame: ScheduledFrame | null = null
+  #selectionState: { session: object; snapshot: object; selections: object } | null = null
 
   constructor(private readonly options: TouchSelectionOptions) {}
 
   selectionChanged(session: object, snapshot: object, selections: object): void {
-    const previous = this.selectionState
-    this.selectionState = { session, snapshot, selections }
+    const previous = this.#selectionState
+    this.#selectionState = { session, snapshot, selections }
     if (
       previous?.session === session &&
       previous.snapshot === snapshot &&
@@ -80,11 +80,11 @@ export class TouchSelectionController {
   }
 
   acceptSelection(session: object, snapshot: object, selections: object): void {
-    this.selectionState = { session, snapshot, selections }
+    this.#selectionState = { session, snapshot, selections }
   }
 
   clearSelection(): void {
-    this.selectionState = null
+    this.#selectionState = null
     this.cancel()
   }
 
@@ -93,54 +93,55 @@ export class TouchSelectionController {
   }
 
   consumeMousePress(): boolean | null {
-    const claimed = this.pendingMousePress
-    this.pendingMousePress = null
+    const claimed = this.#pendingMousePress
+    this.#pendingMousePress = null
     return claimed
   }
 
   install(): void {
     const element = this.options.element
-    element.ownerDocument.addEventListener('pointerdown', this.pointerDown, { capture: true })
+    element.ownerDocument.addEventListener('pointerdown', this.#pointerDown, { capture: true })
     element.addEventListener('touchstart', this.start, { passive: false, capture: true })
     element.addEventListener('touchmove', this.move, { passive: false })
     element.addEventListener('touchend', this.end, { passive: false })
     element.addEventListener('touchcancel', this.cancel)
-    element.addEventListener('contextmenu', this.contextMenu)
-    element.addEventListener('selectstart', this.selectStart)
-    element.addEventListener('scroll', this.scrollNotification)
-    element.addEventListener('wheel', this.cancelNotification)
-    element.addEventListener('beforeinput', this.cancelNotification)
+    element.addEventListener('contextmenu', this.#contextMenu)
+    element.addEventListener('selectstart', this.#selectStart)
+    element.addEventListener('scroll', this.#scrollNotification)
+    // Passive: a blocking wheel listener makes the browser wait for script before every scroll.
+    element.addEventListener('wheel', this.#cancelNotification, { passive: true })
+    element.addEventListener('beforeinput', this.#cancelNotification)
   }
 
   dispose(): void {
     const element = this.options.element
-    element.ownerDocument.removeEventListener('pointerdown', this.pointerDown, { capture: true })
+    element.ownerDocument.removeEventListener('pointerdown', this.#pointerDown, { capture: true })
     element.removeEventListener('touchstart', this.start, { capture: true })
     element.removeEventListener('touchmove', this.move)
     element.removeEventListener('touchend', this.end)
     element.removeEventListener('touchcancel', this.cancel)
-    element.removeEventListener('contextmenu', this.contextMenu)
-    element.removeEventListener('selectstart', this.selectStart)
-    element.removeEventListener('scroll', this.scrollNotification)
-    element.removeEventListener('wheel', this.cancelNotification)
-    element.removeEventListener('beforeinput', this.cancelNotification)
+    element.removeEventListener('contextmenu', this.#contextMenu)
+    element.removeEventListener('selectstart', this.#selectStart)
+    element.removeEventListener('scroll', this.#scrollNotification)
+    element.removeEventListener('wheel', this.#cancelNotification)
+    element.removeEventListener('beforeinput', this.#cancelNotification)
     this.clearSelection()
     this.scheduler.dispose()
-    this.pendingMousePress = null
+    this.#pendingMousePress = null
   }
 
-  private cancelNotification = (): void => {
-    this.endFrame?.cancel()
-    this.endFrame = null
+  #cancelNotification = (): void => {
+    this.#endFrame?.cancel()
+    this.#endFrame = null
     this.options.notify('cancel', null)
   }
 
-  private scrollNotification = (): void => {
-    if (!this.endFrame) this.options.notify('cancel', null)
+  #scrollNotification = (): void => {
+    if (!this.#endFrame) this.options.notify('cancel', null)
   }
 
   // See browser-quirks.md#ios-native-long-press-selection for native selectstart cancellation.
-  private selectStart = (event: Event): void => {
+  #selectStart = (event: Event): void => {
     const Element = this.options.element.ownerDocument.defaultView?.Element
     if (!this.ownsMouseEvent || !Element) return
     if (
@@ -154,11 +155,11 @@ export class TouchSelectionController {
   }
 
   // See browser-quirks.md#ios-native-long-press-selection for native callout suppression.
-  private contextMenu = (event: MouseEvent): void => {
+  #contextMenu = (event: MouseEvent): void => {
     if (this.ownsMouseEvent) event.preventDefault()
   }
 
-  private pointerDown = (event: PointerEvent): void => {
+  #pointerDown = (event: PointerEvent): void => {
     this.pointerType = event.pointerType
     const Node = this.options.element.ownerDocument.defaultView?.Node
     if (
@@ -167,34 +168,34 @@ export class TouchSelectionController {
       !(event.target instanceof Node) ||
       !this.options.element.contains(event.target)
     )
-      this.lastTap = null
-    if (this.endFrame) this.cancelNotification()
+      this.#lastTap = null
+    if (this.#endFrame) this.#cancelNotification()
     if (event.pointerType === 'touch') return
-    this.pendingMousePress = null
+    this.#pendingMousePress = null
   }
 
   private start = (event: TouchEvent): void => {
     // See browser-quirks.md#ios-native-long-press-selection for capture-time suppression.
     this.options.element.dataset.editorTouchSelecting = 'true'
     this.pointerType = 'touch'
-    this.stopGesture()
-    this.cancelNotification()
-    this.pendingMousePress = null
+    this.#stopGesture()
+    this.#cancelNotification()
+    this.#pendingMousePress = null
     if (event.defaultPrevented || event.touches.length !== 1) {
       delete this.options.element.dataset.editorTouchSelecting
-      this.lastTap = null
+      this.#lastTap = null
       return
     }
-    this.pendingMousePress = this.options.claimPress(event)
-    if (this.pendingMousePress) {
-      this.lastTap = null
+    this.#pendingMousePress = this.options.claimPress(event)
+    if (this.#pendingMousePress) {
+      this.#lastTap = null
       return
     }
     const finger = event.touches[0]
     if (!finger) return
     const position = this.options.positionAt(finger.clientX, finger.clientY)
     if (!position) return
-    const previous = this.lastTap
+    const previous = this.#lastTap
     const repeated =
       previous &&
       event.timeStamp - previous.time <= TAP_DELAY &&
@@ -215,12 +216,12 @@ export class TouchSelectionController {
       dragging: false,
       range: null,
     }
-    this.gesture = gesture
+    this.#gesture = gesture
     this.options.begin()
     if (tapCount > 1) {
       event.preventDefault()
       gesture.range = this.options.select(position, granularity)
-      if (this.gesture !== gesture) return
+      if (this.#gesture !== gesture) return
       this.options.notify('start', granularity)
       return
     }
@@ -228,18 +229,18 @@ export class TouchSelectionController {
       key: 'touch-selection-hold',
       taskClass: 'input-critical',
       delayMs: HOLD_DELAY,
-      isCurrent: () => this.gesture === gesture,
+      isCurrent: () => this.#gesture === gesture,
       run: () => {
         gesture.range = this.options.select(gesture.position, 'word')
-        if (this.gesture !== gesture) return
-        this.lastTap = null
+        if (this.#gesture !== gesture) return
+        this.#lastTap = null
         this.options.notify('start', 'word')
       },
     })
   }
 
   private move = (event: TouchEvent): void => {
-    const gesture = this.gesture
+    const gesture = this.#gesture
     if (!gesture) return
     if (event.touches.length !== 1) {
       this.cancel()
@@ -260,44 +261,44 @@ export class TouchSelectionController {
     gesture.currentX = finger.clientX
     gesture.currentY = finger.clientY
     this.extend(gesture)
-    this.autoScroll()
+    this.#autoScroll()
   }
 
   private extend(gesture: TouchGesture): void {
-    if (this.gesture !== gesture || !gesture.range) return
+    if (this.#gesture !== gesture || !gesture.range) return
     const position = this.options.positionAt(gesture.currentX, gesture.currentY - FINGER_LIFT)
     if (!position) return
     const range = gesture.range
     this.options.extend(range, position, gesture.granularity)
-    if (this.gesture !== gesture) return
+    if (this.#gesture !== gesture) return
     this.options.notify('update', gesture.granularity)
   }
 
-  private autoScroll(): void {
-    const gesture = this.gesture
+  #autoScroll(): void {
+    const gesture = this.#gesture
     if (!gesture?.dragging) return
     if (!this.options.scroll(gesture.currentX, gesture.currentY - FINGER_LIFT)) return
     this.extend(gesture)
-    if (this.scrollFrame) return
-    this.scrollFrame = scheduleFrame(() => {
-      this.scrollFrame = null
-      this.autoScroll()
+    if (this.#scrollFrame) return
+    this.#scrollFrame = scheduleFrame(() => {
+      this.#scrollFrame = null
+      this.#autoScroll()
     })
   }
 
   private end = (event: TouchEvent): void => {
-    const gesture = this.gesture
-    this.stopGesture()
+    const gesture = this.#gesture
+    this.#stopGesture()
     delete this.options.element.dataset.editorTouchSelecting
     if (!gesture) return
     if (event.touches.length > 0) {
-      this.lastTap = null
+      this.#lastTap = null
       return
     }
     if (gesture.range) {
-      this.lastTap = null
+      this.#lastTap = null
       if (!gesture.dragging && gesture.tapCount > 1)
-        this.lastTap = {
+        this.#lastTap = {
           x: gesture.x,
           y: gesture.y,
           time: event.timeStamp,
@@ -305,8 +306,8 @@ export class TouchSelectionController {
         }
       event.preventDefault()
       // See browser-quirks.md#touch-release-scroll-ordering for deferred gesture settlement.
-      this.endFrame = scheduleFrame(() => {
-        this.endFrame = null
+      this.#endFrame = scheduleFrame(() => {
+        this.#endFrame = null
         this.options.notify('end', gesture.granularity, {
           x: gesture.currentX,
           y: gesture.currentY,
@@ -316,21 +317,21 @@ export class TouchSelectionController {
       this.options.focus()
       return
     }
-    this.lastTap = { x: gesture.x, y: gesture.y, time: event.timeStamp, count: 1 }
+    this.#lastTap = { x: gesture.x, y: gesture.y, time: event.timeStamp, count: 1 }
     this.options.tap(gesture.position)
   }
 
   private cancel = (): void => {
     delete this.options.element.dataset.editorTouchSelecting
-    this.stopGesture()
-    this.lastTap = null
-    this.cancelNotification()
+    this.#stopGesture()
+    this.#lastTap = null
+    this.#cancelNotification()
   }
 
-  private stopGesture(): void {
+  #stopGesture(): void {
     this.scheduler.cancel('touch-selection-hold')
-    this.scrollFrame?.cancel()
-    this.scrollFrame = null
-    this.gesture = null
+    this.#scrollFrame?.cancel()
+    this.#scrollFrame = null
+    this.#gesture = null
   }
 }

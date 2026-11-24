@@ -9,6 +9,7 @@ import type { encodePaintSnapshot, SavedPaint, SavedPaintRow } from '../editor/p
 import type { MountedPaintSnapshot } from './documentPaintRows'
 import type { EditorSizing } from '../editor/editorHeight'
 import type { ScheduledFrame } from '../editor/scheduleFrame'
+import type { CaretBlink } from './caretBlink'
 import type { WrapAdvance, WrapBreak } from './displayProjectionTypes'
 import type { GlyphAdvances } from './glyphAdvances'
 import type { HighlightOverlayRange } from './highlightOverlay'
@@ -112,6 +113,7 @@ export interface VirtualizedTextViewInternal {
   /** Configured; the gutter applies it only while it is shown. */
   gutterLeadingInset: number
   readonly caretLayerElement: HTMLDivElement
+  readonly caretBlink: CaretBlink
   readonly caretElement: HTMLDivElement
   readonly secondaryCaretElements: HTMLDivElement[]
   /** A caret render waiting for the next frame because the editor does not hold focus. */

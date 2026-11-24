@@ -40,12 +40,12 @@ export type EditorCommandRouterHandlers = {
 }
 
 export class EditorCommandRouter {
-  private readonly commandHandlers = new Map<EditorAnyCommandId, EditorCommandHandler>()
+  readonly #commandHandlers = new Map<EditorAnyCommandId, EditorCommandHandler>()
 
   constructor(private readonly handlers: EditorCommandRouterHandlers) {}
 
   dispatch(command: EditorAnyCommandId, context: EditorCommandContext = {}): boolean {
-    const registeredResult = this.runRegisteredCommand(command, context)
+    const registeredResult = this.#runRegisteredCommand(command, context)
     if (registeredResult === true) return true
     // A contributed command has only the handler its plugin registered.
     if (!isEditorCommandId(command)) return registeredResult ?? false
@@ -111,30 +111,27 @@ export class EditorCommandRouter {
     command: EditorAnyCommandId,
     handler: EditorCommandHandler,
   ): EditorDisposable {
-    if (this.commandHandlers.has(command)) {
+    if (this.#commandHandlers.has(command)) {
       throw new Error(`Editor command already registered: ${command}`)
     }
 
-    this.commandHandlers.set(command, handler)
+    this.#commandHandlers.set(command, handler)
 
     return {
-      dispose: () => this.unregisterCommandHandler(command, handler),
+      dispose: () => this.#unregisterCommandHandler(command, handler),
     }
   }
 
-  private unregisterCommandHandler(
-    command: EditorAnyCommandId,
-    handler: EditorCommandHandler,
-  ): void {
-    if (this.commandHandlers.get(command) !== handler) return
+  #unregisterCommandHandler(command: EditorAnyCommandId, handler: EditorCommandHandler): void {
+    if (this.#commandHandlers.get(command) !== handler) return
 
-    this.commandHandlers.delete(command)
+    this.#commandHandlers.delete(command)
   }
 
-  private runRegisteredCommand(
+  #runRegisteredCommand(
     command: EditorAnyCommandId,
     context: EditorCommandContext,
   ): boolean | null {
-    return this.commandHandlers.get(command)?.(context) ?? null
+    return this.#commandHandlers.get(command)?.(context) ?? null
   }
 }

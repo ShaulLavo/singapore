@@ -274,11 +274,11 @@ function preparedFallbackSelection(
 }
 
 class PreparedFallbackIndex {
-  private readonly work = new EditorWorkScheduler()
+  readonly #work = new EditorWorkScheduler()
   private disposed = false
-  private resolveReady: (ready: boolean) => void = () => undefined
+  #resolveReady: (ready: boolean) => void = () => undefined
   readonly ready = new Promise<boolean>((resolve) => {
-    this.resolveReady = resolve
+    this.#resolveReady = resolve
   })
 
   constructor(
@@ -286,7 +286,7 @@ class PreparedFallbackIndex {
     private readonly documentId: string,
     private readonly selection: () => ReturnType<typeof preparedFallbackSelection>,
   ) {
-    if (!index) this.resolveReady(false)
+    if (!index) this.#resolveReady(false)
     this.advance()
   }
 
@@ -295,19 +295,19 @@ class PreparedFallbackIndex {
   }
 
   pause(): void {
-    this.resolveReady(false)
-    this.work.cancel('editor.prepared.fallbackFolds')
+    this.#resolveReady(false)
+    this.#work.cancel('editor.prepared.fallbackFolds')
     if (!this.index?.ready) this.report('pending')
   }
 
   resume(): void {
     if (this.disposed || !this.index || this.index.ready) return
-    this.work.schedule({
+    this.#work.schedule({
       key: 'editor.prepared.fallbackFolds',
       taskClass: 'background-derived',
       defer: true,
       run: () => this.step(),
-      apply: (ready) => this.afterStep(ready),
+      apply: (ready) => this.#afterStep(ready),
     })
   }
 
@@ -322,28 +322,28 @@ class PreparedFallbackIndex {
 
   dispose(): void {
     if (this.disposed) return
-    this.resolveReady(false)
+    this.#resolveReady(false)
     if (this.index && !this.index.ready) this.report('cancelled')
     this.disposed = true
-    this.work.dispose()
+    this.#work.dispose()
     this.index = null
   }
 
   private advance(): void {
     if (this.disposed || !this.index) return
-    this.afterStep(this.step())
+    this.#afterStep(this.step())
   }
 
   private step(): boolean {
     return this.index?.step({ maxCodeUnits: 64_000, maxRows: 512 }) ?? false
   }
 
-  private afterStep(ready: boolean): void {
+  #afterStep(ready: boolean): void {
     if (!ready) {
       this.resume()
       return
     }
-    this.resolveReady(true)
+    this.#resolveReady(true)
     this.report('completed')
   }
 

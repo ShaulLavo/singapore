@@ -194,7 +194,7 @@ export class FoldBlockTreeBuilder {
   step(): boolean {
     const frame = this.frames.at(-1)
     if (!frame) return true
-    if (this.pending) return this.joinPending(frame, this.pending)
+    if (this.pending) return this.#joinPending(frame, this.pending)
     if (frame.to - frame.from === 1) {
       this.pending = foldBlockLeaf(this.blocks[frame.from]!)
       this.frames.pop()
@@ -204,7 +204,7 @@ export class FoldBlockTreeBuilder {
     return false
   }
 
-  private joinPending(frame: FoldTreeFrame, pending: FoldBlockTree): boolean {
+  #joinPending(frame: FoldTreeFrame, pending: FoldBlockTree): boolean {
     if (!frame.left) {
       frame.left = pending
       this.pending = null

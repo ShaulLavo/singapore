@@ -116,7 +116,7 @@ export class DocumentEditChain {
       }
     }
 
-    const entries = this.entriesFrom(point, current)
+    const entries = this.#entriesFrom(point, current)
     if (!entries) return null
 
     return {
@@ -127,7 +127,7 @@ export class DocumentEditChain {
     }
   }
 
-  private entriesFrom(
+  #entriesFrom(
     point: DocumentSyncPoint,
     current: DocumentSyncPoint,
   ): readonly EditChainEntry[] | null {

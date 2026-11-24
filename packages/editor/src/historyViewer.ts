@@ -115,7 +115,7 @@ export function createHistoryViewer<TResult = unknown>(
 class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
   private readonly listeners = new Set<() => void>()
   private readonly unsubscribe: () => void
-  private nodesById = new Map<HistoryNodeId, EditorHistoryGraphNode>()
+  #nodesById = new Map<HistoryNodeId, EditorHistoryGraphNode>()
   private state: HistoryViewerState<TResult>
   private generation = 0
   private pending: AbortController | null = null
@@ -126,7 +126,7 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
     private readonly options: HistoryViewerOptions<TResult>,
   ) {
     const graph = buffer.getHistoryGraph()
-    this.indexGraph(graph)
+    this.#indexGraph(graph)
     this.state = {
       graph,
       focusedId: graph.currentId,
@@ -134,7 +134,7 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
       comparison: null,
       lostIds: [],
     }
-    this.unsubscribe = buffer.subscribe(() => this.refreshGraph())
+    this.unsubscribe = buffer.subscribe(() => this.#refreshGraph())
   }
 
   getState(): HistoryViewerState<TResult> {
@@ -142,7 +142,7 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
   }
 
   node(id: HistoryNodeId): EditorHistoryGraphNode | null {
-    return this.nodesById.get(id) ?? null
+    return this.#nodesById.get(id) ?? null
   }
 
   subscribe(listener: () => void): () => void {
@@ -153,7 +153,7 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
   // An explicit pick acknowledges a pruning notice: the loss belongs to the refresh that
   // reported it, not to every state chosen afterwards.
   focus(id: HistoryNodeId): boolean {
-    if (!this.nodesById.has(id)) return false
+    if (!this.#nodesById.has(id)) return false
     if (this.state.focusedId === id && this.state.lostIds.length === 0) return false
     this.publish({ ...this.state, focusedId: id, lostIds: [] })
     return true
@@ -164,41 +164,41 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
   }
 
   focusParent(): boolean {
-    const focused = this.focusedNode()
+    const focused = this.#focusedNode()
     if (!focused || focused.parentId === null) return false
     return this.focus(focused.parentId)
   }
 
   focusChild(): boolean {
-    const focused = this.focusedNode()
+    const focused = this.#focusedNode()
     const child = focused?.preferredChildId ?? focused?.childIds[0]
     if (child === undefined) return false
     return this.focus(child)
   }
 
   focusPrevious(): boolean {
-    return this.focusBySequence(-1)
+    return this.#focusBySequence(-1)
   }
 
   focusNext(): boolean {
-    return this.focusBySequence(1)
+    return this.#focusBySequence(1)
   }
 
   toggleSelection(id: HistoryNodeId): boolean {
-    if (!this.nodesById.has(id)) return false
+    if (!this.#nodesById.has(id)) return false
     const selected = this.state.selectedIds
     const next = selected.includes(id)
       ? selected.filter((candidate) => candidate !== id)
       : selected.slice(-1).concat([id])
     this.publish({ ...this.state, selectedIds: next, lostIds: [] })
-    this.syncComparison()
+    this.#syncComparison()
     return true
   }
 
   clearSelection(): void {
     if (this.state.selectedIds.length === 0 && this.state.lostIds.length === 0) return
     this.publish({ ...this.state, selectedIds: [], lostIds: [] })
-    this.syncComparison()
+    this.#syncComparison()
   }
 
   restore(id: HistoryNodeId, sourceView: EditorViewSession | null = null): DocumentSessionChange {
@@ -209,16 +209,16 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
     if (this.disposed) return
     this.disposed = true
     this.unsubscribe()
-    this.cancelPending()
+    this.#cancelPending()
     this.listeners.clear()
-    this.nodesById = new Map()
+    this.#nodesById = new Map()
   }
 
-  private focusedNode(): EditorHistoryGraphNode | null {
+  #focusedNode(): EditorHistoryGraphNode | null {
     return this.state.focusedId === null ? null : this.node(this.state.focusedId)
   }
 
-  private focusBySequence(step: 1 | -1): boolean {
+  #focusBySequence(step: 1 | -1): boolean {
     const nodes = this.state.graph.nodes
     const index = nodes.findIndex((node) => node.id === this.state.focusedId)
     const target = nodes[index === -1 ? (step === 1 ? 0 : nodes.length - 1) : index + step]
@@ -226,47 +226,47 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
     return this.focus(target.id)
   }
 
-  private refreshGraph(): void {
+  #refreshGraph(): void {
     if (this.disposed) return
     const graph = this.buffer.getHistoryGraph()
     if (graph.revision === this.state.graph.revision) return
 
-    this.indexGraph(graph)
+    this.#indexGraph(graph)
     const lostIds = [this.state.focusedId]
       .concat(this.state.selectedIds)
-      .filter((id): id is HistoryNodeId => id !== null && !this.nodesById.has(id))
+      .filter((id): id is HistoryNodeId => id !== null && !this.#nodesById.has(id))
     // Focus rides along with the current state until the user moves it elsewhere.
     const following = this.state.focusedId === this.state.graph.currentId
-    const retained = this.state.focusedId !== null && this.nodesById.has(this.state.focusedId)
+    const retained = this.state.focusedId !== null && this.#nodesById.has(this.state.focusedId)
     const focusedId = following || !retained ? graph.currentId : this.state.focusedId
-    const selectedIds = this.state.selectedIds.filter((id) => this.nodesById.has(id))
+    const selectedIds = this.state.selectedIds.filter((id) => this.#nodesById.has(id))
     this.publish({ ...this.state, graph, focusedId, selectedIds, lostIds })
-    this.syncComparison()
+    this.#syncComparison()
   }
 
-  private indexGraph(graph: EditorHistoryGraph): void {
-    this.nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
+  #indexGraph(graph: EditorHistoryGraph): void {
+    this.#nodesById = new Map(graph.nodes.map((node) => [node.id, node]))
   }
 
   // Two selected states request one comparison. A request captures the node
   // revisions it saw; a result published later is dropped if either moved.
-  private syncComparison(): void {
+  #syncComparison(): void {
     const [leftId, rightId] = this.state.selectedIds
     const left = leftId === undefined ? null : this.side(leftId)
     const right = rightId === undefined ? null : this.side(rightId)
     if (!left || !right) {
       if (this.state.comparison) this.publish({ ...this.state, comparison: null })
-      this.cancelPending()
+      this.#cancelPending()
       return
     }
 
     const current = this.state.comparison
     if (current && sameSide(current.left, left) && sameSide(current.right, right)) return
-    this.requestComparison(left, right)
+    this.#requestComparison(left, right)
   }
 
-  private requestComparison(left: HistoryComparisonSide, right: HistoryComparisonSide): void {
-    this.cancelPending()
+  #requestComparison(left: HistoryComparisonSide, right: HistoryComparisonSide): void {
+    this.#cancelPending()
     this.generation += 1
     const generation = this.generation
     const comparison: HistoryComparison<TResult> = {
@@ -283,29 +283,25 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
     const controller = new AbortController()
     this.pending = controller
     compare(left, right, controller.signal).then(
-      (result) => this.settleComparison(generation, 'ready', result),
-      () => this.settleComparison(generation, 'failed', null),
+      (result) => this.#settleComparison(generation, 'ready', result),
+      () => this.#settleComparison(generation, 'failed', null),
     )
   }
 
-  private settleComparison(
-    generation: number,
-    status: 'ready' | 'failed',
-    result: TResult | null,
-  ): void {
+  #settleComparison(generation: number, status: 'ready' | 'failed', result: TResult | null): void {
     const comparison = this.state.comparison
     if (this.disposed || !comparison || comparison.generation !== generation) return
     this.pending = null
     this.publish({ ...this.state, comparison: { ...comparison, status, result } })
   }
 
-  private cancelPending(): void {
+  #cancelPending(): void {
     this.pending?.abort()
     this.pending = null
   }
 
   private side(id: HistoryNodeId): HistoryComparisonSide | null {
-    const node = this.nodesById.get(id)
+    const node = this.#nodesById.get(id)
     return node ? { id, revision: node.revision, snapshot: node.snapshot } : null
   }
 

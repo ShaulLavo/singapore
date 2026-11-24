@@ -813,11 +813,8 @@ export function updateMountedFoldMarkers(view: VirtualizedTextViewInternal): voi
   for (const row of view.rowElements.values()) {
     const state = mountedRowUpdateState(view, row, pass)
     const marker = state.foldMarker
-    if (
-      row.foldMarkerKey === (marker?.key ?? '') &&
-      row.foldCollapsed === (marker?.collapsed ?? false)
-    )
-      continue
+    // A marker keeps its key while its extent moves, and gutter contributions read the extent.
+    if (sameFoldMarker(row.foldMarker, marker)) continue
     updateRowFoldPresentation(row, marker)
     updateGutterContributionCells(view, row, state)
     updateMountedRowPaintFacts(row, state)
@@ -826,6 +823,22 @@ export function updateMountedFoldMarkers(view: VirtualizedTextViewInternal): voi
       foldCollapsed: marker?.collapsed ?? false,
     })
   }
+}
+
+function sameFoldMarker(
+  left: VirtualizedFoldMarker | null,
+  right: VirtualizedFoldMarker | null,
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  return (
+    left.key === right.key &&
+    left.collapsed === right.collapsed &&
+    left.startRow === right.startRow &&
+    left.endRow === right.endRow &&
+    left.startOffset === right.startOffset &&
+    left.endOffset === right.endOffset
+  )
 }
 
 function updateRowAfterSameLineEdit(

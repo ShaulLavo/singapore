@@ -47,7 +47,7 @@ export class LineMap implements LineGeometry {
 
   lineStart(row: number): number {
     const target = clamp(row, 0, this.lastRow)
-    const span = this.spanAtRow(target)
+    const span = this.#spanAtRow(target)
     if (span && target - span.startRow < span.starts.length) {
       return span.start + span.starts[target - span.startRow]!
     }
@@ -68,8 +68,8 @@ export class LineMap implements LineGeometry {
 
   rowAtOffset(offset: number): number {
     const target = clamp(offset, 0, this.length)
-    const span = this.spanAtOffset(target)
-    if (span && this.spanHolds(span, target)) {
+    const span = this.#spanAtOffset(target)
+    if (span && this.#spanHolds(span, target)) {
       return span.startRow + lastRowStartAtOrBefore(span, target - span.start)
     }
 
@@ -80,7 +80,7 @@ export class LineMap implements LineGeometry {
   slice(start: number, end: number): string {
     const from = clamp(start, 0, this.length)
     const to = clamp(end, from, this.length)
-    const span = this.spanAtOffset(from)
+    const span = this.#spanAtOffset(from)
     if (span && to <= span.start + span.text.length) {
       return span.text.slice(from - span.start, to - span.start)
     }
@@ -119,20 +119,20 @@ export class LineMap implements LineGeometry {
     )
   }
 
-  private spanAtRow(row: number): LineSpan | null {
+  #spanAtRow(row: number): LineSpan | null {
     return lastSpanAtOrBefore(this.spans, (span) => span.startRow <= row)
   }
 
-  private spanAtOffset(offset: number): LineSpan | null {
+  #spanAtOffset(offset: number): LineSpan | null {
     return lastSpanAtOrBefore(this.spans, (span) => span.start <= offset)
   }
 
-  private spanHolds(span: LineSpan, offset: number): boolean {
+  #spanHolds(span: LineSpan, offset: number): boolean {
     const end = span.start + span.text.length
-    return offset < end || (offset === end && this.reachesEnd(span))
+    return offset < end || (offset === end && this.#reachesEnd(span))
   }
 
-  private reachesEnd(span: LineSpan): boolean {
+  #reachesEnd(span: LineSpan): boolean {
     return span.start + span.text.length === this.length
   }
 }
