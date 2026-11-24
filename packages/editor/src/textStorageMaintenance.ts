@@ -1,12 +1,5 @@
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
-import {
-  compactTombstones,
-  type TombstoneCompactionResult,
-} from '@singapore-editor/textbuffer/internal/compaction'
-import {
-  reclaimSnapshotStorage,
-  type TextReclamationResult,
-} from '@singapore-editor/textbuffer/internal/reclamation'
+import type { StorageMaintenanceResult, maintainStorage } from './textStorageMaintainer'
 import { EditorWorkScheduler } from './editor/workScheduler'
 import { recordEditorPerformanceDiagnostic } from './editor/performanceDiagnostics'
 
@@ -32,22 +25,40 @@ export type TextStorageMaintenanceStats = {
   maxSliceMs: number
 }
 
-type StorageMaintenanceResult = TextReclamationResult & TombstoneCompactionResult
+type Maintainer = typeof maintainStorage
+const RETRY_MS = 1000
+const MAX_RETRY_MS = 60_000
 
-// Only the current tree is compacted: history keeps the trees it recorded and
-// lets them go as it moves on, while every later state is edited from this one.
-function* maintainStorage(
-  current: PieceTableSnapshot,
-  snapshots: () => Iterable<PieceTableSnapshot>,
-): Generator<void, StorageMaintenanceResult> {
-  const compaction = yield* compactTombstones(current)
-  const reclamation = yield* reclaimSnapshotStorage(snapshots())
-  return { ...reclamation, ...compaction }
+// Loaded for the first pass rather than with the editor: most documents never delete enough text
+// to need one. One load serves the page. Buffers waiting for it are weakly listed rather than
+// captured by the promise, so a load that never settles keeps no closed buffer or history alive.
+// A failed load leaves every request outstanding; the next request after a doubling backoff tries
+// again, so an unavailable chunk costs one attempt per backoff, never a loop.
+let maintainer: Maintainer | null = null
+let loading = false
+let failures = 0
+let retryAt = 0
+const waiting = new Set<WeakRef<TextStorageMaintenance>>()
+
+function maintainerLoaded(loaded: Maintainer | null, error: unknown): void {
+  loading = false
+  if (!loaded) {
+    failures++
+    retryAt = Date.now() + Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** failures)
+    console.error('[editor]', 'editor.buffer.reclamation_failed', error)
+    recordEditorPerformanceDiagnostic('buffer.reclamation.failed', { error })
+    return
+  }
+  maintainer = loaded
+  const owners = Array.from(waiting, (ref) => ref.deref())
+  waiting.clear()
+  for (const owner of owners) owner?.resume()
 }
 
 export class TextStorageMaintenance {
   private readonly scheduler = new EditorWorkScheduler()
   #job: Generator<void, StorageMaintenanceResult> | null = null
+  #waitRef: WeakRef<TextStorageMaintenance> | null = null
   #runMaxSliceMs = 0
   #deletedUnits = 0
   #piecesAfterPass = 0
@@ -94,6 +105,8 @@ export class TextStorageMaintenance {
 
   suspend(): void {
     this.scheduler.cancel('text-storage', 'detached')
+    if (this.#waitRef) waiting.delete(this.#waitRef)
+    this.#waitRef = null
     if (this.#job) this.stats.cancelled++
     this.#job = null
   }
@@ -103,6 +116,10 @@ export class TextStorageMaintenance {
   }
 
   private schedule(delayMs: number): void {
+    if (!maintainer) {
+      this.#awaitMaintainer()
+      return
+    }
     this.scheduler.schedule({
       key: 'text-storage',
       taskClass: 'idle-cache',
@@ -111,18 +128,35 @@ export class TextStorageMaintenance {
       maxDelayMs: MAX_DELAY_MS,
       run: () => this.step(),
       apply: (result) => this.settle(result),
-      fail: (error) => {
-        this.#job = null
-        this.#due = false
-        console.error('[editor]', 'editor.buffer.reclamation_failed', error)
-        recordEditorPerformanceDiagnostic('buffer.reclamation.failed', { error })
-      },
+      fail: (error) => this.#fail(error),
     })
   }
 
+  #awaitMaintainer(): void {
+    if (!this.#waitRef) {
+      this.#waitRef = new WeakRef(this)
+      waiting.add(this.#waitRef)
+    }
+    if (loading || Date.now() < retryAt) return
+    loading = true
+    // A canceled `vite:preloadError` resolves the import with nothing: a failure like any other.
+    import('./textStorageMaintainer').then(
+      (module) => maintainerLoaded(module?.maintainStorage ?? null, 'maintainer unavailable'),
+      (error: unknown) => maintainerLoaded(null, error),
+    )
+  }
+
+  #fail(error: unknown): void {
+    this.#job = null
+    this.#due = false
+    console.error('[editor]', 'editor.buffer.reclamation_failed', error)
+    recordEditorPerformanceDiagnostic('buffer.reclamation.failed', { error })
+  }
+
   private step(): StorageMaintenanceResult | null {
+    if (!maintainer) return null
     if (!this.#job) {
-      this.#job = maintainStorage(this.current(), this.snapshots)
+      this.#job = maintainer(this.current(), this.snapshots)
       this.#runMaxSliceMs = 0
     }
     const start = performance.now()
