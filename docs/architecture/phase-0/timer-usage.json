@@ -307,6 +307,14 @@
       "snippet": "setTimeout(() => {"
     },
     {
+      "api": "setTimeout",
+      "file": "packages/editor/src/virtualization/caretBlink.ts",
+      "id": "packages/editor/src/virtualization/caretBlink.ts:setTimeout:2f92e532ca",
+      "justification": "The blink's own clock, ended by a time deadline; stop() clears it, and the view stops it on disposal.",
+      "line": 72,
+      "snippet": "this.timer = setTimeout(() => {"
+    },
+    {
       "api": "queueMicrotask",
       "file": "packages/editor/src/virtualization/geckoHighlightRepaint.ts",
       "id": "packages/editor/src/virtualization/geckoHighlightRepaint.ts:queueMicrotask:804ee49585",
@@ -327,7 +335,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 2002,
+      "line": 2024,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -335,7 +343,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 2011,
+      "line": 2033,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -343,7 +351,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1763,
+      "line": 1776,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -543,7 +551,7 @@
       "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
       "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:00a37bab4d",
       "justification": "Yields one macrotask between warm-up compiles so a parse or edit message queued meanwhile runs before the next language; worker-task tracking keeps idle fences behind warm-up.",
-      "line": 359,
+      "line": 374,
       "snippet": "const yieldToMessages = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))"
     },
     {
@@ -551,7 +559,7 @@
       "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
       "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:12f91c71b2",
       "justification": "One quiet round before a closed document is freed. A timer, not a posted message: it has to outlast the round trips between the requests of a document opened in its place. `waitForQuiet` bounds the rounds.",
-      "line": 4381,
+      "line": 4396,
       "snippet": "setTimeout(resolve, DOCUMENT_RELEASE_QUIET_MS)"
     },
     {
@@ -559,7 +567,7 @@
       "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
       "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:21b122d19d",
       "justification": "Runs after the parse answer is posted; it re-checks that the document is still cached and idle, so a late or stale callback does nothing.",
-      "line": 991,
+      "line": 1006,
       "snippet": "setTimeout(() => {"
     },
     {

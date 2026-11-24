@@ -2047,6 +2047,92 @@ describe('VirtualizedTextView', () => {
     for (const caret of carets) expect(caret.parentElement).toBe(layer)
   })
 
+  describe('caret blink', () => {
+    let clock = 0
+    const blinkOff = () =>
+      container
+        .querySelector('.editor-virtualized-caret-layer')!
+        .hasAttribute('data-editor-caret-blink-off')
+    function advance(ms: number): void {
+      for (let step = 0; step < ms; step += 100) {
+        clock += 100
+        vi.advanceTimersByTime(100)
+      }
+    }
+
+    beforeEach(() => {
+      clock = 0
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      vi.spyOn(performance, 'now').mockImplementation(() => clock)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    })
+
+    it('leaves the caret drawn when a throttled callback arrives after the ten seconds', () => {
+      view.setText('abc\ndef')
+      view.setScrollMetrics(0, 80)
+      view.focusInput()
+      view.setSelection(1, 1)
+      clock += 15_000
+      vi.advanceTimersByTime(500)
+      expect(blinkOff()).toBe(false)
+      advance(1_000)
+      expect(blinkOff()).toBe(false)
+    })
+
+    it('blinks again after an edit that leaves the caret where it was', () => {
+      view.setText('abc')
+      view.setScrollMetrics(0, 80)
+      view.focusInput()
+      view.setSelection(0, 1)
+      advance(11_000)
+      expect(blinkOff()).toBe(false)
+
+      view.applyEdit({ from: 0, to: 1, text: 'x' }, 'xbc')
+      view.setSelection(1, 1)
+      advance(500)
+      expect(blinkOff()).toBe(true)
+    })
+
+    it('blinks again when a second caret moves after the blink ended', () => {
+      view.setText('abc\ndef\nxyz')
+      view.setScrollMetrics(0, 80)
+      view.focusInput()
+      view.setSelections([
+        { anchorOffset: 1, headOffset: 1 },
+        { anchorOffset: 5, headOffset: 5 },
+      ])
+      advance(11_000)
+
+      view.setSelections([
+        { anchorOffset: 1, headOffset: 1 },
+        { anchorOffset: 6, headOffset: 6 },
+      ])
+      advance(500)
+      expect(blinkOff()).toBe(true)
+    })
+
+    it('blinks again when a caret scrolls back into view next to one that stayed', () => {
+      view.setText(createLines(40))
+      view.setScrollMetrics(0, 100)
+      view.focusInput()
+      const sixth = createLines(6).length + 1
+      view.setSelections([
+        { anchorOffset: 1, headOffset: 1 },
+        { anchorOffset: sixth, headOffset: sixth },
+      ])
+      view.setScrollMetrics(140, 100)
+      advance(11_000)
+
+      view.setScrollMetrics(0, 100)
+      advance(500)
+      expect(blinkOff()).toBe(true)
+    })
+  })
+
   it('does not rebuild unchanged mounted selection ranges', () => {
     view.setText('abc\ndef\nxyz')
     view.setScrollMetrics(0, 80)
@@ -2942,6 +3028,47 @@ describe('VirtualizedTextView', () => {
     expect(renders).not.toHaveBeenCalled()
     // Syntax scheduling still hears about the change.
     expect(viewportChanges).toBe(1)
+  })
+
+  it('passes a marker whose extent changed under the same key to gutter cells', () => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      gutterContributions: [
+        {
+          id: 'fold-end',
+          createCell: (document) => document.createElement('span'),
+          width: () => 20,
+          updateCell: (cell, row) => {
+            cell.textContent = row.foldMarker ? String(row.foldMarker.endRow) : ''
+          },
+        },
+      ],
+    })
+    const lines = ['if (x) {', '  y();', '  z();', '}']
+    const offsets = lineStartOffsets(lines)
+    view.setText(lines.join('\n'))
+    view.setScrollMetrics(0, 200, 100)
+    const marker = (endRow: number): VirtualizedFoldMarker => ({
+      key: 'fold-if',
+      startOffset: offsets[0]!,
+      endOffset: offsets[3]!,
+      startRow: 0,
+      endRow,
+      collapsed: false,
+    })
+    const cell = () =>
+      container.querySelector(
+        '[data-editor-virtual-gutter-row="0"] .editor-virtualized-gutter-cell',
+      )?.textContent
+
+    view.setFoldMarkers([marker(1)])
+    expect(cell()).toBe('1')
+    view.setFoldMarkers([marker(2)])
+    expect(cell()).toBe('2')
   })
 
   it('moves fold controls through deleted newlines before syntax returns', () => {

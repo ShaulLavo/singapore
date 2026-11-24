@@ -382,30 +382,40 @@ function renderCaretNow(view: VirtualizedTextViewInternal): void {
   if (selections.length === 0) {
     hideCaretElement(view.caretElement)
     hideSecondaryCaretElements(view, 0)
-    view.caretBlink.stop()
+    view.caretBlink.update(null)
     return
   }
 
   const primary = selections[0]!
   const primaryPositions = caretPosition(view, primary.head, primary.affinity)
   const primaryPosition = primaryPositions?.[0] ?? null
-  if (caretMoved(caretPaintPositions.get(view.caretElement), primaryPosition))
-    view.caretBlink.restart()
   renderCaretElement(view, view.caretElement, primaryPosition, false)
+  const drawn: string[] = []
+  if (primaryPosition) drawn.push(caretKey(primaryPosition))
 
   let secondaryIndex = 0
   const primaryOther = primaryPositions?.[1]
-  if (primaryOther) secondaryIndex = renderPooledCaret(view, secondaryIndex, primaryOther, true)
+  if (primaryOther) {
+    secondaryIndex = renderPooledCaret(view, secondaryIndex, primaryOther, true)
+    drawn.push(caretKey(primaryOther))
+  }
   for (let selectionIndex = 1; selectionIndex < selections.length; selectionIndex += 1) {
     const selection = selections[selectionIndex]!
     const positions = caretPosition(view, selection.head, selection.affinity) ?? []
     const position = positions[0]
-    if (position) secondaryIndex = renderPooledCaret(view, secondaryIndex, position, false)
+    if (position) {
+      secondaryIndex = renderPooledCaret(view, secondaryIndex, position, false)
+      drawn.push(caretKey(position))
+    }
     const other = positions[1]
-    if (other) secondaryIndex = renderPooledCaret(view, secondaryIndex, other, true)
+    if (other) {
+      secondaryIndex = renderPooledCaret(view, secondaryIndex, other, true)
+      drawn.push(caretKey(other))
+    }
   }
   hideSecondaryCaretElements(view, secondaryIndex)
-  syncCaretBlink(view)
+  // Positions are document coordinates, so a scroll repaint keeps the key and the blink's phase.
+  view.caretBlink.update(drawn.length > 0 ? drawn.join(' ') : null)
   // Whatever the OS is about to anchor on the input — a candidate window, an accent picker — belongs
   // over the caret the reader is watching, and this is where that caret stops moving.
   positionInputAtCaret(view, primaryPositions?.[0] ?? null)
@@ -424,22 +434,8 @@ function renderPooledCaret(
 // Retain logical geometry so an origin shift can repaint every caret before deferred layout reads.
 const caretPaintPositions = new WeakMap<HTMLElement, VirtualizedCaretPosition>()
 
-// Positions are document coordinates, so a scroll repaint is not a move.
-function caretMoved(
-  previous: VirtualizedCaretPosition | undefined,
-  next: VirtualizedCaretPosition | null,
-): boolean {
-  if (!next) return false
-  if (!previous) return true
-  return previous.left !== next.left || previous.top !== next.top
-}
-
-/** The blink runs while any caret is drawn, and stops with no timer left once none is. */
-function syncCaretBlink(view: VirtualizedTextViewInternal): void {
-  const drawn =
-    !view.caretElement.hidden || view.secondaryCaretElements.some((element) => !element.hidden)
-  if (drawn) view.caretBlink.run()
-  else view.caretBlink.stop()
+function caretKey(position: VirtualizedCaretPosition): string {
+  return `${position.left},${position.top}`
 }
 
 export function rebaseCaretPaint(view: VirtualizedTextViewInternal): void {
