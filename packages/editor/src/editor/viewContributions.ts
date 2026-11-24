@@ -56,22 +56,22 @@ type QueuedUpdate = {
 const MAX_REENTRANT_DEPTH = 32
 
 export class EditorViewContributionController {
-  private notifying = false
-  private activeUpdateKind: EditorViewContributionUpdateKind | null = null
-  private pendingLayout: QueuedUpdate | null = null
-  private readonly pendingUpdates: QueuedUpdate[] = []
-  private updatingContribution: EditorViewContribution | null = null
-  private deliveringUpdate: QueuedUpdate | null = null
+  #notifying = false
+  #activeUpdateKind: EditorViewContributionUpdateKind | null = null
+  #pendingLayout: QueuedUpdate | null = null
+  readonly #pendingUpdates: QueuedUpdate[] = []
+  #updatingContribution: EditorViewContribution | null = null
+  #deliveringUpdate: QueuedUpdate | null = null
   private currentSnapshot: EditorViewSnapshot | null = null
   private readonly contributions: EditorViewContribution[] = []
   private readonly members = new Set<EditorViewContribution>()
   private readonly order = new Map<EditorViewContribution, number>()
-  private nextOrder = 0
+  #nextOrder = 0
   /** Subscribers per kind in contribution order, rebuilt only when membership changes. */
   private subscribers: Map<EditorViewContributionUpdateKind, EditorViewContribution[]> | null = null
-  private readonly pendingTargets = new Set<EditorViewContribution>()
-  private readonly initialUpdates = new Set<EditorViewContribution>()
-  private readonly viewportContributions = new Set<EditorViewContribution>()
+  readonly #pendingTargets = new Set<EditorViewContribution>()
+  readonly #initialUpdates = new Set<EditorViewContribution>()
+  readonly #viewportContributions = new Set<EditorViewContribution>()
 
   constructor(
     contributions: readonly EditorViewContribution[],
@@ -93,8 +93,8 @@ export class EditorViewContributionController {
         const rows = contribution.captureDocumentHeadings(source)
         for (const [row, heading] of rows ?? []) headings.set(row, heading)
       } catch (error) {
-        this.removeFailedContribution(contribution, 'capture-document-paint', error)
-        this.notifyMembershipChange()
+        this.#removeFailedContribution(contribution, 'capture-document-paint', error)
+        this.#notifyMembershipChange()
       }
     }
     return headings
@@ -103,9 +103,9 @@ export class EditorViewContributionController {
   private join(contribution: EditorViewContribution): void {
     this.contributions.push(contribution)
     this.members.add(contribution)
-    this.order.set(contribution, this.nextOrder++)
+    this.order.set(contribution, this.#nextOrder++)
     this.subscribers = null
-    if (contribution.updateViewport) this.viewportContributions.add(contribution)
+    if (contribution.updateViewport) this.#viewportContributions.add(contribution)
   }
 
   private leave(contribution: EditorViewContribution): boolean {
@@ -113,9 +113,9 @@ export class EditorViewContributionController {
     this.contributions.splice(this.contributions.indexOf(contribution), 1)
     this.order.delete(contribution)
     this.subscribers = null
-    this.viewportContributions.delete(contribution)
-    this.initialUpdates.delete(contribution)
-    this.pendingTargets.delete(contribution)
+    this.#viewportContributions.delete(contribution)
+    this.#initialUpdates.delete(contribution)
+    this.#pendingTargets.delete(contribution)
     return true
   }
 
@@ -130,27 +130,27 @@ export class EditorViewContributionController {
   finishRestoration(): void {
     const snapshot = this.currentSnapshot
     if (!snapshot) return
-    const failed = this.removeUnreadyContributions(snapshot)
+    const failed = this.#removeUnreadyContributions(snapshot)
     if (!failed) return
     this.currentSnapshot = null
     this.notify('document')
   }
 
-  private removeUnreadyContributions(snapshot: EditorViewSnapshot): boolean {
+  #removeUnreadyContributions(snapshot: EditorViewSnapshot): boolean {
     let failed = false
-    this.notifying = true
+    this.#notifying = true
     try {
       for (const contribution of Array.from(this.contributions)) {
-        failed = this.rejectUnreadyContribution(contribution, snapshot) || failed
+        failed = this.#rejectUnreadyContribution(contribution, snapshot) || failed
       }
     } finally {
-      this.notifying = false
-      this.clearQueuedUpdates()
+      this.#notifying = false
+      this.#clearQueuedUpdates()
     }
     return failed
   }
 
-  private rejectUnreadyContribution(
+  #rejectUnreadyContribution(
     contribution: EditorViewContribution,
     snapshot: EditorViewSnapshot,
   ): boolean {
@@ -165,7 +165,7 @@ export class EditorViewContributionController {
         fix: 'Finish the contribution in update, or remove snapshot support from its configuration.',
       })
     } catch (error) {
-      this.removeFailedContribution(contribution, 'capture-visible-paint', error)
+      this.#removeFailedContribution(contribution, 'capture-visible-paint', error)
       return true
     }
   }
@@ -180,59 +180,59 @@ export class EditorViewContributionController {
   }
 
   add(contribution: EditorViewContribution): void {
-    this.invalidateCurrentPaint()
+    this.#invalidateCurrentPaint()
     this.join(contribution)
-    this.initialUpdates.add(contribution)
-    this.notifyMembershipChange()
+    this.#initialUpdates.add(contribution)
+    this.#notifyMembershipChange()
   }
 
   remove(contribution: EditorViewContribution): void {
     if (!this.leave(contribution)) return
 
-    this.disposeContribution(contribution)
-    this.notifyMembershipChange()
+    this.#disposeContribution(contribution)
+    this.#notifyMembershipChange()
   }
 
   dispose(): void {
-    this.invalidateCurrentPaint()
+    this.#invalidateCurrentPaint()
     this.currentSnapshot = null
     while (this.contributions.length > 0) {
       const contribution = this.contributions.at(-1)!
       this.leave(contribution)
-      this.disposeContribution(contribution)
+      this.#disposeContribution(contribution)
     }
   }
 
   notifyViewport(createViewport: () => EditorViewportSnapshot): void {
-    if (!this.canPresent() || this.notifying || this.viewportContributions.size === 0) return
-    this.notifying = true
-    this.deliveringUpdate = rootUpdate(['viewport'], null, null)
+    if (!this.canPresent() || this.#notifying || this.#viewportContributions.size === 0) return
+    this.#notifying = true
+    this.#deliveringUpdate = rootUpdate(['viewport'], null, null)
     try {
       const viewport = createViewport()
       if (viewport.clientHeight === 0) return
-      for (const contribution of this.viewportContributions) {
-        this.updateContributionViewport(contribution, viewport)
+      for (const contribution of this.#viewportContributions) {
+        this.#updateContributionViewport(contribution, viewport)
       }
-      this.drainQueuedUpdates()
+      this.#drainQueuedUpdates()
     } finally {
-      this.notifying = false
-      this.activeUpdateKind = null
-      this.clearQueuedUpdates()
+      this.#notifying = false
+      this.#activeUpdateKind = null
+      this.#clearQueuedUpdates()
     }
   }
 
-  private updateContributionViewport(
+  #updateContributionViewport(
     contribution: EditorViewContribution,
     viewport: EditorViewportSnapshot,
   ): void {
-    this.updatingContribution = contribution
+    this.#updatingContribution = contribution
     try {
       contribution.updateViewport?.(viewport)
     } catch (error) {
-      this.removeFailedContribution(contribution, 'viewport', error)
-      this.notifyMembershipChange()
+      this.#removeFailedContribution(contribution, 'viewport', error)
+      this.#notifyMembershipChange()
     } finally {
-      this.updatingContribution = null
+      this.#updatingContribution = null
     }
   }
 
@@ -247,8 +247,8 @@ export class EditorViewContributionController {
   ): void {
     if (!this.canPresent() || this.contributions.length === 0) return
     const kinds = also.length === 0 ? [kind] : [kind].concat(also.filter((other) => other !== kind))
-    if (this.notifying) {
-      this.queueReentrantUpdate(kinds, change)
+    if (this.#notifying) {
+      this.#queueReentrantUpdate(kinds, change)
       return
     }
 
@@ -267,10 +267,10 @@ export class EditorViewContributionController {
       return
     }
     if (!this.canPresent() || !this.members.has(contribution)) return
-    if (this.notifying) {
+    if (this.#notifying) {
       // Asked for from its own layout update, it would ask again every time: once is enough.
-      if (this.activeUpdateKind === 'layout' && this.updatingContribution === contribution) return
-      this.pendingTargets.add(contribution)
+      if (this.#activeUpdateKind === 'layout' && this.#updatingContribution === contribution) return
+      this.#pendingTargets.add(contribution)
       return
     }
 
@@ -278,116 +278,117 @@ export class EditorViewContributionController {
   }
 
   private run(update: QueuedUpdate): void {
-    this.notifying = true
-    this.deliveringUpdate = update
+    this.#notifying = true
+    this.#deliveringUpdate = update
     try {
       this.update(update)
-      this.drainQueuedUpdates()
+      this.#drainQueuedUpdates()
     } finally {
-      this.notifying = false
-      this.activeUpdateKind = null
-      this.clearQueuedUpdates()
+      this.#notifying = false
+      this.#activeUpdateKind = null
+      this.#clearQueuedUpdates()
     }
   }
 
-  private queueReentrantUpdate(
+  #queueReentrantUpdate(
     kinds: readonly EditorViewContributionUpdateKind[],
     change: EditorContributionChange | null,
   ): void {
     if (kinds[0] !== 'layout' || kinds.length > 1) {
-      this.pendingUpdates.push(this.queuedUpdate(kinds, change, null))
+      this.#pendingUpdates.push(this.#queuedUpdate(kinds, change, null))
       return
     }
     // A layout pass reads a fresh snapshot anyway, and one asked for from inside a layout pass would
     // re-run every contribution that calls requestViewUpdate() from update() forever.
-    if (this.activeUpdateKind === 'layout') return
+    if (this.#activeUpdateKind === 'layout') return
 
-    this.queueLayout()
+    this.#queueLayout()
   }
 
-  private queueLayout(): void {
-    this.pendingLayout ??= this.queuedUpdate(['layout'], null, null)
+  #queueLayout(): void {
+    this.#pendingLayout ??= this.#queuedUpdate(['layout'], null, null)
   }
 
-  private queuedUpdate(
+  #queuedUpdate(
     kinds: readonly EditorViewContributionUpdateKind[],
     change: EditorContributionChange | null,
     target: EditorViewContribution | null,
   ): QueuedUpdate {
-    const cause = this.deliveringUpdate
+    const cause = this.#deliveringUpdate
     const depth = (cause?.depth ?? 0) + 1
     return {
       kind: kinds[0]!,
       kinds,
       change,
       target,
-      requester: this.updatingContribution,
+      requester: this.#updatingContribution,
       cause,
       depth,
     }
   }
 
   /** Delivers what arrived during the pass in order, each one after the last has finished. */
-  private drainQueuedUpdates(): void {
-    for (let next = this.nextQueuedUpdate(); next; next = this.nextQueuedUpdate()) {
+  #drainQueuedUpdates(): void {
+    for (let next = this.#nextQueuedUpdate(); next; next = this.#nextQueuedUpdate()) {
       if (next.depth > MAX_REENTRANT_DEPTH) {
-        this.stopUpdateLoop(next)
+        this.#stopUpdateLoop(next)
         continue
       }
-      this.deliveringUpdate = next
+      this.#deliveringUpdate = next
       this.update(next)
     }
   }
 
-  private nextQueuedUpdate(): QueuedUpdate | null {
-    const queued = this.pendingUpdates.shift()
+  #nextQueuedUpdate(): QueuedUpdate | null {
+    const queued = this.#pendingUpdates.shift()
     if (queued) return queued
 
-    const layout = this.pendingLayout
-    this.pendingLayout = null
+    const layout = this.#pendingLayout
+    this.#pendingLayout = null
     if (layout) {
       // A full layout pass already re-runs whoever asked on their own.
-      this.pendingTargets.clear()
+      this.#pendingTargets.clear()
       return layout
     }
-    const target = this.pendingTargets.values().next().value
+    const target = this.#pendingTargets.values().next().value
     if (!target) return null
-    this.pendingTargets.delete(target)
-    return this.queuedUpdate(['layout'], null, target)
+    this.#pendingTargets.delete(target)
+    return this.#queuedUpdate(['layout'], null, target)
   }
 
   /**
    * A chain that ran this deep repeats itself, so whoever asks more than once along it is the loop.
    * A contribution that asked once, at the end, only reacted to it, and it stays.
    */
-  private stopUpdateLoop(update: QueuedUpdate): void {
+  #stopUpdateLoop(update: QueuedUpdate): void {
     const error = reentrantUpdateLoop(update.kind)
     const looping = repeatedRequesters(update)
     if (looping.size === 0) throw error
 
-    for (const contribution of looping) this.removeFailedContribution(contribution, 'update', error)
-    this.dropUpdatesFrom(looping)
+    for (const contribution of looping)
+      this.#removeFailedContribution(contribution, 'update', error)
+    this.#dropUpdatesFrom(looping)
   }
 
-  private dropUpdatesFrom(removed: ReadonlySet<EditorViewContribution>): void {
-    const kept = this.pendingUpdates.filter(
+  #dropUpdatesFrom(removed: ReadonlySet<EditorViewContribution>): void {
+    const kept = this.#pendingUpdates.filter(
       (queued) => !queued.requester || !removed.has(queued.requester),
     )
-    this.pendingUpdates.splice(0, this.pendingUpdates.length, ...kept)
-    const layoutRequester = this.pendingLayout?.requester
-    if (layoutRequester && removed.has(layoutRequester)) this.pendingLayout = null
+    this.#pendingUpdates.splice(0, this.#pendingUpdates.length, ...kept)
+    const layoutRequester = this.#pendingLayout?.requester
+    if (layoutRequester && removed.has(layoutRequester)) this.#pendingLayout = null
   }
 
-  private clearQueuedUpdates(): void {
-    this.pendingLayout = null
-    this.pendingUpdates.length = 0
-    this.pendingTargets.clear()
-    this.deliveringUpdate = null
+  #clearQueuedUpdates(): void {
+    this.#pendingLayout = null
+    this.#pendingUpdates.length = 0
+    this.#pendingTargets.clear()
+    this.#deliveringUpdate = null
   }
 
   private update(update: QueuedUpdate): void {
-    this.invalidateCurrentPaint()
-    const recipients = this.recipientsFor(update)
+    this.#invalidateCurrentPaint()
+    const recipients = this.#recipientsFor(update)
     if (recipients.length === 0) {
       // Nobody reads this pass, so no snapshot is built; the next read builds a fresh one.
       this.currentSnapshot = null
@@ -396,10 +397,10 @@ export class EditorViewContributionController {
     const snapshot = this.createSnapshot()
     this.currentSnapshot = snapshot
     beginEditorViewSnapshotPaint(snapshot)
-    this.activeUpdateKind = update.kind
+    this.#activeUpdateKind = update.kind
     try {
       for (const contribution of recipients) {
-        this.updateContribution(
+        this.#updateContribution(
           contribution,
           snapshot,
           deliveredKind(contribution, update),
@@ -408,15 +409,15 @@ export class EditorViewContributionController {
       }
       finalizeEditorViewSnapshotPaint(snapshot, () => this.captureVisiblePaint(snapshot))
     } finally {
-      this.activeUpdateKind = null
+      this.#activeUpdateKind = null
     }
   }
 
-  private recipientsFor(update: QueuedUpdate): readonly EditorViewContribution[] {
+  #recipientsFor(update: QueuedUpdate): readonly EditorViewContribution[] {
     const lists = update.target
       ? [[update.target]]
-      : update.kinds.map((kind) => this.subscribersOf(kind))
-    if (this.initialUpdates.size > 0) lists.push(Array.from(this.initialUpdates))
+      : update.kinds.map((kind) => this.#subscribersOf(kind))
+    if (this.#initialUpdates.size > 0) lists.push(Array.from(this.#initialUpdates))
     const nonEmpty = lists.filter((list) => list.length > 0)
     if (nonEmpty.length <= 1) return Array.from(nonEmpty[0] ?? [])
 
@@ -425,7 +426,7 @@ export class EditorViewContributionController {
     return Array.from(merged).sort((left, right) => this.order.get(left)! - this.order.get(right)!)
   }
 
-  private subscribersOf(kind: EditorViewContributionUpdateKind): readonly EditorViewContribution[] {
+  #subscribersOf(kind: EditorViewContributionUpdateKind): readonly EditorViewContribution[] {
     this.subscribers ??= new Map()
     const cached = this.subscribers.get(kind)
     if (cached) return cached
@@ -443,7 +444,7 @@ export class EditorViewContributionController {
     const ids = new Set<string>()
     let remainingRectangles = MAX_VISIBLE_PAINT_RECTANGLES
     for (const contribution of Array.from(this.contributions)) {
-      const layer = this.captureContribution(contribution, snapshot, ids, remainingRectangles)
+      const layer = this.#captureContribution(contribution, snapshot, ids, remainingRectangles)
       if (layer === null) return null
       if (layer === undefined) continue
       layers.push(layer)
@@ -454,7 +455,7 @@ export class EditorViewContributionController {
     return freezeEditorVisiblePaintLayers(layers)
   }
 
-  private captureContribution(
+  #captureContribution(
     contribution: EditorViewContribution,
     snapshot: EditorViewSnapshot,
     ids: ReadonlySet<string>,
@@ -462,8 +463,8 @@ export class EditorViewContributionController {
   ): EditorVisiblePaintLayer | null | undefined {
     if (!contribution.captureVisiblePaint || !this.members.has(contribution)) return
     // Capture can run lazily from inside another contribution's update, whose attribution resumes.
-    const updating = this.updatingContribution
-    this.updatingContribution = contribution
+    const updating = this.#updatingContribution
+    this.#updatingContribution = contribution
     try {
       const capture = contribution.captureVisiblePaint(snapshot)
       if (capture.status === 'pending') return null
@@ -472,36 +473,36 @@ export class EditorViewContributionController {
       }
       return copyEditorVisiblePaintLayer(capture, remainingRectangles)
     } catch (error) {
-      this.removeFailedContribution(contribution, 'capture-visible-paint', error)
-      this.notifyMembershipChange()
+      this.#removeFailedContribution(contribution, 'capture-visible-paint', error)
+      this.#notifyMembershipChange()
       return null
     } finally {
-      this.updatingContribution = updating
+      this.#updatingContribution = updating
     }
   }
 
-  private invalidateCurrentPaint(): void {
+  #invalidateCurrentPaint(): void {
     if (this.currentSnapshot) invalidateEditorViewSnapshotPaint(this.currentSnapshot)
   }
 
-  private notifyMembershipChange(): void {
-    this.invalidateCurrentPaint()
-    if (this.notifying) {
-      this.queueLayout()
+  #notifyMembershipChange(): void {
+    this.#invalidateCurrentPaint()
+    if (this.#notifying) {
+      this.#queueLayout()
       return
     }
     this.notify('layout')
   }
 
-  private updateContribution(
+  #updateContribution(
     contribution: EditorViewContribution,
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
     change: EditorContributionChange | null,
   ): void {
     if (!this.members.has(contribution)) return
-    const initialUpdate = this.initialUpdates.delete(contribution)
-    this.updatingContribution = contribution
+    const initialUpdate = this.#initialUpdates.delete(contribution)
+    this.#updatingContribution = contribution
     try {
       contribution.update(
         snapshot,
@@ -509,27 +510,27 @@ export class EditorViewContributionController {
         initialUpdate ? null : change,
       )
     } catch (error) {
-      this.removeFailedContribution(
+      this.#removeFailedContribution(
         contribution,
         initialUpdate ? 'initial-update' : 'update',
         error,
       )
     } finally {
-      this.updatingContribution = null
+      this.#updatingContribution = null
     }
   }
 
-  private removeFailedContribution(
+  #removeFailedContribution(
     contribution: EditorViewContribution,
     phase: EditorViewContributionFailurePhase,
     error: unknown,
   ): void {
     this.onFailure(contribution, phase, error)
     this.leave(contribution)
-    this.disposeContribution(contribution)
+    this.#disposeContribution(contribution)
   }
 
-  private disposeContribution(contribution: EditorViewContribution): void {
+  #disposeContribution(contribution: EditorViewContribution): void {
     try {
       contribution.dispose()
     } catch (error) {

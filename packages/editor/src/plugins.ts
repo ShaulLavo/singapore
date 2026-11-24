@@ -1196,13 +1196,13 @@ type LanguageFeatureChannel = {
 export type EditorLanguageFeatureRegistryListener = (tokenId: string, count: number) => void
 
 export class EditorLanguageFeatureRegistry {
-  private readonly channels = new Map<string, LanguageFeatureChannel>()
+  readonly #channels = new Map<string, LanguageFeatureChannel>()
   private readonly listeners = new Set<EditorLanguageFeatureRegistryListener>()
   private sequence = 0
 
   /** How many providers answer for a token, whatever the document. */
   public count(token: EditorLanguageFeatureToken<unknown>): number {
-    return this.channels.get(token.id)?.entries.length ?? 0
+    return this.#channels.get(token.id)?.entries.length ?? 0
   }
 
   /** Told after every registration and removal with the token's new provider count. */
@@ -1216,7 +1216,7 @@ export class EditorLanguageFeatureRegistry {
     selector: EditorLanguageFeatureSelector,
     provider: T,
   ): EditorDisposable {
-    const channel = this.channelFor(token.id)
+    const channel = this.#channelFor(token.id)
     const entry: LanguageFeatureEntry = { provider, selector, sequence: this.sequence++ }
     channel.entries.push(entry)
     channel.ordered.clear()
@@ -1229,7 +1229,7 @@ export class EditorLanguageFeatureRegistry {
     token: EditorLanguageFeatureToken<T>,
     languageId: EditorSyntaxLanguageId | null,
   ): readonly T[] {
-    const channel = this.channels.get(token.id)
+    const channel = this.#channels.get(token.id)
     if (!channel) return []
 
     // Language features are queried per keystroke, so the answer for a language is held until a
@@ -1243,18 +1243,18 @@ export class EditorLanguageFeatureRegistry {
     return providers as readonly T[]
   }
 
-  private channelFor(id: string): LanguageFeatureChannel {
-    const existing = this.channels.get(id)
+  #channelFor(id: string): LanguageFeatureChannel {
+    const existing = this.#channels.get(id)
     if (existing) return existing
 
     const channel: LanguageFeatureChannel = { entries: [], ordered: new Map() }
-    this.channels.set(id, channel)
+    this.#channels.set(id, channel)
 
     return channel
   }
 
   private unregister(id: string, entry: LanguageFeatureEntry): void {
-    const channel = this.channels.get(id)
+    const channel = this.#channels.get(id)
     if (!channel) return
 
     const index = channel.entries.indexOf(entry)

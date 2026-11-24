@@ -27,38 +27,38 @@ export type CursorHistoryEntry = {
  * the caret leaves them somewhere they never were.
  */
 export class CursorHistory {
-  private readonly undoStack: CursorHistoryEntry[] = []
-  private readonly redoStack: CursorHistoryEntry[] = []
+  readonly #undoStack: CursorHistoryEntry[] = []
+  readonly #redoStack: CursorHistoryEntry[] = []
 
   clear(): void {
-    this.undoStack.length = 0
-    this.redoStack.length = 0
+    this.#undoStack.length = 0
+    this.#redoStack.length = 0
   }
 
   record(previous: CursorHistoryEntry): void {
     // A move that ended where the previous one started is a place already on the
     // stack; keeping it would spend a step of history to go nowhere.
-    if (sameCursorSelections(this.undoStack.at(-1), previous)) return
+    if (sameCursorSelections(this.#undoStack.at(-1), previous)) return
 
-    this.push(this.undoStack, previous)
+    this.push(this.#undoStack, previous)
     // Going back is only offered along the path already walked, and a fresh move
     // is a different path.
-    this.redoStack.length = 0
+    this.#redoStack.length = 0
   }
 
   undo(current: CursorHistoryEntry): CursorHistoryEntry | null {
-    const entry = this.undoStack.pop()
+    const entry = this.#undoStack.pop()
     if (!entry) return null
 
-    this.push(this.redoStack, current)
+    this.push(this.#redoStack, current)
     return entry
   }
 
   redo(current: CursorHistoryEntry): CursorHistoryEntry | null {
-    const entry = this.redoStack.pop()
+    const entry = this.#redoStack.pop()
     if (!entry) return null
 
-    this.push(this.undoStack, current)
+    this.push(this.#undoStack, current)
     return entry
   }
 

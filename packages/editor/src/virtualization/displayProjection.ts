@@ -67,7 +67,7 @@ export class DisplayProjection {
     indexEntriesTouched: 0,
     summaryLinesMeasured: 0,
   }
-  private revisionValue = 0
+  #revisionValue = 0
 
   constructor(input: DisplayProjectionInput) {
     this.context = buildContext(
@@ -89,7 +89,7 @@ export class DisplayProjection {
     return this.root?.rows ?? 0
   }
   get revision(): number {
-    return this.revisionValue
+    return this.#revisionValue
   }
   get config(): DisplayProjectionConfig {
     return this.context.config
@@ -120,11 +120,11 @@ export class DisplayProjection {
     }
     const resolved = this.resolve(index)
     if (!resolved) return undefined
-    const row = this.materialize(resolved)
+    const row = this.#materialize(resolved)
     const bytes = retainedRowBytes(row)
     this.counters.materializedRows += 1
     this.counters.materializedTextBytes += bytes
-    this.cacheRow(index, row, bytes)
+    this.#cacheRow(index, row, bytes)
     return row
   }
 
@@ -206,7 +206,7 @@ export class DisplayProjection {
   materializeWindow(start: number, end: number): readonly DisplayRow[] {
     const from = Math.max(0, Math.floor(start))
     const to = Math.min(this.rowCount, Math.ceil(end))
-    this.evictOutside(from, to)
+    this.#evictOutside(from, to)
     const rows: DisplayRow[] = []
     for (let index = from; index < to; index += 1) {
       const row = this.getRow(index)
@@ -288,7 +288,7 @@ export class DisplayProjection {
       this.context = context
       return
     }
-    this.replaceRanges(context, ranges)
+    this.#replaceRanges(context, ranges)
   }
 
   update(transition: ProjectionTransition, input: Partial<DisplayProjectionConfig> = {}): void {
@@ -320,11 +320,11 @@ export class DisplayProjection {
       )
     }
     const sparse = changedSparseRanges(this.context, context, transition)
-    this.replaceRanges(context, sparse)
+    this.#replaceRanges(context, sparse)
   }
 
   retainWindow(start: number, end: number): void {
-    this.evictOutside(start, end)
+    this.#evictOutside(start, end)
   }
 
   clearCache(): void {
@@ -349,7 +349,7 @@ export class DisplayProjection {
     return location ? resolveProjectionRow(this.textSnapshot, location, index) : undefined
   }
 
-  private materialize(resolved: ResolvedProjectionRow): DisplayRow {
+  #materialize(resolved: ResolvedProjectionRow): DisplayRow {
     const { metrics, injected } = resolved
     const measurements =
       metrics.textLength >= 1024 ? this.getRowMeasurements(metrics.index) : undefined
@@ -396,25 +396,25 @@ export class DisplayProjection {
     )
   }
 
-  private cacheRow(index: number, row: DisplayRow, bytes: number): void {
+  #cacheRow(index: number, row: DisplayRow, bytes: number): void {
     if (bytes > MAX_CACHED_TEXT_BYTES) return
     while (
       this.cache.size >= MAX_CACHED_ROWS ||
       this.cachedTextBytes + bytes > MAX_CACHED_TEXT_BYTES
     )
-      this.evictOldest()
+      this.#evictOldest()
     this.cache.set(index, { row, bytes })
     this.cachedTextBytes += bytes
   }
 
-  private evictOldest(): void {
+  #evictOldest(): void {
     const first = this.cache.keys().next().value
     if (first === undefined) return
     this.cachedTextBytes -= this.cache.get(first)!.bytes
     this.cache.delete(first)
   }
 
-  private evictOutside(start: number, end: number): void {
+  #evictOutside(start: number, end: number): void {
     for (const [index, cached] of this.cache) {
       if (index >= start && index < end) continue
       this.cachedTextBytes -= cached.bytes
@@ -427,10 +427,10 @@ export class DisplayProjection {
     this.root = buildSpan(context, 0, snapshot.lineCount)
     this.context = context
     this.clearCache()
-    this.revisionValue += 1
+    this.#revisionValue += 1
   }
 
-  private replaceRanges(context: BuildContext, ranges: readonly SourceLineRange[]): void {
+  #replaceRanges(context: BuildContext, ranges: readonly SourceLineRange[]): void {
     for (const range of ranges) {
       const end = Math.min(context.snapshot.lineCount, range.end)
       this.root = splice(
@@ -445,7 +445,7 @@ export class DisplayProjection {
     }
     this.context = context
     this.clearCache()
-    this.revisionValue += 1
+    this.#revisionValue += 1
   }
 }
 

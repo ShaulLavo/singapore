@@ -43,7 +43,7 @@ const SLICE = { maxRows: 1024, maxCodeUnits: 32768 }
 
 export class EditorFallbackFoldController {
   private current: IndentationFoldIndex | null = null
-  private job: FallbackFoldJob | null = null
+  #job: FallbackFoldJob | null = null
   private trigger: FallbackFoldTrigger = 'attach'
 
   constructor(private readonly options: FallbackFoldControllerOptions) {}
@@ -54,7 +54,7 @@ export class EditorFallbackFoldController {
 
   reset(): void {
     this.options.scheduler.cancel(WORK_KEY)
-    this.cancelJob()
+    this.#cancelJob()
     this.current = null
     this.trigger = 'attach'
   }
@@ -64,7 +64,7 @@ export class EditorFallbackFoldController {
     const context = this.options.context()
     if (!index || !selected(context) || !compatible(index, context)) return
     if (!index.ready) {
-      this.job = { index, context, trigger: 'prepared', durationMs: 0 }
+      this.#job = { index, context, trigger: 'prepared', durationMs: 0 }
       this.schedule()
       return
     }
@@ -76,7 +76,7 @@ export class EditorFallbackFoldController {
   update(batch: TextEditBatch): void {
     const context = this.options.context()
     const previous = this.current
-    this.cancelJob()
+    this.#cancelJob()
     this.current = null
     this.trigger = 'edit'
     if (!selected(context) || !previous) {
@@ -90,14 +90,14 @@ export class EditorFallbackFoldController {
       previous,
       batch,
     })
-    this.job = { index, context, trigger: 'edit', durationMs: 0 }
-    if (!this.runSlice()) this.options.publish(null)
+    this.#job = { index, context, trigger: 'edit', durationMs: 0 }
+    if (!this.#runSlice()) this.options.publish(null)
   }
 
   schedule(): void {
     const context = this.options.context()
     if (!selected(context)) {
-      this.suppress(context)
+      this.#suppress(context)
       return
     }
     if (this.current && !compatible(this.current, context)) this.current = null
@@ -106,22 +106,22 @@ export class EditorFallbackFoldController {
       this.options.scheduler.cancel(WORK_KEY)
       return
     }
-    this.scheduleSlice(150, 400)
+    this.#scheduleSlice(150, 400)
   }
 
   flush(): void {
     this.options.scheduler.cancel(WORK_KEY)
     const context = this.options.context()
     if (!selected(context)) {
-      this.suppress(context)
+      this.#suppress(context)
       return
     }
     if (this.current && compatible(this.current, context)) {
       this.options.publish(this.current)
       return
     }
-    this.ensureJob(context, 'explicit-command')
-    const job = this.job
+    this.#ensureJob(context, 'explicit-command')
+    const job = this.#job
     if (!job) return
     const started = nowMs()
     job.index.complete()
@@ -129,7 +129,7 @@ export class EditorFallbackFoldController {
     this.finish(job, 'explicit-command')
   }
 
-  private scheduleSlice(delayMs: number, maxDelayMs?: number): void {
+  #scheduleSlice(delayMs: number, maxDelayMs?: number): void {
     const context = this.options.context()
     this.options.scheduler.schedule({
       key: WORK_KEY,
@@ -137,23 +137,23 @@ export class EditorFallbackFoldController {
       maxDelayMs,
       version: context.documentVersion,
       isCurrent: () => sameIndentationSnapshot(context.snapshot, this.options.context().snapshot),
-      run: traceEditorPerformanceTask('editor.secondary.folds', () => this.runScheduledSlice()),
+      run: traceEditorPerformanceTask('editor.secondary.folds', () => this.#runScheduledSlice()),
     })
   }
 
-  private runScheduledSlice(): void {
+  #runScheduledSlice(): void {
     const context = this.options.context()
     if (!selected(context)) {
-      this.suppress(context)
+      this.#suppress(context)
       return
     }
     if (this.current && compatible(this.current, context)) return
-    this.ensureJob(context, this.trigger)
-    if (!this.runSlice()) this.scheduleSlice(0)
+    this.#ensureJob(context, this.trigger)
+    if (!this.#runSlice()) this.#scheduleSlice(0)
   }
 
-  private runSlice(): boolean {
-    const job = this.job
+  #runSlice(): boolean {
+    const job = this.#job
     if (!job) return true
     const started = nowMs()
     const ready = job.index.step(SLICE)
@@ -162,10 +162,10 @@ export class EditorFallbackFoldController {
     return ready
   }
 
-  private ensureJob(context: FallbackFoldContext, trigger: FallbackFoldTrigger): void {
-    if (this.job && compatible(this.job.index, context)) return
-    this.cancelJob()
-    this.job = {
+  #ensureJob(context: FallbackFoldContext, trigger: FallbackFoldTrigger): void {
+    if (this.#job && compatible(this.#job.index, context)) return
+    this.#cancelJob()
+    this.#job = {
       index: new IndentationFoldIndex({
         snapshot: context.snapshot,
         languageId: context.languageId,
@@ -179,18 +179,18 @@ export class EditorFallbackFoldController {
 
   private finish(job: FallbackFoldJob, trigger = job.trigger): void {
     const context = this.options.context()
-    if (this.job !== job || !selected(context) || !compatible(job.index, context)) {
-      this.cancelJob()
+    if (this.#job !== job || !selected(context) || !compatible(job.index, context)) {
+      this.#cancelJob()
       return
     }
     this.current = job.index
-    this.job = null
+    this.#job = null
     this.report(job, undefined, trigger)
     this.options.publish(job.index)
     this.options.changed()
   }
 
-  private suppress(context: FallbackFoldContext): void {
+  #suppress(context: FallbackFoldContext): void {
     this.reset()
     this.options.publish(null)
     recordEditorPerformanceDiagnostic('editor.fallbackFolds.selection', () => ({
@@ -200,12 +200,12 @@ export class EditorFallbackFoldController {
     }))
   }
 
-  private cancelJob(): void {
-    if (this.job) {
-      this.report(this.job, 'cancelled')
-      this.job.index.cancel()
+  #cancelJob(): void {
+    if (this.#job) {
+      this.report(this.#job, 'cancelled')
+      this.#job.index.cancel()
     }
-    this.job = null
+    this.#job = null
   }
 
   private report(

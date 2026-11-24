@@ -24,7 +24,7 @@ const MAX_TRACKED_PAIRS = 32
  * ones this class could never be told about, since nothing in core subscribes to buffer changes.
  */
 export class AutoCloseStore {
-  private validForSnapshot: PieceTableSnapshot | null = null
+  #validForSnapshot: PieceTableSnapshot | null = null
   private pairs: TrackedPair[] = []
 
   /** Keeps outer pairs only when the insertion starts from the snapshot this editor owns. */
@@ -35,7 +35,7 @@ export class AutoCloseStore {
     closerChar: string,
   ): void {
     this.advance(previousSnapshot, snapshot)
-    this.validForSnapshot = snapshot
+    this.#validForSnapshot = snapshot
     // Right bias: text typed between the delimiters must push the closer along, which is exactly
     // what makes type-over still work after editing inside the pair.
     this.pairs.push({ closerAnchor: anchorAfter(snapshot, offset), closerChar })
@@ -49,7 +49,7 @@ export class AutoCloseStore {
    * still hold that character there, both O(1).
    */
   hasCloserAt(snapshot: PieceTableSnapshot, offset: number, closerChar: string): boolean {
-    if (this.validForSnapshot !== snapshot) return false
+    if (this.#validForSnapshot !== snapshot) return false
 
     return this.pairs.some((pair) => {
       if (pair.closerChar !== closerChar) return false
@@ -64,7 +64,7 @@ export class AutoCloseStore {
 
   /** Drops the tracked closer at `offset`, once it has been stepped over or deleted. */
   forget(snapshot: PieceTableSnapshot, offset: number): void {
-    if (this.validForSnapshot !== snapshot) return
+    if (this.#validForSnapshot !== snapshot) return
 
     this.pairs = this.pairs.filter((pair) => {
       const resolved = resolveAnchor(snapshot, pair.closerAnchor)
@@ -74,16 +74,16 @@ export class AutoCloseStore {
 
   /** Carries pairs across owned transitions; a foreign starting snapshot revokes ownership. */
   advance(previousSnapshot: PieceTableSnapshot, snapshot: PieceTableSnapshot): void {
-    if (this.validForSnapshot !== previousSnapshot) {
+    if (this.#validForSnapshot !== previousSnapshot) {
       this.clear()
       return
     }
 
-    this.validForSnapshot = snapshot
+    this.#validForSnapshot = snapshot
   }
 
   clear(): void {
-    this.validForSnapshot = null
+    this.#validForSnapshot = null
     this.pairs = []
   }
 }

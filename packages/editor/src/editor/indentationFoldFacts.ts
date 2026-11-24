@@ -109,7 +109,7 @@ export class FoldFactReader {
   private marker: EditorRegionMarkerClassifier
   private length = 0
   private indent = 0
-  private hasContent = false
+  #hasContent = false
   private column = 0
   codeUnitsRead = 0
 
@@ -134,14 +134,14 @@ export class FoldFactReader {
       if (code === -1 || code === 10) return this.finish(code === 10)
       this.codeUnitsRead += 1
       this.length += 1
-      this.consume(code)
+      this.#consume(code)
     }
     return null
   }
 
-  private consume(code: number): void {
+  #consume(code: number): void {
     this.marker.push(code)
-    if (this.hasContent) return
+    if (this.#hasContent) return
     if (code === 32) {
       this.column += 1
       return
@@ -150,7 +150,7 @@ export class FoldFactReader {
       this.column += this.tabSize - (this.column % this.tabSize)
       return
     }
-    this.hasContent = true
+    this.#hasContent = true
     this.indent = this.column
   }
 
@@ -158,8 +158,8 @@ export class FoldFactReader {
     if (lineBreak) this.codeUnitsRead += 1
     const fact = {
       length: this.length + Number(lineBreak),
-      indent: this.hasContent ? this.indent : -1,
-      marker: this.hasContent ? this.marker.finish() : null,
+      indent: this.#hasContent ? this.indent : -1,
+      marker: this.#hasContent ? this.marker.finish() : null,
     }
     this.reset()
     return fact
@@ -169,7 +169,7 @@ export class FoldFactReader {
     this.marker = new EditorRegionMarkerClassifier(this.rules.regionMarkers)
     this.length = 0
     this.indent = 0
-    this.hasContent = false
+    this.#hasContent = false
     this.column = 0
   }
 }

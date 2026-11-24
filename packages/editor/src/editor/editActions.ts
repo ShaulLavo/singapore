@@ -358,11 +358,11 @@ class TrailingWhitespaceScan {
   feed(text: string, start: number): void {
     let lineStart = 0
     for (let end = text.indexOf('\n'); end !== -1; end = text.indexOf('\n', end + 1)) {
-      this.#runStart = this.runStartBefore(text, start, lineStart, end)
+      this.#runStart = this.#runStartBefore(text, start, lineStart, end)
       this.endRow(start + end)
       lineStart = end + 1
     }
-    this.#runStart = this.runStartBefore(text, start, lineStart, text.length)
+    this.#runStart = this.#runStartBefore(text, start, lineStart, text.length)
   }
 
   finish(length: number): readonly TextEdit[] {
@@ -371,7 +371,7 @@ class TrailingWhitespaceScan {
   }
 
   /** Where the run ending at `end` starts in the document, or -1 when there is none. */
-  private runStartBefore(text: string, start: number, lineStart: number, end: number): number {
+  #runStartBefore(text: string, start: number, lineStart: number, end: number): number {
     let index = end
     while (index > lineStart && isBlank(text.charCodeAt(index - 1))) index -= 1
     // The run began in an earlier chunk when it fills everything this chunk had before `end`.

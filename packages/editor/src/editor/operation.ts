@@ -32,7 +32,7 @@ export type EditorOperationFlush = {
  */
 export class EditorOperation {
   private readonly changes: EditorOperationChange[] = []
-  private readonly changeIndexes = new Map<TextSnapshot, number>()
+  readonly #changeIndexes = new Map<TextSnapshot, number>()
 
   record(
     change: DocumentSessionChange,
@@ -41,7 +41,7 @@ export class EditorOperation {
     options: SessionChangeOptions,
   ): void {
     if (change.kind !== 'selection' && change.kind !== 'synchronize' && change.kind !== 'none') {
-      this.changeIndexes.set(change.textSnapshot, this.changes.length)
+      this.#changeIndexes.set(change.textSnapshot, this.changes.length)
     }
     this.changes.push({ change, totalName, totalStart, options })
   }
@@ -52,7 +52,7 @@ export class EditorOperation {
     totalStart: number,
     options: SessionChangeOptions,
   ): boolean {
-    const index = this.changeIndexes.get(change.textSnapshot)
+    const index = this.#changeIndexes.get(change.textSnapshot)
     if (index === undefined) return false
     const pending = this.changes[index]
     if (!pending) return false
