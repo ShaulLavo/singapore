@@ -1,10 +1,10 @@
-import { createEditorStructuralOperation } from '../src/editor/operationDefinitions'
+import { createEditorStructuralOperation } from '../src/editor/syntaxOperations'
 import {
   TreeSitterWorkerClient,
   type TreeSitterBackend,
 } from '../../tree-sitter/src/treeSitter/workerClient'
 import { TreeSitterSyntaxSession } from '../../tree-sitter/src/session'
-import { defineStructuralOperation } from '../src/editor/operationDefinitions'
+import { defineStructuralOperation } from '../src/editor/syntaxOperations'
 import { afterEach, expect, test, vi } from 'vitest'
 import { commands, page } from 'vitest/browser'
 import { Editor } from '../src/editor/Editor'

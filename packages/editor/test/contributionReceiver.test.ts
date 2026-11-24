@@ -8,10 +8,8 @@ import {
   releaseDocumentMutationLease,
 } from '../src/documentSession'
 import { createEditorDocumentAnalysis } from '../src/editor/documentAnalysis'
-import {
-  defineDocumentOperation,
-  createEditorHighlighterOperation,
-} from '../src/editor/operationDefinitions'
+import { defineDocumentOperation } from '../src/editor/operationDefinitions'
+import { createEditorHighlighterOperation } from '../src/editor/syntaxOperations'
 import type {
   DocumentProjectionEndpoint,
   DocumentProjectionUpdate,

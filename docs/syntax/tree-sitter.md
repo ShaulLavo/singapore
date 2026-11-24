@@ -4,6 +4,8 @@
 
 Tree-sitter is the first-party structural syntax engine, delivered through the optional `@singapore-editor/tree-sitter` runtime plugin. Core editing remains plain when no syntax provider is registered. Shiki remains available as an optional highlighter package for hosts that prefer it.
 
+An editor with no provider does not load the syntax controller. It runs `EditorPlainSyntax`, which does what the full `EditorSyntaxController` does with no provider: host tokens from `setTokens`, the plain initial-paint events, and theme replacement. Document analysis stays loaded, so every buffer-backed document keeps its contribution receiver. The helpers providers are built with (`createEditorStructuralOperation`, `createEditorHighlighterOperation`, and the `define*Operation` functions on the worker entry) install the full controller into a module variable of their own package copy. So the controller ships in the provider's bundle, and an editor handed a provider swaps it in synchronously, after which the plain pipeline publishes nothing. The plugin host refuses a syntax or highlighter provider registered before the controller is installed, with an error naming the helpers. `test/syntaxPipelineBundle.node.test.ts` checks what a built plain-text consumer loads.
+
 Tree-sitter provides a single structural model for:
 
 - syntax highlighting through highlight queries

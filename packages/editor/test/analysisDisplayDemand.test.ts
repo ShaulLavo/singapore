@@ -1,4 +1,4 @@
-import { createEditorStructuralOperation } from '../src/editor/operationDefinitions'
+import { createEditorStructuralOperation } from '../src/editor/syntaxOperations'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createEditorBufferSession,

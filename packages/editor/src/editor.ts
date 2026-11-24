@@ -221,7 +221,7 @@ export type { EditorStructuralOperation, EditorHighlighterOperation } from './do
 export {
   createEditorStructuralOperation,
   createEditorHighlighterOperation,
-} from './editor/operationDefinitions'
+} from './editor/syntaxOperations'
 export type {
   EditorStructuralOperationContext,
   EditorHighlighterOperationContext,

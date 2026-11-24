@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Editor } from '../src/editor'
-import { createEditorStructuralOperation } from '../src/editor/operationDefinitions'
+import { createEditorStructuralOperation } from '../src/editor/syntaxOperations'
 import { createEmptySyntaxResult, type EditorSyntaxRuntime } from '../src/syntax/session'
 import {
   EditorSecondaryWorkScheduler,

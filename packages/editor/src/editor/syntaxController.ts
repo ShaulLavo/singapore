@@ -3,6 +3,7 @@ import {
   retainedSyntaxCanWarm,
   setRetainedSyntaxDisplayDemand,
 } from './documentAnalysis'
+import { installEditorSyntaxRuntime } from './syntaxRuntime'
 import type {
   EditorDocumentAnalysis,
   EditorRetainedSyntaxSession,
@@ -99,6 +100,34 @@ export type EditorSyntaxControllerOptions = {
   needsSyntaxCaptures?(): boolean
   notifyThemeChanged(): void
   log?(event: EditorLogInput): void
+}
+
+export type EditorSyntaxControllerFactory = (
+  options: EditorSyntaxControllerOptions,
+) => EditorSyntaxController
+
+/**
+ * What the editor's plain pipeline (`syntaxPipeline.ts`) hands over when this controller takes the
+ * document from it.
+ */
+export type EditorPlainSyntaxState = {
+  readonly analysis: EditorDocumentAnalysis | null
+  readonly structuralConfigurationTag: readonly EditorPreparedTagValue[]
+  readonly highlighterConfigurationTag: readonly EditorPreparedTagValue[]
+  readonly disposed: boolean
+  readonly initialHighlightState: EditorInitialHighlightStatus
+  readonly initialPaintDocumentVersion: number
+  readonly initialTextPainted: boolean
+  readonly initialTextPaintEmitted: boolean
+  readonly initialHighlightPaintEmitted: boolean
+  readonly configurationGeneration: number
+  readonly pendingReplacement: PendingInitialHighlightReplacement | null
+  readonly includesCaptures: boolean
+  readonly contentVersion: number
+  readonly tokens: EditorTokenStore
+  readonly acceptedCopyTokens: EditorTokenStore
+  readonly acceptedTokensDocumentVersion: number
+  readonly acceptedTokensTextVersion: number
 }
 
 export type EditorSyntaxRefreshOptions = {
@@ -314,6 +343,30 @@ export class EditorSyntaxController {
   #lastStructuralEditRefreshAt = Number.NEGATIVE_INFINITY
 
   constructor(private readonly options: EditorSyntaxControllerOptions) {}
+
+  /**
+   * Takes the document over from the plain pipeline the editor ran before its first provider was
+   * installed, as though this controller had been running it with no provider all along.
+   */
+  adoptPlainState(state: EditorPlainSyntaxState): void {
+    this.analysis = state.analysis
+    this.structuralConfigurationTag = state.structuralConfigurationTag
+    this.highlighterConfigurationTag = state.highlighterConfigurationTag
+    this.disposed = state.disposed
+    this.#initialHighlightState = state.initialHighlightState
+    this.#initialPaintDocumentVersion = state.initialPaintDocumentVersion
+    this.#initialTextPainted = state.initialTextPainted
+    this.#initialTextPaintEmitted = state.initialTextPaintEmitted
+    this.#initialHighlightPaintEmitted = state.initialHighlightPaintEmitted
+    this.#initialHighlightConfigurationGeneration = state.configurationGeneration
+    this.pendingInitialHighlightReplacement = state.pendingReplacement
+    this.#syntaxSessionIncludesCaptures = state.includesCaptures
+    this.#syntaxContentVersion = state.contentVersion
+    this.#currentTokens = state.tokens
+    this.#acceptedCopyTokens = state.acceptedCopyTokens
+    this.#acceptedTokensDocumentVersion = state.acceptedTokensDocumentVersion
+    this.#acceptedTokensTextVersion = state.acceptedTokensTextVersion
+  }
 
   setDisplayDemand(demand: EditorAnalysisDisplayDemand): void {
     const tokens = this.#currentTokens
@@ -2416,6 +2469,15 @@ export class EditorSyntaxController {
 }
 
 type EditorSyntaxDebugPayload = Record<string, unknown>
+
+/**
+ * Makes this controller what editors on the page run once they have a provider. Called by what
+ * providers are built with, so the code travels with the providers rather than with every editor.
+ */
+export function installEditorSyntaxController(): void {
+  const create: EditorSyntaxControllerFactory = (options) => new EditorSyntaxController(options)
+  installEditorSyntaxRuntime(create)
+}
 
 const replacementPriority = (replacement: InitialHighlightReplacement): number => {
   if (replacement === 'all') return 2

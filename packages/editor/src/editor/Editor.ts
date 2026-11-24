@@ -37,7 +37,12 @@ import { EditorHotkeys, type EditorKeymapNodeOptions } from './hotkeys'
 import type { EditorKeymapContext } from './hotkeys'
 import { InputSelectionController } from './inputSelectionController'
 import { defaultRtlMoveVisually } from './navigationTargets'
-import { EditorSyntaxController } from './syntaxController'
+import type { EditorSyntaxControllerOptions } from './syntaxController'
+import {
+  createEditorSyntaxPipeline,
+  upgradeEditorSyntaxPipeline,
+  type EditorSyntaxPipeline,
+} from './syntaxPipeline'
 import { createEditorViewSnapshot } from './viewSnapshot'
 import {
   DocumentEditChain,
@@ -452,7 +457,8 @@ export class Editor {
    * ranges a provider has not produced yet.
    */
   private manualFolds: readonly FoldRange[] = []
-  private readonly syntax: EditorSyntaxController
+  private syntax: EditorSyntaxPipeline
+  private readonly syntaxOptions: EditorSyntaxControllerOptions
   private readonly inputSelection: InputSelectionController
   private readonly selectionRanges: SelectionRangeStore
   private configuredTheme: EditorTheme | null = null
@@ -640,7 +646,7 @@ export class Editor {
     this.environmentRegistrations.add(
       observeBrowserTextMetricsInvalidation(this.el, () => this.remeasureTextMetrics()),
     )
-    this.syntax = new EditorSyntaxController({
+    this.syntaxOptions = {
       pluginHost: this.pluginHost,
       getDocumentVersion: () => this.documentVersion,
       getDocumentId: () => this.documentId,
@@ -678,7 +684,8 @@ export class Editor {
       },
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
-    })
+    }
+    this.syntax = createEditorSyntaxPipeline(this.syntaxOptions)
     this.fallbackFolds = new EditorFallbackFoldController({
       scheduler: this.secondaryWork,
       context: () => ({
@@ -849,8 +856,8 @@ export class Editor {
       onPluginDisposed: (name) => this.recordPluginLifecycle('disposed', name),
       onPluginDisposeFailed: (name, error, durationMs) =>
         this.logPluginFailure('editor.plugin.dispose_failed', name, error, durationMs),
-      onHighlighterProvidersChanged: () => this.syntax.reloadHighlighterAndSyntax(),
-      onSyntaxProvidersChanged: () => this.syntax.reloadSyntaxSession(),
+      onHighlighterProvidersChanged: () => this.syntaxWithProviders().reloadHighlighterAndSyntax(),
+      onSyntaxProvidersChanged: () => this.syntaxWithProviders().reloadSyntaxSession(),
       onViewContributionProviderAdded: (provider) => this.addViewContributionProvider(provider),
       onViewContributionProviderRemoved: (provider) =>
         this.removeViewContributionProvider(provider),
@@ -2515,6 +2522,8 @@ export class Editor {
         textSnapshot: attachment.textSnapshot,
         snapshot: attachment.session.getSnapshot(),
       }
+      // A prepared document is borrowed by the full controller, which preparing it installed.
+      if (options.preparedDocument) this.syntaxWithProviders()
       const prepared = options.preparedDocument
         ? this.syntax.borrowPreparedDocument(syntaxDocument, options.preparedDocument, {
             configuredTabSize: this.configuredTabSize,
@@ -3985,6 +3994,15 @@ export class Editor {
     this.analysisInterest?.dispose()
     this.analysisInterest = null
     this.analysis = null
+  }
+
+  /**
+   * The syntax controller to hand a provider to: the full one in place of the plain one. A provider
+   * can only be registered once the helpers it is built with have installed the full controller.
+   */
+  private syntaxWithProviders(): EditorSyntaxPipeline {
+    this.syntax = upgradeEditorSyntaxPipeline(this.syntax, this.syntaxOptions)
+    return this.syntax
   }
 
   private subscribeToBufferSession(session: DocumentSession): void {

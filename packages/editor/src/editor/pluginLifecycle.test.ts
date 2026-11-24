@@ -1,4 +1,4 @@
-import { defineStructuralOperation } from './operationDefinitions'
+import { defineStructuralOperation } from './syntaxOperations'
 import { Window } from 'happy-dom'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { createEditorLoggingPlugin } from '../logging'

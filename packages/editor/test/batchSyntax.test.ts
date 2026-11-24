@@ -4,7 +4,7 @@ import type { DocumentChangesSinceSyncPoint } from '../src/editor/editChain'
 import {
   createEditorStructuralOperation,
   createEditorHighlighterOperation,
-} from '../src/editor/operationDefinitions'
+} from '../src/editor/syntaxOperations'
 import { waitForDocumentWork } from '../src/editor/documentWork'
 import type { Editor } from '../src/editor'
 import type { EditorPlugin } from '../src/plugins'
