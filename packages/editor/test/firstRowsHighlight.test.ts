@@ -51,25 +51,26 @@ describe('the first highlight of a document', () => {
     expect(fixture.asked).toEqual([rows, VISIBLE])
   })
 
-  it('leaves the visible range to the request that superseded this one', async () => {
+  it('paints once and asks for the visible range once when a newer request takes over', async () => {
     const rows = { startIndex: 0, endIndex: 540 }
     const fixture = controller(rows)
 
     fixture.syntax.refresh(1, null, { delayMs: 0 })
     await vi.waitFor(() => expect(fixture.asked).toEqual([rows]))
-    // A newer request, as an edit makes, while the first one's rows are still on their way.
+    // A newer request for the same text while the first one's rows are still on their way. It
+    // joins the rows already asked for instead of asking again.
     fixture.syntax.refresh(1, null, { delayMs: 0 })
-    await vi.waitFor(() => expect(fixture.asked).toEqual([rows, rows]))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fixture.asked).toEqual([rows])
 
     fixture.answer(0, colored(1))
+    await vi.waitFor(() => expect(fixture.asked).toEqual([rows, VISIBLE]))
+
+    // One paint and one request for the range around the rows: the superseded request stopped
+    // when its rows arrived and left both to the one that replaced it.
     await new Promise((resolve) => setTimeout(resolve, 0))
-
-    // The superseded request stops there. It does not go on to ask for the range around its
-    // rows, which would be a second, wider query for text nobody is waiting on.
-    expect(fixture.asked).toEqual([rows, rows])
-
-    fixture.answer(1, colored(1))
-    await vi.waitFor(() => expect(fixture.asked).toEqual([rows, rows, VISIBLE]))
+    expect(fixture.adopted).toEqual([1])
+    expect(fixture.asked).toEqual([rows, VISIBLE])
   })
 
   it('asks once when the rows on screen are nearly the whole visible range', async () => {

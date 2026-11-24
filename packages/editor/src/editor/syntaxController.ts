@@ -1409,10 +1409,8 @@ export class EditorSyntaxController {
       delayMs,
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: syntaxWorkTags(documentVersion, contentVersion, 'full'),
-      run: traceEditorPerformanceTask(
-        'editor.syntax.structural.request',
-        (signal: AbortSignal) =>
-          this.#loadSyntaxResult(contentVersion, documentVersion, configurationGeneration, signal),
+      run: traceEditorPerformanceTask('editor.syntax.structural.request', (signal: AbortSignal) =>
+        this.#loadSyntaxResult(contentVersion, documentVersion, configurationGeneration, signal),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) =>
         this.#applySyntaxResult(result, documentVersion, startedAt, configurationGeneration),

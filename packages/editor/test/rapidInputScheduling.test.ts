@@ -180,13 +180,13 @@ describe('typing before the first highlight', () => {
     type('y')
     type('z')
 
-    // The first key asks at once. The two after it go to the debounce, which coalesces them into
-    // one request; the scheduler is stubbed here, so that one never runs and nothing more is
-    // analysed.
+    // The first key asks at once, and by the time that request runs it reads all three keys. The
+    // two after it go to the debounce, which coalesces them into one request; the scheduler is
+    // stubbed here, so that one never runs and nothing more is analysed.
     expect(scheduled.filter((work) => work.key === 'editor.syntaxRefresh')).toHaveLength(2)
-    await vi.waitFor(() => expect(analysed).toEqual([3, 4]))
+    await vi.waitFor(() => expect(analysed).toEqual([3, 6]))
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(analysed).toEqual([3, 4])
+    expect(analysed).toEqual([3, 6])
   })
 
   it('debounces again once the first highlight has landed', async () => {
