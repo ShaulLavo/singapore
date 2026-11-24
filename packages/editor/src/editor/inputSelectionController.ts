@@ -95,6 +95,7 @@ import {
   type HiddenInputContent,
   type HiddenInputState,
 } from './input'
+import { patchTextareaValue } from './inputWindowEdits'
 import type {
   EditorCharacterBoundsUpdateEvent,
   EditorTextUpdateEvent,
@@ -1870,7 +1871,8 @@ export class InputSelectionController {
     }
     if (!isTextareaElement(input)) return
 
-    if (input.value !== content.value) input.value = content.value
+    if (input.value !== content.value && !patchTextareaValue(input, content.value))
+      input.value = content.value
     input.setSelectionRange(content.selectionStart, content.selectionEnd, content.direction)
   }
 
@@ -2007,6 +2009,8 @@ export class InputSelectionController {
    * carries usable data on the event, and all of them leave the answer in the element's value.
    */
   #handleHiddenInputChange = this.#traceInput('input.deducedText', (event: Event): void => {
+    // The window's own editing commands raise input events; their text is already the document's.
+    if (this.#writingInputWindow) return
     this.#transitionInputState({ type: 'native-input-observed' })
     const session = this.session
     if (!session) return
@@ -2989,8 +2993,17 @@ export class InputSelectionController {
   }
 
   #handleBeforeInput = this.#traceInput('input.beforeinput', (event: InputEvent): void => {
+    if (this.#writingInputWindow) return
     const session = this.session
     if (!session) return
+    // The element's own history holds window edits, not the document's; replaying them would type
+    // the window's sliding ends into the text. A menu's Undo and Redo mean the editor's.
+    const history = nativeHistoryCommand(event)
+    if (history) {
+      event.preventDefault()
+      this.runInputCommand(history)
+      return
+    }
     if (!this.#canTypeText()) {
       event.preventDefault()
       return
@@ -4269,6 +4282,12 @@ function writeAccessibleWindow(input: HTMLElement, content: HiddenInputState): v
   const anchor = backward ? content.selectionEnd : content.selectionStart
   const focus = backward ? content.selectionStart : content.selectionEnd
   selection.setBaseAndExtent(node, anchor, node, focus)
+}
+
+function nativeHistoryCommand(event: InputEvent): 'undo' | 'redo' | null {
+  if (event.inputType === 'historyUndo') return 'undo'
+  if (event.inputType === 'historyRedo') return 'redo'
+  return null
 }
 
 function beforeInputText(event: InputEvent): string | null {

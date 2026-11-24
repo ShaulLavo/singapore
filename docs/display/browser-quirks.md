@@ -783,3 +783,54 @@ rows then paint the editor's part from `selectionchange`.
   // Firefox: "Title\nfirst line\nsecond line".
 </script>
 ```
+
+## WebKit textarea editing commands cost a value write
+
+**Verified 2026-11-24 against:** Chromium 156, Firefox 157 and Playwright WebKit 27.2 (build 2370),
+Linux. Not a bug; a cost difference the editor routes around.
+
+### Symptom and cause
+
+The hidden textarea holds a window of about 24 lines around the caret, and every key changes it.
+Writing `value` rebuilds the control's inner lines (a text node and a break per line) and restyles
+them. Applying only the changed characters with `execCommand('insertText')` on the focused textarea
+touches just those lines. Measured per update of a 24-line window, including a layout read:
+
+| Engine       | `value` write | Editing command |
+| ------------ | ------------: | --------------: |
+| Chromium 156 |       1.19 ms |         0.11 ms |
+| Firefox 157  |       1.62 ms |         0.21 ms |
+| WebKit 27.2  |       0.88 ms |         1.00 ms |
+
+WebKit also raises `beforeinput` for editing commands, which the other two don't.
+
+### Fix
+
+`patchTextareaValue` (`packages/editor/src/editor/inputWindowEdits.ts`) patches the window with
+editing commands outside WebKit and falls back to a `value` write when the windows differ by more
+than a few hundred characters, when a command is refused, or when the result differs. The engine
+check is the `-webkit-nbsp-mode` support test used elsewhere on this page; it selects WebKit, not
+the cost, so re-measure before removing it. The commands add to the textarea's own undo history,
+so the editor turns away `historyUndo` and `historyRedo` input and runs its own undo instead.
+
+### Minimal reproduction
+
+```js
+const ta = document.body.appendChild(document.createElement('textarea'))
+ta.focus()
+ta.value = Array.from({ length: 24 }, (_, i) => `  export const value_${i} = f(${i});`).join('\n')
+let t = performance.now()
+for (let i = 0; i < 100; i++) {
+  ta.setSelectionRange(300 + i, 300 + i)
+  document.execCommand('insertText', false, 'y')
+  void ta.offsetHeight
+}
+console.log('command', (performance.now() - t) / 100)
+t = performance.now()
+for (let i = 0; i < 100; i++) {
+  ta.value = ta.value.slice(0, 400) + 'z' + ta.value.slice(400)
+  ta.setSelectionRange(401, 401)
+  void ta.offsetHeight
+}
+console.log('value', (performance.now() - t) / 100)
+```
