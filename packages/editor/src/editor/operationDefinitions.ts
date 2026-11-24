@@ -9,12 +9,7 @@ import type {
 } from '../syntax/highlighter'
 import type { DocumentContributionSource, DocumentRead } from './documentDelivery'
 import { DocumentOperation, type BoundOperationContext } from './contributionOperation'
-import {
-  AnalysisEntry,
-  HighlighterEntry,
-  installEditorDocumentAnalysis,
-  StructuralEntry,
-} from './documentAnalysis'
+import { AnalysisEntry, HighlighterEntry, StructuralEntry } from './documentAnalysis'
 import { createEditorRuntimeSessionId, type EditorSyntaxResult } from '../syntax/session'
 import type { EditorHighlightResult } from '../syntax/highlighter'
 import { sameThemeCohort, type ThemeCohort } from '../syntax/providerTheme'
@@ -45,7 +40,6 @@ export class StructuralDefinition extends DocumentOperation<
     ) => EditorSyntaxRuntime | null,
   ) {
     super()
-    installEditorDocumentAnalysis()
   }
   protected create(
     context: BoundOperationContext,
@@ -100,7 +94,6 @@ export class HighlighterDefinition extends DocumentOperation<
     ) => EditorHighlighterRuntime | null,
   ) {
     super()
-    installEditorDocumentAnalysis()
   }
   protected create(
     context: BoundOperationContext,
@@ -196,7 +189,6 @@ class GenericDefinition<Input, Result> extends DocumentOperation<
     private readonly scheduling: 'requested' | 'ordered',
   ) {
     super()
-    installEditorDocumentAnalysis()
   }
   protected create(context: BoundOperationContext, input: Input): AnalysisEntry<Result> | null {
     const { host, sourceScope, initialRead, runtimeSessionId } = context

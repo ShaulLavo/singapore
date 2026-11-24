@@ -2,7 +2,7 @@ import { createEmptySyntaxRuntime } from './factories/syntaxRuntime'
 import {
   createEditorStructuralOperation,
   createEditorHighlighterOperation,
-} from '../src/editor/operationDefinitions'
+} from '../src/editor/syntaxOperations'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createEditorBufferSession,

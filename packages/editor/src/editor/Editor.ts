@@ -1,7 +1,7 @@
 import '../style.css'
 import { editorSizing, type EditorHeight } from './editorHeight'
 import { projectReconciliationEdits } from '../reconciliation'
-import type { EditorDocumentAnalysis } from './documentAnalysis'
+import { acquireEditorDocumentAnalysis, type EditorDocumentAnalysis } from './documentAnalysis'
 import { normalizeGutterLeadingInset } from '../virtualization/virtualizedTextViewHelpers'
 import { captureJumpLocation, JumpHistory, type JumpLocation, type JumpCause } from './jumpHistory'
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
@@ -19,7 +19,6 @@ import {
   type DocumentEditAuthor,
   type EditorTextTransaction,
   type EditorBufferSession,
-  type EditorTextBuffer,
   type EditorTextBufferChange,
 } from '../documentSession'
 import {
@@ -41,9 +40,6 @@ import { defaultRtlMoveVisually } from './navigationTargets'
 import type { EditorSyntaxControllerOptions } from './syntaxController'
 import {
   createEditorSyntaxPipeline,
-  EditorPlainSyntax,
-  editorDocumentAnalysisRuntime,
-  loadEditorSyntaxController,
   upgradeEditorSyntaxPipeline,
   type EditorSyntaxPipeline,
 } from './syntaxPipeline'
@@ -381,10 +377,6 @@ export class Editor {
   private readonly ambientPlugins: EditorAmbientPluginController
   private readonly commandRouter: EditorCommandRouter
   private analysis: EditorDocumentAnalysis | null = null
-  private pendingAnalysis: {
-    readonly buffer: EditorTextBuffer
-    readonly documentId: string
-  } | null = null
   private analysisInterest: { dispose(): void } | null = null
   private readonly document: EditorDocumentController
   private readonly editorFeatures = new Map<EditorCapabilityToken<unknown>, unknown>()
@@ -467,7 +459,6 @@ export class Editor {
   private manualFolds: readonly FoldRange[] = []
   private syntax: EditorSyntaxPipeline
   private readonly syntaxOptions: EditorSyntaxControllerOptions
-  private syntaxControllerLoading = false
   private readonly inputSelection: InputSelectionController
   private readonly selectionRanges: SelectionRangeStore
   private configuredTheme: EditorTheme | null = null
@@ -695,7 +686,6 @@ export class Editor {
       log: (event) => this.logSyntaxLifecycleEvent(event),
     }
     this.syntax = createEditorSyntaxPipeline(this.syntaxOptions)
-    if (this.hasSyntaxOrHighlighterProviders()) this.syntaxWithProviders()
     this.fallbackFolds = new EditorFallbackFoldController({
       scheduler: this.secondaryWork,
       context: () => ({
@@ -2524,7 +2514,7 @@ export class Editor {
       this.attachAnalysis(session, options.analysis ?? options.preparedDocument?.analysis)
       this.subscribeToBufferSession(session)
       const syntaxDocument = {
-        analysis: this.currentAnalysis(),
+        analysis: this.analysis,
         structuralConfigurationTag: options.structuralConfigurationTag,
         highlighterConfigurationTag: options.highlighterConfigurationTag,
         documentId: attachment.internalDocumentId,
@@ -2698,7 +2688,7 @@ export class Editor {
     if (this.view.isProvisional) this.snapshotGeneration = attachment.documentVersion
     this.syntaxCapturesVersion = null
     this.syntax.startDocument({
-      analysis: this.currentAnalysis(),
+      analysis: this.analysis,
       documentId: attachment.internalDocumentId,
       languageId: attachment.languageId,
       textSnapshot: attachment.textSnapshot,
@@ -3678,7 +3668,7 @@ export class Editor {
       highlightPrefix: this.highlightPrefix,
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
-      getDocumentContributions: () => this.currentAnalysis()?.contributions ?? null,
+      getDocumentContributions: () => this.analysis?.contributions ?? null,
       requestViewUpdate: () => this.requestViewUpdate(owner()),
       authorEdits: (author) => this.claimedBy(claims, () => this.authorEdits(author)),
       onDidTransaction: (listener) => this.claimedBy(claims, () => this.onDidTransaction(listener)),
@@ -3992,70 +3982,27 @@ export class Editor {
       this.analysis = analysis ?? null
       return
     }
-    this.pendingAnalysis = { buffer, documentId: this.currentSessionDocumentId() }
-    this.currentAnalysis()
-  }
-
-  /**
-   * The open document's analysis. Only a document operation (a provider or a document contribution)
-   * can make use of one, and building one installs the analysis code, so until then the document
-   * waits for it here instead of every plain-text editor carrying that code.
-   */
-  private currentAnalysis(): EditorDocumentAnalysis | null {
-    const pending = this.pendingAnalysis
-    if (!pending) return this.analysis
-    const runtime = editorDocumentAnalysisRuntime()
-    if (!runtime) return null
-
-    this.pendingAnalysis = null
-    const interest = runtime.acquire(pending)
+    const interest = acquireEditorDocumentAnalysis({
+      buffer,
+      documentId: this.currentSessionDocumentId(),
+    })
     this.analysisInterest = interest
     this.analysis = interest.analysis
-    return this.analysis
   }
 
   private releaseAnalysis(): void {
     this.analysisInterest?.dispose()
     this.analysisInterest = null
     this.analysis = null
-    this.pendingAnalysis = null
   }
 
   /**
-   * The syntax controller to hand a provider to: the full one in place of the plain one, once the
-   * helpers providers are built with have installed it. A provider assembled without them gets the
-   * plain one until the full one has loaded, and the document is then handed over.
+   * The syntax controller to hand a provider to: the full one in place of the plain one. A provider
+   * can only be registered once the helpers it is built with have installed the full controller.
    */
   private syntaxWithProviders(): EditorSyntaxPipeline {
-    this.syntax = upgradeEditorSyntaxPipeline(this.syntax, this.syntaxOptions, () =>
-      this.currentAnalysis(),
-    )
-    if (this.syntax instanceof EditorPlainSyntax && this.hasSyntaxOrHighlighterProviders())
-      this.loadSyntaxController()
+    this.syntax = upgradeEditorSyntaxPipeline(this.syntax, this.syntaxOptions)
     return this.syntax
-  }
-
-  private hasSyntaxOrHighlighterProviders(): boolean {
-    return this.pluginHost.hasSyntaxProviders() || this.pluginHost.hasHighlighterProviders()
-  }
-
-  private loadSyntaxController(): void {
-    if (this.syntaxControllerLoading) return
-    this.syntaxControllerLoading = true
-    loadEditorSyntaxController().then(
-      () => {
-        if (this.disposed) return
-        this.syntaxWithProviders().reloadHighlighterAndSyntax()
-      },
-      (error: unknown) => {
-        this.syntaxControllerLoading = false
-        this.log({
-          action: 'editor.syntax.controller_load_failed',
-          level: 'error',
-          error: editorLogError(error),
-        })
-      },
-    )
   }
 
   private subscribeToBufferSession(session: DocumentSession): void {

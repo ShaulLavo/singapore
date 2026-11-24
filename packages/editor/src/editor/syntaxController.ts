@@ -2464,7 +2464,7 @@ type EditorSyntaxDebugPayload = Record<string, unknown>
  */
 export function installEditorSyntaxController(): void {
   const create: EditorSyntaxControllerFactory = (options) => new EditorSyntaxController(options)
-  installEditorSyntaxRuntime('controller', create)
+  installEditorSyntaxRuntime(create)
 }
 
 const replacementPriority = (replacement: InitialHighlightReplacement): number => {

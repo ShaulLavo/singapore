@@ -2,7 +2,7 @@ import type { DocumentSessionChange } from '../documentSession'
 import type { EditorInitialHighlightStatus } from '../plugins'
 import type { EditorSyntaxInjection, BracketInfo } from '../syntax/session'
 import { EditorTokenStore } from '../syntax/tokenStore'
-import type { EditorDocumentAnalysis, EditorDocumentAnalysisRuntime } from './documentAnalysis'
+import type { EditorDocumentAnalysis } from './documentAnalysis'
 import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
 import type { EditorPreparedTagValue } from './preparedDocument'
 import type {
@@ -29,18 +29,14 @@ type PendingInitialHighlightReplacement = NonNullable<EditorPlainSyntaxState['pe
 type InitialHighlightReplacement = PendingInitialHighlightReplacement['kind']
 
 /**
- * The code behind syntax, highlighting and document contributions is kept out of an editor that
- * only ever shows plain text. Building a document operation installs document analysis, and the
- * helpers that build syntax and highlighter providers also install the syntax controller (see
- * `syntaxOperations.ts`), so the provider's own bundle carries that code and an editor given a
- * provider finds it already loaded: no request, and no frame where the provider waits for code.
+ * The syntax controller is kept out of an editor that only ever shows plain text. The helpers that
+ * build syntax and highlighter providers install it (see `syntaxOperations.ts`), so the provider's
+ * own bundle carries that code, and the plugin host refuses a provider registered before it is
+ * installed. An editor given a provider therefore always finds the controller already loaded: no
+ * request, and no frame where the provider waits for code.
  */
-export function editorDocumentAnalysisRuntime(): EditorDocumentAnalysisRuntime | null {
-  return (installedEditorSyntaxRuntime('analysis') as EditorDocumentAnalysisRuntime) ?? null
-}
-
 function syntaxControllerFactory(): EditorSyntaxControllerFactory | null {
-  return (installedEditorSyntaxRuntime('controller') as EditorSyntaxControllerFactory) ?? null
+  return installedEditorSyntaxRuntime() as EditorSyntaxControllerFactory | null
 }
 
 export function createEditorSyntaxPipeline(
@@ -56,24 +52,14 @@ export function createEditorSyntaxPipeline(
 export function upgradeEditorSyntaxPipeline(
   current: EditorSyntaxPipeline,
   options: EditorSyntaxControllerOptions,
-  analysis: () => EditorDocumentAnalysis | null,
 ): EditorSyntaxPipeline {
   if (!(current instanceof EditorPlainSyntax)) return current
   const create = syntaxControllerFactory()
   if (!create) return current
 
   const controller = create(options)
-  controller.adoptPlainState(current.handOver(analysis()))
+  controller.adoptPlainState(current.handOver())
   return controller
-}
-
-/**
- * Loads the syntax controller for a provider that was built without the helpers that bring it
- * along, such as one assembled from the internal operation classes. The editor keeps the plain
- * pipeline until it arrives.
- */
-export function loadEditorSyntaxController(): Promise<void> {
-  return import('./syntaxController').then((module) => module.installEditorSyntaxController())
 }
 
 const NO_BRACKETS: readonly BracketInfo[] = []
@@ -112,12 +98,17 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
   #acceptedCopyTokens = EditorTokenStore.empty()
   #acceptedTokensDocumentVersion = -1
   #acceptedTokensTextVersion = -1
+  // Set once the full controller has taken the document. A handover can happen inside one of this
+  // pipeline's own callbacks (a host adding a highlighter when the text paints), so every step that
+  // follows a callback checks it and stops rather than publish state that is no longer the editor's.
+  #handedOver = false
 
   constructor(private readonly options: EditorSyntaxControllerOptions) {}
 
-  handOver(analysis: EditorDocumentAnalysis | null): EditorPlainSyntaxState {
+  handOver(): EditorPlainSyntaxState {
+    this.#handedOver = true
     return {
-      analysis: analysis ?? this.#analysis,
+      analysis: this.#analysis,
       structuralConfigurationTag: this.#structuralConfigurationTag,
       highlighterConfigurationTag: this.#highlighterConfigurationTag,
       disposed: this.#disposed,
@@ -278,6 +269,7 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
     this.#includesCaptures = false
     this.#analysis = null
     this.#settlePlainInitialHighlight()
+    if (this.#handedOver) return
     this.#logStatus('editor.syntax.document_cleared')
   }
 
@@ -293,10 +285,15 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
     this.reloadSyntaxSession()
   }
 
+  // Reached only with no provider registered (the plugin host refuses one until the full controller
+  // is installed, and the editor hands over before telling it about a provider).
   reloadHighlighterAndSyntax(): void {
     this.#beginInitialHighlightReplacement('all')
+    if (this.#handedOver) return
     if (!this.#disposed && this.options.getSession()) this.#settlePlainInitialHighlight()
+    if (this.#handedOver) return
     this.reloadSyntaxSession(false)
+    if (this.#handedOver) return
     this.#settlePlainInitialHighlight()
   }
 
@@ -304,6 +301,7 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
     if (this.#disposed) return
 
     if (resetInitialHighlight) this.#beginInitialHighlightReplacement('syntax')
+    if (this.#handedOver) return
     this.#includesCaptures = false
     if (!this.options.getSession()) {
       this.#settlePlainInitialHighlight()
@@ -312,9 +310,11 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
 
     if (this.options.getLanguageId()) this.#includesCaptures = this.#needsCaptures()
     this.options.clearSyntaxFolds()
+    if (this.#handedOver) return
     this.#logStatus('editor.syntax.reloaded')
     if (resetInitialHighlight) this.refresh(this.options.getDocumentVersion(), null)
     this.options.notifyChange(null)
+    if (this.#handedOver) return
     this.#settlePlainInitialHighlight()
   }
 
@@ -417,6 +417,7 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
   }
 
   #emitInitialHighlightPaintIfReady(): void {
+    if (this.#handedOver) return
     if (!this.#initialTextPainted || this.#initialHighlightPaintEmitted) return
     if (this.#initialHighlightState === 'loading' || this.#initialHighlightState === 'idle') return
     if (this.#initialPaintDocumentVersion !== this.options.getDocumentVersion()) return

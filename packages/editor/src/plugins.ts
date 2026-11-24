@@ -57,6 +57,7 @@ import type {
   DocumentLogicalRevisionScope,
   DocumentSyncPoint,
 } from './editor/editChain'
+import { requireEditorSyntaxRuntime } from './editor/syntaxRuntime'
 import type { BrowserTextMetrics } from './virtualization/browserMetrics'
 import type { FixedRowVisibleRange } from './virtualization/fixedRowVirtualizer'
 import type {
@@ -1904,6 +1905,7 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   private registerHighlighter(provider: EditorHighlighterProvider): EditorDisposable {
+    requireEditorSyntaxRuntime()
     this.highlighters.push(provider)
     const disposable = disposableOnce(() => this.unregisterHighlighter(provider))
     notifyRegistrationAdded(disposable, () => this.events.onHighlighterProvidersChanged?.())
@@ -1920,6 +1922,7 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   private registerSyntaxProvider(provider: EditorSyntaxProvider): EditorDisposable {
+    requireEditorSyntaxRuntime()
     this.syntaxProviders.push(provider)
     const disposable = disposableOnce(() => this.unregisterSyntaxProvider(provider))
     notifyRegistrationAdded(disposable, () => this.events.onSyntaxProvidersChanged?.())

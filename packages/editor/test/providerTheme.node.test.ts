@@ -1,4 +1,4 @@
-import { createEditorHighlighterOperation } from '../src/editor/operationDefinitions'
+import { createEditorHighlighterOperation } from '../src/editor/syntaxOperations'
 import { describe, expect, it, vi } from 'vitest'
 import { createEditorBufferSession, createEditorTextBuffer } from '../src/documentSession'
 import {

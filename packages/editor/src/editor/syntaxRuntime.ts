@@ -1,21 +1,30 @@
-// Imports nothing: the modules that install into it (document analysis, the syntax controller) and
-// the editor that reads it sit on opposite sides of the import graph, and this is where they meet
-// without either importing the other. Typed accessors live in `syntaxPipeline.ts`.
+// Imports nothing: the syntax controller that installs itself here and the editor and plugin host
+// that read it sit on opposite sides of the import graph, and this is where they meet without either
+// importing the other. Typed accessors live in `syntaxPipeline.ts`.
+//
+// A module variable rather than anything global, so each copy of the package only ever sees the
+// controller its own helpers installed: a provider and an editor from one copy are never paired with
+// the analysis of another.
 
-// On the global object rather than in this module, so that a page which ends up with two copies of
-// the package (a provider resolved through another path) still finds what a provider installed.
-const RUNTIME_KEY = Symbol.for('@singapore-editor/core/syntax-runtime')
+let installedController: unknown = null
 
-export type EditorSyntaxRuntimeSlot = 'analysis' | 'controller'
-
-type RuntimeHolder = { [RUNTIME_KEY]?: Partial<Record<EditorSyntaxRuntimeSlot, unknown>> }
-
-export function installEditorSyntaxRuntime(slot: EditorSyntaxRuntimeSlot, value: unknown): void {
-  const holder = globalThis as RuntimeHolder
-  const runtime = (holder[RUNTIME_KEY] ??= {})
-  runtime[slot] ??= value
+export function installEditorSyntaxRuntime(controller: unknown): void {
+  installedController ??= controller
 }
 
-export function installedEditorSyntaxRuntime(slot: EditorSyntaxRuntimeSlot): unknown {
-  return (globalThis as RuntimeHolder)[RUNTIME_KEY]?.[slot]
+export function installedEditorSyntaxRuntime(): unknown {
+  return installedController
+}
+
+/**
+ * Refuses a syntax or highlighter provider whose operation was built without the helpers that bring
+ * the syntax controller, instead of letting the editor show it as plain text.
+ */
+export function requireEditorSyntaxRuntime(): void {
+  if (installedController) return
+  throw new TypeError(
+    'Syntax and highlighter providers must be built with createEditorStructuralOperation or ' +
+      'createEditorHighlighterOperation from @singapore-editor/core/editor, or defineStructuralOperation ' +
+      'or defineHighlighterOperation from @singapore-editor/core/internal/document-worker',
+  )
 }

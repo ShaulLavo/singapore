@@ -66,16 +66,9 @@ function loadedAtStart(chunks: readonly ConsumerChunk[]): readonly string[] {
   return Array.from(loaded).flatMap((chunk) => chunk.modules)
 }
 
-const PIPELINE = [
-  'editor/syntaxController.js',
-  'editor/documentAnalysis.js',
-  'editor/documentDelivery.js',
-  'editor/contributionDemand.js',
-]
+const CONTROLLER = 'editor/syntaxController.js'
 
-const pipelineIn = (modules: readonly string[]) => PIPELINE.filter((id) => modules.includes(id))
-
-it('leaves the syntax controller and document analysis out of what an editor given only text loads', () => {
+it('leaves the syntax controller out of an editor given only text', () => {
   const chunks = consumerChunks(`
     import { Editor } from ${JSON.stringify(`${dist}editor.js`)};
     export function mount(element) {
@@ -89,9 +82,9 @@ it('leaves the syntax controller and document analysis out of what an editor giv
 
   expect(atStart).toContain('editor/Editor.js')
   expect(atStart).toContain('editor/syntaxPipeline.js')
-  expect(pipelineIn(atStart)).toEqual([])
-  // Still emitted as a chunk of its own, for a provider assembled without the helpers that bring it.
-  expect(chunks.flatMap((chunk) => chunk.modules)).toContain('editor/syntaxController.js')
+  // Document analysis stays: every buffer-backed document has a contribution receiver.
+  expect(atStart).toContain('editor/documentAnalysis.js')
+  expect(chunks.flatMap((chunk) => chunk.modules)).not.toContain(CONTROLLER)
 })
 
 it('loads the syntax controller with a highlighter built by the public helper', () => {
@@ -105,7 +98,7 @@ it('loads the syntax controller with a highlighter built by the public helper', 
     }
   `)
 
-  expect(pipelineIn(loadedAtStart(chunks))).toEqual(PIPELINE)
+  expect(loadedAtStart(chunks)).toContain(CONTROLLER)
 })
 
 it('loads the syntax controller with a structural provider from the worker entry', () => {
@@ -120,5 +113,5 @@ it('loads the syntax controller with a structural provider from the worker entry
     }
   `)
 
-  expect(pipelineIn(loadedAtStart(chunks))).toEqual(PIPELINE)
+  expect(loadedAtStart(chunks)).toContain(CONTROLLER)
 })
