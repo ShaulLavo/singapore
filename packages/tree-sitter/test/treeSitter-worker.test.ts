@@ -271,15 +271,13 @@ describe('tree-sitter worker internals', () => {
   })
 
   it('queries visible range highlights in UTF-16 code units', () => {
+    const highlightedNode = node('identifier', 75, 82)
     const query = {
       matches: () => [],
-      captureRanges: (
-        _root: Node,
-        options?: NonNullable<Parameters<Query['captureRanges']>[1]>,
-      ) => {
+      captures: (_root: Node, options?: NonNullable<Parameters<Query['captures']>[1]>) => {
         expect(options?.startIndex).toBe(70)
         expect(options?.endIndex).toBe(90)
-        return [{ name: 'variable', startIndex: 75, endIndex: 82, patternIndex: 0 }]
+        return [{ name: 'variable', node: highlightedNode }]
       },
     } as unknown as Query
     const runtime = highlightedRuntime(query)
@@ -300,18 +298,17 @@ describe('tree-sitter worker internals', () => {
     ])
   })
 
-  it('orders range captures on one span by pattern and drops those outside the range', () => {
-    // Matches arrive in completion order; a match may also hold captures outside the range.
-    const ranges = [
-      { name: 'function', startIndex: 75, endIndex: 82, patternIndex: 3 },
-      { name: 'before', startIndex: 10, endIndex: 70, patternIndex: 3 },
-      { name: 'variable', startIndex: 75, endIndex: 82, patternIndex: 1 },
-      { name: 'type', startIndex: 72, endIndex: 74, patternIndex: 2 },
-      { name: 'variable', startIndex: 75, endIndex: 82, patternIndex: 4 },
-      { name: 'after', startIndex: 90, endIndex: 95, patternIndex: 0 },
-      { name: 'empty', startIndex: 80, endIndex: 80, patternIndex: 0 },
+  it('keeps iterator order within a span, first name wins, and drops captures outside the range', () => {
+    const captures = [
+      { name: 'function', node: node('identifier', 75, 82) },
+      { name: 'before', node: node('string', 10, 70) },
+      { name: 'variable', node: node('identifier', 75, 82) },
+      { name: 'type', node: node('type_identifier', 72, 74) },
+      { name: 'function', node: node('identifier', 75, 82) },
+      { name: 'after', node: node('string', 90, 95) },
+      { name: 'empty', node: node('string', 80, 80) },
     ]
-    const query = { captureRanges: () => ranges.slice() } as unknown as Query
+    const query = { captures: () => captures.slice() } as unknown as Query
     const context = { ...cancellationContext(), counts: new Map<string, number>() }
     expect(
       collectCaptures(fakeTree(node('program', 0, 100)), highlightedRuntime(query), context, {
@@ -320,8 +317,8 @@ describe('tree-sitter worker internals', () => {
       }),
     ).toEqual([
       { startIndex: 72, endIndex: 74, captureName: 'type', languageId: 'typescript' },
-      { startIndex: 75, endIndex: 82, captureName: 'variable', languageId: 'typescript' },
       { startIndex: 75, endIndex: 82, captureName: 'function', languageId: 'typescript' },
+      { startIndex: 75, endIndex: 82, captureName: 'variable', languageId: 'typescript' },
     ])
     expect(context.counts.get('rawCaptures')).toBe(7)
     expect(context.counts.get('uniqueCaptures')).toBe(3)

@@ -29,6 +29,7 @@ import {
   Query,
   heap,
   type Node,
+  type QueryCapture,
   type Range as TreeSitterRange,
   type Tree,
   type TreeCursor,
@@ -2502,16 +2503,14 @@ const collectCaptures = (
 }
 
 /**
- * Range highlights read the same flat capture ranges as the full document. `query.captures` built a
- * `Node` object per capture, and deduplicating those through string keys added a quarter to a half
- * again on top of the query.
+ * Range highlights keep tree-sitter's capture iterator, not the completed matches the full document
+ * reads. The two disagree: the iterator can emit a capture from a match it is sure will finish
+ * before it does, and it orders captures that share a span differently. Overlap resolution settles a
+ * tie between equally specific names by arrival order, so that order is part of the colours.
  *
- * The result matches what `query.captures` gave, token for token. Overlap resolution settles a tie
- * between equally specific names by arrival order, and `query.captures` delivered captures in
- * document order with ties at one start broken by pattern index. Matches arrive in completion
- * order instead, so they are sorted by span, then pattern; the sort is stable, so captures of one
- * pattern on one span keep their order within the match. Captures outside the range are dropped,
- * as tree-sitter's capture iterator dropped them.
+ * Deduplication is a stable sort by span and a first-wins pass over each span. That is the same
+ * result as the string-keyed set this used to build, which cost a quarter to a half again on top
+ * of the query.
  */
 const collectRangeCaptures = (
   rootNode: Node,
@@ -2521,28 +2520,47 @@ const collectRangeCaptures = (
   range: TreeSitterSyntaxRange,
 ): TreeSitterCapture[] => {
   const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
-    query.captureRanges(rootNode, queryOptions(context, range)),
+    query.captures(rootNode, queryOptions(context, range)),
   )
   incrementCount(context, 'rawCaptures', queryCaptures.length)
   assertNotCancelled(context)
 
   const captures = measurePhase(context, 'captureNormalization', () => {
-    const inRange = queryCaptures.filter((capture) =>
-      indexesIntersectRange(capture.startIndex, capture.endIndex, range),
-    )
-    inRange.sort(
-      (a, b) =>
-        a.startIndex - b.startIndex || a.endIndex - b.endIndex || a.patternIndex - b.patternIndex,
-    )
-    return uniqueSpanCaptures(inRange, runtime.descriptor.id)
+    const spans = capturedSpansInRange(queryCaptures, range)
+    spans.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
+    return uniqueSpanCaptures(spans, runtime.descriptor.id)
   })
   incrementCount(context, 'uniqueCaptures', captures.length)
   return captures
 }
 
+type CapturedSpan = {
+  readonly name?: string
+  readonly startIndex: number
+  readonly endIndex: number
+}
+
+/** Reads each node's offsets once, so the sort compares numbers instead of crossing into Wasm. */
+const capturedSpansInRange = (
+  queryCaptures: readonly QueryCapture[],
+  range: TreeSitterSyntaxRange,
+): CapturedSpan[] => {
+  const spans: CapturedSpan[] = []
+  for (const capture of queryCaptures) {
+    const node = capture.node
+    if (!node) continue
+    const startIndex = node.startIndex
+    const endIndex = node.endIndex
+    if (!indexesIntersectRange(startIndex, endIndex, range)) continue
+    spans.push({ name: capture.name, startIndex, endIndex })
+  }
+
+  return spans
+}
+
 /** One capture per name per span, in order, from captures sorted by span. Empty spans paint nothing. */
 const uniqueSpanCaptures = (
-  sorted: ReturnType<Query['captureRanges']>,
+  sorted: readonly CapturedSpan[],
   languageId: TreeSitterLanguageId,
 ): TreeSitterCapture[] => {
   const captures: TreeSitterCapture[] = []

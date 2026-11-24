@@ -133,7 +133,89 @@ describe('range highlight captures', () => {
       expect(compared).toBeGreaterThan(1_000)
     },
   )
+
+  // Query shapes the shipped queries barely exercise, where the capture iterator differs from
+  // completed matches: a capture from a match that never finishes, alternatives of one pattern on
+  // one span, quantifiers, several captures on one node, and string delimiters.
+  it.each([
+    { name: 'a delimiter whose match never completes', query: '(string "\\"" @keyword "\\"")' },
+    {
+      name: 'alternatives of one pattern on one span',
+      query:
+        '[(call_expression (identifier) @variable (arguments)) (call_expression (identifier) @function (arguments "("))]',
+    },
+    {
+      name: 'quantified captures',
+      query:
+        '(arguments (identifier)+ @variable.parameter) (array (number)* @number) (formal_parameters (identifier)? @variable)',
+    },
+    {
+      name: 'several captures on one node',
+      query:
+        '(identifier) @variable @function ((identifier) @constant (#match? @constant "^[A-Z]"))',
+    },
+    {
+      name: 'string and template delimiters',
+      query:
+        '(string "\\"" @punctuation.delimiter) (string "\'" @punctuation.special) (template_string "`" @string.special) (string) @string (template_substitution "${" @punctuation.special)',
+    },
+    {
+      name: 'a predicate over a later capture',
+      query:
+        '(call_expression function: (identifier) @function arguments: (arguments) @punctuation.bracket (#eq? @function "foo"))',
+    },
+    {
+      name: 'every shape at once',
+      query: [
+        '(string "\\"" @keyword "\\"")',
+        '[(call_expression (identifier) @variable (arguments)) (call_expression (identifier) @function (arguments "("))]',
+        '(arguments (identifier)+ @variable.parameter)',
+        '(identifier) @variable @function',
+        '(string) @string',
+        '(template_string "`" @string.special)',
+      ].join('\n'),
+    },
+  ])('match query.captures token for token for $name', async ({ query }) => {
+    const javascript = await loadLanguage('javascript')
+    const loaded = {
+      language: javascript.language,
+      descriptor: { ...javascript.descriptor, highlightQuerySource: query },
+    }
+    const text = QUERY_SHAPE_SOURCE
+    const tree = parseWith(loaded, text)
+    let compared = 0
+    for (const range of everyWindow(text.length)) {
+      const runtime = highlightRuntime(loaded)
+      const next = collectCaptures(tree, runtime, cancellationContext(), range)
+      const expected = referenceRangeCaptures(tree, runtime.highlightQuery!, 'javascript', range)
+      expect(next, `${range.startIndex}-${range.endIndex}`).toEqual(expected)
+      expect(packedTokens(next.slice())).toEqual(packedTokens(expected.slice()))
+      compared += expected.length
+    }
+    expect(compared).toBeGreaterThan(0)
+  })
 })
+
+const QUERY_SHAPE_SOURCE = [
+  '"hi"',
+  "const MAX = 'x', items = [1, 2, 3], none = []",
+  'foo(a)',
+  'bar(alpha, beta, Gamma)',
+  'function f(x) { return `a ${x} "b" ${MAX}` }',
+  'obj.method("q", `t`)',
+].join('\n')
+
+/** Every window of a few lengths at every offset, so each token edge falls inside and outside. */
+const everyWindow = (length: number): SyntaxRange[] => {
+  const ranges: SyntaxRange[] = [{ startIndex: 0, endIndex: length }]
+  for (let startIndex = 0; startIndex < length; startIndex += 1) {
+    for (const size of [1, 3, 17]) {
+      ranges.push({ startIndex, endIndex: Math.min(length, startIndex + size) })
+    }
+  }
+
+  return ranges
+}
 
 const appendWithDepth = (
   target: TreeSitterCapture[],
