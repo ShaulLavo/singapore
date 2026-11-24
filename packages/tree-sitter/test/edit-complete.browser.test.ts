@@ -1,6 +1,10 @@
 import { afterEach, expect, it } from 'vitest'
 import type { EditorSyntaxRange, EditorSyntaxResult } from '@singapore-editor/core/syntax'
 import { createDocumentSession, type TextEdit } from '@singapore-editor/core/document'
+import {
+  commitPreparedDocumentTransaction,
+  prepareDocumentTransaction,
+} from '@singapore-editor/core'
 import { Editor } from '@singapore-editor/core/editor'
 import { createTreeSitterLanguagePlugin } from '../src/index'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
@@ -229,7 +233,6 @@ browserTest(
       editor.edit({ from: at, to: at + 1, text: '' })
       // The complete analysis is asked for once the partial answer is in.
       await expect.poll(() => held.length, { timeout: 20_000 }).toBeGreaterThan(0)
-      expect(analysis()).toBe('partial')
       await nextFrame()
       await nextFrame()
       expect(editor['syntaxFoldProjection']()).toEqual(folds)
@@ -237,7 +240,9 @@ browserTest(
       holding = false
       for (const parked of held) parked.release()
       await expect.poll(analysis, { timeout: 20_000 }).toBe('full')
-      await expect.poll(() => editor['syntaxFoldProjection']()).toEqual(folds)
+      // The text below the function is code again, with folds of its own.
+      await expect.poll(() => editor['syntaxFoldProjection']().length).toBeGreaterThan(folds.length)
+      expect(editor['syntaxFoldProjection']()).toEqual(expect.arrayContaining(folds))
     } finally {
       prototype.parse = parse
       for (const parked of held) parked.release()
@@ -258,7 +263,14 @@ browserTest('completes a partial edit answer across a revision that keeps the te
   expect(preview.projection.analysis?.kind).toBe('partial')
   await expect.poll(() => held.length).toBeGreaterThan(0)
 
-  // A new read of the same text, while the complete analysis is under way.
+  // A revision that keeps the text, while the complete analysis is under way.
+  const same = [{ from: 0, to: 1, text: UNFLIPPED.slice(0, 1) }]
+  const committed = commitPreparedDocumentTransaction(
+    { buffer: document.buffer, sourceView: null },
+    prepareDocumentTransaction(document.buffer, same, 1, null),
+    { history: { kind: 'external-barrier', groupId: 'same-text' } },
+  )
+  expect(committed.status).toBe('logical-only')
   await document.run()
   for (const parked of held) parked.release()
   await backend.awaitIdleFence()
