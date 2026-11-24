@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   createDocumentSession,
   createDocumentTextSnapshot,
+  createEditorBufferSession,
   createEditorTextBuffer,
 } from '@singapore-editor/core/document'
 import { createEditorDocumentAnalysis, Editor } from '@singapore-editor/core/editor'
@@ -101,7 +102,7 @@ describe('incremental changed-range invalidation (#169 Item 7)', () => {
         expect(range.endIndex).toBeLessThan(shiftedStart)
       }
 
-      // Verify a fresh query for the shifted block 100 range matches the shifted cached result.
+      // Verify the actual projected cache result from EditorDocumentAnalysis matches a fresh query!
       const freshDoc = createTreeDocument({
         documentId: 'fresh-narrow-invalidation.ts',
         languageId: 'typescript',
@@ -115,26 +116,44 @@ describe('incremental changed-range invalidation (#169 Item 7)', () => {
         startIndex: shiftedStart,
         endIndex: shiftedEnd,
       })
-      const delta = insertText.length
-      expect(
-        tokenValues(initialRange).map(([s, e, c]) => [
-          (s as number) + delta,
-          (e as number) + delta,
-          c,
-        ]),
-      ).toEqual(tokenValues(freshRange))
-      expect(initialRange.brackets.map((b) => ({ ...b, index: b.index + delta }))).toEqual(
-        freshRange.brackets,
-      )
-      expect(
-        initialRange.folds.map((f) => ({
-          ...f,
-          startIndex: f.startIndex + delta,
-          endIndex: f.endIndex + delta,
-          startLine: f.startLine + 1,
-          endLine: f.endLine + 1,
-        })),
-      ).toEqual(freshRange.folds)
+
+      const workerOwner = createTreeSitterWorkerOwner()
+      const provider = createTreeSitterSyntaxProvider({ workerOwner })
+      for (const contribution of TREE_SITTER_LANGUAGE_CONTRIBUTIONS) {
+        provider.registerLanguage(contribution)
+      }
+      const buffer = createEditorTextBuffer(source)
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'promoted-e2e.ts' })
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })
+      cleanups.push(() => {
+        retained?.dispose()
+        analysis.dispose()
+        workerOwner.dispose()
+      })
+      expect(retained).not.toBeNull()
+      await retained!.refreshBase()
+      await retained!.queryRange({ startIndex: block100Start, endIndex: block100End })
+
+      const edited = createEditorBufferSession(buffer).applyEdits([
+        { from: 0, to: 0, text: insertText },
+      ])
+      expect(edited.edits.length).toBe(1)
+      await retained!.refreshBase()
+
+      // Synchronous cache hit on shifted block 100 from real projection — ZERO queryRange call!
+      const promotedRead = retained!.read({ startIndex: shiftedStart, endIndex: shiftedEnd })
+      expect(promotedRead.kind).toBe('ready')
+      if (promotedRead.kind !== 'ready') throw new Error('expected ready promoted range')
+      expect(tokenValues(promotedRead.result)).toEqual(tokenValues(freshRange))
+      expect(promotedRead.result.brackets).toEqual(freshRange.brackets)
+      expect(promotedRead.result.folds).toEqual(freshRange.folds)
     },
   )
 
@@ -256,6 +275,129 @@ describe('incremental changed-range invalidation (#169 Item 7)', () => {
       const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'simple-check.ts' })
       cleanups.push(() => analysis.dispose())
       expect(analysis.inspectRetention().entries).toEqual([])
+    },
+  )
+
+  browserTest(
+    'closes invalidation over the full enclosing root child when editing an identifier inside a statement',
+    async () => {
+      const source = Array.from({ length: 10 }, (_, i) => tsBlock(i)).join('')
+      const backend = new TreeSitterWorkerClient()
+      clients.add(backend)
+      const languageResolver = registry()
+      const document = createDocumentSession(source)
+      const session = createTreeDocument({
+        documentId: 'root-child-closure.ts',
+        languageId: 'typescript',
+        languageResolver,
+        backend,
+        syntaxMode: 'range',
+        text: source,
+      })
+
+      await session.run()
+      const block0Start = 0
+      const block0End = source.indexOf(tsBlock(1))
+      const block5Start = source.indexOf(tsBlock(5))
+
+      // Edit a single character in the middle of `fn0` -> `fx0` (CST shape unchanged!).
+      const nameOffset = source.indexOf('fn0') + 1
+      const change = document.applyEdits([{ from: nameOffset, to: nameOffset + 1, text: 'x' }])
+      const editedBase = await session.edit(change.edits)
+
+      const inv = editedBase.projection.invalidation
+      expect(inv).toBeDefined()
+      // Must cover the ENTIRE root child (export function fx0 { ... }), not just the identifier!
+      const coversWholeBlock0 = inv!.ranges.some(
+        (r) => r.startIndex <= block0Start && r.endIndex >= block0End - 1,
+      )
+      expect(coversWholeBlock0).toBe(true)
+      // Must still stay narrow and NOT touch distant block 5.
+      for (const r of inv!.ranges) {
+        expect(r.endIndex).toBeLessThan(block5Start)
+      }
+    },
+  )
+
+  browserTest(
+    'falls back to full invalidation cleanly without failing the edit when an optional fold query is invalid',
+    async () => {
+      const source = Array.from({ length: 10 }, (_, i) => tsBlock(i)).join('')
+      const backend = new TreeSitterWorkerClient()
+      clients.add(backend)
+      const languageResolver = new TreeSitterLanguageRegistry()
+      for (const contribution of TREE_SITTER_LANGUAGE_CONTRIBUTIONS) {
+        if (contribution.id === 'typescript') {
+          if ('load' in contribution && contribution.load) {
+            const load = contribution.load
+            languageResolver.registerLanguage({
+              ...contribution,
+              load: async () => {
+                const loaded = await load()
+                return { ...loaded, foldQuerySource: '(nonexistent_invalid_node) @fold' }
+              },
+            })
+          } else {
+            languageResolver.registerLanguage({
+              ...contribution,
+              foldQuerySource: '(nonexistent_invalid_node) @fold',
+            })
+          }
+        } else {
+          languageResolver.registerLanguage(contribution)
+        }
+      }
+      const buffer = createEditorTextBuffer(source)
+      const bufferSession = createEditorBufferSession(buffer)
+      const session = createTreeDocument({
+        documentId: 'invalid-fold-query.ts',
+        languageId: 'typescript',
+        languageResolver,
+        backend,
+        syntaxMode: 'range',
+        text: source,
+      })
+
+      await session.run()
+      const initialRange = await session.runtime.queryRange({ startIndex: 0, endIndex: 200 })
+      expect(initialRange.degraded).not.toBeNull()
+
+      const change = bufferSession.applyEdits([{ from: 0, to: 0, text: 'const ok = 1\n' }])
+      const editedBase = await session.edit(change.edits)
+      // Must NOT throw or restart session; locality check fails safely to { kind: 'all' } (undefined invalidation).
+      expect(editedBase.projection.invalidation).toBeUndefined()
+      const afterRange = await session.runtime.queryRange({ startIndex: 0, endIndex: 200 })
+      expect(toEditorTokenStore(afterRange.tokens).length).toBeGreaterThan(0)
+    },
+  )
+
+  browserTest(
+    'invalidates downstream ranges when a comment opener changes the rest of the file',
+    async () => {
+      const source = Array.from({ length: 20 }, (_, i) => tsBlock(i)).join('')
+      const backend = new TreeSitterWorkerClient()
+      clients.add(backend)
+      const languageResolver = registry()
+      const document = createDocumentSession(source)
+      const session = createTreeDocument({
+        documentId: 'comment-opener.ts',
+        languageId: 'typescript',
+        languageResolver,
+        backend,
+        syntaxMode: 'range',
+        text: source,
+      })
+
+      await session.run()
+      const block15Start = source.indexOf(tsBlock(15))
+      const change = document.applyEdits([{ from: 0, to: 0, text: '/* ' }])
+      const editedBase = await session.edit(change.edits)
+
+      const inv = editedBase.projection.invalidation
+      if (inv) {
+        // If narrow invalidation is emitted, it MUST cover downstream block 15 (now commented out!).
+        expect(inv.ranges.some((r) => r.endIndex > block15Start)).toBe(true)
+      }
     },
   )
 })

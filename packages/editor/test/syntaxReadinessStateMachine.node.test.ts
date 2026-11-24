@@ -10,6 +10,7 @@ import {
   type EditorDocumentAnalysis,
 } from '../src/editor/documentAnalysis'
 import { EditorSyntaxController } from '../src/editor/syntaxController'
+import { compactSyntaxRangeTokens } from '../src/editor/syntaxRangeProjection'
 import { createEditorStructuralOperation } from '../src/editor/syntaxOperations'
 import { projectTokensThroughEdit } from '../src/editor/tokenProjection'
 import { EditorPluginHost } from '../src/plugins'
@@ -68,6 +69,7 @@ function createView(
     readonly highlighter?: EditorHighlighterProvider
     readonly mountedRange?: () => EditorSyntaxRange | null
     readonly needsCaptures?: boolean
+    readonly onInitialPaint?: (event: { readonly phase: string; readonly status?: string }) => void
   } = {},
 ) {
   const session = createEditorBufferSession(buffer)
@@ -110,6 +112,7 @@ function createView(
       records = nextRecords
     },
     needsSyntaxCaptures: () => options.needsCaptures ?? false,
+    onInitialPaint: options.onInitialPaint,
     notifyViewUpdate: publish,
     notifyChange: () => undefined,
     notifyThemeChanged: () => undefined,
@@ -1138,7 +1141,21 @@ describe('viewport syntax readiness state machine (#169)', () => {
         ]
         const change1 = createEditorBufferSession(buffer).applyEdits(edits1)
         view.syntax.acceptChange(change1)
-        // Step 2 (R1 -> R2): another line-breaking edit before the view even refreshes!
+        // Publish intermediate R1 parse on the shared analysis BEFORE R2 arrives so TWO distinct
+        // incremental steps (R0 -> R1 and R1 -> R2) are genuinely recorded and replayed!
+        const probe = analysis.borrowStructural({
+          languageId: 'typescript',
+          includeHighlights: true,
+          includeCaptures: false,
+          syntaxMode: 'range',
+          provider,
+          configurationTag: [],
+        })
+        expect(probe).not.toBeNull()
+        await probe!.refreshBase()
+        expect(snapshotVersion).toBe(2)
+
+        // Step 2 (R1 -> R2): another line-breaking edit before the view refreshes!
         const edits2: TextEdit[] = [{ from: 2, to: 2, text: 'z\n' }]
         const change2 = createEditorBufferSession(buffer).applyEdits(edits2)
         view.syntax.acceptChange(change2)
@@ -1147,8 +1164,10 @@ describe('viewport syntax readiness state machine (#169)', () => {
         view.setRange({ startIndex: 106, endIndex: 146 })
         view.syntax.refresh(1, change2, { delayMs: 0 })
         await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        probe!.dispose()
 
-        // ZERO additional queryRange IPC calls!
+        // Both incremental steps published (v1 -> v2 -> v3), with ZERO additional queryRange calls!
+        expect(snapshotVersion).toBe(3)
         expect(query).toHaveBeenCalledTimes(1)
         expect(view.syntax.brackets.map((b) => b.index)).toEqual([108])
         expect(view.syntax.tokens.toTokens()).toEqual([
@@ -1219,6 +1238,463 @@ describe('viewport syntax readiness state machine (#169)', () => {
         view.syntax.refresh(1, change, { delayMs: 0 })
         await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
         expect(querySpy).toHaveBeenCalledTimes(2)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+  })
+
+  describe('PR review regressions (edge cases & invariants)', () => {
+    it('issues authoritative Markdown records query when prefetch bridges a multi-strip viewport', async () => {
+      const buffer = createEditorTextBuffer('# heading\n'.repeat(40))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'md-bridge' })
+      const queried: EditorSyntaxRange[] = []
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        queried.push(range)
+        return answerFor(range, {
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex]),
+          },
+        })
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 40,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Case A: prefetch [0, 100) bridges [0, 40) and [40, 100). Scroll to [20, 60) ->
+        // refreshVisibleRange must NOT get stuck in loading; it settles with authoritative records!
+        view.syntax.prefetchVisibleRange(1, { startIndex: 0, endIndex: 100 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(queried.length).toBe(2))
+        view.setRange({ startIndex: 20, endIndex: 60 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.records()?.data).toEqual(new Uint32Array([0, 100]))
+
+        // Case B: disjoint prefetch [100, 160) -> scroll to [80, 120) spanning [0, 100) & [100, 160)
+        // must issue a fresh authoritative provider query for [80, 120)!
+        view.syntax.prefetchVisibleRange(1, { startIndex: 100, endIndex: 160 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(queried.length).toBe(3))
+        view.setRange({ startIndex: 80, endIndex: 120 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(queried).toContainEqual({ startIndex: 80, endIndex: 120 })
+        expect(view.records()?.data).toEqual(new Uint32Array([80, 120]))
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('keeps settled viewport ready when held base viewport query rejects after prefetch settles it', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(3000))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'held-base-reject' })
+      let rejectHeldVisible: ((err: Error) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        // firstRows [0, 20) resolves quickly; full visible [0, 5000) is held; prefetch settles [20, 5000)!
+        if (range.endIndex === 20) return answerFor(range)
+        if (range.startIndex === 0 && range.endIndex === 5000) {
+          return new Promise<EditorSyntaxResult>((_resolve, reject) => {
+            rejectHeldVisible = reject
+          })
+        }
+        return answerFor(range)
+      })
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query),
+        { startIndex: 0, endIndex: 5000 },
+        { mountedRange: () => ({ startIndex: 0, endIndex: 20 }) },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(rejectHeldVisible).not.toBeNull())
+
+        // Viewport moves onto [20, 5000) and prefetch settles it while base [0, 5000) query is still held.
+        view.setRange({ startIndex: 20, endIndex: 5000 })
+        view.syntax.prefetchVisibleRange(1, { startIndex: 20, endIndex: 6000 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Now reject the held base viewport query -> must NOT turn ready viewport into error!
+        rejectHeldVisible!(new Error('late timeout'))
+        await settle()
+        expect(view.syntax.status).toBe('ready')
+        expect(view.syntax.initialHighlightStatus).toBe('painted')
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('does not cache terminal partial range answers across explicit refresh recovery', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'terminal-partial-retry',
+      })
+      let healthy = false
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (!healthy) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'request-failed', message: 'bg failed' },
+            projection: {
+              ...createEmptySyntaxResult({ requestedRanges: [range] }).projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+          }
+        }
+        return answerFor(range)
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(query).toHaveBeenCalledTimes(1)
+
+        // Provider recovers; explicit refresh must re-query and NOT replay cached terminal partial.
+        healthy = true
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(query).toHaveBeenCalledTimes(2)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('publishes newly intersecting folds when scrolling inside a fragmented single owner and honors viewport readiness with fallback folds', async () => {
+      // Part A: visible [0, 5), then prefetch [0, 40) owns [5, 40) (fragmented single owner!).
+      // Scrolling [5, 25) -> [10, 27) within that fragmented owner must publish newly intersecting foldB!
+      const buffer = createEditorTextBuffer('x\n'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'fragmented-scroll' })
+      const foldA: FoldRange = {
+        startIndex: 10,
+        endIndex: 15,
+        startLine: 5,
+        endLine: 7,
+        type: 'block',
+      }
+      const foldB: FoldRange = {
+        startIndex: 25,
+        endIndex: 28,
+        startLine: 12,
+        endLine: 14,
+        type: 'block',
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        if (range.startIndex === 0 && range.endIndex === 40) {
+          return answerFor(range, { folds: [foldA, foldB] })
+        }
+        return answerFor(range, { folds: [] })
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 5,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        view.syntax.prefetchVisibleRange(1, { startIndex: 0, endIndex: 40 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        await settle()
+
+        // Scroll onto [5, 25) owned solely by the fragmented [0, 40) entry -> only foldA intersects.
+        view.setRange({ startIndex: 5, endIndex: 25 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        expect(view.syntax.status).toBe('ready')
+        expect(view.folds().map((f) => f.startIndex)).toEqual([10])
+
+        // Scroll from [5, 25) to [10, 27) within the same fragmented owner -> foldB [25, 28) now intersects!
+        view.setRange({ startIndex: 10, endIndex: 27 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        expect(view.folds().map((f) => f.startIndex)).toEqual([10, 25])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+
+      // Part B: provider with foldingSupport: 'unsupported' (usesFallbackFolds === true) must still
+      // report 'loading' and renderDataReady === false after jumping to an uncached viewport.
+      const analysis2 = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'fallback-fold-readiness',
+      })
+      let resolveJump: ((r: EditorSyntaxResult) => void) | null = null
+      const query2 = vi.fn(async (range: EditorSyntaxRange) => {
+        if (range.startIndex >= 100) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            resolveJump = resolve
+          })
+        }
+        return answerFor(range)
+      })
+      const view2 = createView(
+        buffer,
+        analysis2,
+        structuralProvider(query2, { foldingSupport: 'unsupported' }),
+        firstFrame,
+      )
+      try {
+        view2.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view2.syntax.status).toBe('ready'))
+        expect(view2.syntax.usesFallbackFolds).toBe(true)
+
+        view2.setRange({ startIndex: 100, endIndex: 120 })
+        expect(view2.syntax.status).toBe('loading')
+        expect(view2.syntax.renderDataReady).toBe(false)
+
+        view2.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveJump).not.toBeNull())
+        resolveJump!(answerFor({ startIndex: 100, endIndex: 120 }))
+        await vi.waitFor(() => expect(view2.syntax.status).toBe('ready'))
+        expect(view2.syntax.renderDataReady).toBe(true)
+      } finally {
+        view2.dispose()
+        analysis2.dispose()
+      }
+    })
+
+    it('does not let an off-screen partial prefetch settle initialHighlightStatus', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(3000))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'partial-prefetch-init' })
+      let resolveVisible: ((r: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        if (range.endIndex === 20) return answerFor(range)
+        if (range.startIndex === 0 && range.endIndex === 5000) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            resolveVisible = resolve
+          })
+        }
+        return {
+          ...answerFor(range),
+          projection: {
+            ...answerFor(range).projection,
+            analysis: { kind: 'partial' as const, coveredRange: range },
+          },
+        }
+      })
+      const events: string[] = []
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query),
+        { startIndex: 0, endIndex: 5000 },
+        {
+          mountedRange: () => ({ startIndex: 0, endIndex: 20 }),
+          onInitialPaint: (event) => {
+            if (event.phase === 'highlight-settled' && event.status) events.push(event.status)
+          },
+        },
+      )
+      try {
+        view.syntax.notifyBaseTextPainted()
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveVisible).not.toBeNull())
+        expect(view.syntax.initialHighlightStatus).toBe('loading')
+
+        // Off-screen partial prefetch lands while visible query is still held.
+        view.syntax.prefetchVisibleRange(1, { startIndex: 5200, endIndex: 5600 }, { delayMs: 0 })
+        await settle()
+        expect(view.syntax.initialHighlightStatus).toBe('loading')
+        expect(events).toEqual([])
+
+        resolveVisible!(answerFor({ startIndex: 0, endIndex: 5000 }))
+        await vi.waitFor(() => expect(view.syntax.initialHighlightStatus).toBe('painted'))
+        expect(events).toEqual(['painted'])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('preserves token ownership across fragmented edit promotion, exact cache lookup, and host setTokens', async () => {
+      // 6A: Fragmented single-entry edit promotion clips to tokenOwnedRanges (no discarded prefetch resurrection).
+      const buffer = createEditorTextBuffer('a\n'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'frag-promote' })
+      let snapshotVersion = 0
+      let call = 0
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        call += 1
+        if (call === 1) {
+          // Visible [100, 140) with green token at [102, 105).
+          return answerFor(range, {
+            tokens: EditorTokenStore.fromTokens([
+              { start: 102, end: 105, style: { color: 'green' } },
+            ]),
+          })
+        }
+        // Prefetch [80, 180) returns BAD red token inside protected [100, 140) + blue token at [150, 155).
+        return answerFor(range, {
+          tokens: EditorTokenStore.fromTokens([
+            { start: 102, end: 105, style: { color: 'bad-red' } },
+            { start: 150, end: 155, style: { color: 'blue' } },
+          ]),
+        })
+      })
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async (read) => {
+            const prev = snapshotVersion
+            snapshotVersion += 1
+            const base = createEmptySyntaxResult({
+              snapshot: {
+                documentId: 'frag-promote',
+                length: read.text.length,
+                version: snapshotVersion,
+              },
+            })
+            if (prev === 0) return base
+            return {
+              ...base,
+              projection: {
+                ...base.projection,
+                invalidation: {
+                  baseSnapshotVersion: prev,
+                  snapshotVersion,
+                  ranges: [{ startIndex: 0, endIndex: 5 }],
+                },
+              },
+            }
+          },
+          queryRange: query,
+        })),
+      }
+      const view = createView(buffer, analysis, provider, { startIndex: 100, endIndex: 140 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Prefetch [80, 180) gets fragmented around protected [100, 140): owns [80, 100) and [140, 180).
+        view.syntax.prefetchVisibleRange(1, { startIndex: 80, endIndex: 180 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        await settle()
+
+        // Move viewport to [145, 175) so [100, 140) is trimmed, leaving ONLY the fragmented [80, 180) entry!
+        view.setRange({ startIndex: 145, endIndex: 175 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await settle()
+
+        // Edit at offset 0 -> promotes the single fragmented [80, 180) entry!
+        const change = createEditorBufferSession(buffer).applyEdits([{ from: 0, to: 0, text: 'z' }])
+        view.syntax.acceptChange(change)
+        view.setRange({ startIndex: 146, endIndex: 176 })
+        view.syntax.refresh(1, change, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Discarded bad-red token at [103, 106) MUST NOT reappear in tokens or copyTokens!
+        expect(view.syntax.tokens.toTokens().some((t) => t.style.color === 'bad-red')).toBe(false)
+        expect(view.syntax.copyTokens.toTokens().some((t) => t.style.color === 'bad-red')).toBe(
+          false,
+        )
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+
+      // 6B: Retained cache prefers exact complete match [0, 40) over wider prefetch [0, 100).
+      const analysis2 = createEditorDocumentAnalysis({ buffer, documentId: 'exact-beats-wide' })
+      const query2 = vi.fn(async (range: EditorSyntaxRange) => {
+        if (range.endIndex === 40) {
+          return answerFor(range, {
+            tokens: EditorTokenStore.fromTokens([{ start: 5, end: 10, style: { color: 'exact' } }]),
+          })
+        }
+        return answerFor(range, {
+          tokens: EditorTokenStore.fromTokens([
+            { start: 5, end: 10, style: { color: 'wide-prefetch' } },
+          ]),
+        })
+      })
+      const view2 = createView(buffer, analysis2, structuralProvider(query2), {
+        startIndex: 0,
+        endIndex: 40,
+      })
+      try {
+        view2.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view2.syntax.status).toBe('ready'))
+        view2.syntax.prefetchVisibleRange(1, { startIndex: 0, endIndex: 100 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query2).toHaveBeenCalledTimes(2))
+        await settle()
+
+        // Explicit refresh must read exact [0, 40) ('exact'), NOT wider [0, 100) ('wide-prefetch').
+        view2.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view2.syntax.status).toBe('ready'))
+        expect(view2.syntax.tokens.toTokens().some((t) => t.style.color === 'exact')).toBe(true)
+        expect(view2.syntax.tokens.toTokens().some((t) => t.style.color === 'wide-prefetch')).toBe(
+          false,
+        )
+      } finally {
+        view2.dispose()
+        analysis2.dispose()
+      }
+
+      // 6C: Visible admission preserves host-installed setTokens external copy ownership.
+      const analysis3 = createEditorDocumentAnalysis({ buffer, documentId: 'host-copy-owner' })
+      const query3 = vi.fn(async (range: EditorSyntaxRange) =>
+        answerFor(range, {
+          tokens: EditorTokenStore.fromTokens([{ start: 1, end: 4, style: { color: 'syntax' } }]),
+        }),
+      )
+      const view3 = createView(buffer, analysis3, structuralProvider(query3), firstFrame)
+      try {
+        const hostTokens = EditorTokenStore.fromTokens([
+          { start: 0, end: 10, style: { color: 'host-owned' } },
+        ])
+        view3.syntax.setTokens(hostTokens)
+        view3.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view3.syntax.status).toBe('ready'))
+        expect(view3.syntax.copyTokens).toBe(hostTokens)
+      } finally {
+        view3.dispose()
+        analysis3.dispose()
+      }
+    })
+
+    it('keeps token palette bounded across prefetch evictions and clips tokens on compaction', async () => {
+      // 7B: Direct compaction clipping check: retaining [45, 50) from token [45, 55) returns [45, 50).
+      const store = EditorTokenStore.fromTokens([
+        { start: 45, end: 55, style: { color: 'split' } },
+        { start: 60, end: 70, style: { color: 'dropped' } },
+      ])
+      const compacted = compactSyntaxRangeTokens(store, [{ startIndex: 45, endIndex: 50 }])
+      expect(compacted.toTokens()).toEqual([{ start: 45, end: 50, style: { color: 'split' } }])
+      expect(compacted.styles).toHaveLength(1)
+
+      // 7A: 40 prefetch evictions with fresh identical style objects keep palette bounded!
+      const buffer = createEditorTextBuffer('x\n'.repeat(2000))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'bounded-palette' })
+      const query = vi.fn(async (range: EditorSyntaxRange) =>
+        answerFor(range, {
+          tokens: EditorTokenStore.fromTokens([
+            { start: range.startIndex, end: range.startIndex + 2, style: { color: 'same-blue' } },
+          ]),
+        }),
+      )
+      const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        for (let step = 1; step <= 40; step += 1) {
+          const startIndex = 100 + step * 30
+          view.syntax.prefetchVisibleRange(
+            1,
+            { startIndex, endIndex: startIndex + 20 },
+            { delayMs: 0 },
+          )
+          await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1 + step))
+        }
+        await settle()
+        expect(view.syntax.tokens.styles.length).toBeLessThanOrEqual(2)
       } finally {
         view.dispose()
         analysis.dispose()

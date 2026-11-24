@@ -2550,12 +2550,12 @@ export class Editor {
       if (prepared) {
         this.view.runAtomicRender(() => {
           this.renderPreparedDocument(attachment.textSnapshot, prepared)
-          this.syntax.adoptPreparedReadyResults(prepared)
+          this.syntax.adoptPreparedReadyResults(prepared, this.visibleSyntaxPrefetchRange())
         })
       } else {
         this.view.runAtomicRender(() => {
           this.renderContent(attachment.textSnapshot)
-          this.syntax.adoptReadyAnalysis()
+          this.syntax.adoptReadyAnalysis(this.visibleSyntaxPrefetchRange())
         })
       }
       // A host handing over its own session is replacing the document just as much as opening one is.

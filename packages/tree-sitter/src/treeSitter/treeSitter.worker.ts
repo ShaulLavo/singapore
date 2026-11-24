@@ -1104,20 +1104,29 @@ const editDocument = async (
         statistics: editStatistics(context),
       }
     }
-    const { parsedDocument, changedRanges, invalidation } = await parseEditedDocument(
-      request,
-      runtime,
-      source,
-      {
-        rootLayer: rootLayerForTree(runtime, rootTree),
-        reusableTree,
-        oldDocument: cached,
-        inputEdits: request.inputEdits,
-      },
-      context,
-    )
+    let parsedDocument: ParsedDocument
+    let changedRanges: readonly TreeSitterSyntaxRange[]
+    let invalidation: TreeSitterParseInvalidation
+    try {
+      const edited = await parseEditedDocument(
+        request,
+        runtime,
+        source,
+        {
+          rootLayer: rootLayerForTree(runtime, rootTree),
+          reusableTree,
+          oldDocument: cached,
+          inputEdits: request.inputEdits,
+        },
+        context,
+      )
+      parsedDocument = edited.parsedDocument
+      changedRanges = edited.changedRanges
+      invalidation = edited.invalidation
+    } finally {
+      reusableTree.delete()
+    }
     const parseMs = nowMs() - parseStart
-    reusableTree.delete()
     assertNotCancelled(context)
     assertRuntimeSessionActive(request.runtimeSessionId)
     replaceCachedDocument(request.runtimeSessionId, parsedDocument)
@@ -2414,32 +2423,42 @@ const allQueryScopes = new WeakMap<Runtime, boolean>()
 const runtimeInjectionsStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
   const known = injectionScopes.get(runtime)
   if (known !== undefined) return known
-  const query = ensureQuery(runtime, 'injection')
-  const source = runtime.descriptor.injectionQuerySource ?? ''
-  const stays = query === null || injectionsStayInRootChildren(query, source, root.type)
-  injectionScopes.set(runtime, stays)
-  return stays
+  try {
+    const query = ensureQuery(runtime, 'injection')
+    const source = runtime.descriptor.injectionQuerySource ?? ''
+    const stays = query === null || injectionsStayInRootChildren(query, source, root.type)
+    injectionScopes.set(runtime, stays)
+    return stays
+  } catch {
+    injectionScopes.set(runtime, false)
+    return false
+  }
 }
 
 /** Whether highlight, fold, and injection queries all stay inside one child of `root`. */
 const runtimeQueriesStayInRootChildren = (runtime: Runtime, root: Node): boolean => {
   const known = allQueryScopes.get(runtime)
   if (known !== undefined) return known
-  const rootType = root.type
-  const highlightQuery = ensureQuery(runtime, 'highlight')
-  const foldQuery = ensureQuery(runtime, 'fold')
-  const stays =
-    runtimeInjectionsStayInRootChildren(runtime, root) &&
-    (highlightQuery === null ||
-      injectionsStayInRootChildren(
-        highlightQuery,
-        runtime.descriptor.highlightQuerySource ?? '',
-        rootType,
-      )) &&
-    (foldQuery === null ||
-      injectionsStayInRootChildren(foldQuery, runtime.descriptor.foldQuerySource ?? '', rootType))
-  allQueryScopes.set(runtime, stays)
-  return stays
+  try {
+    const rootType = root.type
+    const highlightQuery = ensureQuery(runtime, 'highlight')
+    const foldQuery = ensureQuery(runtime, 'fold')
+    const stays =
+      runtimeInjectionsStayInRootChildren(runtime, root) &&
+      (highlightQuery === null ||
+        injectionsStayInRootChildren(
+          highlightQuery,
+          runtime.descriptor.highlightQuerySource ?? '',
+          rootType,
+        )) &&
+      (foldQuery === null ||
+        injectionsStayInRootChildren(foldQuery, runtime.descriptor.foldQuerySource ?? '', rootType))
+    allQueryScopes.set(runtime, stays)
+    return stays
+  } catch {
+    allQueryScopes.set(runtime, false)
+    return false
+  }
 }
 
 /** Each edit's inserted text in the final document, widened by one unit to catch adjacency. */

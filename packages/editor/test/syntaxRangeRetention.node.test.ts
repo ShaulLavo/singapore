@@ -246,11 +246,13 @@ describe('syntax range contributor lifetime', () => {
     }
     const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
     try {
-      view.syntax.setTokens(
-        EditorTokenStore.fromTokens([{ start: 100, end: 110, style: { color: 'manual' } }]),
-      )
+      const manual = EditorTokenStore.fromTokens([
+        { start: 100, end: 110, style: { color: 'manual' } },
+      ])
+      view.syntax.setTokens(manual)
       view.syntax.refresh(1, null, { delayMs: 0 })
-      await vi.waitFor(() => expect(view.syntax.copyTokens.length).toBe(0))
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(view.syntax.copyTokens).toBe(manual)
       view.setRange({ startIndex: 20, endIndex: 40 })
       expect(view.syntax.tokens.toTokens()).toEqual([
         { start: 100, end: 110, style: { color: 'manual' } },

@@ -1072,9 +1072,19 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   }
 
   private findCachedRange(range: EditorSyntaxRange): ReadyRange | undefined {
+    const exact = this.ranges.get(rangeKey(range))
+    if (
+      exact &&
+      exact.point === this.queuedPoint &&
+      !isTerminalIncompleteSyntaxResult(exact.result) &&
+      exact.result.projection.analysis?.kind !== 'partial'
+    ) {
+      return exact
+    }
     let best: ReadyRange | undefined
     for (const candidate of this.ranges.values()) {
       if (candidate.point !== this.queuedPoint) continue
+      if (isTerminalIncompleteSyntaxResult(candidate.result)) continue
       if (!rangeContains(candidate.range, range)) continue
       if (!best) {
         best = candidate
@@ -1087,9 +1097,14 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
         continue
       }
       if (bestPartial !== candidatePartial) continue
+      if (exact && candidate === exact) {
+        best = candidate
+        continue
+      }
+      if (exact && best === exact) continue
       const bestSpan = best.range.endIndex - best.range.startIndex
       const candidateSpan = candidate.range.endIndex - candidate.range.startIndex
-      if (candidateSpan > bestSpan) best = candidate
+      if (candidateSpan < bestSpan) best = candidate
     }
     return best
   }
@@ -1283,7 +1298,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
             point,
             generation: this.generation,
           })
-          if (pending.admission === 'cache') {
+          if (pending.admission === 'cache' && !isTerminalIncompleteSyntaxResult(result)) {
             this.ranges.set(rangeKey(range), { point, range, result })
           }
         }

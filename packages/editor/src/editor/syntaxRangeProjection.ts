@@ -264,6 +264,9 @@ export const mergeTokensOnStrips = (
   return current
 }
 
+const tokenStyleKey = (style: EditorTokenStyle): string =>
+  `${style.color ?? ''}\0${style.backgroundColor ?? ''}\0${style.fontStyle ?? ''}\0${style.fontWeight ?? ''}\0${style.textDecoration ?? ''}`
+
 const mergeTokensOnSingleStrip = (
   target: EditorTokenStore,
   incoming: EditorTokenStore,
@@ -285,29 +288,6 @@ const mergeTokensOnSingleStrip = (
 
   const last = target.firstStartingAtOrAfter(e)
   const first = target.firstEndingAfter(s, last)
-
-  let styles: EditorTokenStyle[]
-  let remap: Uint32Array | null = null
-  if (target.styles.length === 0) {
-    styles = incoming.styles as EditorTokenStyle[]
-  } else if (target.styles === incoming.styles) {
-    styles = target.styles as EditorTokenStyle[]
-  } else {
-    styles = target.styles.slice()
-    const styleIdByValue = new Map<EditorTokenStyle, number>()
-    for (let i = 0; i < styles.length; i += 1) styleIdByValue.set(styles[i]!, i)
-    remap = new Uint32Array(incoming.styles.length)
-    for (let i = 0; i < incoming.styles.length; i += 1) {
-      const style = incoming.styles[i]!
-      let id = styleIdByValue.get(style)
-      if (id === undefined) {
-        id = styles.length
-        styles.push(style)
-        styleIdByValue.set(style, id)
-      }
-      remap[i] = id
-    }
-  }
 
   let preCount = 0
   let postCount = 0
@@ -347,6 +327,34 @@ const mergeTokensOnSingleStrip = (
         postCount += 1
       }
     })
+  }
+
+  let styles: EditorTokenStyle[]
+  let remap: Uint32Array | null = null
+  const replacesAll = first === 0 && last === target.length && preCount === 0 && postCount === 0
+  if (replacesAll || target.styles.length === 0) {
+    styles = incoming.styles as EditorTokenStyle[]
+  } else if (target.styles === incoming.styles) {
+    styles = target.styles as EditorTokenStyle[]
+  } else {
+    styles = target.styles.slice()
+    const styleIdByKey = new Map<string, number>()
+    for (let i = 0; i < styles.length; i += 1) {
+      const key = tokenStyleKey(styles[i]!)
+      if (!styleIdByKey.has(key)) styleIdByKey.set(key, i)
+    }
+    remap = new Uint32Array(incoming.styles.length)
+    for (let i = 0; i < incoming.styles.length; i += 1) {
+      const style = incoming.styles[i]!
+      const key = tokenStyleKey(style)
+      let id = styleIdByKey.get(key)
+      if (id === undefined) {
+        id = styles.length
+        styles.push(style)
+        styleIdByKey.set(key, id)
+      }
+      remap[i] = id
+    }
   }
 
   const capacity = preCount + (inLast - inFirst) + postCount
@@ -426,52 +434,69 @@ export const compactSyntaxRangeTokens = (
   if (ranges.length === 0 || store.length === 0) return EditorTokenStore.empty()
   const sorted = ranges.length === 1 ? ranges : mergeSyntaxRanges(ranges)
   if (sorted.length === 0) return EditorTokenStore.empty()
-  if (
-    sorted.length === 1 &&
-    store.startAt(0) >= sorted[0]!.startIndex &&
-    maxTokenEnd(store) <= sorted[0]!.endIndex
-  ) {
-    return store
-  }
 
   let count = 0
-  let lastSeen = -1
+  let anyClipped = false
+  const styleRemap = new Int32Array(store.styles.length)
+  styleRemap.fill(-1)
+  const nextStyles: EditorTokenStyle[] = []
+  const styleIdByKey = new Map<string, number>()
+
   for (const range of sorted) {
     if (range.endIndex <= range.startIndex) continue
-    const last = store.firstStartingAtOrAfter(range.endIndex)
-    const first = Math.max(lastSeen + 1, store.firstEndingAfter(range.startIndex, last))
-    store.forEachInRange(first, last, (_start, end, _styleId, index) => {
-      if (end <= range.startIndex) return
+    const s = range.startIndex
+    const e = range.endIndex
+    const last = store.firstStartingAtOrAfter(e)
+    const first = store.firstEndingAfter(s, last)
+    store.forEachInRange(first, last, (start, end, styleId) => {
+      const clippedStart = start < s ? s : start
+      const clippedEnd = end > e ? e : end
+      if (clippedEnd <= clippedStart) return
+      if (clippedStart !== start || clippedEnd !== end) anyClipped = true
+      if (styleRemap[styleId] === -1) {
+        const style = store.styles[styleId]!
+        const key = tokenStyleKey(style)
+        let mapped = styleIdByKey.get(key)
+        if (mapped === undefined) {
+          mapped = nextStyles.length
+          nextStyles.push(style)
+          styleIdByKey.set(key, mapped)
+        }
+        styleRemap[styleId] = mapped
+      }
       count += 1
-      lastSeen = index
     })
   }
   if (count === 0) return EditorTokenStore.empty()
-  if (count === store.length) return store
+  if (count === store.length && !anyClipped && nextStyles.length === store.styles.length) {
+    return store
+  }
 
   const starts = new Uint32Array(count)
   const ends = new Uint32Array(count)
   const styleIds = new Uint32Array(count)
   let out = 0
-  lastSeen = -1
   for (const range of sorted) {
     if (range.endIndex <= range.startIndex) continue
-    const last = store.firstStartingAtOrAfter(range.endIndex)
-    const first = Math.max(lastSeen + 1, store.firstEndingAfter(range.startIndex, last))
-    store.forEachInRange(first, last, (start, end, styleId, index) => {
-      if (end <= range.startIndex) return
-      starts[out] = start
-      ends[out] = end
-      styleIds[out] = styleId
+    const s = range.startIndex
+    const e = range.endIndex
+    const last = store.firstStartingAtOrAfter(e)
+    const first = store.firstEndingAfter(s, last)
+    store.forEachInRange(first, last, (start, end, styleId) => {
+      const clippedStart = start < s ? s : start
+      const clippedEnd = end > e ? e : end
+      if (clippedEnd <= clippedStart) return
+      starts[out] = clippedStart
+      ends[out] = clippedEnd
+      styleIds[out] = styleRemap[styleId]!
       out += 1
-      lastSeen = index
     })
   }
   return EditorTokenStore.empty().replaceRange(
     0,
     0,
     { starts, ends, styleIds },
-    { delta: 0, keepsLiveRanges: null, styles: store.styles },
+    { delta: 0, keepsLiveRanges: null, styles: nextStyles },
   )
 }
 
