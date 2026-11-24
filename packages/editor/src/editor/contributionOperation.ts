@@ -65,7 +65,7 @@ export abstract class DocumentOperation<
   Result,
   Entry extends ContributionEntry<Result> = ContributionEntry<Result>,
 > {
-  readonly #slots = new WeakMap<DocumentOperationHost, Slot<Input, Entry>[]>()
+  private readonly slots = new WeakMap<DocumentOperationHost, Slot<Input, Entry>[]>()
 
   protected abstract create(context: BoundOperationContext, input: Input): Entry | null
   protected abstract matches(left: Input, right: Input): boolean
@@ -84,7 +84,7 @@ export abstract class DocumentOperation<
     if (options.signal?.aborted || host.signal.aborted) return null
     host.subscribe()
     const tag = options.configurationTag ?? []
-    const slots = this.#slots.get(host) ?? []
+    const slots = this.slots.get(host) ?? []
     const found = slots.find(
       (slot) =>
         !slot.entry.signal.aborted &&
@@ -129,7 +129,7 @@ export abstract class DocumentOperation<
     }
     const slot: Slot<Input, Entry> = { input, tag: [...tag], entry, owner }
     slots.push(slot)
-    this.#slots.set(host, slots)
+    this.slots.set(host, slots)
     entry.signal.addEventListener('abort', () => this.retire(host, slot), { once: true })
     host.adopt(entry)
     return entry
@@ -140,11 +140,11 @@ export abstract class DocumentOperation<
   }
 
   private retire(host: DocumentOperationHost, slot: Slot<Input, Entry>): void {
-    const slots = this.#slots.get(host)
+    const slots = this.slots.get(host)
     if (!slots) return
     const index = slots.indexOf(slot)
     if (index >= 0) slots.splice(index, 1)
-    if (slots.length === 0) this.#slots.delete(host)
+    if (slots.length === 0) this.slots.delete(host)
   }
 }
 

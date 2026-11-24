@@ -118,9 +118,9 @@ export class EditorWorkScheduler {
   private readonly onEvent?: (event: EditorWorkEvent) => void
   private readonly scheduled = new Map<string, ScheduledEditorWork>()
   private queued: ScheduledEditorWork[] = []
-  #queueTimer: ReturnType<typeof globalThis.setTimeout> | null = null
-  #queueTask: AbortController | null = null
-  #nextToken = 0
+  private queueTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+  private queueTask: AbortController | null = null
+  private nextToken = 0
   private disposed = false
 
   constructor(options: EditorWorkSchedulerOptions = {}) {
@@ -131,25 +131,25 @@ export class EditorWorkScheduler {
   schedule<T>(options: EditorScheduleWorkOptions<T>): EditorScheduledWorkHandle {
     if (this.disposed) return inactiveHandle(options.key)
     const existing = this.scheduled.get(options.key)
-    if (existing && options.replace === false) return this.#handleFor(existing)
+    if (existing && options.replace === false) return this.handleFor(existing)
 
     // Read before cancelling: the outgoing work carries the deadline that the
     // replacement must not push out.
     const firstScheduledAt = existing?.firstScheduledAt ?? null
     if (options.replace !== false) this.cancel(options.key, 'replaced')
 
-    const work = this.#createWork(options, firstScheduledAt)
+    const work = this.createWork(options, firstScheduledAt)
     this.scheduled.set(options.key, work)
     this.emit(work, 'scheduled')
-    this.#scheduleStart(work)
-    return this.#handleFor(work)
+    this.scheduleStart(work)
+    return this.handleFor(work)
   }
 
   cancel(key: string, reason = 'cancelled'): void {
     const work = this.scheduled.get(key)
     if (!work) return
 
-    this.#cancelWork(work, reason)
+    this.cancelWork(work, reason)
   }
 
   dispose(): void {
@@ -157,17 +157,17 @@ export class EditorWorkScheduler {
 
     this.disposed = true
     const works = [...this.scheduled.values()]
-    for (const work of works) this.#cancelWork(work, 'disposed')
-    this.#clearQueueTimer()
+    for (const work of works) this.cancelWork(work, 'disposed')
+    this.clearQueueTimer()
     this.queued = []
   }
 
-  #createWork<T>(
+  private createWork<T>(
     options: EditorScheduleWorkOptions<T>,
     firstScheduledAt: number | null = null,
   ): ScheduledEditorWork<T> {
-    const token = this.#nextToken + 1
-    this.#nextToken = token
+    const token = this.nextToken + 1
+    this.nextToken = token
     const now = this.now()
     return {
       firstScheduledAt: firstScheduledAt ?? now,
@@ -185,10 +185,10 @@ export class EditorWorkScheduler {
     }
   }
 
-  #scheduleStart(work: ScheduledEditorWork): void {
-    const delayMs = this.#effectiveDelayMs(work)
+  private scheduleStart(work: ScheduledEditorWork): void {
+    const delayMs = this.effectiveDelayMs(work)
     if (delayMs === 0) {
-      this.#startZeroDelayWork(work)
+      this.startZeroDelayWork(work)
       return
     }
 
@@ -198,7 +198,7 @@ export class EditorWorkScheduler {
   // The requested delay, clamped by whatever remains of the burst's maximum
   // wait. Once that budget is exhausted the work runs on the next tick even if
   // the key keeps being rescheduled.
-  #effectiveDelayMs(work: ScheduledEditorWork): number {
+  private effectiveDelayMs(work: ScheduledEditorWork): number {
     const delayMs = normalizeDelayMs(work.options.delayMs)
     const maxDelayMs = normalizeDelayMs(work.options.maxDelayMs)
     if (maxDelayMs === 0 || delayMs === 0) return delayMs
@@ -207,33 +207,33 @@ export class EditorWorkScheduler {
     return Math.max(0, Math.min(delayMs, remaining))
   }
 
-  #startZeroDelayWork(work: ScheduledEditorWork): void {
+  private startZeroDelayWork(work: ScheduledEditorWork): void {
     if (work.options.defer === true) {
-      this.#enqueueStart(work)
+      this.enqueueStart(work)
       return
     }
 
     this.start(work)
   }
 
-  #enqueueStart(work: ScheduledEditorWork): void {
-    if (!this.#isCurrentWork(work)) return
+  private enqueueStart(work: ScheduledEditorWork): void {
+    if (!this.isCurrentWork(work)) return
 
     work.timer = null
     this.queued.push(work)
-    this.#scheduleQueueFlush()
+    this.scheduleQueueFlush()
   }
 
-  #scheduleQueueFlush(): void {
-    if (this.#queueTimer !== null || this.#queueTask !== null) return
+  private scheduleQueueFlush(): void {
+    if (this.queueTimer !== null || this.queueTask !== null) return
 
     const scheduler = globalThis.scheduler
     if (scheduler?.postTask) {
       // Timer nesting adds 4 ms to every slice of a large derived job.
       const task = new AbortController()
-      this.#queueTask = task
+      this.queueTask = task
       void scheduler
-        .postTask(() => this.#flushQueuedWork(), {
+        .postTask(() => this.flushQueuedWork(), {
           priority: 'user-visible',
           signal: task.signal,
         })
@@ -243,21 +243,21 @@ export class EditorWorkScheduler {
       return
     }
 
-    this.#queueTimer = globalThis.setTimeout(() => this.#flushQueuedWork(), 0)
+    this.queueTimer = globalThis.setTimeout(() => this.flushQueuedWork(), 0)
   }
 
-  #flushQueuedWork(): void {
-    this.#queueTimer = null
-    this.#queueTask = null
-    const work = this.#takeNextQueuedWork()
+  private flushQueuedWork(): void {
+    this.queueTimer = null
+    this.queueTask = null
+    const work = this.takeNextQueuedWork()
     if (!work) return
 
     this.start(work)
-    if (this.#hasQueuedWork()) this.#scheduleQueueFlush()
+    if (this.hasQueuedWork()) this.scheduleQueueFlush()
   }
 
-  #takeNextQueuedWork(): ScheduledEditorWork | null {
-    this.queued = this.queued.filter((work) => this.#canStartQueuedWork(work))
+  private takeNextQueuedWork(): ScheduledEditorWork | null {
+    this.queued = this.queued.filter((work) => this.canStartQueuedWork(work))
 
     let bestIndex = -1
     let bestWork: ScheduledEditorWork | null = null
@@ -274,67 +274,71 @@ export class EditorWorkScheduler {
     return bestWork
   }
 
-  #hasQueuedWork(): boolean {
-    return this.queued.some((work) => this.#canStartQueuedWork(work))
+  private hasQueuedWork(): boolean {
+    return this.queued.some((work) => this.canStartQueuedWork(work))
   }
 
-  #canStartQueuedWork(work: ScheduledEditorWork): boolean {
+  private canStartQueuedWork(work: ScheduledEditorWork): boolean {
     if (work.startedAt !== null) return false
     if (work.controller.signal.aborted) return false
-    return this.#isCurrentWork(work)
+    return this.isCurrentWork(work)
   }
 
   private start(work: ScheduledEditorWork): void {
-    if (!this.#isCurrentWork(work)) return
+    if (!this.isCurrentWork(work)) return
 
     work.timer = null
     work.startedAt = this.now()
-    const context = this.#contextFor(work)
-    if (!this.#shouldRun(work, context)) {
-      this.#dropWork(work, 'stale-before-start')
+    const context = this.contextFor(work)
+    if (!this.shouldRun(work, context)) {
+      this.dropWork(work, 'stale-before-start')
       return
     }
 
-    this.#startBudgetTimer(work)
+    this.startBudgetTimer(work)
     this.emit(work, 'started')
-    this.#runWork(work, context)
+    this.runWork(work, context)
   }
 
-  #runWork(work: ScheduledEditorWork, context: EditorWorkContext): void {
+  private runWork(work: ScheduledEditorWork, context: EditorWorkContext): void {
     try {
-      this.#resolveRunResult(work, work.options.run(context))
+      this.resolveRunResult(work, work.options.run(context))
     } catch (error) {
-      this.#failWork(work, error)
+      this.failWork(work, error)
     }
   }
 
-  #resolveRunResult(work: ScheduledEditorWork, result: unknown): void {
+  private resolveRunResult(work: ScheduledEditorWork, result: unknown): void {
     if (!isPromiseLike(result)) {
-      this.#completeWork(work, result)
+      this.completeWork(work, result)
       return
     }
 
     void result.then(
-      (value) => this.#completeWork(work, value),
-      (error) => this.#failWork(work, error),
+      (value) => this.completeWork(work, value),
+      (error) => this.failWork(work, error),
     )
   }
 
-  #completeWork(work: ScheduledEditorWork, result: unknown): void {
-    if (!this.#isCurrentWork(work)) return
+  private completeWork(work: ScheduledEditorWork, result: unknown): void {
+    if (!this.isCurrentWork(work)) return
 
-    const context = this.#contextFor(work)
-    this.#clearBudgetTimer(work)
+    const context = this.contextFor(work)
+    this.clearBudgetTimer(work)
     this.scheduled.delete(work.key)
-    if (!this.#shouldRun(work, context)) {
+    if (!this.shouldRun(work, context)) {
       this.emit(work, 'dropped', { reason: 'stale-after-run' })
       return
     }
 
-    this.#applyWorkResult(work, result, context)
+    this.applyWorkResult(work, result, context)
   }
 
-  #applyWorkResult(work: ScheduledEditorWork, result: unknown, context: EditorWorkContext): void {
+  private applyWorkResult(
+    work: ScheduledEditorWork,
+    result: unknown,
+    context: EditorWorkContext,
+  ): void {
     try {
       work.options.apply?.(result as never, context)
       this.emit(work, 'completed', { elapsedMs: this.elapsedMs(work) })
@@ -344,41 +348,41 @@ export class EditorWorkScheduler {
     }
   }
 
-  #failWork(work: ScheduledEditorWork, error: unknown): void {
-    if (!this.#isCurrentWork(work)) return
+  private failWork(work: ScheduledEditorWork, error: unknown): void {
+    if (!this.isCurrentWork(work)) return
 
-    const context = this.#contextFor(work)
-    this.#clearBudgetTimer(work)
+    const context = this.contextFor(work)
+    this.clearBudgetTimer(work)
     this.scheduled.delete(work.key)
     work.options.fail?.(error, context)
     this.emit(work, 'failed', { elapsedMs: this.elapsedMs(work), error })
   }
 
-  #dropWork(work: ScheduledEditorWork, reason: string): void {
-    this.#clearTimerIfScheduled(work)
-    this.#clearBudgetTimer(work)
+  private dropWork(work: ScheduledEditorWork, reason: string): void {
+    this.clearTimerIfScheduled(work)
+    this.clearBudgetTimer(work)
     this.scheduled.delete(work.key)
     this.emit(work, 'dropped', { reason })
   }
 
-  #cancelWork(work: ScheduledEditorWork, reason: string): void {
-    this.#clearTimerIfScheduled(work)
-    this.#clearBudgetTimer(work)
+  private cancelWork(work: ScheduledEditorWork, reason: string): void {
+    this.clearTimerIfScheduled(work)
+    this.clearBudgetTimer(work)
     this.scheduled.delete(work.key)
     work.controller.abort(reason)
     work.options.cancel?.()
     this.emit(work, 'cancelled', { reason })
   }
 
-  #startBudgetTimer(work: ScheduledEditorWork): void {
+  private startBudgetTimer(work: ScheduledEditorWork): void {
     const budgetMs = normalizeBudgetMs(work.options.budgetMs)
     if (budgetMs === null) return
 
-    work.budgetTimer = globalThis.setTimeout(() => this.#timeoutWork(work), budgetMs)
+    work.budgetTimer = globalThis.setTimeout(() => this.timeoutWork(work), budgetMs)
   }
 
-  #timeoutWork(work: ScheduledEditorWork): void {
-    if (!this.#isCurrentWork(work)) return
+  private timeoutWork(work: ScheduledEditorWork): void {
+    if (!this.isCurrentWork(work)) return
 
     this.scheduled.delete(work.key)
     work.budgetTimer = null
@@ -387,56 +391,56 @@ export class EditorWorkScheduler {
     this.emit(work, 'timed-out', { elapsedMs: this.elapsedMs(work), reason: 'budget-timeout' })
   }
 
-  #clearTimerIfScheduled(work: ScheduledEditorWork): void {
+  private clearTimerIfScheduled(work: ScheduledEditorWork): void {
     if (work.timer === null) return
 
     globalThis.clearTimeout(work.timer)
     work.timer = null
   }
 
-  #clearQueueTimer(): void {
-    this.#queueTask?.abort()
-    this.#queueTask = null
-    if (this.#queueTimer === null) return
+  private clearQueueTimer(): void {
+    this.queueTask?.abort()
+    this.queueTask = null
+    if (this.queueTimer === null) return
 
-    globalThis.clearTimeout(this.#queueTimer)
-    this.#queueTimer = null
+    globalThis.clearTimeout(this.queueTimer)
+    this.queueTimer = null
   }
 
-  #clearBudgetTimer(work: ScheduledEditorWork): void {
+  private clearBudgetTimer(work: ScheduledEditorWork): void {
     if (work.budgetTimer === null) return
 
     globalThis.clearTimeout(work.budgetTimer)
     work.budgetTimer = null
   }
 
-  #shouldRun(work: ScheduledEditorWork, context: EditorWorkContext): boolean {
+  private shouldRun(work: ScheduledEditorWork, context: EditorWorkContext): boolean {
     if (work.controller.signal.aborted) return false
     return work.options.isCurrent?.(work.tags, context) ?? true
   }
 
-  #isCurrentWork(work: ScheduledEditorWork): boolean {
+  private isCurrentWork(work: ScheduledEditorWork): boolean {
     if (this.disposed) return false
     return this.scheduled.get(work.key)?.token === work.token
   }
 
-  #handleFor(work: ScheduledEditorWork): EditorScheduledWorkHandle {
+  private handleFor(work: ScheduledEditorWork): EditorScheduledWorkHandle {
     return {
       key: work.key,
       token: work.token,
       signal: work.controller.signal,
-      cancel: () => this.#cancelHandle(work),
-      isActive: () => this.#isCurrentWork(work),
+      cancel: () => this.cancelHandle(work),
+      isActive: () => this.isCurrentWork(work),
     }
   }
 
-  #cancelHandle(work: ScheduledEditorWork): void {
-    if (!this.#isCurrentWork(work)) return
+  private cancelHandle(work: ScheduledEditorWork): void {
+    if (!this.isCurrentWork(work)) return
 
-    this.#cancelWork(work, 'handle-cancelled')
+    this.cancelWork(work, 'handle-cancelled')
   }
 
-  #contextFor(work: ScheduledEditorWork): EditorWorkContext {
+  private contextFor(work: ScheduledEditorWork): EditorWorkContext {
     return {
       key: work.key,
       token: work.token,
@@ -445,7 +449,7 @@ export class EditorWorkScheduler {
       tags: work.tags,
       signal: work.controller.signal,
       startedAt: work.startedAt ?? work.createdAt,
-      isCurrent: () => this.#isCurrentWork(work) && !work.controller.signal.aborted,
+      isCurrent: () => this.isCurrentWork(work) && !work.controller.signal.aborted,
     }
   }
 

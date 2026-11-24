@@ -364,7 +364,7 @@ class MergeConflictViewContribution implements EditorViewContribution {
   private readonly root: HTMLDivElement
   private readonly subscription: EditorDisposable
   private readonly minimap: EditorMinimapFeature | null
-  #minimapConflicts: readonly MergeConflictRegion[] | null = null
+  private minimapConflicts: readonly MergeConflictRegion[] | null = null
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -399,7 +399,7 @@ class MergeConflictViewContribution implements EditorViewContribution {
 
   private render(snapshot: EditorViewSnapshot): void {
     const conflicts = this.controller.peekConflicts()
-    this.#publishMinimap(conflicts)
+    this.publishMinimap(conflicts)
     this.root.textContent = ''
     if (this.options.lens === false) return
     for (const row of snapshot.visibleRows) {
@@ -407,49 +407,49 @@ class MergeConflictViewContribution implements EditorViewContribution {
       if (index === null) continue
       const conflict = conflicts[index]
       if (!conflict) continue
-      this.root.appendChild(this.#createLens(conflict, row.top))
+      this.root.appendChild(this.createLens(conflict, row.top))
     }
   }
 
-  #publishMinimap(conflicts: readonly MergeConflictRegion[]): void {
-    if (!this.minimap || conflicts === this.#minimapConflicts) return
-    this.#minimapConflicts = conflicts
+  private publishMinimap(conflicts: readonly MergeConflictRegion[]): void {
+    if (!this.minimap || conflicts === this.minimapConflicts) return
+    this.minimapConflicts = conflicts
     this.minimap.setDecorations(ROW_DECORATION_SOURCE_ID, minimapBands(conflicts))
   }
 
-  #createLens(conflict: MergeConflictRegion, top: number): HTMLDivElement {
+  private createLens(conflict: MergeConflictRegion, top: number): HTMLDivElement {
     const document = this.root.ownerDocument
     const lens = document.createElement('div')
     lens.className = 'editor-merge-conflict-lens'
     lens.style.transform = `translate3d(0, ${Math.max(0, top)}px, 0)`
     const actions: HTMLElement[] = [
-      this.#createAction('Accept Current Change', () =>
+      this.createAction('Accept Current Change', () =>
         this.controller.resolveConflict(conflict.index, 'ours'),
       ),
-      this.#createAction('Accept Incoming Change', () =>
+      this.createAction('Accept Incoming Change', () =>
         this.controller.resolveConflict(conflict.index, 'theirs'),
       ),
-      this.#createAction('Accept Both Changes', () =>
+      this.createAction('Accept Both Changes', () =>
         this.controller.resolveConflict(conflict.index, 'both'),
       ),
     ]
     const compare = this.options.compare
     if (compare) {
       actions.push(
-        this.#createAction('Compare Changes', () => {
+        this.createAction('Compare Changes', () => {
           compare(conflict)
           return true
         }),
       )
     }
     actions.forEach((action, index) => {
-      if (index > 0) lens.appendChild(this.#createSeparator())
+      if (index > 0) lens.appendChild(this.createSeparator())
       lens.appendChild(action)
     })
     return lens
   }
 
-  #createAction(label: string, run: () => boolean): HTMLButtonElement {
+  private createAction(label: string, run: () => boolean): HTMLButtonElement {
     const button = this.root.ownerDocument.createElement('button')
     button.type = 'button'
     button.tabIndex = -1
@@ -463,7 +463,7 @@ class MergeConflictViewContribution implements EditorViewContribution {
     return button
   }
 
-  #createSeparator(): HTMLSpanElement {
+  private createSeparator(): HTMLSpanElement {
     const separator = this.root.ownerDocument.createElement('span')
     separator.className = 'editor-merge-conflict-lens-separator'
     separator.ariaHidden = 'true'

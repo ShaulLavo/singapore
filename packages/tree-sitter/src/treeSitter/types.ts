@@ -338,6 +338,15 @@ type TreeSitterDisposeDocumentRequest = {
   readonly runtimeSessionId: string
 }
 
+/**
+ * Tells the worker a session is closing, ahead of `disposeDocument`, which waits for the session's
+ * requests to settle. A page without shared memory has no other way to stop one that is running.
+ */
+type TreeSitterCloseRuntimeSessionRequest = {
+  readonly type: 'closeRuntimeSession'
+  readonly runtimeSessionId: string
+}
+
 type TreeSitterRuntimeBarrierRequest = {
   readonly type: 'runtimeBarrier'
   readonly runtimeSessionId: string
@@ -368,6 +377,7 @@ export type TreeSitterWorkerRequestPayload =
   | TreeSitterProjectedMergeUnitsRequest
   | TreeSitterReviewBatchRequest
   | TreeSitterDisposeDocumentRequest
+  | TreeSitterCloseRuntimeSessionRequest
   | TreeSitterRuntimeBarrierRequest
   | TreeSitterIdleFenceRequest
   | TreeSitterDisposeRequest

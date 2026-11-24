@@ -1,7 +1,6 @@
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { browserTestResponses } from '../../scripts/browser-test-responses.ts'
+import { runTempDir } from '../../scripts/run-temp-dir.ts'
 import { workspaceRoot } from '../../scripts/workspace-root.ts'
 import { playwright } from '@vitest/browser-playwright'
 import { devices } from '@playwright/test'
@@ -19,7 +18,7 @@ let contentEvidence: string | undefined
 let highlightEvidence: string | undefined
 
 const proofStyledWrapScreenshot: BrowserCommand = async ({ iframe, project }, width: number) => {
-  const directory = mkdtempSync(join(tmpdir(), 'singapore-styled-wrap-'))
+  const directory = runTempDir('styled-wrap')
   const path = join(directory, `${project.name}-${width}.png`)
   await iframe.locator('[data-styled-wrap-proof]').screenshot({ path, animations: 'disabled' })
   return path
@@ -216,7 +215,7 @@ export default defineConfig({
             provider: playwright(),
             commands: {
               proofContentLayoutScreenshot: async ({ iframe, project }, width: number) => {
-                contentEvidence ??= mkdtempSync(join(tmpdir(), 'singapore-content-layout-'))
+                contentEvidence ??= runTempDir('content-layout')
                 const path = join(contentEvidence, `${project.name}-${width}.png`)
                 await iframe
                   .locator('#content-height-proof')
@@ -328,8 +327,7 @@ export default defineConfig({
                 hostId: string,
                 label?: string,
               ) => {
-                if (label)
-                  highlightEvidence ??= mkdtempSync(join(tmpdir(), 'singapore-highlight-boundary-'))
+                if (label) highlightEvidence ??= runTempDir('highlight-boundary')
                 const path = label
                   ? join(highlightEvidence!, `${project.name}-${label}.png`)
                   : undefined

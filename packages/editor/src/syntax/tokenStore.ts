@@ -80,7 +80,7 @@ let nextRevision = 1
 export class EditorTokenStore {
   readonly length: number
   readonly revision: number
-  readonly #segmentStarts: readonly number[]
+  private readonly segmentStarts: readonly number[]
   private maxEnds: Uint32Array | null = null
   // The segment the last read landed in; a row is read front to back.
   private cursor = 0
@@ -98,16 +98,16 @@ export class EditorTokenStore {
       segmentStarts.push(length)
       length += segment.to - segment.from
     }
-    this.#segmentStarts = segmentStarts
+    this.segmentStarts = segmentStarts
     this.length = length
     this.revision = nextRevision
     nextRevision += 1
   }
 
-  static readonly #EMPTY = new EditorTokenStore([], [], true, true, null)
+  private static readonly EMPTY = new EditorTokenStore([], [], true, true, null)
 
   static empty(): EditorTokenStore {
-    return EditorTokenStore.#EMPTY
+    return EditorTokenStore.EMPTY
   }
 
   static inspectRetention(stores: Iterable<EditorTokenStore>): EditorTokenStoreRetentionSnapshot {
@@ -139,7 +139,7 @@ export class EditorTokenStore {
 
   /** Takes ownership of the packed arrays; nothing may write to them afterwards. */
   static fromPacked(packed: PackedEditorTokens): EditorTokenStore {
-    if (packed.starts.length === 0) return EditorTokenStore.#EMPTY
+    if (packed.starts.length === 0) return EditorTokenStore.EMPTY
 
     assertStyleIds(packed.styleIds, packed.styles.length)
     const run = packed.sortedByStart ? packed : sortRunByStart(packed)
@@ -155,7 +155,7 @@ export class EditorTokenStore {
 
   /** The boundary for hosts that build tokens by hand; costs the input, not the document. */
   static fromTokens(tokens: readonly EditorToken[]): EditorTokenStore {
-    if (tokens.length === 0) return EditorTokenStore.#EMPTY
+    if (tokens.length === 0) return EditorTokenStore.EMPTY
 
     const writer = createPackedEditorTokenWriter(tokens.length)
     const styles: EditorTokenStyle[] = []
@@ -173,18 +173,18 @@ export class EditorTokenStore {
   }
 
   startAt(index: number): number {
-    const segment = this.#segmentAt(index)
-    return segment.starts[segment.from + index - this.#segmentStarts[this.cursor]!]! + segment.delta
+    const segment = this.segmentAt(index)
+    return segment.starts[segment.from + index - this.segmentStarts[this.cursor]!]! + segment.delta
   }
 
   endAt(index: number): number {
-    const segment = this.#segmentAt(index)
-    return segment.ends[segment.from + index - this.#segmentStarts[this.cursor]!]! + segment.delta
+    const segment = this.segmentAt(index)
+    return segment.ends[segment.from + index - this.segmentStarts[this.cursor]!]! + segment.delta
   }
 
   styleIdAt(index: number): number {
-    const segment = this.#segmentAt(index)
-    return segment.styleIds[segment.from + index - this.#segmentStarts[this.cursor]!]!
+    const segment = this.segmentAt(index)
+    return segment.styleIds[segment.from + index - this.segmentStarts[this.cursor]!]!
   }
 
   styleAt(index: number): EditorTokenStyle {
@@ -213,10 +213,10 @@ export class EditorTokenStore {
     let index = Math.max(0, from)
     if (index >= last) return
 
-    let segmentIndex = this.#segmentIndexAt(index)
+    let segmentIndex = this.segmentIndexAt(index)
     while (index < last) {
       const segment = this.segments[segmentIndex]!
-      const segmentStart = this.#segmentStarts[segmentIndex]!
+      const segmentStart = this.segmentStarts[segmentIndex]!
       const stop = Math.min(last, segmentStart + segment.to - segment.from)
       for (; index < stop; index += 1) {
         const at = segment.from + index - segmentStart
@@ -232,20 +232,20 @@ export class EditorTokenStore {
   }
 
   firstStartingAtOrAfter(offset: number): number {
-    return this.#lowerBoundByStart(offset)
+    return this.lowerBoundByStart(offset)
   }
 
   firstStartingAfter(offset: number): number {
-    return this.#lowerBoundByStart(offset + 1)
+    return this.lowerBoundByStart(offset + 1)
   }
 
   /** First index below `endIndex` whose running maximum end is past `offset`. */
   firstEndingAfter(offset: number, endIndex = this.length): number {
-    return this.#lowerBoundByMaxEnd(offset + 1, endIndex)
+    return this.lowerBoundByMaxEnd(offset + 1, endIndex)
   }
 
   firstEndingAtOrAfter(offset: number, endIndex = this.length): number {
-    return this.#lowerBoundByMaxEnd(offset, endIndex)
+    return this.lowerBoundByMaxEnd(offset, endIndex)
   }
 
   /**
@@ -263,12 +263,12 @@ export class EditorTokenStore {
       options.keepsLiveRanges === null
         ? null
         : { revision: this.revision, keepsLiveRanges: options.keepsLiveRanges }
-    const segments = this.#segmentsInRange(0, first, 0).concat(
+    const segments = this.segmentsInRange(0, first, 0).concat(
       inserted.starts.length > 0 ? [wholeRunSegment(inserted)] : NO_SEGMENTS,
-      this.#segmentsInRange(last, this.length, options.delta),
+      this.segmentsInRange(last, this.length, options.delta),
     )
-    const flags = this.monotonicEnd ? this.#flagsAfterReplace(first, last, inserted, options) : null
-    if (!flags) return EditorTokenStore.#fromUnchecked(segments, styles, derivedFrom)
+    const flags = this.monotonicEnd ? this.flagsAfterReplace(first, last, inserted, options) : null
+    if (!flags) return EditorTokenStore.fromUnchecked(segments, styles, derivedFrom)
 
     return new EditorTokenStore(
       compactSegments(segments),
@@ -283,7 +283,7 @@ export class EditorTokenStore {
   applyPatch(patch: PackedEditorTokenPatch): EditorTokenStore {
     const first = this.firstStartingAtOrAfter(patch.fromOffset)
     const last = Math.max(first, this.firstStartingAtOrAfter(patch.oldEndOffset))
-    return this.#insertPacked(
+    return this.insertPacked(
       first,
       last,
       patch.tokensPacked,
@@ -305,8 +305,8 @@ export class EditorTokenStore {
     const answerLast = tokens.firstStartingAtOrAfter(endOffset)
     const answerFirst = tokens.firstEndingAfter(startOffset, answerLast)
     const answer = slicePacked(tokens.toPacked(), answerFirst, answerLast)
-    if (this.monotonicEnd && tokens.monotonicEnd) return this.#insertPacked(first, last, answer, 0)
-    return this.#replaceNestedOffsetRange(first, last, startOffset, answer)
+    if (this.monotonicEnd && tokens.monotonicEnd) return this.insertPacked(first, last, answer, 0)
+    return this.replaceNestedOffsetRange(first, last, startOffset, answer)
   }
 
   /**
@@ -314,7 +314,7 @@ export class EditorTokenStore {
    * maximum end, so a window can hold tokens that end before the range. Each candidate's own end
    * decides whether it is replaced (existing) or inserted (answer).
    */
-  #replaceNestedOffsetRange(
+  private replaceNestedOffsetRange(
     first: number,
     last: number,
     startOffset: number,
@@ -349,7 +349,7 @@ export class EditorTokenStore {
     })
   }
 
-  #insertPacked(
+  private insertPacked(
     first: number,
     last: number,
     packed: PackedEditorTokens,
@@ -430,25 +430,25 @@ export class EditorTokenStore {
     otherIndex: number,
     withOffsets: boolean,
   ): number {
-    const mine = this.#segmentAt(index)
-    const mineAt = mine.from + index - this.#segmentStarts[this.cursor]!
-    const theirs = other.#segmentAt(otherIndex)
-    const theirsAt = theirs.from + otherIndex - other.#segmentStarts[other.cursor]!
+    const mine = this.segmentAt(index)
+    const mineAt = mine.from + index - this.segmentStarts[this.cursor]!
+    const theirs = other.segmentAt(otherIndex)
+    const theirsAt = theirs.from + otherIndex - other.segmentStarts[other.cursor]!
     if (mineAt !== theirsAt || !segmentsShareArrays(mine, theirs, withOffsets)) return 0
     return Math.min(mine.to - mineAt, theirs.to - theirsAt)
   }
 
   /** @internal Tokens before `index` that are `other`'s before `otherIndex` by construction. */
   sharedRunBehind(index: number, other: EditorTokenStore, otherIndex: number): number {
-    const mine = this.#segmentAt(index - 1)
-    const mineAt = mine.from + index - 1 - this.#segmentStarts[this.cursor]!
-    const theirs = other.#segmentAt(otherIndex - 1)
-    const theirsAt = theirs.from + otherIndex - 1 - other.#segmentStarts[other.cursor]!
+    const mine = this.segmentAt(index - 1)
+    const mineAt = mine.from + index - 1 - this.segmentStarts[this.cursor]!
+    const theirs = other.segmentAt(otherIndex - 1)
+    const theirsAt = theirs.from + otherIndex - 1 - other.segmentStarts[other.cursor]!
     if (mineAt !== theirsAt || !segmentsShareArrays(mine, theirs, true)) return 0
     return Math.min(mineAt - mine.from, theirsAt - theirs.from) + 1
   }
 
-  static #fromUnchecked(
+  private static fromUnchecked(
     segments: readonly TokenSegment[],
     styles: readonly EditorTokenStyle[],
     derivedFrom: EditorTokenStoreOrigin | null,
@@ -469,7 +469,7 @@ export class EditorTokenStore {
   }
 
   /** Flags for a replace that keeps the store sorted with growing ends, else `null`. */
-  #flagsAfterReplace(
+  private flagsAfterReplace(
     first: number,
     last: number,
     inserted: EditorTokenRun,
@@ -497,13 +497,13 @@ export class EditorTokenStore {
     return { monotonicEnd: true, nonOverlapping }
   }
 
-  #segmentsInRange(from: number, to: number, delta: number): TokenSegment[] {
+  private segmentsInRange(from: number, to: number, delta: number): TokenSegment[] {
     const result: TokenSegment[] = []
     if (from >= to) return result
 
-    for (let index = this.#segmentIndexAt(from); index < this.segments.length; index += 1) {
+    for (let index = this.segmentIndexAt(from); index < this.segments.length; index += 1) {
       const segment = this.segments[index]!
-      const segmentStart = this.#segmentStarts[index]!
+      const segmentStart = this.segmentStarts[index]!
       if (segmentStart >= to) break
 
       result.push({
@@ -516,8 +516,8 @@ export class EditorTokenStore {
     return result
   }
 
-  #segmentAt(index: number): TokenSegment {
-    const cursorStart = this.#segmentStarts[this.cursor]
+  private segmentAt(index: number): TokenSegment {
+    const cursorStart = this.segmentStarts[this.cursor]
     const current = this.segments[this.cursor]
     if (
       current &&
@@ -529,23 +529,23 @@ export class EditorTokenStore {
     }
     if (index < 0 || index >= this.length) throw tokenIndexOutOfRange(index, this.length)
 
-    this.cursor = this.#segmentIndexAt(index)
+    this.cursor = this.segmentIndexAt(index)
     return this.segments[this.cursor]!
   }
 
   /** The segment holding token `index`; `index` must be below `length`. */
-  #segmentIndexAt(index: number): number {
+  private segmentIndexAt(index: number): number {
     let low = 0
-    let high = this.#segmentStarts.length - 1
+    let high = this.segmentStarts.length - 1
     while (low < high) {
       const middle = (low + high + 1) >>> 1
-      if (this.#segmentStarts[middle]! <= index) low = middle
+      if (this.segmentStarts[middle]! <= index) low = middle
       else high = middle - 1
     }
     return low
   }
 
-  #lowerBoundByStart(offset: number): number {
+  private lowerBoundByStart(offset: number): number {
     let low = 0
     let high = this.length
     while (low < high) {
@@ -556,8 +556,8 @@ export class EditorTokenStore {
     return low
   }
 
-  #lowerBoundByMaxEnd(offset: number, endIndex: number): number {
-    const maxEnds = this.monotonicEnd ? null : this.#runningMaxEnds()
+  private lowerBoundByMaxEnd(offset: number, endIndex: number): number {
+    const maxEnds = this.monotonicEnd ? null : this.runningMaxEnds()
     let low = 0
     let high = Math.min(endIndex, this.length)
     while (low < high) {
@@ -570,7 +570,7 @@ export class EditorTokenStore {
   }
 
   // Only a store with overlapping input reaches this, and that store is one flat segment.
-  #runningMaxEnds(): Uint32Array {
+  private runningMaxEnds(): Uint32Array {
     if (this.maxEnds) return this.maxEnds
 
     const maxEnds = new Uint32Array(this.length)

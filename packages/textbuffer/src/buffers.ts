@@ -122,7 +122,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
       const entry = this.log.chunks[chunk]!
       const next = tails.has(chunk)
         ? entry
-        : yield* this.#reclaimChunk(chunk, liveRanges.get(chunk) ?? [])
+        : yield* this.reclaimChunk(chunk, liveRanges.get(chunk) ?? [])
       chunks.push(next)
       if (next !== entry) changed.add(chunk)
       if (chunk % 256 === 255) yield
@@ -130,7 +130,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
     if (changed.size === 0) return new Map()
     if (this.size > 1) chunks[this.size - 1] = this.chunkText(this.size - 1)
     const copied = new Set<number>()
-    yield* this.#detachSurvivors(chunks, copied)
+    yield* this.detachSurvivors(chunks, copied)
     const chunkOfBuffer: number[] = []
     for (let buffer = 0; buffer < this.bufferCount; buffer++) {
       chunkOfBuffer.push(this.log.chunkOfBuffer[buffer]!)
@@ -199,7 +199,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
     return views
   }
 
-  *#detachSurvivors(chunks: PieceBufferLog['chunks'], copied: Set<number>): Generator<void> {
+  private *detachSurvivors(chunks: PieceBufferLog['chunks'], copied: Set<number>): Generator<void> {
     let visited = 0
     for (const chunk of this.log.borrowedChunks) {
       if (++visited % 256 === 0) yield
@@ -211,7 +211,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
     }
   }
 
-  *#reclaimChunk(chunk: number, marked: TextRange[]): Generator<void, string | SparseText> {
+  private *reclaimChunk(chunk: number, marked: TextRange[]): Generator<void, string | SparseText> {
     const entry = this.log.chunks[chunk]!
     const ranges = yield* unionTextRanges(marked)
     let retainedLength = 0
@@ -221,13 +221,13 @@ class PieceBufferChunkView implements PieceBufferChunks {
     }
     if (retainedLength === retainedTextLength(entry)) return entry
     // Append chunks are bounded; original text already owns a complete index.
-    if (retainedLength > 0 && typeof entry === 'string') this.#ensureLineIndex(chunk, entry)
+    if (retainedLength > 0 && typeof entry === 'string') this.ensureLineIndex(chunk, entry)
     const spans: BufferTextSpan[] = []
     for (const range of ranges) yield* this.copyRange(chunk, range, spans)
     return { length: entry.length, retainedLength, spans }
   }
 
-  #ensureLineIndex(chunk: number, text: string): void {
+  private ensureLineIndex(chunk: number, text: string): void {
     let index = this.log.lineIndexes.get(chunk)
     if (!index) {
       index = { offsets: new Uint32Array(0), count: 0, scannedLength: 0 }
@@ -239,7 +239,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   private *copyRange(chunk: number, range: TextRange, spans: BufferTextSpan[]): Generator<void> {
     let at = range.start
     while (at < range.end) {
-      const source = this.#spanAtChunk(chunk, at)
+      const source = this.spanAtChunk(chunk, at)
       const end = Math.min(range.end, source.end, at + BUFFER_CHUNK_SIZE)
       if (at === source.start && end === source.end) spans.push(source)
       else {
@@ -260,10 +260,10 @@ class PieceBufferChunkView implements PieceBufferChunks {
     if (chunk === undefined) throw new RangeError('piece buffer not found')
     if (offset < 0 || offset >= this.chunkLength(chunk))
       throw new RangeError('invalid buffer offset')
-    return this.#spanAtChunk(chunk, offset)
+    return this.spanAtChunk(chunk, offset)
   }
 
-  #spanAtChunk(chunk: number, offset: number): BufferTextSpan {
+  private spanAtChunk(chunk: number, offset: number): BufferTextSpan {
     const entry = this.log.chunks[chunk]!
     if (typeof entry !== 'string') return sparseSpanAt(entry, offset)
     let owner = this.log.textOwners.get(chunk)
@@ -411,7 +411,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   }
 
   public extendTail(text: string, lineBreaks: number): PieceBufferChunkView {
-    this.#ownTail()
+    this.ownTail()
     this.log.chunks[this.size - 1] = this.chunkText(this.size - 1) + text
     this.log.tailLastUnit = text.charCodeAt(text.length - 1)
     return new PieceBufferChunkView(
@@ -424,7 +424,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
   }
 
   public fill(text: string, lineBreaks: number, borrowed: boolean): PieceBufferChunkView {
-    this.#ownTail()
+    this.ownTail()
     if (borrowed) this.log.borrowedChunks.add(this.size - 1)
     this.log.chunks[this.size - 1] = this.chunkText(this.size - 1) + text
     this.log.chunkOfBuffer.push(this.size - 1)
@@ -453,7 +453,7 @@ class PieceBufferChunkView implements PieceBufferChunks {
     )
   }
 
-  #ownTail(): void {
+  private ownTail(): void {
     if (!this.log.sharedTailOwner) return
     // Maintenance shares the unchanged tail; either log must fork its owner before appending.
     this.log.textOwners.delete(this.size - 1)

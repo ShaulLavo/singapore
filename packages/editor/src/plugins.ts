@@ -1364,27 +1364,27 @@ export function subscribeAmbientEditorPlugins(listener: () => void): EditorDispo
 }
 
 export class EditorPluginHost implements EditorDisposable {
-  readonly #loggers: EditorLogger[] = []
+  private readonly loggers: EditorLogger[] = []
   private readonly highlighters: EditorHighlighterProvider[] = []
   private readonly syntaxProviders: EditorSyntaxProvider[] = []
   private readonly viewContributions: EditorViewContributionProvider[] = []
-  readonly #commandContributions: EditorCommandContributionProvider[] = []
-  readonly #capabilityContributions: EditorCapabilityContributionProvider[] = []
-  readonly #editContributions: EditorEditContributionProvider[] = []
-  readonly #decorationContributions: EditorDecorationContributionProvider[] = []
-  readonly #editorFeatureContributions: EditorFeatureContributionProvider[] = []
-  readonly #gutterContributions: EditorGutterContribution[] = []
-  readonly #injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
-  readonly #inlineReplacementProviders: EditorInlineReplacementSource[] = []
+  private readonly commandContributions: EditorCommandContributionProvider[] = []
+  private readonly capabilityContributions: EditorCapabilityContributionProvider[] = []
+  private readonly editContributions: EditorEditContributionProvider[] = []
+  private readonly decorationContributions: EditorDecorationContributionProvider[] = []
+  private readonly editorFeatureContributions: EditorFeatureContributionProvider[] = []
+  private readonly gutterContributions: EditorGutterContribution[] = []
+  private readonly injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
+  private readonly inlineReplacementProviders: EditorInlineReplacementSource[] = []
   private readonly selectionRangeProviders: EditorSelectionRangeProvider[] = []
-  readonly #injectedTextRowProviderInvalidationDisposables = new Map<
+  private readonly injectedTextRowProviderInvalidationDisposables = new Map<
     EditorInjectedTextRowProvider,
     MutableEditorDisposable
   >()
   private readonly installedPlugins = new Map<EditorPlugin, InstalledEditorPlugin>()
-  readonly #managedPlugins = new Set<EditorPlugin>()
-  readonly #manualPlugins = new Set<EditorPlugin>()
-  readonly #usedPlugins = new Map<EditorPlugin, number>()
+  private readonly managedPlugins = new Set<EditorPlugin>()
+  private readonly manualPlugins = new Set<EditorPlugin>()
+  private readonly usedPlugins = new Map<EditorPlugin, number>()
   private events: EditorPluginHostEvents = {}
   private disposed = false
 
@@ -1397,39 +1397,39 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   public addPlugin(plugin: EditorPlugin): EditorDisposable {
-    if (this.#manualPlugins.has(plugin)) return disposableOnce(() => undefined)
-    if (!this.#ensurePluginActive(plugin)) return disposableOnce(() => undefined)
+    if (this.manualPlugins.has(plugin)) return disposableOnce(() => undefined)
+    if (!this.ensurePluginActive(plugin)) return disposableOnce(() => undefined)
 
-    this.#manualPlugins.add(plugin)
-    this.#updatePlugin(plugin)
+    this.manualPlugins.add(plugin)
+    this.updatePlugin(plugin)
 
-    return disposableOnce(() => this.#removeManualPlugin(plugin))
+    return disposableOnce(() => this.removeManualPlugin(plugin))
   }
 
   public removePlugin(plugin: EditorPlugin): boolean {
-    const removedManaged = this.#removeManagedPlugin(plugin)
-    const removedManual = this.#removeManualPlugin(plugin)
+    const removedManaged = this.removeManagedPlugin(plugin)
+    const removedManual = this.removeManualPlugin(plugin)
     return removedManaged || removedManual
   }
 
   public setPlugins(plugins: readonly EditorPlugin[]): void {
     const nextPlugins = new Set(plugins)
 
-    for (const plugin of this.#managedPlugins) {
+    for (const plugin of this.managedPlugins) {
       if (nextPlugins.has(plugin)) continue
 
-      this.#managedPlugins.delete(plugin)
-      this.#updatePlugin(plugin)
-      this.#disposePluginIfUnowned(plugin)
+      this.managedPlugins.delete(plugin)
+      this.updatePlugin(plugin)
+      this.disposePluginIfUnowned(plugin)
     }
 
     for (const plugin of nextPlugins) {
-      if (this.#managedPlugins.has(plugin)) continue
+      if (this.managedPlugins.has(plugin)) continue
 
-      if (!this.#ensurePluginActive(plugin)) continue
+      if (!this.ensurePluginActive(plugin)) continue
 
-      this.#managedPlugins.add(plugin)
-      this.#updatePlugin(plugin)
+      this.managedPlugins.add(plugin)
+      this.updatePlugin(plugin)
     }
   }
 
@@ -1479,7 +1479,7 @@ export class EditorPluginHost implements EditorDisposable {
     context: EditorCommandContributionContext,
   ): EditorCommandContribution[] {
     const contributions: EditorCommandContribution[] = []
-    for (const provider of this.#commandContributions) {
+    for (const provider of this.commandContributions) {
       const contribution = provider.createContribution(context)
       if (contribution) contributions.push(contribution)
     }
@@ -1491,7 +1491,7 @@ export class EditorPluginHost implements EditorDisposable {
     context: EditorCapabilityContributionContext,
   ): EditorCapabilityContribution[] {
     const contributions: EditorCapabilityContribution[] = []
-    for (const provider of this.#capabilityContributions) {
+    for (const provider of this.capabilityContributions) {
       const contribution = provider.createContribution(context)
       if (contribution) contributions.push(contribution)
     }
@@ -1501,7 +1501,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   public createEditContributions(context: EditorEditContributionContext): EditorEditContribution[] {
     const contributions: EditorEditContribution[] = []
-    for (const provider of this.#editContributions) {
+    for (const provider of this.editContributions) {
       const contribution = provider.createContribution(context)
       if (contribution) contributions.push(contribution)
     }
@@ -1513,7 +1513,7 @@ export class EditorPluginHost implements EditorDisposable {
     context: EditorDecorationContributionContext,
   ): EditorDecorationContribution[] {
     const contributions: EditorDecorationContribution[] = []
-    for (const provider of this.#decorationContributions) {
+    for (const provider of this.decorationContributions) {
       const contribution = provider.createContribution(context)
       if (contribution) contributions.push(contribution)
     }
@@ -1525,7 +1525,7 @@ export class EditorPluginHost implements EditorDisposable {
     context: EditorFeatureContributionContext,
   ): EditorFeatureContribution[] {
     const contributions: EditorFeatureContribution[] = []
-    for (const provider of this.#editorFeatureContributions) {
+    for (const provider of this.editorFeatureContributions) {
       const contribution = provider.createContribution(context)
       if (contribution) contributions.push(contribution)
     }
@@ -1534,11 +1534,11 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   public getGutterContributions(): readonly EditorGutterContribution[] {
-    return [...this.#gutterContributions]
+    return [...this.gutterContributions]
   }
 
   public getInlineReplacementProviders(): readonly EditorInlineReplacementSource[] {
-    return this.#inlineReplacementProviders
+    return this.inlineReplacementProviders
   }
 
   public getSelectionRangeProviders(): readonly EditorSelectionRangeProvider[] {
@@ -1546,7 +1546,7 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   public getInjectedTextRowProviders(): readonly EditorInjectedTextRowProvider[] {
-    return this.#injectedTextRowProviders
+    return this.injectedTextRowProviders
   }
 
   public getViewContributionProviders(): readonly EditorViewContributionProvider[] {
@@ -1563,23 +1563,23 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   public getCommandContributionProviders(): readonly EditorCommandContributionProvider[] {
-    return this.#commandContributions
+    return this.commandContributions
   }
 
   public getCapabilityContributionProviders(): readonly EditorCapabilityContributionProvider[] {
-    return this.#capabilityContributions
+    return this.capabilityContributions
   }
 
   public getEditContributionProviders(): readonly EditorEditContributionProvider[] {
-    return this.#editContributions
+    return this.editContributions
   }
 
   public getDecorationContributionProviders(): readonly EditorDecorationContributionProvider[] {
-    return this.#decorationContributions
+    return this.decorationContributions
   }
 
   public getEditorFeatureContributionProviders(): readonly EditorFeatureContributionProvider[] {
-    return this.#editorFeatureContributions
+    return this.editorFeatureContributions
   }
 
   public getActivePluginNames(): readonly string[] {
@@ -1592,13 +1592,13 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   public hasLoggers(): boolean {
-    return this.#loggers.length > 0
+    return this.loggers.length > 0
   }
 
   public log(event: EditorLogEvent): void {
-    if (this.#loggers.length === 0) return
+    if (this.loggers.length === 0) return
 
-    for (const logger of this.#loggers) callEditorLogger(logger, event)
+    for (const logger of this.loggers) callEditorLogger(logger, event)
   }
 
   public dispose(): void {
@@ -1609,38 +1609,38 @@ export class EditorPluginHost implements EditorDisposable {
       const plugin = this.installedPlugins.keys().next().value
       if (!plugin) break
 
-      this.#disposeInstalledPlugin(plugin)
+      this.disposeInstalledPlugin(plugin)
     }
-    this.#managedPlugins.clear()
-    this.#manualPlugins.clear()
-    this.#usedPlugins.clear()
-    this.#loggers.length = 0
+    this.managedPlugins.clear()
+    this.manualPlugins.clear()
+    this.usedPlugins.clear()
+    this.loggers.length = 0
     this.highlighters.length = 0
     this.syntaxProviders.length = 0
     this.viewContributions.length = 0
-    this.#commandContributions.length = 0
-    this.#capabilityContributions.length = 0
-    this.#editContributions.length = 0
-    this.#decorationContributions.length = 0
-    this.#editorFeatureContributions.length = 0
-    this.#gutterContributions.length = 0
-    for (const disposable of this.#injectedTextRowProviderInvalidationDisposables.values()) {
+    this.commandContributions.length = 0
+    this.capabilityContributions.length = 0
+    this.editContributions.length = 0
+    this.decorationContributions.length = 0
+    this.editorFeatureContributions.length = 0
+    this.gutterContributions.length = 0
+    for (const disposable of this.injectedTextRowProviderInvalidationDisposables.values()) {
       disposable.dispose()
     }
-    this.#injectedTextRowProviderInvalidationDisposables.clear()
-    this.#injectedTextRowProviders.length = 0
-    this.#inlineReplacementProviders.length = 0
+    this.injectedTextRowProviderInvalidationDisposables.clear()
+    this.injectedTextRowProviders.length = 0
+    this.inlineReplacementProviders.length = 0
     this.selectionRangeProviders.length = 0
   }
 
-  #ensurePluginActive(plugin: EditorPlugin): boolean {
-    const installedPlugin = this.#ensurePluginInstalled(plugin)
+  private ensurePluginActive(plugin: EditorPlugin): boolean {
+    const installedPlugin = this.ensurePluginInstalled(plugin)
     if (!installedPlugin) return false
     if (installedPlugin.active) return true
 
-    const activation = this.#activatePlugin(plugin, installedPlugin)
+    const activation = this.activatePlugin(plugin, installedPlugin)
     if (!activation.activated) {
-      this.#disposeInstalledPlugin(plugin)
+      this.disposeInstalledPlugin(plugin)
       return false
     }
 
@@ -1650,12 +1650,12 @@ export class EditorPluginHost implements EditorDisposable {
     return true
   }
 
-  #ensurePluginInstalled(plugin: EditorPlugin): InstalledEditorPlugin | null {
+  private ensurePluginInstalled(plugin: EditorPlugin): InstalledEditorPlugin | null {
     const installedPlugin = this.installedPlugins.get(plugin)
     if (installedPlugin) return installedPlugin
 
-    const nextInstalledPlugin = this.#createInstalledPlugin()
-    const installation = this.#installPlugin(plugin, nextInstalledPlugin)
+    const nextInstalledPlugin = this.createInstalledPlugin()
+    const installation = this.installPlugin(plugin, nextInstalledPlugin)
     if (!installation.installed) {
       nextInstalledPlugin.registrations.installed.dispose()
       return null
@@ -1668,7 +1668,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   // Each plugin gets its own context, so a registration it makes from a timer or a promise is its
   // own and goes when it does, and one plugin object in two editors keeps two separate owners.
-  #createInstalledPlugin(): InstalledEditorPlugin {
+  private createInstalledPlugin(): InstalledEditorPlugin {
     const registrations: PluginRegistrations = {
       scope: null,
       active: null,
@@ -1678,21 +1678,24 @@ export class EditorPluginHost implements EditorDisposable {
       active: false,
       activationDisposable: null,
       installationDisposable: null,
-      context: this.#createContext(registrations),
+      context: this.createContext(registrations),
       registrations,
     }
   }
 
-  #disposePluginIfUnowned(plugin: EditorPlugin): void {
-    if (this.#managedPlugins.has(plugin)) return
-    if (this.#manualPlugins.has(plugin)) return
-    if (this.#usedPlugins.has(plugin)) return
+  private disposePluginIfUnowned(plugin: EditorPlugin): void {
+    if (this.managedPlugins.has(plugin)) return
+    if (this.manualPlugins.has(plugin)) return
+    if (this.usedPlugins.has(plugin)) return
 
-    this.#deactivatePlugin(plugin)
-    this.#disposeInstalledPlugin(plugin)
+    this.deactivatePlugin(plugin)
+    this.disposeInstalledPlugin(plugin)
   }
 
-  #installPlugin(plugin: EditorPlugin, installed: InstalledEditorPlugin): EditorPluginInstallation {
+  private installPlugin(
+    plugin: EditorPlugin,
+    installed: InstalledEditorPlugin,
+  ): EditorPluginInstallation {
     if (!plugin.install) return { installed: true, disposable: null }
 
     const start = nowMs()
@@ -1715,7 +1718,10 @@ export class EditorPluginHost implements EditorDisposable {
     }
   }
 
-  #activatePlugin(plugin: EditorPlugin, installed: InstalledEditorPlugin): EditorPluginActivation {
+  private activatePlugin(
+    plugin: EditorPlugin,
+    installed: InstalledEditorPlugin,
+  ): EditorPluginActivation {
     const start = nowMs()
     const registrations = new EditorDisposableStore()
     installed.registrations.scope = registrations
@@ -1737,21 +1743,21 @@ export class EditorPluginHost implements EditorDisposable {
     }
   }
 
-  #updatePlugin(plugin: EditorPlugin): void {
+  private updatePlugin(plugin: EditorPlugin): void {
     const installedPlugin = this.installedPlugins.get(plugin)
     if (!installedPlugin?.active) return
     if (!plugin.update) return
 
     const start = nowMs()
     try {
-      plugin.update(installedPlugin.context, this.#lifecycleStateFor(plugin, installedPlugin))
+      plugin.update(installedPlugin.context, this.lifecycleStateFor(plugin, installedPlugin))
       this.events.onPluginUpdated?.(pluginName(plugin), nowMs() - start)
     } catch (error) {
       this.events.onPluginUpdateFailed?.(pluginName(plugin), error, nowMs() - start)
     }
   }
 
-  #deactivatePlugin(plugin: EditorPlugin): void {
+  private deactivatePlugin(plugin: EditorPlugin): void {
     const installedPlugin = this.installedPlugins.get(plugin)
     if (!installedPlugin?.active) return
 
@@ -1779,11 +1785,11 @@ export class EditorPluginHost implements EditorDisposable {
     this.events.onPluginDisposed?.(pluginName(plugin))
   }
 
-  #disposeInstalledPlugin(plugin: EditorPlugin): void {
+  private disposeInstalledPlugin(plugin: EditorPlugin): void {
     const installedPlugin = this.installedPlugins.get(plugin)
     if (!installedPlugin) return
 
-    this.#deactivatePlugin(plugin)
+    this.deactivatePlugin(plugin)
     if (!this.installedPlugins.delete(plugin)) return
 
     const start = nowMs()
@@ -1798,114 +1804,114 @@ export class EditorPluginHost implements EditorDisposable {
     }
   }
 
-  #lifecycleStateFor(
+  private lifecycleStateFor(
     plugin: EditorPlugin,
     installedPlugin: InstalledEditorPlugin,
   ): EditorPluginLifecycleState {
     return {
       active: installedPlugin.active,
-      managed: this.#managedPlugins.has(plugin),
-      manual: this.#manualPlugins.has(plugin),
-      used: this.#usedPlugins.has(plugin),
+      managed: this.managedPlugins.has(plugin),
+      manual: this.manualPlugins.has(plugin),
+      used: this.usedPlugins.has(plugin),
     }
   }
 
-  #removeManagedPlugin(plugin: EditorPlugin): boolean {
-    if (!this.#managedPlugins.delete(plugin)) return false
+  private removeManagedPlugin(plugin: EditorPlugin): boolean {
+    if (!this.managedPlugins.delete(plugin)) return false
 
-    this.#updatePlugin(plugin)
-    this.#disposePluginIfUnowned(plugin)
+    this.updatePlugin(plugin)
+    this.disposePluginIfUnowned(plugin)
     return true
   }
 
-  #usePlugin(plugin: EditorPlugin): EditorDisposable {
-    const count = this.#usedPlugins.get(plugin) ?? 0
-    if (count === 0 && !this.#ensurePluginActive(plugin)) return disposableOnce(() => undefined)
+  private usePlugin(plugin: EditorPlugin): EditorDisposable {
+    const count = this.usedPlugins.get(plugin) ?? 0
+    if (count === 0 && !this.ensurePluginActive(plugin)) return disposableOnce(() => undefined)
 
-    this.#usedPlugins.set(plugin, count + 1)
-    if (count === 0) this.#updatePlugin(plugin)
-    return disposableOnce(() => this.#releaseUsedPlugin(plugin))
+    this.usedPlugins.set(plugin, count + 1)
+    if (count === 0) this.updatePlugin(plugin)
+    return disposableOnce(() => this.releaseUsedPlugin(plugin))
   }
 
-  #releaseUsedPlugin(plugin: EditorPlugin): void {
-    const count = this.#usedPlugins.get(plugin) ?? 0
+  private releaseUsedPlugin(plugin: EditorPlugin): void {
+    const count = this.usedPlugins.get(plugin) ?? 0
     if (count > 1) {
-      this.#usedPlugins.set(plugin, count - 1)
+      this.usedPlugins.set(plugin, count - 1)
       return
     }
-    this.#usedPlugins.delete(plugin)
-    this.#updatePlugin(plugin)
-    this.#disposePluginIfUnowned(plugin)
+    this.usedPlugins.delete(plugin)
+    this.updatePlugin(plugin)
+    this.disposePluginIfUnowned(plugin)
   }
 
-  #removeManualPlugin(plugin: EditorPlugin): boolean {
-    if (!this.#manualPlugins.delete(plugin)) return false
+  private removeManualPlugin(plugin: EditorPlugin): boolean {
+    if (!this.manualPlugins.delete(plugin)) return false
 
-    this.#updatePlugin(plugin)
-    this.#disposePluginIfUnowned(plugin)
+    this.updatePlugin(plugin)
+    this.disposePluginIfUnowned(plugin)
     return true
   }
 
-  #createContext(owner: PluginRegistrations): EditorInternalPluginContext {
+  private createContext(owner: PluginRegistrations): EditorInternalPluginContext {
     return {
-      log: (event) => this.#logInput(event),
-      registerLogger: (logger) => this.#ownRegistration(owner, () => this.registerLogger(logger)),
+      log: (event) => this.logInput(event),
+      registerLogger: (logger) => this.ownRegistration(owner, () => this.registerLogger(logger)),
       registerHighlighter: (provider) =>
-        this.#ownRegistration(owner, () => this.registerHighlighter(provider)),
+        this.ownRegistration(owner, () => this.registerHighlighter(provider)),
       registerSyntaxProvider: (provider) =>
-        this.#ownRegistration(owner, () => this.registerSyntaxProvider(provider)),
+        this.ownRegistration(owner, () => this.registerSyntaxProvider(provider)),
       registerViewContribution: (provider) =>
-        this.#ownRegistration(owner, () => this.registerViewContribution(provider)),
+        this.ownRegistration(owner, () => this.registerViewContribution(provider)),
       registerCommandContribution: (provider) =>
-        this.#ownRegistration(owner, () => this.registerCommandContribution(provider)),
+        this.ownRegistration(owner, () => this.registerCommandContribution(provider)),
       registerCapabilityContribution: (provider) =>
-        this.#ownRegistration(owner, () => this.registerCapabilityContribution(provider)),
+        this.ownRegistration(owner, () => this.registerCapabilityContribution(provider)),
       registerEditContribution: (provider) =>
-        this.#ownRegistration(owner, () => this.registerEditContribution(provider)),
+        this.ownRegistration(owner, () => this.registerEditContribution(provider)),
       registerDecorationContribution: (provider) =>
-        this.#ownRegistration(owner, () => this.registerDecorationContribution(provider)),
+        this.ownRegistration(owner, () => this.registerDecorationContribution(provider)),
       registerEditorFeatureContribution: (provider) =>
-        this.#ownRegistration(owner, () => this.registerEditorFeatureContribution(provider)),
+        this.ownRegistration(owner, () => this.registerEditorFeatureContribution(provider)),
       registerGutterContribution: (contribution) =>
-        this.#ownRegistration(owner, () => this.registerGutterContribution(contribution)),
+        this.ownRegistration(owner, () => this.registerGutterContribution(contribution)),
       registerInjectedTextRowProvider: (provider) =>
-        this.#ownRegistration(owner, () => this.registerInjectedTextRowProvider(provider)),
+        this.ownRegistration(owner, () => this.registerInjectedTextRowProvider(provider)),
       registerInlineReplacementProvider: (provider, options) =>
-        this.#ownRegistration(owner, () =>
+        this.ownRegistration(owner, () =>
           this.registerInlineReplacementProvider(provider, options),
         ),
       registerSelectionRangeProvider: (provider) =>
-        this.#ownRegistration(owner, () => this.registerSelectionRangeProvider(provider)),
-      usePlugin: (plugin) => this.#ownRegistration(owner, () => this.#usePlugin(plugin)),
+        this.ownRegistration(owner, () => this.registerSelectionRangeProvider(provider)),
+      usePlugin: (plugin) => this.ownRegistration(owner, () => this.usePlugin(plugin)),
     }
   }
 
-  #logInput(event: EditorLogInput): void {
+  private logInput(event: EditorLogInput): void {
     this.log(normalizeEditorLogInput(event))
   }
 
   private registerLogger(logger: EditorLogger): EditorDisposable {
-    this.#loggers.push(logger)
+    this.loggers.push(logger)
 
-    return disposableOnce(() => this.#unregisterLogger(logger))
+    return disposableOnce(() => this.unregisterLogger(logger))
   }
 
-  #unregisterLogger(logger: EditorLogger): void {
-    const index = this.#loggers.indexOf(logger)
+  private unregisterLogger(logger: EditorLogger): void {
+    const index = this.loggers.indexOf(logger)
     if (index === -1) return
 
-    this.#loggers.splice(index, 1)
+    this.loggers.splice(index, 1)
   }
 
   private registerHighlighter(provider: EditorHighlighterProvider): EditorDisposable {
     this.highlighters.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterHighlighter(provider))
+    const disposable = disposableOnce(() => this.unregisterHighlighter(provider))
     notifyRegistrationAdded(disposable, () => this.events.onHighlighterProvidersChanged?.())
 
     return disposable
   }
 
-  #unregisterHighlighter(provider: EditorHighlighterProvider): void {
+  private unregisterHighlighter(provider: EditorHighlighterProvider): void {
     const index = this.highlighters.indexOf(provider)
     if (index === -1) return
 
@@ -1915,13 +1921,13 @@ export class EditorPluginHost implements EditorDisposable {
 
   private registerSyntaxProvider(provider: EditorSyntaxProvider): EditorDisposable {
     this.syntaxProviders.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterSyntaxProvider(provider))
+    const disposable = disposableOnce(() => this.unregisterSyntaxProvider(provider))
     notifyRegistrationAdded(disposable, () => this.events.onSyntaxProvidersChanged?.())
 
     return disposable
   }
 
-  #unregisterSyntaxProvider(provider: EditorSyntaxProvider): void {
+  private unregisterSyntaxProvider(provider: EditorSyntaxProvider): void {
     const index = this.syntaxProviders.indexOf(provider)
     if (index === -1) return
 
@@ -1931,7 +1937,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   private registerViewContribution(provider: EditorViewContributionProvider): EditorDisposable {
     this.viewContributions.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterViewContribution(provider))
+    const disposable = disposableOnce(() => this.unregisterViewContribution(provider))
 
     try {
       this.events.onViewContributionProviderAdded?.(provider)
@@ -1943,7 +1949,7 @@ export class EditorPluginHost implements EditorDisposable {
     return disposable
   }
 
-  #unregisterViewContribution(provider: EditorViewContributionProvider): void {
+  private unregisterViewContribution(provider: EditorViewContributionProvider): void {
     const index = this.viewContributions.indexOf(provider)
     if (index === -1) return
 
@@ -1954,8 +1960,8 @@ export class EditorPluginHost implements EditorDisposable {
   private registerCommandContribution(
     provider: EditorCommandContributionProvider,
   ): EditorDisposable {
-    this.#commandContributions.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterCommandContribution(provider))
+    this.commandContributions.push(provider)
+    const disposable = disposableOnce(() => this.unregisterCommandContribution(provider))
 
     try {
       this.events.onCommandContributionProviderAdded?.(provider)
@@ -1967,19 +1973,19 @@ export class EditorPluginHost implements EditorDisposable {
     return disposable
   }
 
-  #unregisterCommandContribution(provider: EditorCommandContributionProvider): void {
-    const index = this.#commandContributions.indexOf(provider)
+  private unregisterCommandContribution(provider: EditorCommandContributionProvider): void {
+    const index = this.commandContributions.indexOf(provider)
     if (index === -1) return
 
-    this.#commandContributions.splice(index, 1)
+    this.commandContributions.splice(index, 1)
     this.events.onCommandContributionProviderRemoved?.(provider)
   }
 
   private registerCapabilityContribution(
     provider: EditorCapabilityContributionProvider,
   ): EditorDisposable {
-    this.#capabilityContributions.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterCapabilityContribution(provider))
+    this.capabilityContributions.push(provider)
+    const disposable = disposableOnce(() => this.unregisterCapabilityContribution(provider))
 
     try {
       this.events.onCapabilityContributionProviderAdded?.(provider)
@@ -1991,17 +1997,17 @@ export class EditorPluginHost implements EditorDisposable {
     return disposable
   }
 
-  #unregisterCapabilityContribution(provider: EditorCapabilityContributionProvider): void {
-    const index = this.#capabilityContributions.indexOf(provider)
+  private unregisterCapabilityContribution(provider: EditorCapabilityContributionProvider): void {
+    const index = this.capabilityContributions.indexOf(provider)
     if (index === -1) return
 
-    this.#capabilityContributions.splice(index, 1)
+    this.capabilityContributions.splice(index, 1)
     this.events.onCapabilityContributionProviderRemoved?.(provider)
   }
 
   private registerEditContribution(provider: EditorEditContributionProvider): EditorDisposable {
-    this.#editContributions.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterEditContribution(provider))
+    this.editContributions.push(provider)
+    const disposable = disposableOnce(() => this.unregisterEditContribution(provider))
 
     try {
       this.events.onEditContributionProviderAdded?.(provider)
@@ -2013,19 +2019,19 @@ export class EditorPluginHost implements EditorDisposable {
     return disposable
   }
 
-  #unregisterEditContribution(provider: EditorEditContributionProvider): void {
-    const index = this.#editContributions.indexOf(provider)
+  private unregisterEditContribution(provider: EditorEditContributionProvider): void {
+    const index = this.editContributions.indexOf(provider)
     if (index === -1) return
 
-    this.#editContributions.splice(index, 1)
+    this.editContributions.splice(index, 1)
     this.events.onEditContributionProviderRemoved?.(provider)
   }
 
   private registerDecorationContribution(
     provider: EditorDecorationContributionProvider,
   ): EditorDisposable {
-    this.#decorationContributions.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterDecorationContribution(provider))
+    this.decorationContributions.push(provider)
+    const disposable = disposableOnce(() => this.unregisterDecorationContribution(provider))
 
     try {
       this.events.onDecorationContributionProviderAdded?.(provider)
@@ -2037,19 +2043,19 @@ export class EditorPluginHost implements EditorDisposable {
     return disposable
   }
 
-  #unregisterDecorationContribution(provider: EditorDecorationContributionProvider): void {
-    const index = this.#decorationContributions.indexOf(provider)
+  private unregisterDecorationContribution(provider: EditorDecorationContributionProvider): void {
+    const index = this.decorationContributions.indexOf(provider)
     if (index === -1) return
 
-    this.#decorationContributions.splice(index, 1)
+    this.decorationContributions.splice(index, 1)
     this.events.onDecorationContributionProviderRemoved?.(provider)
   }
 
   private registerEditorFeatureContribution(
     provider: EditorFeatureContributionProvider,
   ): EditorDisposable {
-    this.#editorFeatureContributions.push(provider)
-    const disposable = disposableOnce(() => this.#unregisterEditorFeatureContribution(provider))
+    this.editorFeatureContributions.push(provider)
+    const disposable = disposableOnce(() => this.unregisterEditorFeatureContribution(provider))
 
     try {
       this.events.onEditorFeatureContributionProviderAdded?.(provider)
@@ -2061,31 +2067,31 @@ export class EditorPluginHost implements EditorDisposable {
     return disposable
   }
 
-  #unregisterEditorFeatureContribution(provider: EditorFeatureContributionProvider): void {
-    const index = this.#editorFeatureContributions.indexOf(provider)
+  private unregisterEditorFeatureContribution(provider: EditorFeatureContributionProvider): void {
+    const index = this.editorFeatureContributions.indexOf(provider)
     if (index === -1) return
 
-    this.#editorFeatureContributions.splice(index, 1)
+    this.editorFeatureContributions.splice(index, 1)
     this.events.onEditorFeatureContributionProviderRemoved?.(provider)
   }
 
   private registerGutterContribution(contribution: EditorGutterContribution): EditorDisposable {
-    if (this.#gutterContributions.some((registered) => registered.id === contribution.id)) {
+    if (this.gutterContributions.some((registered) => registered.id === contribution.id)) {
       throw new Error(`Editor gutter contribution already registered: ${contribution.id}`)
     }
 
-    this.#gutterContributions.push(contribution)
-    const disposable = disposableOnce(() => this.#unregisterGutterContribution(contribution))
+    this.gutterContributions.push(contribution)
+    const disposable = disposableOnce(() => this.unregisterGutterContribution(contribution))
     notifyRegistrationAdded(disposable, () => this.events.onGutterContributionsChanged?.())
 
     return disposable
   }
 
-  #unregisterGutterContribution(contribution: EditorGutterContribution): void {
-    const index = this.#gutterContributions.indexOf(contribution)
+  private unregisterGutterContribution(contribution: EditorGutterContribution): void {
+    const index = this.gutterContributions.indexOf(contribution)
     if (index === -1) return
 
-    this.#gutterContributions.splice(index, 1)
+    this.gutterContributions.splice(index, 1)
     this.events.onGutterContributionsChanged?.()
   }
 
@@ -2098,18 +2104,18 @@ export class EditorPluginHost implements EditorDisposable {
       trigger: options.trigger ?? 'syntax',
       requiresSyntax: options.requiresSyntax,
     }
-    this.#inlineReplacementProviders.push(source)
-    const disposable = disposableOnce(() => this.#unregisterInlineReplacementProvider(source))
+    this.inlineReplacementProviders.push(source)
+    const disposable = disposableOnce(() => this.unregisterInlineReplacementProvider(source))
     notifyRegistrationAdded(disposable, () => this.events.onInlineReplacementProvidersChanged?.())
 
     return disposable
   }
 
-  #unregisterInlineReplacementProvider(source: EditorInlineReplacementSource): void {
-    const index = this.#inlineReplacementProviders.indexOf(source)
+  private unregisterInlineReplacementProvider(source: EditorInlineReplacementSource): void {
+    const index = this.inlineReplacementProviders.indexOf(source)
     if (index === -1) return
 
-    this.#inlineReplacementProviders.splice(index, 1)
+    this.inlineReplacementProviders.splice(index, 1)
     this.events.onInlineReplacementProvidersChanged?.()
   }
 
@@ -2117,10 +2123,10 @@ export class EditorPluginHost implements EditorDisposable {
   private registerSelectionRangeProvider(provider: EditorSelectionRangeProvider): EditorDisposable {
     this.selectionRangeProviders.push(provider)
 
-    return disposableOnce(() => this.#unregisterSelectionRangeProvider(provider))
+    return disposableOnce(() => this.unregisterSelectionRangeProvider(provider))
   }
 
-  #unregisterSelectionRangeProvider(provider: EditorSelectionRangeProvider): void {
+  private unregisterSelectionRangeProvider(provider: EditorSelectionRangeProvider): void {
     const index = this.selectionRangeProviders.indexOf(provider)
     if (index === -1) return
 
@@ -2130,33 +2136,33 @@ export class EditorPluginHost implements EditorDisposable {
   private registerInjectedTextRowProvider(
     provider: EditorInjectedTextRowProvider,
   ): EditorDisposable {
-    this.#injectedTextRowProviders.push(provider)
+    this.injectedTextRowProviders.push(provider)
     const invalidation =
-      this.#injectedTextRowProviderInvalidationDisposables.get(provider) ??
+      this.injectedTextRowProviderInvalidationDisposables.get(provider) ??
       new MutableEditorDisposable()
-    this.#injectedTextRowProviderInvalidationDisposables.set(provider, invalidation)
+    this.injectedTextRowProviderInvalidationDisposables.set(provider, invalidation)
     invalidation.value =
       provider.onDidChangeInjectedTextRows?.(() => {
         this.events.onInjectedTextRowProvidersChanged?.()
       }) ?? null
-    const disposable = disposableOnce(() => this.#unregisterInjectedTextRowProvider(provider))
+    const disposable = disposableOnce(() => this.unregisterInjectedTextRowProvider(provider))
     notifyRegistrationAdded(disposable, () => this.events.onInjectedTextRowProvidersChanged?.())
 
     return disposable
   }
 
-  #unregisterInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): void {
-    const index = this.#injectedTextRowProviders.indexOf(provider)
+  private unregisterInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): void {
+    const index = this.injectedTextRowProviders.indexOf(provider)
     if (index === -1) return
 
-    this.#injectedTextRowProviders.splice(index, 1)
+    this.injectedTextRowProviders.splice(index, 1)
     // Every lease on the same provider shares one invalidation subscription, so only the last one
     // out may close it — releasing it earlier would leave the surviving registrations deaf to the
     // provider's own change events.
     let invalidation: MutableEditorDisposable | undefined
-    if (!this.#injectedTextRowProviders.includes(provider)) {
-      invalidation = this.#injectedTextRowProviderInvalidationDisposables.get(provider)
-      this.#injectedTextRowProviderInvalidationDisposables.delete(provider)
+    if (!this.injectedTextRowProviders.includes(provider)) {
+      invalidation = this.injectedTextRowProviderInvalidationDisposables.get(provider)
+      this.injectedTextRowProviderInvalidationDisposables.delete(provider)
     }
     try {
       invalidation?.dispose()
@@ -2170,7 +2176,7 @@ export class EditorPluginHost implements EditorDisposable {
    * names their owner: the install or activate call that is running, else the plugin's current
    * lifetime. A registration after the plugin is gone is undone at once.
    */
-  #ownRegistration(
+  private ownRegistration(
     registrations: PluginRegistrations,
     register: () => EditorDisposable,
   ): EditorDisposable {

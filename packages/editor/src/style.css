@@ -272,8 +272,6 @@
   padding-left: var(--editor-gutter-inset);
   position: absolute;
   right: 0;
-  /* Same WebKit highlight-invalidation workaround as .editor-virtualized-row. */
-  will-change: transform;
   top: 0;
   user-select: none;
 }
@@ -351,10 +349,19 @@
   -webkit-user-select: text;
   user-select: text;
   touch-action: manipulation;
-  /* Own compositor layer per row: WebKit re-resolves every registered CSS
-     Highlight range when a painted row's transform changes, stalling scroll
-     remounts 100-300ms. Compositor-only moves skip that invalidation. */
-  will-change: transform;
+}
+
+/* Own compositor layer per row, in WebKit only: WebKit re-resolves every
+   registered CSS Highlight range when a painted row's transform changes,
+   stalling scroll remounts 100-300ms, and compositor-only moves skip that
+   invalidation. Elsewhere sixty row layers cost more than they save: every
+   frame paints and synchronizes each one. The gate is the engine capability
+   check from browser-quirks.md. */
+@supports (-webkit-nbsp-mode: space) {
+  .editor-virtualized-row,
+  .editor-virtualized-gutter-row {
+    will-change: transform;
+  }
 }
 
 /* See browser-quirks.md#ios-native-long-press-selection for scoped row suppression. */
@@ -509,12 +516,18 @@
   z-index: var(--editor-z-inline-surface);
 }
 
+/* The blink is a timer toggling this attribute (caretBlink.ts), not a CSS animation: Chromium
+   restyles an animated element in every rendered frame, and each restyle repaints every row that
+   carries a CSS highlight. */
 .editor-virtualized-caret-layer {
-  animation: editor-virtualized-caret-blink 1s steps(1, end) infinite;
   left: 0;
   pointer-events: none;
   position: absolute;
   top: 0;
+}
+
+.editor-virtualized-caret-layer[data-editor-caret-blink-off] {
+  opacity: 0;
 }
 
 .editor-virtualized-caret {
@@ -524,18 +537,6 @@
   position: absolute;
   top: 0;
   width: 2px;
-}
-
-@keyframes editor-virtualized-caret-blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
-
-  50%,
-  100% {
-    opacity: 0;
-  }
 }
 
 .editor-virtualized-metric-probe {

@@ -761,6 +761,49 @@ describe('Tree-sitter syntax capture conversion', () => {
     expect(tokenObjects(result.tokens)).toEqual([])
   })
 
+  it('keeps the newest range answer when an older one arrives after it', async () => {
+    const replies: {
+      readonly payload: TreeSitterRangePayload
+      readonly result: Deferred<TreeSitterRangeResult>
+    }[] = []
+    const backend = {
+      generation: 1,
+      sourceEndpoint: createSourceEndpoint(),
+      disposeDocument: () => undefined,
+      edit: async () => undefined,
+      parse: async (payload) => createParseAck(payload.snapshotVersion),
+      queryRange: (payload) => {
+        const result = createDeferred<TreeSitterRangeResult>()
+        replies.push({ payload, result })
+        return result.promise
+      },
+      registerLanguages: async () => undefined,
+      select: async () => undefined,
+    } satisfies TreeSitterBackend
+    const text = 'const a = 1;'
+    const session = createTreeDocument({
+      backend,
+      documentId: 'file.ts',
+      languageId: 'typescript',
+      syntaxMode: 'range',
+      text: readAll(createDocumentTextSnapshot(createPieceTableSnapshot(text))),
+    })
+    const olderToken = { start: 0, end: 5, style: { color: '#111111' } }
+    const newerToken = { start: 6, end: 7, style: { color: '#222222' } }
+
+    await session.run()
+    const older = session.runtime.queryRange({ startIndex: 0, endIndex: 6 })
+    const newer = session.runtime.queryRange({ startIndex: 6, endIndex: 12 })
+    await Promise.resolve()
+    replies[1]!.result.resolve(createRangeResult(replies[1]!.payload, [newerToken]))
+    await newer
+    replies[0]!.result.resolve(createRangeResult(replies[0]!.payload, [olderToken]))
+
+    // Each caller gets the range it asked for; the session keeps the one asked for last.
+    expect(tokenObjects((await older).tokens)).toEqual([olderToken])
+    expect(tokenObjects(session.runtime.getResult().tokens)).toEqual([newerToken])
+  })
+
   it('suppresses stale parse results after a newer refresh starts', async () => {
     const parses: {
       readonly payload: TreeSitterBackendParsePayload
