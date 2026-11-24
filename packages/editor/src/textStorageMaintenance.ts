@@ -1,12 +1,5 @@
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
-import {
-  compactTombstones,
-  type TombstoneCompactionResult,
-} from '@singapore-editor/textbuffer/internal/compaction'
-import {
-  reclaimSnapshotStorage,
-  type TextReclamationResult,
-} from '@singapore-editor/textbuffer/internal/reclamation'
+import type { StorageMaintenanceResult, maintainStorage } from './textStorageMaintainer'
 import { EditorWorkScheduler } from './editor/workScheduler'
 import { recordEditorPerformanceDiagnostic } from './editor/performanceDiagnostics'
 
@@ -32,22 +25,28 @@ export type TextStorageMaintenanceStats = {
   maxSliceMs: number
 }
 
-type StorageMaintenanceResult = TextReclamationResult & TombstoneCompactionResult
+type Maintainer = typeof maintainStorage
 
-// Only the current tree is compacted: history keeps the trees it recorded and
-// lets them go as it moves on, while every later state is edited from this one.
-function* maintainStorage(
-  current: PieceTableSnapshot,
-  snapshots: () => Iterable<PieceTableSnapshot>,
-): Generator<void, StorageMaintenanceResult> {
-  const compaction = yield* compactTombstones(current)
-  const reclamation = yield* reclaimSnapshotStorage(snapshots())
-  return { ...reclamation, ...compaction }
+// Loaded for the first pass rather than with the editor: most documents never delete enough text
+// to need one, and a pass waits for a quiet moment anyway, so the load hides inside that wait.
+let maintainer: Maintainer | null = null
+let loadingMaintainer: Promise<Maintainer> | null = null
+function loadMaintainer(): Promise<Maintainer> {
+  loadingMaintainer ??= import('./textStorageMaintainer').then(
+    (module) => (maintainer = module.maintainStorage),
+    (error: unknown) => {
+      loadingMaintainer = null
+      throw error
+    },
+  )
+  return loadingMaintainer
 }
 
 export class TextStorageMaintenance {
   private readonly scheduler = new EditorWorkScheduler()
   #job: Generator<void, StorageMaintenanceResult> | null = null
+  // The delay a pass asked for while the maintainer was still loading; null when none is waiting.
+  #loadingDelayMs: number | null = null
   #runMaxSliceMs = 0
   #deletedUnits = 0
   #piecesAfterPass = 0
@@ -94,6 +93,7 @@ export class TextStorageMaintenance {
 
   suspend(): void {
     this.scheduler.cancel('text-storage', 'detached')
+    this.#loadingDelayMs = null
     if (this.#job) this.stats.cancelled++
     this.#job = null
   }
@@ -103,6 +103,10 @@ export class TextStorageMaintenance {
   }
 
   private schedule(delayMs: number): void {
+    if (!maintainer) {
+      this.#scheduleAfterLoad(delayMs)
+      return
+    }
     this.scheduler.schedule({
       key: 'text-storage',
       taskClass: 'idle-cache',
@@ -111,18 +115,38 @@ export class TextStorageMaintenance {
       maxDelayMs: MAX_DELAY_MS,
       run: () => this.step(),
       apply: (result) => this.settle(result),
-      fail: (error) => {
-        this.#job = null
-        this.#due = false
-        console.error('[editor]', 'editor.buffer.reclamation_failed', error)
-        recordEditorPerformanceDiagnostic('buffer.reclamation.failed', { error })
-      },
+      fail: (error) => this.#fail(error),
     })
   }
 
+  #scheduleAfterLoad(delayMs: number): void {
+    const waiting = this.#loadingDelayMs !== null
+    this.#loadingDelayMs = delayMs
+    if (waiting) return
+    loadMaintainer().then(
+      () => {
+        const delay = this.#loadingDelayMs
+        this.#loadingDelayMs = null
+        if (delay !== null) this.schedule(delay)
+      },
+      (error: unknown) => {
+        this.#loadingDelayMs = null
+        this.#fail(error)
+      },
+    )
+  }
+
+  #fail(error: unknown): void {
+    this.#job = null
+    this.#due = false
+    console.error('[editor]', 'editor.buffer.reclamation_failed', error)
+    recordEditorPerformanceDiagnostic('buffer.reclamation.failed', { error })
+  }
+
   private step(): StorageMaintenanceResult | null {
+    if (!maintainer) return null
     if (!this.#job) {
-      this.#job = maintainStorage(this.current(), this.snapshots)
+      this.#job = maintainer(this.current(), this.snapshots)
       this.#runMaxSliceMs = 0
     }
     const start = performance.now()

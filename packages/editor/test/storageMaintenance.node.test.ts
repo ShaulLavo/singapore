@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { bufferStorageIdentity } from '@singapore-editor/textbuffer/internal/buffers'
 import {
   anchorAt,
@@ -23,6 +23,9 @@ import {
 
 const payload = 'x'.repeat(16384)
 const subscriptions: (() => void)[] = []
+// The maintainer is loaded on the first pass. Loading a module takes real time, which fake timers
+// cannot advance, so it is loaded once here and every pass below finds it ready.
+beforeAll(() => import('../src/textStorageMaintainer'))
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => {
   vi.restoreAllMocks()
