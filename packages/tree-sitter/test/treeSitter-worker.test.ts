@@ -271,13 +271,15 @@ describe('tree-sitter worker internals', () => {
   })
 
   it('queries visible range highlights in UTF-16 code units', () => {
-    const highlightedNode = node('identifier', 75, 82)
     const query = {
       matches: () => [],
-      captures: (_root: Node, options?: NonNullable<Parameters<Query['captures']>[1]>) => {
+      captureRanges: (
+        _root: Node,
+        options?: NonNullable<Parameters<Query['captureRanges']>[1]>,
+      ) => {
         expect(options?.startIndex).toBe(70)
         expect(options?.endIndex).toBe(90)
-        return [{ name: 'variable', node: highlightedNode }]
+        return [{ name: 'variable', startIndex: 75, endIndex: 82, patternIndex: 0 }]
       },
     } as unknown as Query
     const runtime = highlightedRuntime(query)
@@ -296,6 +298,33 @@ describe('tree-sitter worker internals', () => {
         languageId: 'typescript',
       },
     ])
+  })
+
+  it('orders range captures on one span by pattern and drops those outside the range', () => {
+    // Matches arrive in completion order; a match may also hold captures outside the range.
+    const ranges = [
+      { name: 'function', startIndex: 75, endIndex: 82, patternIndex: 3 },
+      { name: 'before', startIndex: 10, endIndex: 70, patternIndex: 3 },
+      { name: 'variable', startIndex: 75, endIndex: 82, patternIndex: 1 },
+      { name: 'type', startIndex: 72, endIndex: 74, patternIndex: 2 },
+      { name: 'variable', startIndex: 75, endIndex: 82, patternIndex: 4 },
+      { name: 'after', startIndex: 90, endIndex: 95, patternIndex: 0 },
+      { name: 'empty', startIndex: 80, endIndex: 80, patternIndex: 0 },
+    ]
+    const query = { captureRanges: () => ranges.slice() } as unknown as Query
+    const context = { ...cancellationContext(), counts: new Map<string, number>() }
+    expect(
+      collectCaptures(fakeTree(node('program', 0, 100)), highlightedRuntime(query), context, {
+        startIndex: 70,
+        endIndex: 90,
+      }),
+    ).toEqual([
+      { startIndex: 72, endIndex: 74, captureName: 'type', languageId: 'typescript' },
+      { startIndex: 75, endIndex: 82, captureName: 'variable', languageId: 'typescript' },
+      { startIndex: 75, endIndex: 82, captureName: 'function', languageId: 'typescript' },
+    ])
+    expect(context.counts.get('rawCaptures')).toBe(7)
+    expect(context.counts.get('uniqueCaptures')).toBe(3)
   })
 
   it('groups full captures by span and preserves first-capture precedence within equal spans', () => {

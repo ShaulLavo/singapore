@@ -29,7 +29,6 @@ import {
   Query,
   heap,
   type Node,
-  type QueryCapture,
   type Range as TreeSitterRange,
   type Tree,
   type TreeCursor,
@@ -2481,27 +2480,7 @@ const collectCaptures = (
   const rootNode = tree?.rootNode
   if (!rootNode) return []
 
-  const captures: TreeSitterCapture[] = []
-  if (range) {
-    const seen = new Set<string>()
-    const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
-      query.captures(rootNode, queryOptions(context, range)),
-    )
-    incrementCount(context, 'rawCaptures', queryCaptures.length)
-    const normalizeStart = nowMs()
-    assertNotCancelled(context)
-
-    for (const capture of queryCaptures) {
-      collectCapture(capture, captures, seen, runtime.descriptor.id, range)
-    }
-
-    context.measurements?.set(
-      'captureNormalization',
-      (context.measurements.get('captureNormalization') ?? 0) + nowMs() - normalizeStart,
-    )
-    incrementCount(context, 'uniqueCaptures', captures.length)
-    return captures
-  }
+  if (range) return collectRangeCaptures(rootNode, query, runtime, context, range)
 
   const bounded = captureLimit === undefined ? null : limitSliceQuery(context)
   const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
@@ -2517,11 +2496,61 @@ const collectCaptures = (
 
   // Stable sorting keeps accepted-match precedence within equal spans.
   queryCaptures.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
+  const captures = uniqueSpanCaptures(queryCaptures, runtime.descriptor.id)
+  incrementCount(context, 'uniqueCaptures', captures.length)
+  return captures
+}
+
+/**
+ * Range highlights read the same flat capture ranges as the full document. `query.captures` built a
+ * `Node` object per capture, and deduplicating those through string keys added a quarter to a half
+ * again on top of the query.
+ *
+ * The result matches what `query.captures` gave, token for token. Overlap resolution settles a tie
+ * between equally specific names by arrival order, and `query.captures` delivered captures in
+ * document order with ties at one start broken by pattern index. Matches arrive in completion
+ * order instead, so they are sorted by span, then pattern; the sort is stable, so captures of one
+ * pattern on one span keep their order within the match. Captures outside the range are dropped,
+ * as tree-sitter's capture iterator dropped them.
+ */
+const collectRangeCaptures = (
+  rootNode: Node,
+  query: Query,
+  runtime: HighlightRuntime,
+  context: CancellationContext,
+  range: TreeSitterSyntaxRange,
+): TreeSitterCapture[] => {
+  const queryCaptures = measurePhase(context, 'highlightQueryAndPredicates', () =>
+    query.captureRanges(rootNode, queryOptions(context, range)),
+  )
+  incrementCount(context, 'rawCaptures', queryCaptures.length)
+  assertNotCancelled(context)
+
+  const captures = measurePhase(context, 'captureNormalization', () => {
+    const inRange = queryCaptures.filter((capture) =>
+      indexesIntersectRange(capture.startIndex, capture.endIndex, range),
+    )
+    inRange.sort(
+      (a, b) =>
+        a.startIndex - b.startIndex || a.endIndex - b.endIndex || a.patternIndex - b.patternIndex,
+    )
+    return uniqueSpanCaptures(inRange, runtime.descriptor.id)
+  })
+  incrementCount(context, 'uniqueCaptures', captures.length)
+  return captures
+}
+
+/** One capture per name per span, in order, from captures sorted by span. Empty spans paint nothing. */
+const uniqueSpanCaptures = (
+  sorted: ReturnType<Query['captureRanges']>,
+  languageId: TreeSitterLanguageId,
+): TreeSitterCapture[] => {
+  const captures: TreeSitterCapture[] = []
   const lastSpanByName = new Map<string, number>()
   let span = 0
   let previousStart = -1
   let previousEnd = -1
-  for (const capture of queryCaptures) {
+  for (const capture of sorted) {
     const { startIndex, endIndex } = capture
     if (startIndex >= endIndex) continue
     if (startIndex !== previousStart || endIndex !== previousEnd) {
@@ -2532,10 +2561,9 @@ const collectCaptures = (
     const captureName = capture.name ?? ''
     if (lastSpanByName.get(captureName) === span) continue
     lastSpanByName.set(captureName, span)
-    captures.push({ startIndex, endIndex, captureName, languageId: runtime.descriptor.id })
+    captures.push({ startIndex, endIndex, captureName, languageId })
   }
 
-  incrementCount(context, 'uniqueCaptures', captures.length)
   return captures
 }
 
@@ -2574,28 +2602,6 @@ const collectFolds = (
   }
 
   return folds
-}
-
-const collectCapture = (
-  capture: QueryCapture,
-  captures: TreeSitterCapture[],
-  seen: Set<string>,
-  languageId: TreeSitterLanguageId,
-  range?: TreeSitterSyntaxRange,
-): void => {
-  const node = capture.node
-  if (!node) return
-
-  const startIndex = node.startIndex
-  const endIndex = node.endIndex
-  const captureName = capture.name ?? ''
-  const key = `${startIndex}:${endIndex}:${captureName}:${languageId}`
-  if (seen.has(key)) return
-  if (startIndex >= endIndex) return
-  if (range && !indexesIntersectRange(startIndex, endIndex, range)) return
-
-  seen.add(key)
-  captures.push({ startIndex, endIndex, captureName, languageId })
 }
 
 const collectMatchFolds = (
