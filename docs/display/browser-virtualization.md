@@ -61,6 +61,14 @@ them:
 - store prefix sums / Fenwick tree for row -> y and y -> row
 - update only rows whose measured height changes
 
+After an edit, each mounted row is compared with its display row: source, text, offsets, inline
+row, chunk window, row decoration and fold marker. A row where all of them match stays as it is.
+A row below the edit whose text is unchanged but whose source offsets moved by a uniform shift
+keeps its DOM, and only its chunk offsets move. Every other row is rebuilt. The view's text
+revision is not part of the comparison, so one key rebuilds the edited row, not every mounted row.
+Inline-mapped and widget rows are always rebuilt when their offsets move, because their runs come
+from the inline map that the edit rebuilt.
+
 ### Horizontal Virtualization
 
 Do not build a full x-position model.
