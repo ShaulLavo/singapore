@@ -933,12 +933,14 @@ export class Editor {
       this.recordSnapshotAdmission('generation-live')
       return
     }
-    this.lastSnapshot = snapshot
+    // Before recording the offer: one refused for want of the plugin must stay offerable again
+    // once the plugin is installed.
     const support = this.getFeature(EDITOR_PAINT_SNAPSHOT_FEATURE)
     if (!support) {
       this.recordSnapshotAdmission('no-paint-snapshot-plugin')
       return
     }
+    this.lastSnapshot = snapshot
     const paint = support.decode(snapshot)
     if (!paint) {
       this.recordSnapshotAdmission('invalid-paint')

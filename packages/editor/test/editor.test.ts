@@ -1748,6 +1748,17 @@ describe('Editor', () => {
       expect(editor.getState().canUndo).toBe(true)
     })
 
+    it('reports failure when a read-only editor refuses the resolution', () => {
+      const feature = mergeConflicts()
+      const text = ['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n')
+      editor.setText(text)
+      editor.setEditability('readonly')
+
+      expect(feature.resolveConflict(0, 'theirs')).toBe(false)
+      expect(feature.resolveAllConflicts('ours')).toBe(false)
+      expect(editor.materializeFullText()).toBe(text)
+    })
+
     it('returns false for absent conflicts or absent base sections', () => {
       const feature = mergeConflicts()
       editor.setText(['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'))

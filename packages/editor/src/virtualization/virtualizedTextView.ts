@@ -20,7 +20,7 @@ import type {
   PaintSnapshot,
   SavedDocumentPaint,
 } from '../editor/documentPaint'
-import type { EditorPaintSnapshotSupport } from '../editor/paintSnapshotSupport'
+import type { EditorPaintSnapshotSupport } from './virtualizedTextViewInternals'
 import type { MountedPaintSnapshot } from './documentPaintRows'
 import type { TextContent } from '../textContent'
 import type { FoldMap } from '../foldMap'

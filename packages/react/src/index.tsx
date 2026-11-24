@@ -456,6 +456,10 @@ class ReactEditorControllerImplementation implements ReactEditorController {
 
     syncPlugins(editor, this.reactSyncPlugin, this.options)
     this.markPluginsSynced(this.options)
+    // A snapshot offered before its plugin arrived was refused; offer it again now. The editor
+    // ignores a repeat of one it already shows or has settled past.
+    const pending = this.syncedSnapshotEligibility
+    if (pending?.snapshot) editor.setSnapshot(pending.snapshot, pending.documentKey)
   }
 
   public syncSnapshot(

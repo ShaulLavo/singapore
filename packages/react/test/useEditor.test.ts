@@ -233,6 +233,21 @@ describe('useEditor', () => {
     mounted.dispose()
   })
 
+  it('shows a pending snapshot once a rerender adds the paint snapshot plugin', () => {
+    const snapshot = captureSavedPaint('saved text')
+    const options = { documentKey: 'a.ts', document: null, snapshot }
+    const mounted = mountSnapshotEditor(options, false)
+    const instance = mounted.controller.getEditor()
+    expect(instance?.getPresentationState()).toBe('empty')
+
+    mounted.render({ ...options, plugins: [paintSnapshots] })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(instance?.getPresentationState()).toBe('provisional')
+    expect(mounted.host.textContent).toContain('saved text')
+    mounted.dispose()
+  })
+
   it('keeps saved paint for initial null and replaces it with an authoritative empty file', () => {
     const snapshot = captureSavedPaint('saved text')
     const options = { documentKey: 'a.ts', document: null, snapshot }
@@ -1389,17 +1404,19 @@ const withPaintSnapshots = (options: ReactEditorOptions): ReactEditorOptions => 
   plugins: (options.plugins ?? []).concat([paintSnapshots]),
 })
 
-function mountSnapshotEditor(options: ReactEditorOptions): MountedEditor {
+/** Mounts with the paint snapshot plugin added to every render, unless `paint` is false. */
+function mountSnapshotEditor(options: ReactEditorOptions, paint = true): MountedEditor {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(80)
   // Paint admission compares the outer box, which happy-dom otherwise reports as 0 by 0.
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(320)
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(80)
-  const inner = mountReactEditor(withPaintSnapshots(options))
+  const withPaint = paint ? withPaintSnapshots : (next: ReactEditorOptions) => next
+  const inner = mountReactEditor(withPaint(options))
   const mounted: MountedEditor = {
     controller: inner.controller,
     host: inner.host,
-    render: (next) => inner.render(withPaintSnapshots(next)),
+    render: (next) => inner.render(withPaint(next)),
     dispose: () => inner.dispose(),
   }
   const editor = mounted.controller.getEditor()

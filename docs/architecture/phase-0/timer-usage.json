@@ -511,7 +511,7 @@
       "file": "packages/react/src/index.tsx",
       "id": "packages/react/src/index.tsx:queueMicrotask:021fec5f8c",
       "justification": "Defers the callback past StrictMode's synchronous replay; the incarnation, document and state guards drop it when the editor moved on, and no editor work is scheduled.",
-      "line": 618,
+      "line": 622,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -527,7 +527,7 @@
       "file": "packages/react/src/index.tsx",
       "id": "packages/react/src/index.tsx:queueMicrotask:95e4ae90ae",
       "justification": "Defers delivery until the mount survives React's synchronous StrictMode replay; the incarnation guard cancels disposed mounts, and no editor work is scheduled.",
-      "line": 575,
+      "line": 579,
       "snippet": "queueMicrotask(() => {"
     },
     {

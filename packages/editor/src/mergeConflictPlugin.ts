@@ -65,11 +65,12 @@ type MergeConflictHost = {
     timingName: string,
     options?: EditorSetSelectionOptions,
   ): void
+  /** False when the editor refused the edits. */
   applyEdits(
     edits: readonly TextEdit[],
     timingName: string,
     selection?: { readonly anchor: number; readonly head: number },
-  ): void
+  ): boolean
   setRowDecorations(
     sourceId: string,
     decorations: ReadonlyMap<number, VirtualizedTextRowDecoration>,
@@ -220,7 +221,7 @@ class EditorMergeConflictController {
     const resolved = resolveMergeConflict(source, conflict, resolution)
     if (!resolved) return false
 
-    this.host.applyEdits(
+    return this.host.applyEdits(
       [
         {
           from: resolved.range.start,
@@ -234,7 +235,6 @@ class EditorMergeConflictController {
         head: resolved.selection.end,
       },
     )
-    return true
   }
 
   public resolveAllConflicts(resolution: MergeConflictResolution): boolean {
@@ -253,8 +253,7 @@ class EditorMergeConflictController {
     }
     if (edits.length === 0) return false
 
-    this.host.applyEdits(edits, 'input.resolveAllMergeConflicts')
-    return true
+    return this.host.applyEdits(edits, 'input.resolveAllMergeConflicts')
   }
 
   public resolveConflictAtSelection(resolution: MergeConflictResolution): boolean {

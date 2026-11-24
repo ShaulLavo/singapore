@@ -1614,12 +1614,14 @@ export class InputSelectionController {
     timingName: string,
     selection?: EditorSelectionRange | readonly EditorSelectionRange[],
     options: DocumentSessionApplyEditsOptions = {},
-  ): void {
-    this.options.runInOperation(() => {
+  ): boolean {
+    // True only when the edits reached the document; a read-only, provisional or empty editor
+    // refuses them, and callers that report success must say so.
+    return this.options.runInOperation(() => {
       const session = this.session
-      if (!session) return
-      if (!this.options.canEditDocument()) return
-      if (edits.length === 0) return
+      if (!session) return false
+      if (!this.options.canEditDocument()) return false
+      if (edits.length === 0) return false
 
       const start = nowMs()
       const change = session.applyEdits(
@@ -1637,6 +1639,7 @@ export class InputSelectionController {
         revealOffset: this.primarySelectionHeadOffset(change),
         syncDomSelection: false,
       })
+      return true
     })
   }
 
