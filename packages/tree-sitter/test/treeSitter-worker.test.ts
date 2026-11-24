@@ -298,6 +298,32 @@ describe('tree-sitter worker internals', () => {
     ])
   })
 
+  it('keeps iterator order within a span, first name wins, and drops captures outside the range', () => {
+    const captures = [
+      { name: 'function', node: node('identifier', 75, 82) },
+      { name: 'before', node: node('string', 10, 70) },
+      { name: 'variable', node: node('identifier', 75, 82) },
+      { name: 'type', node: node('type_identifier', 72, 74) },
+      { name: 'function', node: node('identifier', 75, 82) },
+      { name: 'after', node: node('string', 90, 95) },
+      { name: 'empty', node: node('string', 80, 80) },
+    ]
+    const query = { captures: () => captures.slice() } as unknown as Query
+    const context = { ...cancellationContext(), counts: new Map<string, number>() }
+    expect(
+      collectCaptures(fakeTree(node('program', 0, 100)), highlightedRuntime(query), context, {
+        startIndex: 70,
+        endIndex: 90,
+      }),
+    ).toEqual([
+      { startIndex: 72, endIndex: 74, captureName: 'type', languageId: 'typescript' },
+      { startIndex: 75, endIndex: 82, captureName: 'function', languageId: 'typescript' },
+      { startIndex: 75, endIndex: 82, captureName: 'variable', languageId: 'typescript' },
+    ])
+    expect(context.counts.get('rawCaptures')).toBe(7)
+    expect(context.counts.get('uniqueCaptures')).toBe(3)
+  })
+
   it('groups full captures by span and preserves first-capture precedence within equal spans', () => {
     const ranges = [
       { name: 'variable', startIndex: 75, endIndex: 82, patternIndex: 0 },
