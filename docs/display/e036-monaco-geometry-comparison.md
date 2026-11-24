@@ -87,6 +87,22 @@ resynchronizes the window.
 On Chromium the route retires the value diff (`deduceHiddenInputEdit` and its guards) and the
 textarea composition commit. Nothing can be deleted while other engines still need them.
 
+## Caret blink, revisited
+
+Candidate 5 measured an idle editor. Revisited on 2026-11-24 (Chromium 156) under scrolling and
+typing, the CSS blink is a large cost, and the blink is now a timer that toggles
+`data-editor-caret-blink-off` on the caret layer (`virtualization/caretBlink.ts`).
+
+While the keyframe animation runs, Chromium restyles the caret layer in every frame it renders.
+Any restyle makes it re-validate every CSS highlight in the document, which repaints each
+highlighted row: with a caret on screen, every frame of a scroll or of typing repainted all mounted
+rows. On the 50,000-line file with 60 wheel events (the comparison harness's wheel run after a
+step scroll, unminified build, traced): the main thread was busy 1,195 ms with the animation and
+370 ms with the timer, Paint events fell from 6,435 to a few hundred, input acknowledgement went
+from 3.0 s to 2.0 s, and wheel event to frame from 55 ms to 38 ms. Typing 18 keys into a 500-line
+file: 222 ms of main thread with the animation, 131 ms with the timer. The timer costs two
+restyles a second while a caret is drawn, and none when no caret is.
+
 ## Reproduce
 
 From `examples/stress`, after `bun run build` at the repository root:

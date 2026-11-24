@@ -13,8 +13,13 @@ fixes ship.
 Related inline workarounds already documented at their call sites:
 
 - `packages/editor/src/style.css` — `will-change: transform` on virtualized rows
-  (WebKit re-resolves registered CSS Highlight ranges when a painted row's
-  transform changes).
+  and gutter rows, in WebKit only (WebKit re-resolves registered CSS Highlight
+  ranges when a painted row's transform changes). The rule sits behind
+  `@supports (-webkit-nbsp-mode: space)`, the engine check described below. In
+  Chromium the sixty row layers made every scroll frame paint and synchronize
+  each layer: on a 50,000-line file, removing them cut compositor-thread time
+  during 60 wheel events from about 300 ms to about 120 ms. Verified 2026-11-24
+  with Chromium 156.
 
 ## WebKit moves highlights from unselectable inline text onto following text
 

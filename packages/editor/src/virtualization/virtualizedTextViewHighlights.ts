@@ -19,6 +19,7 @@ import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
 import { lowerBound, upperBound } from './rowHeightIndex'
 import { getSharedTokenHighlights, SHARED_TOKEN_HIGHLIGHT_PREFIX } from './sharedTokenHighlights'
 import { rowLocalIndexForOffset } from './virtualizedTextViewInlineMapping'
+import { rowForCaretPosition } from './virtualizedTextViewLayout'
 import { reregisterHighlights, scheduleHighlightRepaintNudge } from './geckoHighlightRepaint'
 import {
   addTokenRangeToChunk,
@@ -333,7 +334,7 @@ export function clearRangeHighlight(view: VirtualizedTextViewInternal, name: str
 }
 
 function renderCaret(view: VirtualizedTextViewInternal): void {
-  if (view.selections.length > 0 && !viewHoldsFocus(view)) {
+  if (!viewHoldsFocus(view) && caretReadsLayout(view)) {
     deferCaret(view)
     return
   }
@@ -343,6 +344,15 @@ function renderCaret(view: VirtualizedTextViewInternal): void {
 
 // Caret geometry reads row layout. An editor without focus positions its caret in the next frame,
 // after every write of the open or render that asked for it, so opening one forces no layout.
+// A caret whose row is not mounted is only hidden, which reads nothing: scrolling it out of view
+// must not cost the extra frame.
+function caretReadsLayout(view: VirtualizedTextViewInternal): boolean {
+  for (const selection of view.selections) {
+    if (view.rowElements.has(rowForCaretPosition(view, selection.head, selection.affinity)))
+      return true
+  }
+  return false
+}
 function deferCaret(view: VirtualizedTextViewInternal): void {
   if (view.deferredCaret) return
   view.deferredCaret = scheduleFrame(() => {
@@ -372,6 +382,7 @@ function renderCaretNow(view: VirtualizedTextViewInternal): void {
   if (selections.length === 0) {
     hideCaretElement(view.caretElement)
     hideSecondaryCaretElements(view, 0)
+    view.caretBlink.stop()
     return
   }
 
@@ -379,7 +390,7 @@ function renderCaretNow(view: VirtualizedTextViewInternal): void {
   const primaryPositions = caretPosition(view, primary.head, primary.affinity)
   const primaryPosition = primaryPositions?.[0] ?? null
   if (caretMoved(caretPaintPositions.get(view.caretElement), primaryPosition))
-    restartCaretBlink(view)
+    view.caretBlink.restart()
   renderCaretElement(view, view.caretElement, primaryPosition, false)
 
   let secondaryIndex = 0
@@ -394,6 +405,7 @@ function renderCaretNow(view: VirtualizedTextViewInternal): void {
     if (other) secondaryIndex = renderPooledCaret(view, secondaryIndex, other, true)
   }
   hideSecondaryCaretElements(view, secondaryIndex)
+  syncCaretBlink(view)
   // Whatever the OS is about to anchor on the input — a candidate window, an accent picker — belongs
   // over the caret the reader is watching, and this is where that caret stops moving.
   positionInputAtCaret(view, primaryPositions?.[0] ?? null)
@@ -422,21 +434,12 @@ function caretMoved(
   return previous.left !== next.left || previous.top !== next.top
 }
 
-const caretBlinks = new WeakMap<HTMLElement, Animation>()
-
-/**
- * Shows the caret solid from the moment it lands: rewinding the blink to its visible half keeps it
- * from vanishing mid-keystroke. Rewinding the running animation needs no style or layout change.
- */
-function restartCaretBlink(view: VirtualizedTextViewInternal): void {
-  const layer = view.caretLayerElement
-  let blink = caretBlinks.get(layer)
-  if (!blink || blink.playState === 'idle') {
-    blink = layer.getAnimations?.()[0]
-    if (!blink) return
-    caretBlinks.set(layer, blink)
-  }
-  blink.currentTime = 0
+/** The blink runs while any caret is drawn, and stops with no timer left once none is. */
+function syncCaretBlink(view: VirtualizedTextViewInternal): void {
+  const drawn =
+    !view.caretElement.hidden || view.secondaryCaretElements.some((element) => !element.hidden)
+  if (drawn) view.caretBlink.run()
+  else view.caretBlink.stop()
 }
 
 export function rebaseCaretPaint(view: VirtualizedTextViewInternal): void {

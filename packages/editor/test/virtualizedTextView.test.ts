@@ -2895,6 +2895,55 @@ describe('VirtualizedTextView', () => {
     expect(gutterRow?.getAttribute('data-editor-virtual-gutter-row')).toBe('2')
   })
 
+  it('updates fold controls for new markers without rendering the rows again', () => {
+    view.dispose()
+    let viewportChanges = 0
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      gutterContributions: [createFoldGutterContribution()],
+      onViewportChange: () => {
+        viewportChanges += 1
+      },
+    })
+    const lines = ['a', 'if (x) {', '  y();', '}', 'if (z) {', '  w();', '}']
+    const offsets = lineStartOffsets(lines)
+    view.setText(lines.join('\n'))
+    view.setScrollMetrics(0, 200, 100)
+    const marker = (row: number): VirtualizedFoldMarker => ({
+      key: `fold-${row}`,
+      startOffset: offsets[row]!,
+      endOffset: offsets[row + 2]!,
+      startRow: row,
+      endRow: row + 1,
+      collapsed: false,
+    })
+    view.setFoldMarkers([marker(1)])
+    const rowText = view.getState().mountedRows.map((row) => row.element.textContent)
+    const textWrites = vi.spyOn(Text.prototype, 'data', 'set')
+    const renders = vi.spyOn(view as unknown as { renderSnapshot(): void }, 'renderSnapshot')
+    viewportChanges = 0
+
+    // Cached syntax folds arrive for every scrolled range; a marker change moves no row.
+    view.setFoldMarkers([marker(1), marker(4)])
+
+    const gutterRows = Array.from(
+      container.querySelectorAll('.editor-virtualized-fold-toggle:not([hidden])'),
+      (toggle) =>
+        toggle
+          .closest('[data-editor-virtual-gutter-row]')
+          ?.getAttribute('data-editor-virtual-gutter-row'),
+    )
+    expect(gutterRows.toSorted()).toEqual(['1', '4'])
+    expect(view.getState().mountedRows.map((row) => row.element.textContent)).toEqual(rowText)
+    expect(textWrites).not.toHaveBeenCalled()
+    expect(renders).not.toHaveBeenCalled()
+    // Syntax scheduling still hears about the change.
+    expect(viewportChanges).toBe(1)
+  })
+
   it('moves fold controls through deleted newlines before syntax returns', () => {
     view.dispose()
     view = new VirtualizedTextView(container, {

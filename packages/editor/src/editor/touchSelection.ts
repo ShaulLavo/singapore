@@ -108,7 +108,8 @@ export class TouchSelectionController {
     element.addEventListener('contextmenu', this.contextMenu)
     element.addEventListener('selectstart', this.selectStart)
     element.addEventListener('scroll', this.scrollNotification)
-    element.addEventListener('wheel', this.cancelNotification)
+    // Passive: a blocking wheel listener makes the browser wait for script before every scroll.
+    element.addEventListener('wheel', this.cancelNotification, { passive: true })
     element.addEventListener('beforeinput', this.cancelNotification)
   }
 

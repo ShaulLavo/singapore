@@ -11,6 +11,7 @@ import {
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
 import { pointViewport } from './pointViewport'
 import { markerAtRowX } from './virtualizedTextViewHiddenCharacters'
+import { CaretBlink } from './caretBlink'
 import { ScrollViewport } from './scrollViewport'
 import type { FoldMarkerSource } from './foldMarkerSource'
 import type { SavedPaint } from '../editor/paintSnapshot'
@@ -419,6 +420,7 @@ export class VirtualizedTextView {
       gutterWidthProvider,
       gutterLeadingInset: normalizeGutterLeadingInset(options.gutterLeadingInset),
       caretLayerElement,
+      caretBlink: new CaretBlink(caretLayerElement),
       caretElement,
       deferredCaret: null,
       secondaryCaretElements: [],
@@ -553,6 +555,7 @@ export class VirtualizedTextView {
     this.cancelContentWidthMeasurement = null
     this.disposeForegroundHighlightRestore()
     cancelDeferredCaret(view)
+    view.caretBlink.stop()
     clearSelectionHighlight(view)
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
     clearTokenHighlights(view)
@@ -952,12 +955,27 @@ export class VirtualizedTextView {
     if (update.foldMapChanged) clearRowTokenState(view)
     if (update.foldMapChanged) refreshDisplayProjection(view, horizontalViewportColumns(view))
 
-    view.lastRenderedRowsKey = ''
     if (update.foldMapChanged) {
+      view.lastRenderedRowsKey = ''
       updateVirtualizerRows(view)
       return
     }
+    // Markers alone move no row: cached syntax folds arrive for every scrolled range, and a full
+    // render here repeated the scroll's row, token and caret work on each step. Syntax scheduling
+    // still hears about the new markers through the viewport report.
+    if (
+      !view.disposed &&
+      !view.provisional &&
+      !this.atomicRenderPending &&
+      this.atomicRenderDepth === 0 &&
+      !this.applyingEdit
+    ) {
+      updateMountedFoldMarkers(view)
+      this.reportViewportChange()
+      return
+    }
 
+    view.lastRenderedRowsKey = ''
     this.renderSnapshot(view.virtualizer.getSnapshot())
   }
 
