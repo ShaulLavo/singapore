@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, resolve, sep } from 'node:path'
@@ -9,7 +9,9 @@ import { defineConfig } from 'vitest/config'
 const require = createRequire(import.meta.url)
 const packageDir = dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = resolve(packageDir, '../..')
-const screenshotDirectory = mkdtempSync(resolve(tmpdir(), 'singapore-tree-sitter-screenshots-'))
+// One fixed directory, reused by every run, so runs never accumulate temp directories.
+const screenshotDirectory = resolve(tmpdir(), 'singapore-tree-sitter-screenshots')
+mkdirSync(screenshotDirectory, { recursive: true })
 const languagePackageDir = resolve(packageDir, '../tree-sitter-languages')
 const servedDependencyRoots = uniqueItems(
   [

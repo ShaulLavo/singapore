@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { browserTestResponses } from '../../scripts/browser-test-responses.ts'
@@ -15,11 +15,18 @@ const crossEngineScrollTests = [
   'test/{virtualizedTextView,virtualizedTextViewGeometry,wheelScrollTarget,gutterScroll,gutterLeadingInset,gutterPointerEvents,wrappedLineGutter,wrappedLineHighlight,mouseSelectionAutoScroll,navigationReveal,initialViewport,firstPaint,longLineMeasurements,millionLinePaint,codeViewport,renderDisposal,rowPresentation,proportionalRows,proportionalWrap,freeSansShaping,freeSansNativeCarets,wordWrap,defaultLargeDocument,metricProbeScrollExtent,tailGeometry,typography,selectionCopy}.browser.test.ts',
 ]
 
+// Fixed, reused directories: runs overwrite their evidence instead of leaking a new directory each.
+function evidenceDirectory(name: string): string {
+  const directory = join(tmpdir(), name)
+  mkdirSync(directory, { recursive: true })
+  return directory
+}
+
 let contentEvidence: string | undefined
 let highlightEvidence: string | undefined
 
 const proofStyledWrapScreenshot: BrowserCommand = async ({ iframe, project }, width: number) => {
-  const directory = mkdtempSync(join(tmpdir(), 'singapore-styled-wrap-'))
+  const directory = evidenceDirectory('singapore-styled-wrap')
   const path = join(directory, `${project.name}-${width}.png`)
   await iframe.locator('[data-styled-wrap-proof]').screenshot({ path, animations: 'disabled' })
   return path
@@ -216,7 +223,7 @@ export default defineConfig({
             provider: playwright(),
             commands: {
               proofContentLayoutScreenshot: async ({ iframe, project }, width: number) => {
-                contentEvidence ??= mkdtempSync(join(tmpdir(), 'singapore-content-layout-'))
+                contentEvidence ??= evidenceDirectory('singapore-content-layout')
                 const path = join(contentEvidence, `${project.name}-${width}.png`)
                 await iframe
                   .locator('#content-height-proof')
@@ -328,8 +335,7 @@ export default defineConfig({
                 hostId: string,
                 label?: string,
               ) => {
-                if (label)
-                  highlightEvidence ??= mkdtempSync(join(tmpdir(), 'singapore-highlight-boundary-'))
+                if (label) highlightEvidence ??= evidenceDirectory('singapore-highlight-boundary')
                 const path = label
                   ? join(highlightEvidence!, `${project.name}-${label}.png`)
                   : undefined

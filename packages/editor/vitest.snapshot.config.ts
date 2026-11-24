@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { arch, cpus, release, tmpdir, type } from 'node:os'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -12,7 +12,8 @@ import {
   settleDocumentPaint,
 } from './test/env/document-paint-first-frame.ts'
 
-const evidence = mkdtempSync(join(tmpdir(), 'singapore-document-paint-'))
+const evidence = join(tmpdir(), 'singapore-document-paint')
+mkdirSync(evidence, { recursive: true })
 const results: unknown[] = []
 const require = createRequire(import.meta.url)
 writeFileSync(
