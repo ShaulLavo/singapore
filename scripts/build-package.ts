@@ -231,16 +231,20 @@ function emitBinaryAssets(): Plugin {
 // `await import("fs/promises")` (as does `tree-sitter-md` with `'node:fs/promises'`) which Vite
 // browser worker builds stub to an empty object, breaking Bun/Node Worker hosts when reading
 // emitted binary `.wasm` files from disk.
+// The runtime ships minified, so each call is matched with and without the space after the comma.
+// A miss is silent and costly (both copies end up inlined), so the runtime entry must match both.
 function patchWebTreeSitterUrls(): Plugin {
-  const baseDirTarget = 'new URL(".", import.meta.url)'
+  const spellings = (call: string) => [call, call.replace(', ', ',')]
+  const baseDirTargets = spellings('new URL(".", import.meta.url)')
   const baseDirReplacement = 'new URL(/* @vite-ignore */ ".", import.meta.url)'
-  const wasmUrlTarget = 'new URL("web-tree-sitter.wasm", import.meta.url).href'
+  const wasmUrlTargets = spellings('new URL("web-tree-sitter.wasm", import.meta.url).href')
   const wasmUrlReplacement = '__singaporeWebTreeSitterWasmUrl'
   const wasmUrlImport =
     'import __singaporeWebTreeSitterWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";'
   const fsPromisesTarget = 'await import("fs/promises")'
   const nodeFsPromisesTarget = "await import('node:fs/promises')"
   const builtinFsPromises = 'process.getBuiltinModule("node:fs/promises")'
+  const runtimeEntry = /[\\/]web-tree-sitter[\\/]web-tree-sitter\.js$/
 
   return {
     name: 'singapore-patch-web-tree-sitter-urls',
@@ -248,9 +252,16 @@ function patchWebTreeSitterUrls(): Plugin {
     transform(code, id) {
       if (!id.includes('web-tree-sitter') && !id.includes('tree-sitter-md')) return null
       const replacements: (readonly [string, string])[] = []
-      if (code.includes(baseDirTarget)) replacements.push([baseDirTarget, baseDirReplacement])
-      const hasWasmUrl = code.includes(wasmUrlTarget)
-      if (hasWasmUrl) replacements.push([wasmUrlTarget, wasmUrlReplacement])
+      const baseDir = baseDirTargets.filter((target) => code.includes(target))
+      for (const target of baseDir) replacements.push([target, baseDirReplacement])
+      const wasmUrl = wasmUrlTargets.filter((target) => code.includes(target))
+      for (const target of wasmUrl) replacements.push([target, wasmUrlReplacement])
+      const hasWasmUrl = wasmUrl.length > 0
+      if (runtimeEntry.test(id) && (baseDir.length === 0 || !hasWasmUrl)) {
+        throw new Error(
+          `${id}: the runtime's base or Wasm URL call changed shape; update patchWebTreeSitterUrls`,
+        )
+      }
       if (code.includes(fsPromisesTarget)) replacements.push([fsPromisesTarget, builtinFsPromises])
       if (code.includes(nodeFsPromisesTarget)) {
         replacements.push([nodeFsPromisesTarget, builtinFsPromises])
