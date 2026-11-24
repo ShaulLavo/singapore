@@ -362,6 +362,7 @@ export class EditorSyntaxController {
       syntaxRangeListsIntersect(cached.newestRanges, ranges),
     )
     const foldContributors = activeFoldContributors(oldCache, ranges)
+    // Besides what shown text needs, the newest look-ahead answers on each side of it.
     const retained = new Set(
       newestContributors.concat(foldContributors, newestLookAheadAnswers(oldCache, ranges)),
     )
@@ -2693,7 +2694,11 @@ const firstUncoveredSyntaxRange = (
   return { startIndex: cursor, endIndex: range.endIndex }
 }
 
-/** The newest look-ahead answer entirely before the shown text and the newest entirely after it. */
+/**
+ * The newest two look-ahead answers entirely before the shown text and the newest two entirely
+ * after it. Two, because an older visible answer can split one side's uncached text into two
+ * gaps; keeping one would have each gap's answer push the other out and be asked for again.
+ */
 const newestLookAheadAnswers = (
   cache: readonly CachedSyntaxFoldRange[],
   shown: readonly EditorSyntaxRange[],
@@ -2702,9 +2707,9 @@ const newestLookAheadAnswers = (
   const last = shown.at(-1)
   if (!first || !last) return []
   const lookAhead = cache.filter((cached) => cached.lookAhead)
-  const before = lookAhead.findLast((cached) => cached.range.endIndex <= first.startIndex)
-  const after = lookAhead.findLast((cached) => cached.range.startIndex >= last.endIndex)
-  return [before, after].filter((cached): cached is CachedSyntaxFoldRange => cached !== undefined)
+  const before = lookAhead.filter((cached) => cached.range.endIndex <= first.startIndex)
+  const after = lookAhead.filter((cached) => cached.range.startIndex >= last.endIndex)
+  return before.slice(-2).concat(after.slice(-2))
 }
 
 const lastUncoveredSyntaxRange = (
