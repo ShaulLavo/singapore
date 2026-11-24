@@ -820,12 +820,13 @@ export type EditorEditContributionContext = EditorDocumentContributionContext &
     > | null
     getSelections(): readonly EditorResolvedSelection[]
     focusEditor(): void
+    /** False when the editor refused the edits: read-only, provisional, or no document. */
     applyEdits(
       edits: readonly TextEdit[],
       timingName: string,
       selection?: EditorSelectionRange,
       options?: DocumentSessionApplyEditsOptions,
-    ): void
+    ): boolean
     /**
      * Starts tab-stop navigation over the text just inserted: one entry per stop, carrying the
      * range the caret visits and, where the snippet writes that stop more than once, the copies
@@ -1098,12 +1099,13 @@ export type EditorInternalViewContributionContext = EditorViewContributionContex
   /** The owning editor, typed where it is used; unstable. */
   readonly unstableEditor: unknown
   getSelections(): readonly EditorResolvedSelection[]
+  /** False when the editor refused the edits: read-only, provisional, or no document. */
   applyEdits(
     edits: readonly TextEdit[],
     timingName: string,
     selection?: EditorSelectionRange | readonly EditorSelectionRange[],
     options?: DocumentSessionApplyEditsOptions,
-  ): void
+  ): boolean
   /** While `accepts` answers false, typed, composed, pasted and dropped text is refused. */
   registerTextGate(accepts: () => boolean): EditorDisposable
   setCursorStyle(style: EditorCursorStyle): void

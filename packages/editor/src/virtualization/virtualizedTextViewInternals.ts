@@ -1,4 +1,12 @@
 import type { EditorDisposable } from '../editor/disposables'
+import type {
+  DocumentPaintCapture,
+  DocumentPaintRow,
+  PaintSnapshot,
+  SavedDocumentPaint,
+} from '../editor/documentPaint'
+import type { encodePaintSnapshot, SavedPaint, SavedPaintRow } from '../editor/paintSnapshot'
+import type { MountedPaintSnapshot } from './documentPaintRows'
 import type { EditorSizing } from '../editor/editorHeight'
 import type { ScheduledFrame } from '../editor/scheduleFrame'
 import type { WrapAdvance, WrapBreak } from './displayProjectionTypes'
@@ -50,6 +58,28 @@ export type VirtualizedTextHighlightRange = {
 }
 
 export type { VirtualizedTextHighlightStyle } from './virtualizedTextViewTypes'
+
+/**
+ * Saving and restoring painted views: the codecs and the DOM capture and mount code behind
+ * `captureSnapshot()` and `setSnapshot()`. The view keeps only the provisional-paint lifecycle;
+ * `createPaintSnapshotPlugin()` supplies this, so an app that never caches paint never loads it.
+ */
+export type EditorPaintSnapshotSupport = {
+  decode(serialized: string): PaintSnapshot | null
+  readonly encodeViewport: typeof encodePaintSnapshot
+  captureDocument(
+    view: VirtualizedTextViewInternal,
+    appearance: string,
+    headings: ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>>,
+  ): DocumentPaintCapture
+  mountDocument(
+    host: HTMLElement,
+    paint: SavedDocumentPaint,
+    options: { readonly width?: number },
+  ): MountedPaintSnapshot | null
+  paintViewportRows(view: VirtualizedTextViewInternal, paint: SavedPaint): (() => void) | null
+  captureGutters(view: VirtualizedTextViewInternal): readonly SavedPaintRow['gutterCells'][] | null
+}
 
 export type VirtualizedTextHighlightGroup = {
   readonly name: string

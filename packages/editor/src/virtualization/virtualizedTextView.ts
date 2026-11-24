@@ -20,8 +20,8 @@ import type {
   PaintSnapshot,
   SavedDocumentPaint,
 } from '../editor/documentPaint'
-import { captureDocumentPaint } from './documentPaintCapture'
-import { mountDocumentPaint, type MountedPaintSnapshot } from './documentPaintRows'
+import type { EditorPaintSnapshotSupport } from './virtualizedTextViewInternals'
+import type { MountedPaintSnapshot } from './documentPaintRows'
 import type { TextContent } from '../textContent'
 import type { FoldMap } from '../foldMap'
 import { nextGraphemeBoundary, previousGraphemeBoundary } from '../graphemes'
@@ -169,7 +169,6 @@ import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTex
 import { BIDI_CONTROL_CODE_POINTS, isSimpleRowText } from '../textCharacters'
 import {
   applyRowHeight,
-  captureGutterPaint,
   takeGutterCells,
   takeInlineWidgets,
   ensureOffsetMounted,
@@ -179,7 +178,6 @@ import {
   setGutterLeadingInsetProperty,
   horizontalViewportColumns,
   pageRowDelta,
-  paintProvisionalRows,
   positionInputAtCaret,
   renderRows,
   resetContentWidthScan,
@@ -642,8 +640,8 @@ export class VirtualizedTextView {
     }))
   }
 
-  public captureGutterPaint() {
-    return captureGutterPaint(this.view)
+  public captureGutterPaint(support: EditorPaintSnapshotSupport) {
+    return support.captureGutters(this.view)
   }
 
   public get hasPendingReveal(): boolean {
@@ -651,14 +649,16 @@ export class VirtualizedTextView {
   }
 
   public captureDocumentPaint(
+    support: EditorPaintSnapshotSupport,
     appearance: string,
     headings: ReadonlyMap<number, NonNullable<DocumentPaintRow['heading']>>,
   ): DocumentPaintCapture {
-    return captureDocumentPaint(this.view, appearance, headings)
+    return support.captureDocument(this.view, appearance, headings)
   }
 
   private provisionalDocumentPaint: {
     readonly paint: SavedDocumentPaint
+    readonly support: EditorPaintSnapshotSupport
     mounted: MountedPaintSnapshot
     readonly releaseRows: () => void
     width: number
@@ -668,11 +668,14 @@ export class VirtualizedTextView {
     return this.provisionalDocumentPaint?.paint ?? this.provisionalPaint?.paint ?? null
   }
 
-  private restoreDocumentPaint(paint: SavedDocumentPaint): boolean {
+  private restoreDocumentPaint(
+    paint: SavedDocumentPaint,
+    support: EditorPaintSnapshotSupport,
+  ): boolean {
     if (this.view.scrollMode !== 'content') return false
     const width = this.documentPaintWidth()
     this.releaseProvisionalPaint()
-    const mounted = mountDocumentPaint(this.view.spacer, paint, { width })
+    const mounted = support.mountDocument(this.view.spacer, paint, { width })
     if (!mounted) return false
     const rows = getMountedRows(this.view)
     const visibility = rows.map((row) => row.element.style.visibility)
@@ -688,6 +691,7 @@ export class VirtualizedTextView {
     this.setInputEditable(false)
     this.provisionalDocumentPaint = {
       paint,
+      support,
       mounted,
       width,
       releaseRows: () => {
@@ -711,7 +715,9 @@ export class VirtualizedTextView {
     if (!provisional) return
     const width = this.documentPaintWidth()
     if (width !== provisional.width) {
-      const mounted = mountDocumentPaint(this.view.spacer, provisional.paint, { width })
+      const mounted = provisional.support.mountDocument(this.view.spacer, provisional.paint, {
+        width,
+      })
       if (!mounted) return
       provisional.mounted.dispose()
       provisional.mounted = mounted
@@ -754,8 +760,8 @@ export class VirtualizedTextView {
     return paint ? { top: paint.scrollTop, left: paint.scrollLeft } : null
   }
 
-  public restorePaint(paint: PaintSnapshot): boolean {
-    if (paint.format === 6) return this.restoreDocumentPaint(paint)
+  public restorePaint(paint: PaintSnapshot, support: EditorPaintSnapshotSupport): boolean {
+    if (paint.format === 6) return this.restoreDocumentPaint(paint, support)
     const inset = paint.gutterWidth > 0 ? this.view.gutterLeadingInset : 0
     if (paint.gutterLayout.leadingInset !== inset) return false
 
@@ -783,7 +789,7 @@ export class VirtualizedTextView {
     this.view.viewport.setScrollPosition(paint.scrollLeft, paint.scrollTop, this.isPageScrolled)
     this.scrollElement.style.setProperty('--editor-gutter-width', `${paint.gutterWidth}px`)
     setGutterLeadingInsetProperty(this.view, inset)
-    const release = paintProvisionalRows(this.view, paint)
+    const release = support.paintViewportRows(this.view, paint)
     if (!release) {
       this.commitProvisionalPaint()
       return false

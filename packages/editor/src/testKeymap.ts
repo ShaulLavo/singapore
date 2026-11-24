@@ -1,5 +1,5 @@
 import { createBrowserDispatcher, type CommandHandler } from '@shaulavo/hotkeys'
-import { EDITOR_COMMANDS } from './editor/commandCatalog'
+import { EDITOR_COMMAND_IDS } from './editor/commandCatalog'
 import type { EditorAnyCommandId } from './editor/commandCatalog'
 import type { EditorCommandHandler } from './plugins'
 import type { EditorDisposable } from './editor/disposables'
@@ -26,11 +26,8 @@ export function createTestKeymap(
     keymap: editorKeymapBindings({}, 'linux'),
   })
   const handlers: Record<string, CommandHandler<KeyboardEvent>> = {}
-  for (const command of new Set(
-    EDITOR_COMMANDS.map<EditorAnyCommandId>((entry) => entry.id).concat(
-      Array.from(commands.keys()),
-    ),
-  ))
+  const builtIns: readonly EditorAnyCommandId[] = EDITOR_COMMAND_IDS
+  for (const command of new Set(builtIns.concat(Array.from(commands.keys()))))
     handlers[command] = ({ source }) =>
       commands.get(command)?.(source ? { event: source } : {}) ?? false
   const node = dispatcher.createNode({

@@ -5,8 +5,8 @@ import { acquireEditorDocumentAnalysis, type EditorDocumentAnalysis } from './do
 import { normalizeGutterLeadingInset } from '../virtualization/virtualizedTextViewHelpers'
 import { captureJumpLocation, JumpHistory, type JumpLocation, type JumpCause } from './jumpHistory'
 import type { EditorPointHit, EditorMarkerHit } from '../pointQueries'
-import { encodePaintSnapshot } from './paintSnapshot'
-import { decodeSnapshot as decodePaintSnapshot, type DocumentPaintCapture } from './documentPaint'
+import type { DocumentPaintCapture } from './documentPaint'
+import { EDITOR_PAINT_SNAPSHOT_FEATURE } from './paintSnapshotSupport'
 import { detectPlatform } from '@shaulavo/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
@@ -65,13 +65,12 @@ import {
   recordEditorPerformanceDiagnostic,
   traceEditorPerformanceTask,
 } from './performanceDiagnostics'
-import type { EditorCommandContext, EditorCommandId } from './commands'
+import type { EditorCommandContext } from './commands'
 import {
-  EDITOR_COMMANDS,
-  editorCommandDeclaration,
+  EDITOR_COMMAND_IDS,
+  editorCommandMutates,
   isEditorCommandId,
   type EditorAnyCommandId,
-  type EditorCommandDeclaration,
   type EditorContributedCommandDeclaration,
 } from './commandCatalog'
 import { normalizeEditorEditInput } from './editInput'
@@ -220,12 +219,6 @@ import { EditorEventSource } from './emitter'
 import { lastAddedSelectionIndex, markSelectionSetDirty, resolveSelection } from '../selections'
 import { type EditorSyntaxLanguageId } from '../syntax/session'
 import type { EditorSyntaxRange } from '../syntax/session'
-import {
-  parseMergeConflicts,
-  resolveMergeConflict as resolveMergeConflictText,
-  type MergeConflictRegion,
-  type MergeConflictResolution,
-} from '../mergeConflicts'
 import type { FoldRange } from '../syntax/session'
 import type { EditorTheme } from '../theme'
 import { editorThemesEqual, mergeEditorThemes } from '../theme'
@@ -816,7 +809,7 @@ export class Editor {
       hotkeys: options.hotkeys,
       parent: options.hotkeysParent,
       readContext: () => this.readHotkeysContext(),
-      commands: this.getCommandDeclarations().map((command) => command.id),
+      commands: this.getCommandIds(),
       keymap: options.keymap,
       dispatch: (command, context) => this.dispatchCommand(command, context),
     })
@@ -863,7 +856,7 @@ export class Editor {
         this.removeCommandContributionProvider(provider),
       onContributedCommandsChanged: () => {
         if (this.disposed) return
-        this.keymap.updateCommands(this.getCommandDeclarations().map((command) => command.id))
+        this.keymap.updateCommands(this.getCommandIds())
       },
       onCapabilityContributionProviderAdded: (provider) =>
         this.addCapabilityContributionProvider(provider),
@@ -940,8 +933,15 @@ export class Editor {
       this.recordSnapshotAdmission('generation-live')
       return
     }
+    // Before recording the offer: one refused for want of the plugin must stay offerable again
+    // once the plugin is installed.
+    const support = this.getFeature(EDITOR_PAINT_SNAPSHOT_FEATURE)
+    if (!support) {
+      this.recordSnapshotAdmission('no-paint-snapshot-plugin')
+      return
+    }
     this.lastSnapshot = snapshot
-    const paint = decodePaintSnapshot(snapshot)
+    const paint = support.decode(snapshot)
     if (!paint) {
       this.recordSnapshotAdmission('invalid-paint')
       return
@@ -975,7 +975,7 @@ export class Editor {
       return
     }
     this.snapshotGeneration = this.session ? this.documentVersion : null
-    if (!this.view.restorePaint(paint)) {
+    if (!this.view.restorePaint(paint, support)) {
       this.recordSnapshotAdmission('gutter-paint')
       return
     }
@@ -993,6 +993,8 @@ export class Editor {
   }): ReturnType<Editor['captureViewportSnapshot']>
   captureSnapshot(options?: { readonly scope: 'viewport' | 'document' }) {
     if (options?.scope !== 'document') return this.captureViewportSnapshot()
+    const support = this.getFeature(EDITOR_PAINT_SNAPSHOT_FEATURE)
+    if (!support) return { status: 'unsupported', reason: 'no-paint-snapshot-plugin' } as const
     if (this.disposed || !this.session || this.view.isProvisional || this.preparingDocument)
       return { status: 'unsupported', reason: 'document-not-ready' } as const
     if (!this.syntax.renderDataReady || !this.presentationReady)
@@ -1001,12 +1003,15 @@ export class Editor {
     if (appearance === null)
       return { status: 'unsupported', reason: 'appearance-not-ready' } as const
     return this.view.captureDocumentPaint(
+      support,
       appearance,
       this.viewContributions.captureDocumentHeadings(this.textSnapshot),
     )
   }
 
   private captureViewportSnapshot() {
+    const support = this.getFeature(EDITOR_PAINT_SNAPSHOT_FEATURE)
+    if (!support) return null
     if (this.disposed || !this.session || this.view.isProvisional || this.preparingDocument)
       return null
     if (!this.syntax.renderDataReady || !this.presentationReady) return null
@@ -1017,7 +1022,7 @@ export class Editor {
     if (!snapshot || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) return null
     if (snapshot.documentId !== this.documentId || snapshot.textVersion !== this.textVersion)
       return null
-    const gutters = this.view.captureGutterPaint()
+    const gutters = this.view.captureGutterPaint(support)
     if (!gutters) return null
     const json = snapshot.toJSON()
     const visible = json.rows.flatMap((row, index) =>
@@ -1027,7 +1032,7 @@ export class Editor {
         : [],
     )
     const backgrounds = this.view.captureRowBackgrounds()
-    const paint = encodePaintSnapshot(
+    const paint = support.encodeViewport(
       {
         ...json,
         viewport: {
@@ -1150,7 +1155,9 @@ export class Editor {
     } catch (error) {
       this.snapshotGeneration = null
       this.snapshotSettled = true
-      if (saved && this.view.restorePaint(saved)) this.observeSnapshotAppearance()
+      const support = this.getFeature(EDITOR_PAINT_SNAPSHOT_FEATURE)
+      if (saved && support && this.view.restorePaint(saved, support))
+        this.observeSnapshotAppearance()
       this.syncViewEditability()
       this.el.dataset.editorPresentationError = 'authoritative-commit'
       this.log({
@@ -2062,44 +2069,6 @@ export class Editor {
     return this.session?.getTextSnapshot() ?? this.textSnapshot
   }
 
-  getMergeConflicts(): readonly MergeConflictRegion[] {
-    return parseMergeConflicts(this.getTextSnapshot())
-  }
-
-  resolveMergeConflict(index: number, resolution: MergeConflictResolution): boolean {
-    if (!this.canEditDocument()) return false
-
-    const source = this.getTextSnapshot()
-    const conflict = parseMergeConflicts(source)[index]
-    if (!conflict) return false
-
-    const resolved = resolveMergeConflictText(source, conflict, resolution)
-    if (!resolved) return false
-
-    this.edit(
-      {
-        from: resolved.range.start,
-        to: resolved.range.end,
-        text: resolved.replacement,
-      },
-      {
-        selection: {
-          anchor: resolved.selection.start,
-          head: resolved.selection.end,
-        },
-      },
-    )
-    return true
-  }
-
-  revealMergeConflict(index: number): boolean {
-    const conflict = parseMergeConflicts(this.getTextSnapshot())[index]
-    if (!conflict) return false
-
-    this.setSelection(conflict.range.start)
-    return true
-  }
-
   focus(): void {
     this.view.focusInput()
   }
@@ -2477,21 +2446,23 @@ export class Editor {
     }
   }
 
-  /** The commands this editor knows: every built-in, then those its plugins contribute. */
-  getCommandDeclarations(): readonly (
-    | EditorCommandDeclaration<EditorCommandId>
-    | EditorContributedCommandDeclaration
-  )[] {
-    const commands: readonly (
-      | EditorCommandDeclaration<EditorCommandId>
-      | EditorContributedCommandDeclaration
-    )[] = EDITOR_COMMANDS
-    return commands.concat(this.pluginHost.getContributedCommands())
+  /**
+   * The commands this editor knows: every built-in, then those its plugins contribute. The
+   * built-ins' titles are in `EDITOR_COMMANDS` from `@singapore-editor/core/keymap`, which only a
+   * palette or shortcut UI needs to load.
+   */
+  getCommandIds(): readonly EditorAnyCommandId[] {
+    const builtIns: readonly EditorAnyCommandId[] = EDITOR_COMMAND_IDS
+    return builtIns.concat(this.pluginHost.getContributedCommands().map((command) => command.id))
+  }
+
+  /** The commands this editor's plugins contribute, with their titles. */
+  getContributedCommandDeclarations(): readonly EditorContributedCommandDeclaration[] {
+    return this.pluginHost.getContributedCommands()
   }
 
   private refusesMutation(command: string): boolean {
-    if (isEditorCommandId(command))
-      return editorCommandDeclaration(command).mutates && !this.canEditDocument()
+    if (isEditorCommandId(command)) return editorCommandMutates(command) && !this.canEditDocument()
     const declared = this.pluginHost.getContributedCommands().find((entry) => entry.id === command)
     return declared?.mutates === true && !this.canEditDocument()
   }
