@@ -1584,8 +1584,12 @@ export class EditorSyntaxController {
       })
     }
 
+    // A replaced look-ahead keeps running: when the scroll turns back, its answer is what the next
+    // look-ahead needs, and a request for the same window joins it. Edits and disposal still stop
+    // it. Requests for shown rows and background tiles are cancelled once nobody waits for them.
+    const signal = source === 'prefetch' ? undefined : options.signal
     const result = this.retainedSyntax
-      ? this.retainedSyntax.queryRange(range, { signal: options.signal })
+      ? this.retainedSyntax.queryRange(range, { signal })
       : this.syntaxSession.queryRange(range)
     return result.then((result) => ({
       contentVersion,

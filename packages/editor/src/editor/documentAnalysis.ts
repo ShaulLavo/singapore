@@ -39,7 +39,7 @@ import {
   type DocumentRead,
   type DocumentContributionScope,
 } from './documentDelivery'
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, type EditorScheduledWorkHandle } from './workScheduler'
 import type { DocumentSyncPoint } from './editChain'
 import {
   bindDocumentOperation,
@@ -749,6 +749,15 @@ type PendingRangeQuery = {
   readonly point: DocumentSyncPoint
   readonly range: EditorSyntaxRange
   readonly promise: Promise<EditorSyntaxResult>
+  /** Aborted when every caller has left and the query is superseded or its handoff time passes. */
+  readonly cancellation: AbortController
+  /** Callers that can leave; a caller without a signal keeps the query for good. */
+  holders: number
+  pinned: boolean
+  /** The pending cancellation after the last caller left; cancelled when the query settles. */
+  release: EditorScheduledWorkHandle | null
+  /** Unique per query: two queries for the same offsets, such as across analysis generations, differ. */
+  readonly id: number
   admission: 'cache' | 'return-only'
   work:
     | { readonly kind: 'queued'; readonly generation: number | null }
@@ -804,6 +813,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   >()
   private ranges = new Map<string, ReadyRange>()
   private queries = new Map<string, PendingRangeQuery>()
+  /** Identifies each range query, so its release timer belongs to it alone. */
+  private nextQueryId = 0
   private rangePoint: DocumentSyncPoint | null = null
   private stoppedWarmGeneration: number | null = null
 
@@ -1061,7 +1072,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.retention.changed()
     }
     signal.addEventListener('abort', release, { once: true })
-    const pending = interruptible(this.range(range), signal)
+    const pending = interruptible(this.range(range, signal), signal)
     this.retention.changed()
     return pending.finally(() => {
       release()
@@ -1091,6 +1102,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     this.contributors.clear()
     this.queryWaiters.clear()
     this.ranges.clear()
+    for (const query of this.queries.values()) query.release?.cancel()
     this.queries.clear()
     super.dispose()
   }
@@ -1111,7 +1123,15 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return { kind: 'pending', revision: state.revision }
   }
 
-  range(range: EditorSyntaxRange): Promise<EditorSyntaxResult> {
+  /**
+   * One shared query per range: a caller asking for a range already on its way joins it. A caller
+   * that passes `signal` holds the query only until the signal aborts. A query every caller has
+   * left is never sent to the runtime; a running one stays joinable briefly for a caller asking
+   * for the same range again, and is cancelled when that time passes or a query for another range
+   * starts. That stops the runtime's work where it can stop, and keeps a superseded query from
+   * being sent again once a complete analysis lands.
+   */
+  range(range: EditorSyntaxRange, signal?: AbortSignal): Promise<EditorSyntaxResult> {
     range = boundedRange(range, this.buffer.getTextSnapshot().length)
     if (!this.structuralSession.queryRange) return this.current()
     const state = this.readRange(range)
@@ -1125,23 +1145,37 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.compatibleQuery(query, point, range),
     )
     if (existing) {
+      holdRangeQuery(existing, signal, this.releaseOrphanLater)
       this.trimOptionalRanges()
       return existing.promise
     }
+    this.cancelOrphanedQueries()
     let queried = false
+    const cancellation = new AbortController()
     const pending: PendingRangeQuery = {
       snapshot: this.buffer.getTextSnapshot(),
       point,
       range,
+      cancellation,
+      holders: 0,
+      pinned: false,
+      release: null,
+      id: this.nextQueryId++,
       admission: 'cache',
       work: { kind: 'queued', generation },
-      promise: this.query((signal) => {
-        pending.work = { kind: 'running', generation: this.generation }
-        const current = this.readRange(range)
-        if (current.kind === 'ready') return Promise.resolve(current.result)
-        queried = true
-        return this.structuralSession.queryRange?.(range, signal) ?? this.current()
-      }).then((result) => {
+      promise: interruptible(
+        this.query((interest) => {
+          if (cancellation.signal.aborted || rangeQueryIsOrphaned(pending))
+            return Promise.reject(cancelled())
+          pending.work = { kind: 'running', generation: this.generation }
+          const current = this.readRange(range)
+          if (current.kind === 'ready') return Promise.resolve(current.result)
+          queried = true
+          const querySignal = AbortSignal.any([interest, cancellation.signal])
+          return this.structuralSession.queryRange?.(range, querySignal) ?? this.current()
+        }),
+        cancellation.signal,
+      ).then((result) => {
         if (queried && syntaxResultCoversRange(result, range) && this.canAdmitRange(key, pending)) {
           this.resultOrigins.set(result, {
             snapshot: pending.snapshot,
@@ -1155,10 +1189,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }),
     }
     this.queries.set(key, pending)
+    holdRangeQuery(pending, signal, this.releaseOrphanLater)
     this.trimOptionalRanges()
     this.retention.changed()
     void pending.promise
       .finally(() => {
+        pending.release?.cancel()
         if (this.queries.get(key) !== pending) return
         this.queries.delete(key)
         this.retention.changed()
@@ -1167,12 +1203,33 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return pending.promise
   }
 
+  private cancelOrphanedQueries(): void {
+    for (const query of this.queries.values()) {
+      if (rangeQueryIsOrphaned(query)) query.cancellation.abort(cancelled())
+    }
+  }
+
+  /** Cancels an orphan once its handoff time has passed, unless a caller has joined it since. */
+  private readonly releaseOrphanLater = (query: PendingRangeQuery): void => {
+    if (this.signal.aborted) return
+    query.release?.cancel()
+    query.release = this.scheduler.schedule({
+      key: `${this.runtimeSessionId}:orphaned-range:${query.id}`,
+      taskClass: 'background-derived',
+      delayMs: ORPHANED_QUERY_HANDOFF_MS,
+      run: () => {
+        if (rangeQueryIsOrphaned(query)) query.cancellation.abort(cancelled())
+      },
+    })
+  }
+
   private compatibleQuery(
     query: PendingRangeQuery,
     point: DocumentSyncPoint,
     range: EditorSyntaxRange,
   ): boolean {
     return (
+      !query.cancellation.signal.aborted &&
       query.point === point &&
       query.snapshot === this.buffer.getTextSnapshot() &&
       rangeKey(query.range) === rangeKey(range) &&
@@ -1731,6 +1788,36 @@ function leaseCancellation(
 
 function cancelled(): DOMException {
   return new DOMException('Document analysis was superseded or released', 'AbortError')
+}
+
+/**
+ * How long a running query every caller has left stays joinable for a caller asking for the same
+ * range again, such as a request replaced by one for the same rows a frame later.
+ */
+const ORPHANED_QUERY_HANDOFF_MS = 150
+
+function rangeQueryIsOrphaned(query: PendingRangeQuery): boolean {
+  return query.holders === 0 && !query.pinned
+}
+
+function holdRangeQuery(
+  query: PendingRangeQuery,
+  signal: AbortSignal | undefined,
+  orphaned: (query: PendingRangeQuery) => void,
+): void {
+  if (!signal) {
+    query.pinned = true
+    return
+  }
+  if (signal.aborted) return
+  query.holders += 1
+  const release = () => {
+    query.holders -= 1
+    if (rangeQueryIsOrphaned(query)) orphaned(query)
+  }
+  signal.addEventListener('abort', release, { once: true })
+  const forget = () => signal.removeEventListener('abort', release)
+  void query.promise.then(forget, forget)
 }
 function rangeKey(range: EditorSyntaxRange): string {
   return `${range.startIndex}:${range.endIndex}`

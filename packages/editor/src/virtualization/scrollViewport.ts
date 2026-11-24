@@ -19,6 +19,7 @@ export class ScrollViewport {
   private viewportWidth = -1
   private viewportHeight = -1
   #originY = 0
+  #documentWidth = -1
   #pageScrolled = false
   /** Every reservation change passes through here, including the provisional paint's. */
   public onReservedOverlayWidthChange: ((side: 'left' | 'right') => void) | null = null
@@ -94,9 +95,12 @@ export class ScrollViewport {
   }
 
   public setDocumentWidth(width: number): void {
-    const value = `${width}px`
-    if (this.#extent.style.width === value) return
+    // Compared with what was written, not with `style.width`: CSS serializes a fractional width
+    // with fewer digits, so that comparison never matches and every call would rewrite it.
+    if (this.#documentWidth === width) return
 
+    this.#documentWidth = width
+    const value = `${width}px`
     this.#extent.style.width = value
     for (const layer of this.layers) layer.spacer.style.width = value
   }
