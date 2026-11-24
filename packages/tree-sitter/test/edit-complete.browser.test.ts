@@ -72,20 +72,22 @@ async function expectFresh(actual: EditorSyntaxResult, text: string, range: Edit
 browserTest(
   'colors a block comment longer than any lookahead as a comment right after an edit',
   async () => {
-    // Removing the enclosing backticks turns 25,000 units of what was a string into one comment.
+    // The whole file is one string. Removing its backticks turns the first 25,000 units into one
+    // comment and the rest back into code, which a reparse takes far longer than a frame to read.
     const comment = '/*\n' + 'let apparentlyCode = 5;\n'.repeat(1000) + '*/\n'
-    let text = '`' + comment + '`\n' + TAIL
+    const code = TAIL.replaceAll('`', "'")
+    let text = '`' + comment + code + '`\n'
     const buffer = createDocumentSession(text)
     const { document } = rangeDocument('comment.ts', text)
     await document.run()
     await settle(document, text.length)
-    const close = text.indexOf('`', 1)
+    const close = text.length - 2
     const edits: TextEdit[] = [
       { from: close, to: close + 1, text: '' },
       { from: 0, to: 1, text: '' },
     ]
     const change = buffer.applyEdits(edits)
-    text = comment + '\n' + TAIL
+    text = comment + code + '\n'
     await document.edit(change.edits)
     const visible = { startIndex: 0, endIndex: 1_000 }
     const answer = await document.runtime.queryRange(visible)
