@@ -6455,7 +6455,7 @@ describe('Editor', () => {
       await vi.waitFor(() => expect(ranges.some((range) => range.startIndex > 0)).toBe(true))
     })
 
-    it('keeps a look-ahead on its way when the same or an overlapping window is asked for', async () => {
+    it('sends a look-ahead asked for again while on its way only once', async () => {
       const asked: EditorSyntaxRange[] = []
       const signals: (AbortSignal | undefined)[] = []
       editor.addPlugin(
@@ -6484,13 +6484,10 @@ describe('Editor', () => {
       syntax.prefetchVisibleRange(1, lookAhead, { delayMs: 0 })
       await vi.waitFor(() => expect(asked).toContainEqual(lookAhead))
       const first = asked.findIndex((range) => range.startIndex === lookAhead.startIndex)
-      // The same window, and a window overlapping it as when the scroll turns around.
+      // The same window again: it joins the request on its way instead of sending it again.
       syntax.prefetchVisibleRange(1, lookAhead, { delayMs: 0 })
-      syntax.prefetchVisibleRange(1, { startIndex: 380000, endIndex: 630000 }, { delayMs: 0 })
       await flushSyntaxDebounce()
-      const lookAheadAsks = asked.filter(
-        (range) => range.startIndex >= 380000 && range.endIndex - range.startIndex >= 200000,
-      )
+      const lookAheadAsks = asked.filter((range) => range.startIndex === lookAhead.startIndex)
       expect(lookAheadAsks).toHaveLength(1)
       expect(signals[first]?.aborted).toBe(false)
     })

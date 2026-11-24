@@ -756,6 +756,8 @@ type PendingRangeQuery = {
   pinned: boolean
   /** The pending cancellation after the last caller left; cancelled when the query settles. */
   release: EditorScheduledWorkHandle | null
+  /** Unique per query: two queries for the same offsets, such as across analysis generations, differ. */
+  readonly id: number
   admission: 'cache' | 'return-only'
   work:
     | { readonly kind: 'queued'; readonly generation: number | null }
@@ -811,6 +813,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   >()
   private ranges = new Map<string, ReadyRange>()
   private queries = new Map<string, PendingRangeQuery>()
+  /** Identifies each range query, so its release timer belongs to it alone. */
+  private nextQueryId = 0
   private rangePoint: DocumentSyncPoint | null = null
   private stoppedWarmGeneration: number | null = null
 
@@ -1156,6 +1160,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       holders: 0,
       pinned: false,
       release: null,
+      id: this.nextQueryId++,
       admission: 'cache',
       work: { kind: 'queued', generation },
       promise: interruptible(
@@ -1209,7 +1214,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     if (this.signal.aborted) return
     query.release?.cancel()
     query.release = this.scheduler.schedule({
-      key: `${this.runtimeSessionId}:orphaned-range:${rangeKey(query.range)}`,
+      key: `${this.runtimeSessionId}:orphaned-range:${query.id}`,
       taskClass: 'background-derived',
       delayMs: ORPHANED_QUERY_HANDOFF_MS,
       run: () => {

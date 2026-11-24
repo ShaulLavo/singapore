@@ -265,8 +265,8 @@ const RAPID_INPUT_TIMING_NAMES = new Set([
 ])
 const VISIBLE_SYNTAX_OVERSCAN_CHARS = 20_000
 // The look-ahead is asked for whole on each viewport change, so its size is per-step worker work.
-// 64,000 characters ahead (about a thousand lines) asked a 50,000-line file for 3 million
-// characters over a 60-step scroll, against 13 million with 250,000; 32,000 saved little more.
+// 64,000 characters ahead (about a thousand lines) asked a 50,000-line file for about 5.5 million
+// characters over a 60-step scroll, against 9 to 12 million with 250,000.
 const VISIBLE_SYNTAX_TRAILING_CHARS = 32_000
 const VISIBLE_SYNTAX_LEAD_CHARS = 64_000
 const VISIBLE_SYNTAX_MAX_LEAD_CHARS = 192_000

@@ -448,6 +448,53 @@ describe('syntax range contributor lifetime', () => {
     }
   })
 
+  it.each(['late', 'failed'] as const)(
+    'ignores a replaced look-ahead that lands %s over a ready viewport',
+    async (outcome) => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(250))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: `replaced-${outcome}` })
+      const colored = (range: EditorSyntaxRange, color: string) => ({
+        ...createEmptySyntaxResult({ requestedRanges: [range] }),
+        tokens: EditorTokenStore.fromTokens([{ start: 120, end: 121, style: { color } }]),
+      })
+      const held = Promise.withResolvers<void>()
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        // The first look-ahead is held, then answers red or fails; everything else answers green.
+        if (range.startIndex === 0 && range.endIndex === 250) {
+          await held.promise
+          if (outcome === 'failed') throw new Error('look-ahead failed')
+          return colored(range, 'red')
+        }
+        return colored(range, 'green')
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 100,
+        endIndex: 160,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        view.syntax.prefetchVisibleRange(1, { startIndex: 0, endIndex: 250 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        // A newer, overlapping window replaces it.
+        view.syntax.prefetchVisibleRange(1, { startIndex: 50, endIndex: 300 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(3))
+        held.resolve()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(view.syntax.status).toBe('ready')
+        expect(view.syntax.initialHighlightStatus).not.toBe('error')
+        expect(view.syntax.tokens.toTokens()).toContainEqual({
+          start: 120,
+          end: 121,
+          style: { color: 'green' },
+        })
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    },
+  )
+
   it('keeps the tokens of an answer that stays cached through a newer analysis', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'cached-colors' })
