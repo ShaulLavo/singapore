@@ -163,7 +163,7 @@ type PendingSyntaxWarm = {
 type CachedSyntaxFoldRange = {
   readonly range: EditorSyntaxRange
   readonly folds: readonly FoldRange[]
-  /** The answer's brackets, moved through the edits since it, as its folds are. */
+  /** The answer's brackets; none once an edit is projected through it, until a new answer. */
   readonly brackets: readonly BracketInfo[]
   readonly result: EditorSyntaxResult
   readonly snapshot: DocumentTextSnapshot
@@ -245,11 +245,11 @@ export class EditorSyntaxController {
   #foldCoverage:
     | { readonly kind: 'full' }
     | { readonly kind: 'range'; readonly range: EditorSyntaxRange }
-    // The provider answered that it cannot answer for the range: settled, with nothing accepted.
-    | { readonly kind: 'unavailable'; readonly range: EditorSyntaxRange }
     | null = null
+  // Only bracket arrays: holding the answers would keep their records alive after the range cache
+  // drops them.
   #joinedBrackets: {
-    readonly answers: readonly CachedSyntaxFoldRange[]
+    readonly sources: readonly (readonly BracketInfo[])[]
     readonly brackets: readonly BracketInfo[]
   } | null = null
   #cachedSyntaxRanges: readonly EditorSyntaxRange[] = []
@@ -956,7 +956,9 @@ export class EditorSyntaxController {
     this.#foldCoverage = null
     this.#parsedSyntaxContentVersion = null
     this.#projectSyntaxRangeCache(change)
-    this.#projectBrackets(change)
+    // An edit can change which brackets pair, so there are none until its answer lands: Jump to
+    // Bracket and the match highlight do nothing for that moment rather than pair the wrong ones.
+    this.#currentBrackets = []
     if (this.#retainedHighlighter) {
       this.#refreshHighlightTokens(this.options.getDocumentVersion(), change, { delayMs: 0 })
     }
@@ -1659,14 +1661,11 @@ export class EditorSyntaxController {
     configurationGeneration: number,
   ): boolean {
     const session = this.options.getSession()
-    if (loadResult.skipApply) return false
+    if (loadResult.skipApply || !syntaxResultCoversRange(loadResult.result, loadResult.range))
+      return false
     if (!session || documentVersion !== this.options.getDocumentVersion()) return false
     if (configurationGeneration !== this.#initialHighlightConfigurationGeneration) return false
     if (loadResult.contentVersion !== this.#syntaxContentVersion) return false
-    if (!syntaxResultCoversRange(loadResult.result, loadResult.range)) {
-      this.#settleUnavailableViewport(loadResult, configurationGeneration)
-      return false
-    }
 
     this.#applyingRenderData = true
     try {
@@ -1698,23 +1697,9 @@ export class EditorSyntaxController {
       (snapshot &&
         loadResult.range?.startIndex === 0 &&
         loadResult.range.endIndex >= snapshot.length)
-    // A look-ahead or background answer fills in around the viewport. Once an answer for the
-    // viewport is accepted, the rows it covers keep its colors: a late answer from the same parse
-    // can still take over the folds and brackets, which it reports alike, but never recolors them.
-    // The answer's tokens are patched once with the painted ones there, and that store is both
-    // merged in and taken as the copy colors, so a copy matches the screen.
-    const optional = loadResult.source === 'prefetch' || loadResult.source === 'warm'
-    const acceptedRange = optional ? this.#acceptedViewportRange() : null
-    const keptRange =
-      acceptedRange && loadResult.range && syntaxRangesIntersect(loadResult.range, acceptedRange)
-        ? acceptedRange
-        : null
-    const answerTokens = this.#highlighterSession
-      ? null
-      : this.#answerTokensKeeping(result.tokens, keptRange)
-    const nextTokens = answerTokens
-      ? this.#syntaxTokensForResult(answerTokens, loadResult.range)
-      : this.#currentTokens
+    const nextTokens = this.#highlighterSession
+      ? this.#currentTokens
+      : this.#syntaxTokensForResult(result.tokens, loadResult.range)
     // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
     // window that does not cover the viewport would pair brackets across the part it never parsed
     // and report the rest of the document as being in the host language.
@@ -1744,7 +1729,7 @@ export class EditorSyntaxController {
     }
     if (!this.#highlighterSession) {
       const status: SettledHighlightStatus = result.degraded ? 'degraded' : 'painted'
-      const copyTokens = loadResult.range && answerTokens ? answerTokens : nextTokens
+      const copyTokens = loadResult.range ? toEditorTokenStore(result.tokens) : nextTokens
       this.#rangeTokenOwner =
         contributor && canOwnRanges ? { store: nextTokens, snapshot: contributor.snapshot } : null
       this.rangeCopyOwner = contributor ? { store: copyTokens, contributor } : null
@@ -1791,41 +1776,6 @@ export class EditorSyntaxController {
     }
     this.options.notifyChange(null)
     return true
-  }
-
-  /**
-   * The provider could not answer for the rows on screen. Nothing more is asked for them until
-   * the view, the text or the parse changes, so the answer is final: `degraded`, with no brackets
-   * or injected spans from some other range left standing in for theirs.
-   */
-  #settleUnavailableViewport(
-    loadResult: EditorSyntaxLoadResult,
-    configurationGeneration: number,
-  ): void {
-    if (loadResult.result.degraded?.kind !== 'range-unavailable') return
-    if (loadResult.source !== 'visible' || !loadResult.range || loadResult.firstRows) return
-    if (!this.#shouldApplySyntaxFolds(loadResult)) return
-
-    if (loadResult.updatesDocument) this.#acceptSyntaxDocument(loadResult.contentVersion)
-    this.syntaxStatus = 'degraded'
-    this.#foldCoverage = { kind: 'unavailable', range: loadResult.range }
-    this.#rangeScopeOwner = null
-    this.#currentBrackets = []
-    this.#currentInjections = []
-    if (!this.#highlighterSession) {
-      this.#commitInitialHighlightStatus(
-        'degraded',
-        () => this.options.notifyViewUpdate(),
-        configurationGeneration,
-      )
-    }
-    this.options.log?.({
-      action: 'editor.syntax.range_unavailable',
-      level: 'info',
-      syntax: { ...this.fallbackFoldSelection, range: loadResult.range },
-    })
-    this.options.notifyViewUpdate()
-    this.options.notifyChange(null)
   }
 
   #shouldApplySyntaxFolds(loadResult: EditorSyntaxLoadResult): boolean {
@@ -1967,34 +1917,20 @@ export class EditorSyntaxController {
   }
 
   #syntaxTokensForResult(
-    store: EditorTokenStore,
+    tokens: EditorTokenInput,
     range: EditorSyntaxRange | null,
   ): EditorTokenStore {
+    const store = toEditorTokenStore(tokens)
     if (!range) return store
     return mergeSyntaxRangeTokens(this.#currentTokens, store, range)
   }
 
-  /** The answer's tokens, with the painted ones in place of its own across the kept range. */
-  #answerTokensKeeping(
-    tokens: EditorTokenInput,
-    keptRange: EditorSyntaxRange | null,
-  ): EditorTokenStore {
-    const store = toEditorTokenStore(tokens)
-    if (!keptRange) return store
-    return store.replaceOffsetRange(keptRange.startIndex, keptRange.endIndex, this.#currentTokens)
-  }
-
-  /** The range whose answer was accepted for the rows on screen, while it still covers them. */
-  #acceptedViewportRange(): EditorSyntaxRange | null {
-    const coverage = this.#foldCoverage
-    if (coverage?.kind !== 'range' || !this.#foldsCoverViewport()) return null
-    return coverage.range
-  }
-
   /**
-   * Readies the range from the answers that cover it together: their folds, and their brackets
-   * joined into one list. The answers meeting a covered range join without a hole, and a match
-   * pairs brackets by scanning the list, so the joined list pairs as one answer's would.
+   * Readies the range from the answers that cover it: the newest answer covering it alone, or
+   * else every answer meeting it. Their folds repaint it and their brackets are joined into one
+   * list; the answers meeting a covered range join without a hole, and a match pairs brackets by
+   * scanning the list, so the joined list pairs as one answer's would. The range is `ready` only
+   * when none of those answers is degraded, because a degraded answer may lack its brackets.
    */
   #applyCachedSyntaxFolds(range: EditorSyntaxRange): void {
     const folds = cachedSyntaxFoldsForRange(
@@ -2004,37 +1940,38 @@ export class EditorSyntaxController {
     )
     if (!folds) return
 
+    const cache = this.#cachedSyntaxFoldRanges
+    const covering = cache.findLast(
+      (cached) => syntaxRangeCoverage(range, [cached.range]) === 'full',
+    )
+    const answers = covering
+      ? [covering]
+      : cache.filter((cached) => syntaxRangesIntersect(cached.range, range))
     this.#foldCoverage = { kind: 'range', range }
-    this.syntaxStatus = 'ready'
-    this.#currentBrackets = this.#cachedBracketsForRange(range)
+    this.syntaxStatus = answers.some((answer) => answer.result.degraded) ? 'degraded' : 'ready'
+    this.#currentBrackets = this.#joinBrackets(answers.map((answer) => answer.brackets))
     this.options.setSyntaxFolds(folds)
     this.options.notifyViewUpdate()
   }
 
   /**
-   * The newest answer covering the range on its own gives its list as it is. Otherwise the lists
-   * of the answers meeting it are joined, one bracket per offset with the newest answer's winning,
-   * and the join is kept while the same answers meet the range, as they do across a scroll.
+   * One bracket per offset, the newest answer's winning. The join is kept while the same lists
+   * meet the range, as they do across a scroll.
    */
-  #cachedBracketsForRange(range: EditorSyntaxRange): readonly BracketInfo[] {
-    const cache = this.#cachedSyntaxFoldRanges
-    const covering = cache.findLast(
-      (cached) => syntaxRangeCoverage(range, [cached.range]) === 'full',
-    )
-    if (covering) return covering.brackets
-    const answers = cache.filter((cached) => syntaxRangesIntersect(cached.range, range))
+  #joinBrackets(sources: readonly (readonly BracketInfo[])[]): readonly BracketInfo[] {
+    if (sources.length === 1) return sources[0]!
     const joined = this.#joinedBrackets
     if (
-      joined?.answers.length === answers.length &&
-      joined.answers.every((answer, index) => answer === answers[index])
+      joined?.sources.length === sources.length &&
+      joined.sources.every((source, index) => source === sources[index])
     )
       return joined.brackets
     const byIndex = new Map<number, BracketInfo>()
-    for (const answer of answers) {
-      for (const bracket of answer.brackets) byIndex.set(bracket.index, bracket)
+    for (const source of sources) {
+      for (const bracket of source) byIndex.set(bracket.index, bracket)
     }
     const brackets = Array.from(byIndex.values()).sort((left, right) => left.index - right.index)
-    this.#joinedBrackets = { answers, brackets }
+    this.#joinedBrackets = { sources, brackets }
     return brackets
   }
 
@@ -2090,18 +2027,6 @@ export class EditorSyntaxController {
       change.snapshot.length,
       change.textSnapshot,
     )
-  }
-
-  /**
-   * Bracket Jump and the match highlight read the list before the edit's own answer lands, so it
-   * has to hold offsets into the edited text. One edit moves it; several clear it until the
-   * answer.
-   */
-  #projectBrackets(change: DocumentSessionChange): void {
-    const edit = change.edits[0]
-    if (!edit) return
-    this.#currentBrackets =
-      change.edits.length === 1 ? projectBracketsThroughEdit(this.#currentBrackets, edit) : []
   }
 
   #applyHighlightResult(
@@ -2642,22 +2567,8 @@ const projectCachedSyntaxFoldRanges = (
       range: nextRange,
       newestRanges: projectCachedSyntaxRanges(range.newestRanges, edit, documentLength),
       folds: projectFoldRangesThroughInsertion(range.folds, edit, documentLength),
-      brackets: projectBracketsThroughEdit(range.brackets, edit),
+      brackets: [],
     })
-  }
-  return projected
-}
-
-/** Moves brackets through one edit: those it replaced are gone, those after it shift. */
-const projectBracketsThroughEdit = (
-  brackets: readonly BracketInfo[],
-  edit: TextEdit,
-): readonly BracketInfo[] => {
-  const delta = edit.text.length - (edit.to - edit.from)
-  const projected: BracketInfo[] = []
-  for (const bracket of brackets) {
-    if (bracket.index < edit.from) projected.push(bracket)
-    else if (bracket.index >= edit.to) projected.push({ ...bracket, index: bracket.index + delta })
   }
   return projected
 }
