@@ -1,5 +1,10 @@
 import { createTreeSource, disposeTreeSources } from './factories/source'
-import { createTreeDocument, disposeTreeDocuments } from './factories/document'
+import {
+  awaitsCompleteAnalysis,
+  completeResult,
+  createTreeDocument,
+  disposeTreeDocuments,
+} from './factories/document'
 import { readAll } from '../../editor/test/factories/snapshotText'
 import { afterEach } from 'vitest'
 afterEach(() => {
@@ -520,23 +525,6 @@ async function settledResult(
   if (!awaitsCompleteAnalysis(first)) return first
   await completeResult(document.runtime)
   return document.runtime.queryRange(range)
-}
-
-function completeResult(runtime: TreeSitterSyntaxSession): Promise<void> {
-  if (!awaitsCompleteAnalysis(runtime.getResult())) return Promise.resolve()
-  return new Promise((resolve) => {
-    const unsubscribe = runtime.subscribeResults((_read, result) => {
-      if (awaitsCompleteAnalysis(result)) return
-      unsubscribe()
-      resolve()
-    })
-  })
-}
-
-/** A partial result that its complete analysis has not answered yet, with a result or without. */
-function awaitsCompleteAnalysis(result: EditorSyntaxResult): boolean {
-  const analysis = result.projection.analysis
-  return analysis?.kind === 'partial' && !analysis.background
 }
 
 function assertPaint(

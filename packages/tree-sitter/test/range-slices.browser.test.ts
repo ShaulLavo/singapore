@@ -11,7 +11,7 @@ import { __treeSitterWorkerInternalsForTests } from '../src/treeSitter/treeSitte
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
-import { createTreeDocument, disposeTreeDocuments } from './factories/document'
+import { completeResult, createTreeDocument, disposeTreeDocuments } from './factories/document'
 import { disposeTreeSources } from './factories/source'
 
 // A range longer than this many units runs in slices inside the worker; a shorter one is one query.
@@ -99,6 +99,9 @@ it('colors a long range exactly as the same text asked for in short windows', as
   expect(text.length).toBeGreaterThan(30 * SLICE_UNITS)
   const doc = open(worker(), 'range-slices', text)
   await doc.run()
+  // The whole tree and the injected grammars first: until they are in, answers are provisional.
+  await doc.runtime.queryRange({ startIndex: text.length - 64, endIndex: text.length })
+  await completeResult(doc.runtime)
   const whole = { startIndex: 0, endIndex: text.length }
   // Longer than a slice, so the worker runs it in slices and pauses between them.
   const long = await doc.runtime.queryRange(whole)
@@ -136,6 +139,7 @@ it('answers another document while a long range query is still running', async (
   await large.run()
   // Complete the analysis first, so the long query below is one request against the full tree.
   await large.runtime.queryRange({ startIndex: text.length - 64, endIndex: text.length })
+  await completeResult(large.runtime)
   expect(large.runtime.getResult().projection.analysis?.kind).toBe('full')
 
   const order: string[] = []
@@ -177,6 +181,7 @@ it('stops a long range query when its document closes on a page without shared m
   const large = open(backend, 'range-slices-closing', text)
   await large.run()
   await large.runtime.queryRange({ startIndex: text.length - 64, endIndex: text.length })
+  await completeResult(large.runtime)
   expect(large.runtime.getResult().projection.analysis?.kind).toBe('full')
   answers.length = 0
 

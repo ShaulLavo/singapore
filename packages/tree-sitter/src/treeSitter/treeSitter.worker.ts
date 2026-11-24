@@ -232,6 +232,8 @@ const languageDescriptors = new Map<TreeSitterLanguageId, TreeSitterLanguageDesc
 const languageDescriptorOrder: TreeSitterLanguageId[] = []
 let languageRegistryVersion = 0
 const runtimePromises = new Map<TreeSitterLanguageId, Promise<Runtime>>()
+/** The languages whose grammar has finished loading, so a parse with one starts at once. */
+const loadedRuntimes = new Set<TreeSitterLanguageId>()
 const sliceRuntimes = new Map<number, Promise<SliceRuntime>>()
 const sliceGrammars = new Map<string, Promise<Language>>()
 const documentCaches = new Map<string, DocumentCache>()
@@ -424,6 +426,10 @@ const ensureRuntime = async (languageId: TreeSitterLanguageId): Promise<Runtime>
 
   const promise = createRuntime(languageId)
   runtimePromises.set(languageId, promise)
+  const loaded = (): void => {
+    if (runtimePromises.get(languageId) === promise) loadedRuntimes.add(languageId)
+  }
+  void promise.then(loaded, () => undefined)
   return promise
 }
 
@@ -1894,6 +1900,7 @@ const parseParsedDocument = async (
     await appendInjectionLayers(parsedLayers, options.rootLayer, context)
     if (options.injectionRanges) {
       await appendCarriedLayers(parsedLayers, context)
+      carryMissingLanguages(context)
     }
     const layers = orderParsedLayers(options.rootLayer, parsedLayers)
 
@@ -1915,6 +1922,16 @@ const parseParsedDocument = async (
   } finally {
     disposeAvailableReusableLayers(reusableLayers)
   }
+}
+
+/**
+ * An edit looks for injections in the ranges it changed, and nowhere else. The layers the old
+ * document lacked outside them are still lacking, so the grammars it was waiting for are still
+ * reported: a caller that loads them gets those layers with the next parse of this version,
+ * which looks at the whole tree again. Dropping them here would lose the colors for good.
+ */
+const carryMissingLanguages = (context: ParseInjectionContext): void => {
+  for (const id of context.oldDocument?.missingLanguages ?? []) context.missingLanguages.add(id)
 }
 
 const prepareReusableLayers = (
@@ -2003,6 +2020,7 @@ const appendInjectionLayers = async (
       options.missingLanguages.add(plan.languageId)
       continue
     }
+    if (leavesInjectionForLater(plan, options)) continue
     try {
       const layer = await parseInjectionLayer(plan, options)
       layers.push(layer)
@@ -2017,6 +2035,19 @@ const appendInjectionLayers = async (
       )
     }
   }
+}
+
+/**
+ * An edit does not wait for a grammar that is registered and still downloading or compiling: the
+ * key is applied to the document's own tree and answered. The load is started, and the grammar
+ * is reported as lacking, so the caller parses this version again when it is in and gets the
+ * layer then. A parse from the start, and that second parse, wait for the grammar as before.
+ */
+const leavesInjectionForLater = (plan: InjectionPlan, options: ParseInjectionContext): boolean => {
+  if (!options.injectionRanges || loadedRuntimes.has(plan.languageId)) return false
+  void ensureRuntime(plan.languageId).catch(() => undefined)
+  options.missingLanguages.add(plan.languageId)
+  return true
 }
 
 const isNonProgressingInjection = (
@@ -4524,6 +4555,7 @@ const disposeAll = (): void => {
     void promise.then(disposeRuntime).catch(() => undefined)
   }
   runtimePromises.clear()
+  loadedRuntimes.clear()
   activeRuntimeTasks.clear()
   activeWorkerTasks.clear()
   disposedRuntimeSessions.clear()
@@ -4543,6 +4575,7 @@ const disposeRuntimeForLanguage = (languageId: TreeSitterLanguageId): void => {
   if (!runtime) return
 
   runtimePromises.delete(languageId)
+  loadedRuntimes.delete(languageId)
   void runtime.then(disposeRuntime).catch(() => undefined)
 }
 

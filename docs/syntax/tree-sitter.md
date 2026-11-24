@@ -160,9 +160,36 @@ Injected parse trees must retain parent snapshot identity and produce highlights
 
 Injected grammars load on demand: the worker names the ones a document's injections need and has not got. A range-mode session does not hold its first answer for them. The document is colored by its own grammar at once, the injected grammars load behind that, and the document is parsed again (its tree is reused, the injected layers are added) and published as a new result, which the editor asks about like any other new analysis. This happens once per grammar and worker; later documents find the grammar registered. A full-mode session, whose caller gets one answer, still waits for them.
 
-The early answer says so: its `analysis.kind` is `partial`, the same signal a large file's first screen gives, on the analysis result and on every range answered before the grammars are in. The complete result says `full` and is published to result listeners, so a caller that asks for ranges itself asks again when it is told, as it does for a large file. The wait belongs to the text, not to the request that started it: a revision that leaves the text unchanged keeps it and is told of the result, and an edit ends it, so an edit that removes the injection settles without the grammar.
-
 A grammar that cannot be loaded does not hold back the others. The ones that load are registered together, and the failure is reported as `degraded` on that version's results, range answers included. A grammar nothing provides, or one whose assets failed, is asked for once per session. In Markdown a fence whose grammar cannot be loaded or parsed is reported as `injection-failed` and left to the Markdown colors; the document still parses and edits.
+
+### Partial and full
+
+A range-mode session says how final its answers are in `analysis.kind`, on the analysis result and on every range answer. Two facts about the current version of the text decide it, and they are tracked apart:
+
+- **Whole tree.** The worker holds the document's whole tree, not only a large file's first 65,536 units.
+- **Injections pending.** The document lacks injected layers whose grammars can still be loaded.
+
+`full` means the whole tree is there and no injection is pending. Anything else is `partial`.
+
+| State                                      | Says                                                       | How it is left                                                                                                                                       |
+| ------------------------------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First part (large file, no whole tree yet) | `partial`                                                  | The background parse answers: whole tree. Or the worker gives up on it: first part, final.                                                           |
+| Whole tree, injections pending             | `partial`                                                  | The grammars are registered and the same version is parsed again: complete. Or the grammars fail, or the worker gives up: complete, with the reason. |
+| Complete                                   | `full`, with `degraded` when an injection could not be had | An edit that leaves the document lacking a loadable grammar: back to injections pending.                                                             |
+| First part, final                          | `partial` with `background` set                            | A new parse of the text.                                                                                                                             |
+
+The rules:
+
+1. New text is parsed from the start. A file up to 65,536 units has its whole tree with the first answer. A larger one is answered from its first part, and the whole tree follows in the background.
+2. An edit is applied to the whole tree whenever the worker has one, whatever the injections' state. A grammar still downloading never turns a keystroke into a parse of the file, and the worker does not hold the edit for it either: it reports the grammar as lacking and starts loading it. Only an edit of a first-part document is parsed from the start, as there is no whole tree to edit.
+3. With the whole tree, every range is answered at once from it. A range past a large file's first part waits for the whole tree and for nothing else. In the first-part state a range still waits for the grammars its own rows need, as it always has.
+4. A `partial` answer carries colors only. Folds, brackets, errors and injected spans come with the complete result, so nothing structural is shown and then changed. A version is published once, when it is complete: the whole tree arriving while injections are pending is not published by itself.
+5. An edit looks for injections in the ranges it changed. The worker keeps reporting the grammars the rest of the document was already lacking, so they stay pending across the edit and their layers arrive for the edited version.
+6. `partial` becomes `full` once per version, by publication, and a version that is `full` stays `full`. The next version may be `partial` again: a typed injection whose grammar is not loaded, or one carried by rule 5.
+7. Giving up is final for the version. When the worker abandons the background parse with the whole tree in hand, the result is `full` and `degraded` says the injected grammars were not ready; nothing more is promised. Without the whole tree the result stays `partial` and `background` records the reason. Neither is tried again for that version; the next edit starts over, and a grammar that has arrived by then is used.
+8. A revision that leaves the text unchanged changes no state. It is told of the result when it is published.
+
+A full-mode session, whose caller gets one answer, waits for the grammars instead and is always `full`.
 
 ## Acceptance Criteria
 

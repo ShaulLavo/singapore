@@ -212,44 +212,92 @@ describe('the first answer and injected grammars', () => {
   // The document's injections need these until they are registered.
   type Injecting = { needs: readonly string[] }
 
+  type Identified = { documentId: string; languageId: string; snapshotVersion: number }
+  const answer = (payload: Identified) => ({
+    documentId: payload.documentId,
+    languageId: payload.languageId,
+    snapshotVersion: payload.snapshotVersion,
+  })
+  const parsed = (payload: Identified, missingLanguages: readonly string[]) => ({
+    ...answer(payload),
+    status: 'parsed' as const,
+    changedRanges: [],
+    missingLanguages,
+    timings: [],
+  })
+  const rangeAnswer = (
+    payload: Identified & { range: { startIndex: number; endIndex: number } },
+  ) => ({
+    ...answer(payload),
+    range: payload.range,
+    captures: [],
+    folds: [],
+    brackets: [],
+    errors: [],
+    injections: [],
+    timings: [],
+  })
+
+  /**
+   * `edits`, when given, makes the backend apply edits to the tree it has, as the worker does,
+   * and records them. Without it an edit is refused and the session parses from the start.
+   */
   const injectingBackend = (
     registered: string[][],
     parses: number[],
     document: Injecting = { needs: ['astro'] },
+    edits?: number[],
   ): TreeSitterBackend => {
     const missing = () => document.needs.filter((id) => !registered.some((ids) => ids.includes(id)))
-    const answer = (payload: {
-      documentId: string
-      languageId: string
-      snapshotVersion: number
-    }) => ({
-      documentId: payload.documentId,
-      languageId: payload.languageId,
-      snapshotVersion: payload.snapshotVersion,
-    })
     return {
       ...recordingBackend(registered),
       parse: async (payload) => {
         parses.push(payload.snapshotVersion)
+        return parsed(payload, missing())
+      },
+      edit: async (payload) => {
+        if (!edits) return undefined
+        edits.push(payload.snapshotVersion)
+        // The worker looks for injections where the edit changed the text, and keeps reporting
+        // the grammars the rest of the document was already waiting for.
+        return parsed(payload, missing())
+      },
+      queryRange: async (payload) => rangeAnswer(payload),
+    }
+  }
+
+  /**
+   * A file long enough to be answered from its first part. A range past that part has no
+   * answer until the whole tree is parsed.
+   */
+  const largeFileBackend = (registered: string[][], log: string[]): TreeSitterBackend => {
+    const missing = () => (registered.some((ids) => ids.includes('astro')) ? [] : ['astro'])
+    let wholeTree = false
+    return {
+      ...recordingBackend(registered),
+      parse: async (payload) => {
+        log.push(`${payload.resultMode} parse of version ${payload.snapshotVersion}`)
+        wholeTree = payload.resultMode !== 'bootstrap'
+        if (wholeTree) return parsed(payload, missing())
         return {
-          ...answer(payload),
-          status: 'parsed',
-          changedRanges: [],
-          missingLanguages: missing(),
-          timings: [],
+          ...parsed(payload, []),
+          analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
         }
       },
-      queryRange: async (payload) => ({
-        ...answer(payload),
-        range: payload.range,
-        captures: [],
-        folds: [],
-        brackets: [],
-        errors: [],
-        injections: [],
-        timings: [],
-      }),
+      edit: async (payload) => {
+        log.push(`edit to version ${payload.snapshotVersion}`)
+        return parsed(payload, missing())
+      },
+      queryRange: async (payload) => (wholeTree ? rangeAnswer(payload) : undefined),
     }
+  }
+
+  /** The promise's value, or `waiting` when it has not settled after a few turns of the loop. */
+  const soon = <T>(promise: Promise<T>): Promise<T | 'waiting'> =>
+    Promise.race([promise, turns(20).then(() => 'waiting' as const)])
+
+  const turns = async (count: number): Promise<void> => {
+    for (let turn = 0; turn < count; turn += 1) await flushPromises()
   }
 
   const delayedAstro = () => {
@@ -450,6 +498,230 @@ describe('the first answer and injected grammars', () => {
     await vi.waitFor(() => expect(produced).toBe(1))
 
     expect(analysisOf(await lease.queryRange(range))).toBe('full')
+  })
+
+  it('gives a pending range its colors only, and its folds with the complete result', async () => {
+    const registered: string[][] = []
+    const astro = delayedAstro()
+    const fold = { startIndex: 0, endIndex: 21, startLine: 0, endLine: 2, type: 'fence' }
+    const backend: TreeSitterBackend = {
+      ...injectingBackend(registered, []),
+      queryRange: async (payload) => ({ ...rangeAnswer(payload), folds: [fold] }),
+    }
+    const session = createTreeDocument({
+      documentId: 'colors-only',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```',
+      backend,
+      syntaxMode: 'range',
+      languageResolver: astro.resolver,
+    })
+    const published: EditorSyntaxResult[] = []
+    session.runtime.subscribeResults((_read, result) => published.push(result))
+    await session.run()
+    const range = { startIndex: 0, endIndex: 21 }
+
+    // A partial answer is provisional: nothing structural is shown and then changed.
+    const pending = await session.runtime.queryRange(range)
+    expect(analysisOf(pending)).toBe('partial')
+    expect(pending.folds).toEqual([])
+
+    astro.release()
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+
+    const complete = await session.runtime.queryRange(range)
+    expect(analysisOf(complete)).toBe('full')
+    expect(complete.folds).toEqual([fold])
+    session.dispose()
+  })
+
+  it('applies an edit to the tree it has while an injected grammar is still loading', async () => {
+    const registered: string[][] = []
+    const parses: number[] = []
+    const edits: number[] = []
+    const astro = delayedAstro()
+    const session = createTreeDocument({
+      documentId: 'typed-while-loading',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```',
+      backend: injectingBackend(registered, parses, { needs: ['astro'] }, edits),
+      syntaxMode: 'range',
+      languageResolver: astro.resolver,
+    })
+    expect(analysisOf(await session.run())).toBe('partial')
+
+    // The grammar is still downloading. The key is applied to the tree the worker already has:
+    // it is not a reason to parse the file from the start.
+    const edited = await session.edit([{ from: 0, to: 0, text: ' ' }])
+    expect(edits).toEqual([2])
+    expect(parses).not.toContain(3)
+    expect(analysisOf(edited)).toBe('partial')
+
+    astro.release()
+    await vi.waitFor(() => expect(analysisOf(session.runtime.getResult())).toBe('full'))
+
+    // The edited version gets its injected layers from a parse of that same version.
+    expect(registered).toEqual([['container'], ['astro']])
+    expect(session.runtime.getSnapshotVersion()).toBe(2)
+    session.dispose()
+  })
+
+  it('keeps a large file partial until its injected grammars are in, across an edit', async () => {
+    const registered: string[][] = []
+    const log: string[] = []
+    const astro = delayedAstro()
+    const text = '```astro\n<Card />\n```\n' + 'x'.repeat(70_000)
+    const session = createTreeDocument({
+      documentId: 'large',
+      languageId: 'container',
+      text,
+      backend: largeFileBackend(registered, log),
+      syntaxMode: 'range',
+      languageResolver: astro.resolver,
+    })
+    const published: EditorSyntaxResult[] = []
+    session.runtime.subscribeResults((_read, result) => published.push(result))
+    expect(analysisOf(await session.run())).toBe('partial')
+
+    // A range past the first part waits for the whole tree and for nothing else: it is answered
+    // from that tree while the grammar is still loading, and says the answer is not final.
+    const far = { startIndex: text.length - 10, endIndex: text.length }
+    const answered = await soon(session.runtime.queryRange(far))
+    expect(answered).not.toBe('waiting')
+    expect(analysisOf(answered as EditorSyntaxResult)).toBe('partial')
+    // Nothing is published for the whole tree alone: what is on screen is replaced once, by
+    // the complete result.
+    expect(published).toEqual([])
+
+    // Typing on another line edits that tree; the document is still waiting for the grammar.
+    const edited = await session.edit([{ from: text.length, to: text.length, text: 'y' }])
+    expect(analysisOf(edited)).toBe('partial')
+    expect(log.slice(0, 3)).toEqual([
+      'bootstrap parse of version 1',
+      'parseOnly parse of version 1',
+      'edit to version 2',
+    ])
+
+    astro.release()
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+
+    // The grammar arrives for the edited version, which is completed without a parse from the
+    // start.
+    expect(registered).toEqual([['container'], ['astro']])
+    expect(analysisOf(published[0]!)).toBe('full')
+    expect(published[0]!.projection.snapshot.version).toBe(2)
+    expect(analysisOf(await session.runtime.queryRange(far))).toBe('full')
+    expect(log.filter((entry) => entry.startsWith('bootstrap'))).toHaveLength(1)
+    session.dispose()
+  })
+
+  it('reports injected layers the worker gave up on, and stops calling the result partial', async () => {
+    const registered: string[][] = []
+    const cancelled = { cancel: true }
+    const backend: TreeSitterBackend = {
+      ...recordingBackend(registered),
+      parse: async (payload) => {
+        const loaded = registered.some((ids) => ids.includes('astro'))
+        if (!loaded) return parsed(payload, ['astro'])
+        if (!cancelled.cancel) return parsed(payload, [])
+        // The grammar's own download outlasted the parse that was to use it.
+        return {
+          ...parsed(payload, []),
+          status: 'cancelled',
+          analysis: {
+            kind: 'cancelled',
+            coveredRange: { startIndex: 0, endIndex: 0 },
+            reason: 'budget',
+            elapsedMs: 20_000,
+            budgetMs: 20_000,
+            timings: [],
+          },
+        }
+      },
+      edit: async (payload) => parsed(payload, ['astro']),
+      queryRange: async (payload) => rangeAnswer(payload),
+    }
+    const session = createTreeDocument({
+      documentId: 'gave-up',
+      languageId: 'container',
+      text: '```astro\n<Card />\n```',
+      backend,
+      syntaxMode: 'range',
+      languageResolver: { resolveTreeSitterLanguage: async (id) => descriptor(id) },
+    })
+    const published: EditorSyntaxResult[] = []
+    session.runtime.subscribeResults((_read, result) => published.push(result))
+    expect(analysisOf(await session.run())).toBe('partial')
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+
+    // The document's own tree is whole, so the result is final for this version and says what
+    // it lacks. A range answer says the same instead of promising more.
+    const failure = { kind: 'optional-phase-failed', phase: 'load injected languages' }
+    expect(analysisOf(published[0]!)).toBe('full')
+    expect(published[0]!.degraded).toMatchObject(failure)
+    const ranged = await session.runtime.queryRange({ startIndex: 0, endIndex: 8 })
+    expect(analysisOf(ranged)).toBe('full')
+    expect(ranged.degraded).toMatchObject(failure)
+
+    // The next edit starts over: the worker still reports the layers as lacking, and this time
+    // the grammar is in.
+    cancelled.cancel = false
+    expect(analysisOf(await session.edit([{ from: 0, to: 0, text: ' ' }]))).toBe('partial')
+    await vi.waitFor(() => expect(published).toHaveLength(2))
+    expect(analysisOf(published[1]!)).toBe('full')
+    expect(published[1]!.degraded).toBeNull()
+    session.dispose()
+  })
+
+  it('keeps the first part of a large file whose whole parse the worker gave up on', async () => {
+    const registered: string[][] = []
+    const parses: string[] = []
+    const backend: TreeSitterBackend = {
+      ...recordingBackend(registered),
+      parse: async (payload) => {
+        parses.push(String(payload.resultMode))
+        if (payload.resultMode === 'bootstrap')
+          return {
+            ...parsed(payload, []),
+            analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
+          }
+        return {
+          ...parsed(payload, []),
+          status: 'cancelled',
+          analysis: {
+            kind: 'cancelled',
+            coveredRange: { startIndex: 0, endIndex: 0 },
+            reason: 'budget',
+            elapsedMs: 20_000,
+            budgetMs: 20_000,
+            timings: [],
+          },
+        }
+      },
+      queryRange: async () => undefined,
+    }
+    const session = createTreeDocument({
+      documentId: 'no-whole-tree',
+      languageId: 'container',
+      text: 'x'.repeat(70_000),
+      backend,
+      syntaxMode: 'range',
+      languageResolver: { resolveTreeSitterLanguage: async (id) => descriptor(id) },
+    })
+    const published: EditorSyntaxResult[] = []
+    session.runtime.subscribeResults((_read, result) => published.push(result))
+    expect(analysisOf(await session.run())).toBe('partial')
+    await session.runtime.queryRange({ startIndex: 69_000, endIndex: 70_000 })
+    await vi.waitFor(() => expect(published).toHaveLength(1))
+
+    // There is no whole tree to call complete: the result stays partial and records why. It is
+    // final for this version, so asking again does not start the parse again.
+    const analysis = published[0]!.projection.analysis
+    expect(analysis).toMatchObject({ kind: 'partial', background: { reason: 'budget' } })
+    await session.runtime.queryRange({ startIndex: 69_000, endIndex: 70_000 })
+    await turns(3)
+    expect(parses).toEqual(['bootstrap', 'parseOnly'])
+    session.dispose()
   })
 
   it('waits for injected grammars when the caller is given one complete answer', async () => {

@@ -11,7 +11,29 @@ import {
   type DocumentSourceConnection,
   type DocumentContributionSource,
 } from '@singapore-editor/core/internal/document-worker'
+import type { EditorSyntaxResult } from '@singapore-editor/core/syntax'
 import { TreeSitterSyntaxSession, type TreeSitterSyntaxSessionOptions } from '../../src/session'
+
+/**
+ * Resolves once the session has published the result its complete analysis ends with. A
+ * range-mode session answers first from what it has, and says `partial` until then.
+ */
+export function completeResult(runtime: TreeSitterSyntaxSession): Promise<void> {
+  if (!awaitsCompleteAnalysis(runtime.getResult())) return Promise.resolve()
+  return new Promise((resolve) => {
+    const unsubscribe = runtime.subscribeResults((_read, result) => {
+      if (awaitsCompleteAnalysis(result)) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}
+
+/** A partial result that its complete analysis has not answered yet, with a result or without. */
+export function awaitsCompleteAnalysis(result: EditorSyntaxResult): boolean {
+  const analysis = result.projection.analysis
+  return analysis?.kind === 'partial' && !analysis.background
+}
 
 const disposers = new Set<() => void>()
 export function disposeTreeDocuments() {
