@@ -3130,10 +3130,27 @@ const rangeSlices = (layer: ParsedLayer, range: TreeSitterSyntaxRange): TreeSitt
   if (endIndex - startIndex <= RANGE_SLICE_UNITS) return [range]
 
   const slices: TreeSitterSyntaxRange[] = []
-  for (let start = startIndex; start < endIndex; start += RANGE_SLICE_UNITS) {
-    slices.push({ startIndex: start, endIndex: Math.min(endIndex, start + RANGE_SLICE_UNITS) })
+  for (let start = startIndex; start < endIndex;) {
+    const end = sliceEnd(layer.tree, start + RANGE_SLICE_UNITS, endIndex)
+    slices.push({ startIndex: start, endIndex: end })
+    start = end
   }
   return slices
+}
+
+/**
+ * Where a slice that would end at `boundary` ends: there, or at the end of the token it would cut.
+ * A node without children that crossed the boundary would be matched by every slice it reaches,
+ * and each of them would run its predicates over its whole text; a two-million-character
+ * identifier was read 245 times. A node with children still meets every slice it spans, which
+ * costs its matches again but reads no text unless a predicate is written on it.
+ */
+const sliceEnd = (tree: Tree, boundary: number, limit: number): number => {
+  if (boundary >= limit) return limit
+  const token = tree.rootNode.descendantForIndex(boundary)
+  if (!token || token.childCount > 0) return boundary
+  if (token.startIndex >= boundary || token.endIndex <= boundary) return boundary
+  return Math.min(limit, token.endIndex)
 }
 
 /**
@@ -3391,8 +3408,24 @@ const bridgeNewlineRange = (
 const sortCaptures = (captures: TreeSitterCapture[]): TreeSitterCapture[] =>
   captures.sort((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
 
+// A total order: folds on the same lines are ordered by where they start and end, then by node
+// type. A range answered in slices reports them in another order than one answered whole, and a
+// sort that left ties in arrival order would pass that difference on.
 const sortFolds = (folds: FoldRange[]): FoldRange[] =>
-  folds.sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine)
+  folds.sort(
+    (a, b) =>
+      a.startLine - b.startLine ||
+      a.endLine - b.endLine ||
+      a.startIndex - b.startIndex ||
+      a.endIndex - b.endIndex ||
+      compareText(a.type, b.type) ||
+      compareText(a.languageId ?? '', b.languageId ?? ''),
+  )
+
+const compareText = (left: string, right: string): number => {
+  if (left === right) return 0
+  return left < right ? -1 : 1
+}
 
 const sortBrackets = (brackets: BracketInfo[]): BracketInfo[] =>
   brackets.sort((a, b) => a.index - b.index || a.depth - b.depth)
@@ -4580,6 +4613,12 @@ const executeRequest = async (
       payload.includeRetention ? inspectRetention() : undefined,
     )
   }
+  if (payload.type === 'closeRuntimeSession') {
+    // The close itself follows once the session's requests have settled. This reaches a request
+    // that is running in slices at its next pause, and stops it there.
+    markRuntimeSessionDisposed(payload.runtimeSessionId)
+    return Promise.resolve(undefined)
+  }
   if (payload.type === 'disposeDocument') {
     markRuntimeSessionDisposed(payload.runtimeSessionId)
     const released = awaitRuntimeTasks(payload.runtimeSessionId).then(() =>
@@ -4843,6 +4882,7 @@ export const __treeSitterWorkerInternalsForTests = {
   collectTreeData,
   flattenLayerSlices,
   rangeSlices,
+  sortFolds,
   appendItems,
   rangeSpan,
   readTreeSitterPieceTableInput,

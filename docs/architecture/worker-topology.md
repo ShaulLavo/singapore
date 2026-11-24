@@ -65,7 +65,9 @@ Limits:
 Disposal and restart:
 
 - `disposeDocument(documentId)` invalidates owner source chunk accounting and posts
-  `disposeDocument` to the worker. The worker forgets the document at once and frees its trees
+  `disposeDocument` to the worker once the document's requests have settled. When some are still
+  running it first posts `closeRuntimeSession`, which stops a sliced range query at its next
+  pause. The worker forgets the document at once and frees its trees
   after the first 20 ms without a new request, a few milliseconds at a time, answering when the
   last one is freed, so a document opened in its place is not parsed behind the release. An idle
   fence waits for it.

@@ -543,6 +543,62 @@ describe('range queries that run in slices', () => {
     await expect(flatten).rejects.toThrow('Tree-sitter request cancelled')
     expect(asked).toEqual([])
   })
+
+  it('never ends a slice inside a token, so one long token is matched by one slice', async () => {
+    // `const NAME = 1` where the name alone is longer than twelve slices.
+    const name = node('identifier', 6, 100_006)
+    const root = Object.assign(node('program', 0, 100_020), {
+      children: [node('const', 0, 5), name, node('=', 100_007), node('number', 100_009)],
+    })
+    const reported: number[] = []
+    const highlight = {
+      captures: (_root: Node, asks: QueryRange) => {
+        if (name.startIndex >= asks.endIndex || name.endIndex <= asks.startIndex) return []
+        reported.push(asks.startIndex)
+        return [{ name: 'constant', node: name }]
+      },
+      captureRanges: (_root: Node, asks: QueryRange) => {
+        if (name.startIndex >= asks.endIndex || name.endIndex <= asks.startIndex) return []
+        reported.push(asks.startIndex)
+        return [{ name: 'constant', startIndex: name.startIndex, endIndex: name.endIndex }]
+      },
+    } as unknown as Query
+    const tree = fakeTree(root)
+    const layer = {
+      id: 'root',
+      key: 'root',
+      kind: 'root',
+      parentId: null,
+      parentLanguageId: null,
+      languageId: 'typescript',
+      depth: 0,
+      tree,
+      ranges: [treeSitterRange(0, 100_020)],
+    } as SliceLayer
+    const whole = { startIndex: 0, endIndex: 100_020 }
+    const slices = rangeSlices(layer, whole)
+    const sliced = emptyResult()
+
+    await flattenLayerSlices(
+      layer,
+      highlightedRuntime(highlight) as unknown as Parameters<typeof collectFolds>[1],
+      sliced,
+      cancellationContext(),
+      { options: { ...options, range: whole }, pacing: alwaysDue(), slices },
+    )
+
+    // The first slice runs to the end of the name instead of stopping 8,192 units in, and the
+    // slices still cover the whole range without a gap.
+    expect(slices[0]).toEqual({ startIndex: 0, endIndex: 100_006 })
+    expect(slices.at(-1)!.endIndex).toBe(100_020)
+    for (const [index, slice] of slices.entries())
+      expect(slice.startIndex).toBe(index === 0 ? 0 : slices[index - 1]!.endIndex)
+    // Each time a slice reports the name, the query has run its predicates over all of its text.
+    expect(reported).toEqual([0])
+    expect(sliced.captures).toEqual([
+      { startIndex: 6, endIndex: 100_006, captureName: 'constant', languageId: 'typescript' },
+    ])
+  })
 })
 
 const sourceCleanup: Array<() => void> = []
@@ -621,10 +677,31 @@ function nestedNode(depth: number): TestNode {
 
 function fakeTree(root: TestNode, hasError = true): Tree {
   Object.defineProperty(root, 'hasError', { value: hasError, configurable: true })
+  Object.defineProperty(root, 'descendantForIndex', {
+    value: (index: number) => smallestNodeAt(root, index),
+    configurable: true,
+  })
   return {
     rootNode: root,
     walk: () => new FakeTreeCursor(root),
   } as unknown as Tree
+}
+
+/** The smallest node that contains `index`, as `Node.descendantForIndex` answers. */
+function smallestNodeAt(root: TestNode, index: number) {
+  let current = root
+  for (;;) {
+    const child = current.children.find(
+      (candidate) => candidate.startIndex <= index && candidate.endIndex > index,
+    )
+    if (!child) break
+    current = child
+  }
+  return {
+    startIndex: current.startIndex,
+    endIndex: current.endIndex,
+    childCount: current.children.length,
+  }
 }
 
 function highlightedRuntime(query: Query): Parameters<typeof collectCaptures>[1] {
