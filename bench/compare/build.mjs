@@ -51,7 +51,7 @@ async function aliases() {
 function minimalEntry(editor, highlighted) {
   const entries = {
     singapore: `import '@singapore-editor/core/style.css'; import { Editor } from '@singapore-editor/core/editor';
-      ${highlighted ? "import { typeScript } from '@singapore-editor/tree-sitter-languages';" : ''}
+      ${highlighted ? "import { typeScript } from '@singapore-editor/tree-sitter-languages/typescript';" : ''}
       const editor = new Editor(document.body, { ${highlighted ? 'plugins: [typeScript()]' : ''} });
       ${highlighted ? "editor.setText('', { languageId: 'typescript' });" : ''}`,
     codemirror: `import { EditorView } from '@codemirror/view'; import { EditorState } from '@codemirror/state';

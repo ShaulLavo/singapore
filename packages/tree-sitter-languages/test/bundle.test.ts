@@ -68,6 +68,24 @@ it('emits only the grammars a typeScript() app can load, in one chunk per langua
   ])
 }, 60_000)
 
+it('keeps one chunk per language when an app uses every language plugin', async () => {
+  const plugins = ['css', 'html', 'javaScript', 'json', 'markdown', 'tsx', 'typeScript']
+  const files = await emittedFiles(
+    plugins
+      .map((name) => `import { ${name} } from '${dist}${name.toLowerCase()}.js'`)
+      .concat([`console.log(${plugins.map((name) => `${name}()`).join(', ')})`])
+      .join('\n'),
+  )
+  // Queries shared between languages are copied into each language's chunk, so opening a file
+  // fetches its language chunk and nothing else.
+  const chunks = files
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => name.replace(/-[\w-]{8}\.js$/, '.js'))
+  expect(chunks.filter((name) => !/(_virtual-entry|\.assets\.generated)\.js$/.test(name))).toEqual(
+    [],
+  )
+}, 60_000)
+
 it('emits no grammar from the root entry', async () => {
   const grammars = await emittedGrammars(
     `import { TREE_SITTER_LANGUAGE_METADATA } from '${dist}index.js'\nconsole.log(TREE_SITTER_LANGUAGE_METADATA)`,
