@@ -167,6 +167,11 @@ type CachedSyntaxFoldRange = {
   readonly snapshot: DocumentTextSnapshot
   /** The parts of `range` that no later answer has covered. */
   readonly newestRanges: readonly EditorSyntaxRange[]
+  /**
+   * A partial answer: it answers its range for tokens, so the view does not ask for it again,
+   * but its empty folds are not the range's folds and give no fold coverage.
+   */
+  readonly partial: boolean
 }
 
 type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
@@ -1694,12 +1699,17 @@ export class EditorSyntaxController {
     // and report the rest of the document as being in the host language.
     // The first rows are a head start on the tokens and nothing else: the visible-range answer
     // that follows them is the one that carries scope facts and settles the highlight.
-    const applyScopeFacts = !loadResult.firstRows && this.#shouldApplySyntaxFolds(loadResult)
+    // A partial answer (a prefix parse standing in for the complete analysis) carries tokens only.
+    // Its folds, brackets and injected spans are empty because it never computed them, so the ones
+    // on screen stay, and it gives no fold coverage, live or cached, until a complete answer lands.
+    const partial = result.projection.analysis?.kind === 'partial'
+    const applyScopeFacts =
+      !partial && !loadResult.firstRows && this.#shouldApplySyntaxFolds(loadResult)
     // Ahead of the tokens, because adopting them is the only notification this pass sends the view
     // contributions: a bracket list assigned after it is a parse late to everyone reading the
     // snapshot, and on a document nobody touches after opening it that means never.
     const contributor = loadResult.range
-      ? this.#rememberSyntaxRange(loadResult.range, result)
+      ? this.#rememberSyntaxRange(loadResult.range, result, partial)
       : null
     if (applyScopeFacts) {
       this.#rangeScopeOwner = contributor
@@ -1712,7 +1722,7 @@ export class EditorSyntaxController {
       this.options.setSyntaxFolds(result.folds)
       this.options.setSyntaxCaptures?.(result.captures, result.records)
     }
-    if (!applyScopeFacts) {
+    if (!applyScopeFacts && !partial) {
       const visibleRange = this.options.getVisibleSyntaxRange()
       if (visibleRange) this.#applyCachedSyntaxFolds(visibleRange)
     }
@@ -1931,6 +1941,7 @@ export class EditorSyntaxController {
   #rememberSyntaxRange(
     range: EditorSyntaxRange,
     result: EditorSyntaxResult,
+    partial: boolean,
   ): CachedSyntaxFoldRange | null {
     const snapshot = this.options.getSession()?.getTextSnapshot()
     if (!snapshot) return null
@@ -1940,6 +1951,7 @@ export class EditorSyntaxController {
       snapshot,
       folds: result.folds,
       newestRanges: [range],
+      partial,
     }
     this.#cachedSyntaxRanges = appendCachedSyntaxRange(this.#cachedSyntaxRanges, range)
     const previous = this.#cachedSyntaxFoldRanges.map((cached) => ({
@@ -2636,6 +2648,7 @@ const cachedSyntaxFoldsForRange = (
   coverageRanges: readonly EditorSyntaxRange[],
 ): readonly FoldRange[] | null => {
   if (syntaxRangeCoverage(range, coverageRanges) !== 'full') return null
+  if (syntaxRangeCoverage(range, completeFoldRanges(cachedRanges)) !== 'full') return null
 
   const foldsByKey = new Map<string, FoldRange>()
   for (const cachedRange of cachedRanges) {
@@ -2647,6 +2660,16 @@ const cachedSyntaxFoldsForRange = (
   }
   return Array.from(foldsByKey.values()).sort(compareFoldRanges)
 }
+
+/** The ranges whose cached folds are complete answers, in order and merged. */
+const completeFoldRanges = (
+  cachedRanges: readonly CachedSyntaxFoldRange[],
+): readonly EditorSyntaxRange[] =>
+  cachedRanges.reduce<readonly EditorSyntaxRange[]>(
+    (covered, cached) =>
+      cached.partial ? covered : appendCachedSyntaxRange(covered, cached.range),
+    [],
+  )
 
 const sameSyntaxRange = (left: EditorSyntaxRange, right: EditorSyntaxRange): boolean =>
   left.startIndex === right.startIndex && left.endIndex === right.endIndex

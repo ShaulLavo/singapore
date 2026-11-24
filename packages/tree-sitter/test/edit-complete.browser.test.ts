@@ -1,6 +1,8 @@
 import { afterEach, expect, it } from 'vitest'
 import type { EditorSyntaxRange, EditorSyntaxResult } from '@singapore-editor/core/syntax'
 import { createDocumentSession, type TextEdit } from '@singapore-editor/core/document'
+import { Editor } from '@singapore-editor/core/editor'
+import { createTreeSitterLanguagePlugin } from '../src/index'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/catalog.generated'
@@ -122,18 +124,32 @@ const UNFLIPPED = HEAD + TAIL
 
 async function openDocument(documentId: string, text: string) {
   const buffer = createDocumentSession(text)
-  const { document } = rangeDocument(documentId, text)
+  const { document, backend } = rangeDocument(documentId, text)
   await document.run()
   await settle(document, text.length)
-  return { document, buffer }
+  return { document, buffer, backend }
 }
 
 // Deleting the backtick in front of TAIL turns every string in the file back into code and every
 // code span back into a string: the reparse reads the whole file, many parse slices long.
-async function unflip(documentId: string) {
-  const { document, buffer } = await openDocument(documentId, FLIPPED)
+async function unflip(documentId: string, text = FLIPPED) {
+  const { document, buffer, backend } = await openDocument(documentId, text)
   const change = buffer.applyEdits([{ from: HEAD.length, to: HEAD.length + 1, text: '' }])
-  return { document, buffer, answered: await document.edit(change.edits) }
+  return { document, buffer, backend, answered: await document.edit(change.edits) }
+}
+
+type HeldParse = { readonly release: () => void }
+
+/** Holds each complete analysis the client is asked for until `release`. */
+function holdCompleteAnalyses(backend: TreeSitterWorkerClient): HeldParse[] {
+  const held: HeldParse[] = []
+  const parse = backend.parse.bind(backend) as (...args: unknown[]) => Promise<unknown>
+  ;(backend as { parse: unknown }).parse = (...args: unknown[]) => {
+    const payload = args[0] as { readonly resultMode?: string }
+    if (payload.resultMode !== 'parseOnly') return parse(...args)
+    return new Promise((resolve) => held.push({ release: () => resolve(parse(...args)) }))
+  }
+  return held
 }
 
 function rootCaptures(result: EditorSyntaxResult) {
@@ -176,6 +192,99 @@ browserTest('completes an edit made while a slow edit before it is still partial
   const visible = { startIndex: 0, endIndex: 2_000 }
   await expectFresh(await document.runtime.queryRange(visible), text, visible)
 })
+
+browserTest(
+  'keeps the folds on screen while an edit is answered from a prefix',
+  async () => {
+    const host = globalThis.document.createElement('div')
+    host.style.cssText = 'width:1000px;height:600px;display:flex;flex-direction:column'
+    globalThis.document.body.append(host)
+    const editor = new Editor(host, {
+      plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],
+    })
+    const prototype = TreeSitterWorkerClient.prototype as unknown as {
+      parse: (...args: unknown[]) => Promise<unknown>
+    }
+    const parse = prototype.parse
+    let holding = false
+    const held: HeldParse[] = []
+    prototype.parse = function (this: unknown, ...args: unknown[]) {
+      const payload = args[0] as { readonly resultMode?: string }
+      if (!holding || payload.resultMode !== 'parseOnly') return parse.apply(this, args)
+      return new Promise((resolve) =>
+        held.push({ release: () => resolve(parse.apply(this, args)) }),
+      )
+    }
+    const analysis = () => editor['syntax']['syntaxSession']?.getResult().projection.analysis?.kind
+    try {
+      const folded = 'function folded() {\n  return 1\n}\n'
+      editor.setText(folded + FLIPPED, { languageId: 'typescript' })
+      await expect.poll(analysis, { timeout: 20_000 }).toBe('full')
+      await expect.poll(() => editor['syntaxFoldProjection']().length).toBeGreaterThan(0)
+      expect(editor.fold(0)).toBe(true)
+      const folds = editor['syntaxFoldProjection']()
+
+      holding = true
+      const at = folded.length + HEAD.length
+      editor.edit({ from: at, to: at + 1, text: '' })
+      // The complete analysis is asked for once the partial answer is in.
+      await expect.poll(() => held.length, { timeout: 20_000 }).toBeGreaterThan(0)
+      expect(analysis()).toBe('partial')
+      await nextFrame()
+      await nextFrame()
+      expect(editor['syntaxFoldProjection']()).toEqual(folds)
+
+      holding = false
+      for (const parked of held) parked.release()
+      await expect.poll(analysis, { timeout: 20_000 }).toBe('full')
+      await expect.poll(() => editor['syntaxFoldProjection']()).toEqual(folds)
+    } finally {
+      prototype.parse = parse
+      for (const parked of held) parked.release()
+      editor.dispose()
+      host.remove()
+    }
+  },
+  60_000,
+)
+
+browserTest('completes a partial edit answer across a revision that keeps the text', async () => {
+  const { document, backend, answered } = await unflip('same-text.ts')
+  expect(answered.projection.analysis?.kind).toBe('partial')
+  const published: EditorSyntaxResult[] = []
+  document.runtime.subscribeResults((_read, result) => published.push(result))
+  const held = holdCompleteAnalyses(backend)
+  const preview = await document.runtime.queryRange({ startIndex: 0, endIndex: 2_000 })
+  expect(preview.projection.analysis?.kind).toBe('partial')
+  await expect.poll(() => held.length).toBeGreaterThan(0)
+
+  // A new read of the same text, while the complete analysis is under way.
+  await document.run()
+  for (const parked of held) parked.release()
+  await backend.awaitIdleFence()
+  await expect
+    .poll(() => published.some((result) => result.projection.analysis?.kind === 'full'))
+    .toBe(true)
+  expect(document.runtime.getResult().projection.analysis?.kind).not.toBe('partial')
+})
+
+browserTest(
+  'waits for the complete tree below a block comment that runs past the prefix',
+  async () => {
+    // The comment opens above the requested range and closes past the prefix, so every prefix cut
+    // reads its body as code, with the recovery error at its opener, above the range.
+    const comment = '/*\n' + 'let apparentlyCode = 5;\n'.repeat(4_000) + '*/\n'
+    const { document, answered } = await unflip('comment-below.ts', HEAD + '`' + comment + TAIL)
+    expect(answered.projection.analysis?.kind).toBe('partial')
+    const range = { startIndex: 4_000, endIndex: 45_000 }
+    const answer = await document.runtime.queryRange(range)
+    await expectFresh(answer, HEAD + comment + TAIL, range)
+  },
+)
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
+}
 
 function tokenValues(result: EditorSyntaxResult) {
   return 'toTokens' in result.tokens ? result.tokens.toTokens() : result.tokens

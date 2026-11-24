@@ -1859,13 +1859,18 @@ const bootstrapPreviewUnsettled = (
 ): boolean => {
   // Cutting the source almost always leaves an error at the cut, past the requested range.
   // Recovery that reinterprets earlier tokens wraps them in an ERROR node, so with the full
-  // lookahead parsed, only an error touching the range puts the range in doubt.
+  // lookahead parsed, only an error between the start of the source and the end of the range
+  // puts the range in doubt: the range is then what a prefix with nothing wrong up to its end
+  // reads, the rule for a first screen that starts at offset zero. An error above a range that
+  // starts lower down counts too; it can be the opener of a block comment or string that runs past
+  // the cut, whose recovery reads the range as code.
   // Text past the cut can still change how a token in the range reads (an arrow's `=>` after a
   // parameter list longer than the lookahead, a call's `(` after a long run of blank lines), as it
   // could for an error-free prefix; the complete analysis replaces the preview when it lands.
   const lookaheadEnd = Math.min(sourceLength, range.endIndex + BOOTSTRAP_LOOKAHEAD_UNITS)
+  const fromStart = { startIndex: 0, endIndex: range.endIndex }
   if (preview.size >= lookaheadEnd)
-    return preview.layers.some((layer) => mergeRangeHasErrors(layer.tree.rootNode, range))
+    return preview.layers.some((layer) => mergeRangeHasErrors(layer.tree.rootNode, fromStart))
   // Near the end of the prefix there is less lookahead than that, and recovery in a tree cut that
   // close can reinterpret tokens before its error. Any error then waits for the complete tree.
   return preview.layers.some((layer) => layer.tree.rootNode.hasError)
