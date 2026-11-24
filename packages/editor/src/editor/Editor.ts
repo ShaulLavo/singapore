@@ -1269,10 +1269,7 @@ export class Editor {
     this.editBufferSession(session, 'setContent', [{ from: 0, to, text }], null)
   }
 
-  private renderContent(
-    text: string | TextSnapshot,
-    tokens: EditorTokenStore = EditorTokenStore.empty(),
-  ): void {
+  private renderContent(text: string | TextSnapshot, tokens?: EditorTokenStore): void {
     const savedFolds = editorBufferSession(this.session)?.view.getFoldState()
     this.fallbackFolds.reset()
     this.view.measureInitialViewport()
@@ -1284,7 +1281,7 @@ export class Editor {
       this.view.setText(textSnapshot)
       this.retagDisplayProjectionSources()
       this.syncInjectedTextRows()
-      this.adoptTokens(tokens)
+      this.adoptTokens(tokens ?? EditorTokenStore.empty(), tokens !== undefined)
     })
     this.dropManualFolds()
     this.clearSyntaxFolds()
@@ -1398,7 +1395,10 @@ export class Editor {
   }
 
   private renderDocument(document: EditorDocument): void {
-    this.renderContent(document.text, toEditorTokenStore(document.tokens ?? []))
+    this.renderContent(
+      document.text,
+      document.tokens !== undefined ? toEditorTokenStore(document.tokens) : undefined,
+    )
   }
 
   /** Turns soft wrap on or off. Returns the state actually in effect afterwards. */
@@ -2699,7 +2699,10 @@ export class Editor {
     this.adoptDocumentTabSize(attachment.textSnapshot)
     // Asked for before the text lands, so the replacement renders the restored viewport directly.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
-    this.renderContent(attachment.textSnapshot, toEditorTokenStore(document.tokens ?? []))
+    this.renderContent(
+      attachment.textSnapshot,
+      document.tokens !== undefined ? toEditorTokenStore(document.tokens) : undefined,
+    )
     // After the text is in, so what is rebuilt here is measured against the document that arrived.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyRangeDecorations()

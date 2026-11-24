@@ -1750,50 +1750,92 @@ describe('viewport syntax readiness state machine (#169)', () => {
       },
     )
 
-    it('settles initialHighlightStatus and renderDataReady independently of host copy ownership on complete and partial answers', async () => {
+    it('settles initialHighlightStatus and renderDataReady independently of host copy ownership on complete, empty-host, and partial answers', async () => {
       const buffer = createEditorTextBuffer('x\n'.repeat(100))
-      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'host-copy-settle' })
-      let partialMode = true
-      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
-        if (partialMode) {
-          return {
-            ...answerFor(range, {
-              tokens: EditorTokenStore.fromTokens([
-                { start: 1, end: 4, style: { color: 'partial' } },
-              ]),
-            }),
-            projection: {
-              ...answerFor(range).projection,
-              analysis: { kind: 'partial', coveredRange: range },
-            },
-          }
-        }
-        return answerFor(range, {
-          tokens: EditorTokenStore.fromTokens([{ start: 1, end: 4, style: { color: 'complete' } }]),
-        })
-      })
-      const view = createView(buffer, analysis, structuralProvider(query), firstFrame)
+
+      // Part A: complete viewport answer directly from initialHighlightStatus === 'loading' with host tokens.
+      const analysisA = createEditorDocumentAnalysis({ buffer, documentId: 'host-copy-complete' })
+      const viewA = createView(
+        buffer,
+        analysisA,
+        structuralProvider(async (range) =>
+          answerFor(range, {
+            tokens: EditorTokenStore.fromTokens([
+              { start: 1, end: 4, style: { color: 'complete' } },
+            ]),
+          }),
+        ),
+        firstFrame,
+      )
       try {
         const hostTokens = EditorTokenStore.fromTokens([
           { start: 0, end: 10, style: { color: 'host-copy' } },
         ])
-        view.syntax.setTokens(hostTokens)
-
-        // Part A: required non-terminal partial settles initialHighlightStatus without replacing host copyTokens.
-        view.syntax.refresh(1, null, { delayMs: 0 })
-        await vi.waitFor(() => expect(view.syntax.initialHighlightStatus).toBe('painted'))
-        expect(view.syntax.copyTokens).toBe(hostTokens)
-
-        // Part B: complete viewport answer settles status, initialHighlightStatus, and renderDataReady while keeping host copyTokens.
-        partialMode = false
-        view.syntax.refresh(1, null, { delayMs: 0 })
-        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
-        expect(view.syntax.initialHighlightStatus).toBe('painted')
-        expect(view.syntax.renderDataReady).toBe(true)
-        expect(view.syntax.copyTokens).toBe(hostTokens)
+        viewA.syntax.setTokens(hostTokens)
+        expect(viewA.syntax.initialHighlightStatus).toBe('loading')
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewA.syntax.status).toBe('ready'))
+        expect(viewA.syntax.initialHighlightStatus).toBe('painted')
+        expect(viewA.syntax.renderDataReady).toBe(true)
+        expect(viewA.syntax.copyTokens).toBe(hostTokens)
       } finally {
-        view.dispose()
-        analysis.dispose()
+        viewA.dispose()
+        analysisA.dispose()
+      }
+
+      // Part B: explicitly empty host copy store keeps ownership (does not alias empty range store singleton).
+      const analysisB = createEditorDocumentAnalysis({ buffer, documentId: 'host-copy-empty' })
+      const viewB = createView(
+        buffer,
+        analysisB,
+        structuralProvider(async (range) =>
+          answerFor(range, {
+            tokens: EditorTokenStore.fromTokens([{ start: 1, end: 4, style: { color: 'range' } }]),
+          }),
+        ),
+        firstFrame,
+      )
+      try {
+        viewB.syntax.setTokens(EditorTokenStore.empty())
+        viewB.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewB.syntax.status).toBe('ready'))
+        expect(viewB.syntax.initialHighlightStatus).toBe('painted')
+        expect(viewB.syntax.renderDataReady).toBe(true)
+        expect(viewB.syntax.copyTokens.length).toBe(0)
+      } finally {
+        viewB.dispose()
+        analysisB.dispose()
+      }
+
+      // Part C: required non-terminal partial settles initialHighlightStatus without replacing host copyTokens.
+      const analysisC = createEditorDocumentAnalysis({ buffer, documentId: 'host-copy-partial' })
+      const viewC = createView(
+        buffer,
+        analysisC,
+        structuralProvider(async (range) => ({
+          ...answerFor(range, {
+            tokens: EditorTokenStore.fromTokens([
+              { start: 1, end: 4, style: { color: 'partial' } },
+            ]),
+          }),
+          projection: {
+            ...answerFor(range).projection,
+            analysis: { kind: 'partial', coveredRange: range },
+          },
+        })),
+        firstFrame,
+      )
+      try {
+        const hostTokens = EditorTokenStore.fromTokens([
+          { start: 0, end: 10, style: { color: 'host-copy' } },
+        ])
+        viewC.syntax.setTokens(hostTokens)
+        viewC.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewC.syntax.initialHighlightStatus).toBe('painted'))
+        expect(viewC.syntax.copyTokens).toBe(hostTokens)
+      } finally {
+        viewC.dispose()
+        analysisC.dispose()
       }
     })
 
@@ -1992,6 +2034,151 @@ describe('viewport syntax readiness state machine (#169)', () => {
         viewport = { startIndex: 200, endIndex: 240 }
         expect(syntax.status).toBe('ready')
         expect(syntax.renderDataReady).toBe(true)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('does not publish a late off-screen prefetch as a full-document result if canQueryRange turns false mid-flight', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'late-prefetch-cap' })
+      let allowRange = true
+      let releasePrefetch: ((r: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange) => {
+        if (range.startIndex === 60) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            releasePrefetch = resolve
+          })
+        }
+        return answerFor(range, { brackets: [{ index: 2, char: '(', depth: 1 }] })
+      })
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query, { canQueryRange: () => allowRange }),
+        firstFrame,
+      )
+      try {
+        const hostTokens = EditorTokenStore.fromTokens([
+          { start: 0, end: 5, style: { color: 'host' } },
+        ])
+        view.syntax.setTokens(hostTokens)
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.brackets.map((b) => b.index)).toEqual([2])
+
+        view.syntax.prefetchVisibleRange(1, { startIndex: 60, endIndex: 80 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(releasePrefetch).not.toBeNull())
+
+        allowRange = false
+        releasePrefetch!(
+          answerFor(
+            { startIndex: 60, endIndex: 80 },
+            { brackets: [{ index: 62, char: ')', depth: 0 }] },
+          ),
+        )
+        await settle()
+        expect(view.syntax.status).toBe('ready')
+        expect(view.syntax.brackets.map((b) => b.index)).toEqual([2])
+        expect(view.syntax.copyTokens).toBe(hostTokens)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('retries a full-document-only provider whose prepared result was complete but degraded on explicit refresh', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'full-degraded-retry' })
+      let healthy = false
+      const analyze = vi.fn(async (): Promise<EditorSyntaxResult> => {
+        if (!healthy) {
+          return {
+            ...createEmptySyntaxResult(),
+            degraded: { kind: 'request-failed', message: 'transient' },
+          }
+        }
+        return createEmptySyntaxResult()
+      })
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze,
+        })),
+      }
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      const degradedResult = await retained.refresh(buffer.getTextSnapshot())
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getDocumentId: () => 'full-degraded-retry.ts',
+        getCurrentSessionDocumentId: () => 'full-degraded-retry.ts',
+        getLanguageId: () => 'typescript',
+        getVisibleSyntaxRange: () => firstFrame,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: 'rt-full-degraded',
+          provider,
+          configurationTag: [],
+          session: retained,
+          range: firstFrame,
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(degradedResult),
+          readyResult: degradedResult,
+          dispose: () => retained.dispose(),
+        },
+      }
+      try {
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'full-degraded-retry.ts',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntax.adoptPreparedReadyResults(prepared)
+        expect(syntax.status).toBe('degraded')
+        expect(analyze).toHaveBeenCalledTimes(1)
+
+        healthy = true
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(analyze).toHaveBeenCalledTimes(2)
       } finally {
         syntax.dispose()
         pluginHost.dispose()

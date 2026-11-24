@@ -849,18 +849,27 @@ export class EditorSyntaxController {
   }
 
   setTokens(tokens: EditorTokenStore, current = true, copyTokens = tokens): void {
+    this.#applyTokens(tokens, current, copyTokens, 'external')
+  }
+
+  #applyTokens(
+    tokens: EditorTokenStore,
+    current: boolean,
+    copyTokens: EditorTokenStore,
+    owner: 'none' | 'range' | 'external',
+  ): void {
     if (this.#rangeTokenOwner?.store !== tokens) this.#rangeTokenOwner = null
-    if (!current || this.rangeCopyOwner?.store !== copyTokens) this.rangeCopyOwner = null
+    if (!current || owner !== 'range' || this.rangeCopyOwner?.store !== copyTokens) {
+      this.rangeCopyOwner = null
+    }
     if (!current && tokens !== this.#currentTokens) {
       this.#acceptedCopyTokens = EditorTokenStore.empty()
       if (this.#copyOwner === 'range') this.#copyOwner = 'none'
     }
     this.#currentTokens = tokens
     if (current) {
-      if (this.#highlighterSession || copyTokens !== this.#rangeCopyTokens) {
-        this.#copyOwner = 'external'
-        this.rangeCopyOwner = null
-      }
+      this.#copyOwner = owner
+      if (owner !== 'range') this.rangeCopyOwner = null
       this.#acceptedCopyTokens = copyTokens
       this.#acceptedTokensDocumentVersion = this.options.getDocumentVersion()
       this.#acceptedTokensTextVersion = this.options.getTextVersion()
@@ -1973,11 +1982,11 @@ export class EditorSyntaxController {
         if (needsStatusCommit) {
           this.#commitInitialHighlightStatus(
             status,
-            () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
+            () => this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range'),
             configurationGeneration,
           )
         } else {
-          this.setTokens(this.#currentTokens, true, nextCopyTokens)
+          this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range')
         }
         notifyUpdate = true
       } else if (this.#copyOwner === 'external' && needsStatusCommit) {
@@ -2558,11 +2567,9 @@ export class EditorSyntaxController {
       }))
     }
 
-    // Full-document mode (no range queries).
-    if (
-      loadResult.range === null ||
-      !(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
-    ) {
+    // Full-document mode (strictly determined by the result's own scope, never by mid-flight
+    // capability changes on a range-scoped reply).
+    if (loadResult.range === null) {
       return this.#publishFullDocumentResult(result, guard)
     }
 
@@ -2645,13 +2652,13 @@ export class EditorSyntaxController {
               this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
               this.#commitInitialHighlightStatus(
                 settledStatus,
-                () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
+                () => this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range'),
                 guard.configurationGeneration,
               )
             } else if (needsStatusCommit) {
               this.#commitInitialHighlightStatus(
                 settledStatus,
-                () => this.setTokens(this.#currentTokens, true, this.#rangeCopyTokens),
+                () => this.#applyTokens(this.#currentTokens, true, this.#rangeCopyTokens, 'range'),
                 guard.configurationGeneration,
               )
             }
@@ -2679,7 +2686,7 @@ export class EditorSyntaxController {
       const publish =
         this.#copyOwner === 'external'
           ? () => this.options.adoptTokens(this.#currentTokens)
-          : () => this.setTokens(this.#currentTokens, true, this.#rangeCopyTokens)
+          : () => this.#applyTokens(this.#currentTokens, true, this.#rangeCopyTokens, 'range')
       this.#commitInitialHighlightStatus(status, publish, guard.configurationGeneration)
     }
 
@@ -2757,13 +2764,23 @@ export class EditorSyntaxController {
       const tokens = toEditorTokenStore(result.tokens)
       this.#rangeTokenOwner = null
       this.rangeCopyOwner = null
-      this.#copyOwner = 'external'
       const status: SettledHighlightStatus = degraded ? 'degraded' : 'painted'
-      this.#commitInitialHighlightStatus(
-        status,
-        () => this.setTokens(tokens, true, tokens),
-        guard.configurationGeneration,
-      )
+      if (this.#copyOwner === 'external') {
+        this.#commitInitialHighlightStatus(
+          status,
+          () => {
+            this.#currentTokens = tokens
+            this.options.adoptTokens(tokens)
+          },
+          guard.configurationGeneration,
+        )
+      } else {
+        this.#commitInitialHighlightStatus(
+          status,
+          () => this.#applyTokens(tokens, true, tokens, 'none'),
+          guard.configurationGeneration,
+        )
+      }
     } else if (this.#pendingReplacementMatches('syntax', guard.configurationGeneration)) {
       this.#commitInitialHighlightStatus(
         this.#lastInitialHighlightTerminalStatus ?? 'painted',
@@ -2795,7 +2812,7 @@ export class EditorSyntaxController {
           this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
           this.#commitInitialHighlightStatus(
             status,
-            () => this.setTokens(this.#currentTokens, true, nextCopyTokens),
+            () => this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range'),
             guard.configurationGeneration,
           )
         } else {
@@ -3316,7 +3333,7 @@ export class EditorSyntaxController {
       if (firstRows) {
         // Set rangeCopyOwner BEFORE painting so adoptTokens sees exact paint provenance.
         this.#paintAheadOfSettlement(
-          () => this.setTokens(this.#currentTokens, true, copyStore),
+          () => this.#applyTokens(this.#currentTokens, true, copyStore, 'range'),
           configurationGeneration,
         )
         return
@@ -3328,14 +3345,14 @@ export class EditorSyntaxController {
           this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
           this.#acceptedTokensTextVersion === this.options.getTextVersion()
         if (currentCopyAccepted || entry.copyEligible) {
-          this.setTokens(this.#currentTokens, true, copyStore)
+          this.#applyTokens(this.#currentTokens, true, copyStore, 'range')
         } else {
           this.options.adoptTokens(this.#currentTokens)
         }
         return
       }
       // Partial (non-terminal or terminal): paint provisional tokens without losing copy store.
-      this.setTokens(this.#currentTokens, true, copyStore)
+      this.#applyTokens(this.#currentTokens, true, copyStore, 'range')
       return
     }
 

@@ -1210,16 +1210,22 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return this.currentReady()
   }
 
-  clearPartialRanges(): void {
+  clearDegradedOrPartialRanges(): void {
     for (const [key, cached] of this.ranges) {
-      if (cached.result.projection.analysis?.kind === 'partial') {
+      if (
+        cached.result.projection.analysis?.kind === 'partial' ||
+        cached.result.degraded !== null
+      ) {
         this.ranges.delete(key)
         this.resultOrigins.delete(cached.result)
       }
     }
     for (const list of this.contributors.values()) {
       for (const contributor of list) {
-        if (contributor.result.projection.analysis?.kind === 'partial') {
+        if (
+          contributor.result.projection.analysis?.kind === 'partial' ||
+          contributor.result.degraded !== null
+        ) {
           this.resultOrigins.delete(contributor.result)
         }
       }
@@ -1870,12 +1876,12 @@ function structuralLease(
     const currentRead = entry.read()
     const shouldRetryFailed =
       currentRead.kind === 'failed' && failedBaseGeneration === entry.analysisGeneration
-    const shouldForceRetryTerminal =
+    const shouldForceRetryDegraded =
       options?.forceRetry === true &&
       currentRead.kind === 'ready' &&
-      isTerminalIncompleteSyntaxResult(currentRead.result)
-    if (options?.forceRetry === true) entry.clearPartialRanges()
-    if (shouldRetryFailed || shouldForceRetryTerminal) entry.refresh()
+      (isTerminalIncompleteSyntaxResult(currentRead.result) || currentRead.result.degraded !== null)
+    if (options?.forceRetry === true) entry.clearDegradedOrPartialRanges()
+    if (shouldRetryFailed || shouldForceRetryDegraded) entry.refresh()
     const generation = entry.analysisGeneration
     try {
       const base = await entry.currentBase()
