@@ -379,6 +379,73 @@ describe('DocumentSession', () => {
     expect(double.undo().textSnapshot.materializeFullText()).toBe('hello')
   })
 
+  it('breaks typing and deletion undo runs after an idle pause', () => {
+    let clock = 1000
+    const buffer = createEditorTextBuffer('', { now: () => clock })
+    const session = createEditorBufferSession(buffer)
+
+    for (const char of 'hello') {
+      session.applyText(char)
+      clock += 100
+    }
+    clock += 500
+    for (const char of 'world') {
+      session.applyText(char)
+      clock += 100
+    }
+
+    expect(session.materializeFullText()).toBe('helloworld')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('hello')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('')
+
+    session.redo()
+    session.redo()
+    expect(session.materializeFullText()).toBe('helloworld')
+
+    session.backspace()
+    clock += 100
+    session.backspace()
+    clock += 600
+    session.backspace()
+    clock += 100
+    session.backspace()
+
+    expect(session.materializeFullText()).toBe('hellow')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('hellowor')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('helloworld')
+
+    session.setSelection(0)
+    session.deleteForward()
+    clock += 100
+    session.deleteForward()
+    clock += 600
+    session.deleteForward()
+
+    expect(session.materializeFullText()).toBe('loworld')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('lloworld')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('helloworld')
+  })
+
+  it('starts a fresh spacing run after an idle pause following a lone space', () => {
+    let clock = 1000
+    const buffer = createEditorTextBuffer('', { now: () => clock })
+    const session = createEditorBufferSession(buffer)
+
+    for (const char of 'hi ') {
+      session.applyText(char)
+      clock += 50
+    }
+    clock += 600
+    for (const char of 'there') {
+      session.applyText(char)
+      clock += 50
+    }
+
+    expect(session.materializeFullText()).toBe('hi there')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('hi ')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('hi')
+  })
+
   it('undoes a held backspace in one step', () => {
     const session = createDocumentSession('hello world')
     session.setSelection(11)

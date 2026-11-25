@@ -1,6 +1,7 @@
 import { isTextareaElement } from '../dom'
 import { registerSelectionCopySource, selectionLeavesElement } from './selectionCopy'
 import { scheduleFrame, type ScheduledFrame } from './scheduleFrame'
+import { EditorWorkScheduler } from './workScheduler'
 import {
   TouchSelectionController,
   type TouchSelectionGranularity,
@@ -291,6 +292,30 @@ const LINE_END_COLUMN = Number.MAX_SAFE_INTEGER
  */
 const DELETE_READ_WINDOW = 64
 
+/**
+ * Maximum sequentially typed UTF-16 code units deferred before rewriting the hidden textarea.
+ * Keeps sequential typing bursts off the synchronous textarea DOM mutation path while bounding
+ * how far the accessible window can lag behind the document.
+ */
+const LAZY_HIDDEN_INPUT_MAX_CHARS = 128
+
+/** Delay after sequential typing stops before syncing the deferred hidden textarea window. */
+const LAZY_HIDDEN_INPUT_IDLE_FLUSH_MS = 500
+
+type LazyHiddenInputState = {
+  /** Collapsed document offset where `#hiddenInputContent` was last written. */
+  readonly baseOffset: number
+  /** Collapsed document offset after the deferred sequential inserts. */
+  readonly expectedOffset: number
+  /** Cumulative UTF-16 code units deferred since the last DOM write. */
+  readonly drift: number
+}
+
+type PendingLazyTypingState = LazyHiddenInputState & {
+  readonly snapshot: PieceTableSnapshot
+  readonly selections: SelectionSet<PieceTableAnchor>
+}
+
 const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
   'cursorColumnSelectLeft',
   'cursorColumnSelectRight',
@@ -324,6 +349,11 @@ export class InputSelectionController {
   // still be diffed against next time.
   #hiddenInputContent: HiddenInputState = EMPTY_HIDDEN_INPUT_STATE
   #writingInputWindow = false
+  #suppressHiddenInputDuringDrag = false
+  #hiddenInputDirty = false
+  #hiddenInputLazy: LazyHiddenInputState | null = null
+  #pendingLazyTyping: PendingLazyTypingState | null = null
+  readonly #hiddenInputScheduler = new EditorWorkScheduler()
   /** What a textarea composition replaces in the written window, read when it starts. */
   #compositionRange: { readonly start: number; readonly end: number } | null = null
   /** The window range an EditContext composition replaces, and where its candidate now ends. */
@@ -379,6 +409,8 @@ export class InputSelectionController {
     el.addEventListener('beforeinput', this.#handleBeforeInput)
     el.addEventListener('select', this.#syncHiddenInputSelection)
     el.addEventListener('focusin', this.#syncInputOnFocus)
+    el.addEventListener('focusout', this.#flushHiddenInputOnBlur)
+    el.addEventListener('beforecopy', this.#handleBeforeCopy)
     el.addEventListener('copy', this.handleCopy)
     el.addEventListener('cut', this.#handleCut)
     el.addEventListener('dragover', this.#handleDragOver)
@@ -406,6 +438,8 @@ export class InputSelectionController {
     el.removeEventListener('beforeinput', this.#handleBeforeInput)
     el.removeEventListener('select', this.#syncHiddenInputSelection)
     el.removeEventListener('focusin', this.#syncInputOnFocus)
+    el.removeEventListener('focusout', this.#flushHiddenInputOnBlur)
+    el.removeEventListener('beforecopy', this.#handleBeforeCopy)
     el.removeEventListener('copy', this.handleCopy)
     el.removeEventListener('cut', this.#handleCut)
     el.removeEventListener('dragover', this.#handleDragOver)
@@ -420,8 +454,11 @@ export class InputSelectionController {
     el.removeEventListener('keyup', this.#syncSessionSelectionFromDom)
     el.removeEventListener('mouseup', this.#syncSessionSelectionFromDom)
     el.ownerDocument.removeEventListener('selectionchange', this.#syncCustomSelectionFromDom)
-    this.#stopMouseSelectionDrag()
-    this.#stopMouseTextMoveDrag()
+    this.#clearLazyHiddenInput()
+    this.#hiddenInputScheduler.dispose()
+    this.#hiddenInputDirty = false
+    this.#stopMouseSelectionDrag('cancel', false)
+    this.#stopMouseTextMoveDrag('cancel', false)
   }
 
   syncNativeInputHandlers(editable: boolean): void {
@@ -1743,16 +1780,47 @@ export class InputSelectionController {
    * lives, and writing a value or a selection into it takes that candidate away from the reader
    * mid-word — or, worse, leaves it and commits it wherever the write moved the caret to.
    */
-  #refreshHiddenInputContent(): void {
+  #refreshHiddenInputContent(options: { readonly force?: boolean } = {}): void {
     const session = this.session
     if (!session) return
     if (this.#inputState.compositionActive) return
 
+    if (!options.force && this.#suppressHiddenInputDuringDrag) {
+      this.#hiddenInputDirty = true
+      this.#clearLazyHiddenInput()
+      return
+    }
+
     const snapshot = session.getSnapshot()
-    const selection = session.getSelections().selections[0]
+    const selectionSet = session.getSelections()
+    const selection = selectionSet.selections[0]
     if (!selection) return
 
-    const content = pagedHiddenInputContent(snapshot, resolveSelection(snapshot, selection))
+    const resolved = resolveSelection(snapshot, selection)
+    const pending = this.#pendingLazyTyping
+    if (
+      !options.force &&
+      pending !== null &&
+      snapshot === pending.snapshot &&
+      selectionSet === pending.selections &&
+      selectionSet.selections.length === 1 &&
+      resolved.collapsed &&
+      resolved.startOffset === pending.expectedOffset
+    ) {
+      this.#hiddenInputLazy = {
+        baseOffset: pending.baseOffset,
+        expectedOffset: pending.expectedOffset,
+        drift: pending.drift,
+      }
+      this.#hiddenInputDirty = false
+      this.#scheduleLazyHiddenInputFlush()
+      return
+    }
+
+    this.#clearLazyHiddenInput()
+    this.#hiddenInputDirty = false
+
+    const content = pagedHiddenInputContent(snapshot, resolved)
     // Selection setters may synchronously dispatch select while the window is being written.
     this.#writingInputWindow = true
     try {
@@ -1766,6 +1834,77 @@ export class InputSelectionController {
       value: content.value,
     }
     this.#transitionInputState({ type: 'hidden-input-written' })
+  }
+
+  #clearLazyHiddenInput(): void {
+    this.#hiddenInputLazy = null
+    this.#pendingLazyTyping = null
+    this.#hiddenInputScheduler.cancel('lazy-hidden-input-flush')
+  }
+
+  #scheduleLazyHiddenInputFlush(): void {
+    this.#hiddenInputScheduler.schedule({
+      key: 'lazy-hidden-input-flush',
+      taskClass: 'visible-render',
+      delayMs: LAZY_HIDDEN_INPUT_IDLE_FLUSH_MS,
+      run: () => {
+        if (this.#hiddenInputLazy === null && !this.#hiddenInputDirty) return
+        this.#refreshHiddenInputContent({ force: true })
+      },
+    })
+  }
+
+  #flushHiddenInputIfStale(): void {
+    if (this.#hiddenInputLazy === null && !this.#hiddenInputDirty) return
+    this.#refreshHiddenInputContent({ force: true })
+  }
+
+  #lazyTypingCaretBefore(session: DocumentSession, inserted: string): number | null {
+    if (this.options.view.editContext) return null
+    if (!isTextareaElement(this.options.view.inputElement) || !this.#isInputFocused()) return null
+    if (this.#hiddenInputDirty) return null
+    if (inserted.length === 0 || inserted.includes('\n') || inserted.includes('\r')) return null
+    // Require text in front of the caret in the textarea so native backward delete still fires input.
+    if (this.#hiddenInputContent.selectionStart <= 0) return null
+    if (this.#hiddenInputContent.selectionStart !== this.#hiddenInputContent.selectionEnd) {
+      return null
+    }
+
+    const primary = this.#singleSelection(session, session.getSnapshot())
+    if (!primary?.collapsed) return null
+    const lazy = this.#hiddenInputLazy
+    if (lazy !== null && lazy.expectedOffset !== primary.startOffset) return null
+    if ((lazy?.drift ?? 0) + inserted.length > LAZY_HIDDEN_INPUT_MAX_CHARS) return null
+
+    return primary.startOffset
+  }
+
+  #pendingLazyTypingAfterInsert(
+    caretBefore: number | null,
+    inserted: string,
+    change: DocumentSessionChange,
+  ): PendingLazyTypingState | null {
+    if (caretBefore === null) return null
+    if (change.kind !== 'edit' || change.edits.length !== 1) return null
+    const edit = change.edits[0]
+    if (!edit || edit.from !== caretBefore || edit.to !== caretBefore || edit.text !== inserted) {
+      return null
+    }
+    if (change.selections.selections.length !== 1) return null
+    const only = change.selections.selections[0]
+    if (!only) return null
+    const resolved = resolveSelection(change.snapshot, only)
+    const caretAfter = caretBefore + inserted.length
+    if (!resolved.collapsed || resolved.startOffset !== caretAfter) return null
+
+    const lazy = this.#hiddenInputLazy
+    return {
+      baseOffset: lazy?.baseOffset ?? caretBefore,
+      drift: (lazy?.drift ?? 0) + inserted.length,
+      expectedOffset: caretAfter,
+      selections: change.selections,
+      snapshot: change.snapshot,
+    }
   }
 
   /**
@@ -1870,8 +2009,17 @@ export class InputSelectionController {
     }
     if (!isTextareaElement(input)) return
 
-    if (input.value !== content.value) input.value = content.value
-    input.setSelectionRange(content.selectionStart, content.selectionEnd, content.direction)
+    const valueChanged = input.value !== content.value
+    if (valueChanged) input.value = content.value
+    if (
+      valueChanged ||
+      input.selectionStart !== content.selectionStart ||
+      input.selectionEnd !== content.selectionEnd ||
+      (content.selectionStart !== content.selectionEnd &&
+        input.selectionDirection !== content.direction)
+    ) {
+      input.setSelectionRange(content.selectionStart, content.selectionEnd, content.direction)
+    }
   }
 
   #installNativeInputHandlers(): void {
@@ -2031,6 +2179,7 @@ export class InputSelectionController {
     'input.compositionstart',
     (event: CompositionEvent): void => {
       const selectionChange = this.#isInputFocused() ? this.#selectionChangeBeforeEdit() : null
+      this.#clearLazyHiddenInput()
       const input = this.options.view.inputElement
       // Keep the browser's window intact as composition begins, but measure its replacement
       // against the mapped native selection so omitted display text cannot enter the document.
@@ -2670,8 +2819,10 @@ export class InputSelectionController {
     event.preventDefault()
     this.#mouseSelectionDrag.clientX = event.clientX
     this.#mouseSelectionDrag.clientY = event.clientY
-    this.#updateMouseSelectionFromDragPoint()
-    this.#updateMouseSelectionAutoScroll()
+    this.#withDragHiddenInputSuppressed(() => {
+      this.#updateMouseSelectionFromDragPoint()
+      this.#updateMouseSelectionAutoScroll()
+    })
   }
 
   #finishMouseSelectionDrag = (event: MouseEvent): void => {
@@ -2691,6 +2842,7 @@ export class InputSelectionController {
     const start = nowMs()
     if (granularity === 'column') {
       this.#commitColumnSelection(session, head.offset, start)
+      this.#flushHiddenInputIfStale()
       this.options.finishPointerJump?.()
       return
     }
@@ -2758,7 +2910,9 @@ export class InputSelectionController {
       position.affinity !== drag.press.affinity
     drag.drop =
       position.offset > drag.source.start && position.offset < drag.source.end ? null : position
-    this.#showTextMoveDropCaret(drag)
+    this.#withDragHiddenInputSuppressed(() => {
+      this.#showTextMoveDropCaret(drag)
+    })
   }
 
   #finishMouseTextMoveDrag = this.#traceInput(
@@ -2833,7 +2987,7 @@ export class InputSelectionController {
     this.applyChange(change, 'input.selection', start, { syncDomSelection: true })
   }
 
-  #stopMouseTextMoveDrag(reason: 'cancel' | 'finish' = 'cancel'): void {
+  #stopMouseTextMoveDrag(reason: 'cancel' | 'finish' = 'cancel', flush = true): void {
     const hadDrag = this.#mouseTextMoveDrag !== null
     this.#mouseTextMoveDrag = null
     this.options.el.ownerDocument.removeEventListener('mousemove', this.#updateMouseTextMoveDrag)
@@ -2842,9 +2996,10 @@ export class InputSelectionController {
 
     if (reason === 'cancel') this.options.cancelPointerJump?.()
     this.#transitionInputState({ type: 'mouse-selection-finish' })
+    if (flush && reason === 'cancel') this.#flushHiddenInputIfStale()
   }
 
-  #stopMouseSelectionDrag(reason: 'cancel' | 'finish' = 'cancel'): void {
+  #stopMouseSelectionDrag(reason: 'cancel' | 'finish' = 'cancel', flush = true): void {
     const hadDrag = this.#mouseSelectionDrag !== null
     this.#mouseSelectionDrag = null
     this.#stopMouseSelectionAutoScroll()
@@ -2856,6 +3011,17 @@ export class InputSelectionController {
     this.#transitionInputState({
       type: reason === 'finish' ? 'mouse-selection-finish' : 'mouse-selection-cancel',
     })
+    if (flush && reason === 'cancel') this.#flushHiddenInputIfStale()
+  }
+
+  #withDragHiddenInputSuppressed(run: () => void): void {
+    const previous = this.#suppressHiddenInputDuringDrag
+    this.#suppressHiddenInputDuringDrag = true
+    try {
+      run()
+    } finally {
+      this.#suppressHiddenInputDuringDrag = previous
+    }
   }
 
   #updateMouseSelectionFromDragPoint(): void {
@@ -2958,7 +3124,9 @@ export class InputSelectionController {
     this.#mouseSelectionAutoScrollFrame = scheduleFrame(() => {
       this.#mouseSelectionAutoScrollFrame = null
       if (!this.#mouseSelectionDrag) return
-      this.#updateMouseSelectionAutoScroll()
+      this.#withDragHiddenInputSuppressed(() => {
+        this.#updateMouseSelectionAutoScroll()
+      })
     })
   }
 
@@ -3011,12 +3179,19 @@ export class InputSelectionController {
     event.preventDefault()
     this.#transitionInputState({ text: inserted, type: 'beforeinput-pending' })
     this.#pendingKeyboardEdit = true
+    const lazyCaretBefore =
+      event.inputType === 'insertText' ? this.#lazyTypingCaretBefore(session, inserted) : null
     // Only a plain typed character can auto-close; insertLineBreak also yields a 1-character
     // string, and composition results must never be rewritten.
     const textChange = measureEditorPerformance('session.applyText', () =>
       event.inputType === 'insertText'
         ? this.applyTypedText(session, inserted)
         : this.#applyLineBreak(session, inserted),
+    )
+    this.#pendingLazyTyping = this.#pendingLazyTypingAfterInsert(
+      lazyCaretBefore,
+      inserted,
+      textChange,
     )
     this.#transitionInputState({ type: 'transaction-committed' })
     this.applyChange(mergeChangeTimings(textChange, selectionChange), 'input.beforeinput', start)
@@ -3228,7 +3403,12 @@ export class InputSelectionController {
     })
   })
 
+  #handleBeforeCopy = (): void => {
+    this.#flushHiddenInputIfStale()
+  }
+
   private handleCopy = (event: ClipboardEvent): void => {
+    this.#flushHiddenInputIfStale()
     // A page selection that reaches past the editor is copied whole by the document's handler.
     if (this.#selectionLeavesEditor()) return
     const payload = this.#clipboardPayload()
@@ -3260,6 +3440,7 @@ export class InputSelectionController {
     if (!event.clipboardData) return
     if (!this.options.canEditDocument()) return
     if (this.#selectionLeavesEditor()) return
+    this.#flushHiddenInputIfStale()
 
     const start = eventStartMs(event)
     const selectionChange = this.#selectionChangeBeforeEdit()
@@ -3861,7 +4042,12 @@ export class InputSelectionController {
   // See browser-quirks.md#ios-focus-selection-collapse for focusin range restoration.
   #syncInputOnFocus = (event: FocusEvent): void => {
     if (event.target !== this.options.view.inputElement) return
-    this.#refreshHiddenInputContent()
+    this.#refreshHiddenInputContent({ force: true })
+  }
+
+  #flushHiddenInputOnBlur = (event: FocusEvent): void => {
+    if (event.target !== this.options.view.inputElement) return
+    this.#flushHiddenInputIfStale()
   }
 
   #syncHiddenInputSelection = (event: Event): void => {
@@ -3900,8 +4086,13 @@ export class InputSelectionController {
     )
       return null
 
-    const start = hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionStart)
-    const end = hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionEnd)
+    const lazy = this.#hiddenInputLazy
+    const start = lazy
+      ? lazyHiddenInputOffsetToDocument(snapshot, lazy, written, input.selectionStart)
+      : hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionStart)
+    const end = lazy
+      ? lazyHiddenInputOffsetToDocument(snapshot, lazy, written, input.selectionEnd)
+      : hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionEnd)
     return session.setSelection(backward ? end : start, backward ? start : end)
   }
 
@@ -4278,6 +4469,19 @@ function beforeInputText(event: InputEvent): string | null {
   if (event.inputType === 'insertText') return event.data ?? ''
   if (event.inputType === 'insertFromComposition') return event.data ?? ''
   return null
+}
+
+function lazyHiddenInputOffsetToDocument(
+  snapshot: PieceTableSnapshot,
+  lazy: LazyHiddenInputState,
+  written: HiddenInputState,
+  offset: number,
+): number {
+  const mapped =
+    offset <= written.selectionStart
+      ? lazy.baseOffset + (offset - written.selectionStart)
+      : lazy.expectedOffset + (offset - written.selectionEnd)
+  return clamp(mapped, 0, snapshot.length)
 }
 
 function isSelectionList(

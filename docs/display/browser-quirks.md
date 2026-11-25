@@ -542,14 +542,23 @@ long-press selection is expected browser behavior. The defect is allowing two
 selection owners to handle the same editor contact.
 
 [TouchSelectionController](../../packages/editor/src/editor/touchSelection.ts)
-sets `data-editor-touch-selecting` in the capture-phase `touchstart` listener,
-before recognition and host callbacks. [style.css](../../packages/editor/src/style.css)
-makes visible rows unselectable for that contact and disables native touch
-callouts on the virtualized editor. Touch-originated row `selectstart` and
-`contextmenu` events are cancelled. Release and cancellation restore selectable
-rows, retaining CSS Highlight paint and generic DOM-range behavior. Permanently
-unselectable rows failed 15 WebKit paint assertions and four Chromium iframe
-DOM-selection assertions in the reviewed control.
+keeps `touchstart` and `touchmove` passive at rest so ordinary mobile scroll
+swipes stay on the compositor without blocking on script or triggering a frame-0
+full-editor style recalc. For a single-finger stationary hold, it delays setting
+`data-editor-touch-selecting` for 180 ms (cancelling immediately if the contact
+moves past `MOVE_SLOP`), which lands well before iOS's native long-press
+recognition while leaving scroll swipes untouched. Multi-tap contacts
+(`tapCount > 1`, where selection starts immediately) set the attribute and
+attach the non-passive `touchmove` drag listener immediately; single-finger
+holds attach the non-passive `touchmove` listener once the 550 ms hold activates
+selection. [style.css](../../packages/editor/src/style.css)
+makes visible rows unselectable while `data-editor-touch-selecting` is active
+and disables native touch callouts on the virtualized editor. Touch-originated
+row `selectstart` and `contextmenu` events are cancelled. Release and
+cancellation restore selectable rows and remove the non-passive `touchmove`
+listener, retaining CSS Highlight paint and generic DOM-range behavior.
+Permanently unselectable rows failed 15 WebKit paint assertions and four
+Chromium iframe DOM-selection assertions in the reviewed control.
 
 The portable reproduction is
 [mobile-custom-selection.html](../../examples/app/test/fixtures/mobile-custom-selection.html).

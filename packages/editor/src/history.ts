@@ -62,6 +62,66 @@ const DEFAULT_RETAINED_HISTORY_STATES = 200
 type Node<S, Sel, T> = EditorHistoryNode<S, Sel, T>
 type Nodes<S, Sel, T> = Map<HistoryNodeId, Node<S, Sel, T>>
 
+// Keeps the unsealed amendable leaf outside the committed map so every amended
+// keystroke replaces only the single tip reference in O(1) instead of cloning
+// all retained entries, while preserving immutability of prior history values
+// and letting superseded typing-run intermediates be collected immediately.
+class HistoryNodesView<S, Sel, T> implements ReadonlyMap<HistoryNodeId, Node<S, Sel, T>> {
+  public readonly base: ReadonlyMap<HistoryNodeId, Node<S, Sel, T>>
+  public readonly tip: Node<S, Sel, T>
+
+  public constructor(base: ReadonlyMap<HistoryNodeId, Node<S, Sel, T>>, tip: Node<S, Sel, T>) {
+    this.base = base
+    this.tip = tip
+  }
+
+  public get size(): number {
+    return this.base.size + 1
+  }
+
+  public get(key: HistoryNodeId): Node<S, Sel, T> | undefined {
+    return key === this.tip.id ? this.tip : this.base.get(key)
+  }
+
+  public has(key: HistoryNodeId): boolean {
+    return key === this.tip.id || this.base.has(key)
+  }
+
+  public forEach(
+    callbackfn: (
+      value: Node<S, Sel, T>,
+      key: HistoryNodeId,
+      map: ReadonlyMap<HistoryNodeId, Node<S, Sel, T>>,
+    ) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.base) callbackfn.call(thisArg, value, key, this)
+    callbackfn.call(thisArg, this.tip, this.tip.id, this)
+  }
+
+  public *entries(): MapIterator<[HistoryNodeId, Node<S, Sel, T>]> {
+    yield* this.base.entries()
+    yield [this.tip.id, this.tip]
+  }
+
+  public *keys(): MapIterator<HistoryNodeId> {
+    yield* this.base.keys()
+    yield this.tip.id
+  }
+
+  public *values(): MapIterator<Node<S, Sel, T>> {
+    yield* this.base.values()
+    yield this.tip
+  }
+
+  public [Symbol.iterator](): MapIterator<[HistoryNodeId, Node<S, Sel, T>]> {
+    return this.entries()
+  }
+}
+
+const isAmendableLeaf = <S, Sel, T>(node: Node<S, Sel, T>): boolean =>
+  node.parentId !== null && !node.sealed && node.childIds.length === 0
+
 type HistoryState<S, Sel, T> = {
   nodes: Nodes<S, Sel, T>
   rootId: HistoryNodeId
@@ -192,19 +252,30 @@ export const amendEditorHistory = <TSnapshot, TSelectionState, TTransaction = ne
   options: EditorHistoryCommitOptions<TSelectionState> = {},
 ): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
   const node = history.nodes.get(history.currentId)!
-  if (node.parentId === null || node.sealed || node.childIds.length > 0) {
+  if (!isAmendableLeaf(node)) {
     return commitEditorHistory(history, current, selections, transaction, options)
   }
 
-  const state = clone(history)
-  state.nodes.set(node.id, {
+  const amended: Node<TSnapshot, TSelectionState, TTransaction> = {
     ...node,
     revision: node.revision + 1,
     committedAt: options.committedAt ?? node.committedAt,
     snapshot: current,
     selections,
     transaction,
-  })
+  }
+  if (history.nodes instanceof HistoryNodesView && history.nodes.tip.id === node.id) {
+    return finishWithNodes(
+      history,
+      new HistoryNodesView(history.nodes.base, amended),
+      amended,
+      history.nodes.base.get(node.parentId!)!,
+      undefined,
+    )
+  }
+
+  const state = clone(history)
+  state.nodes.set(node.id, amended)
   return finish(state)
 }
 
@@ -265,6 +336,24 @@ export const replaceEditorHistoryState = <TSnapshot, TSelectionState, TTransacti
   selections: TSelectionState,
   options: { readonly clearRedo?: boolean } = {},
 ): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  if (history.nodes instanceof HistoryNodesView && history.nodes.tip.id === history.currentId) {
+    const node = history.nodes.tip
+    const replaced: Node<TSnapshot, TSelectionState, TTransaction> = {
+      ...node,
+      preferredChildId: options.clearRedo ? null : node.preferredChildId,
+      snapshot: current,
+      selections,
+    }
+    const base = history.nodes.base
+    return finishWithNodes(
+      history,
+      new HistoryNodesView(base, replaced),
+      replaced,
+      nodeParent(base, replaced),
+      undefined,
+    )
+  }
+
   const state = clone(history)
   const node = state.nodes.get(state.currentId)!
   state.nodes.set(node.id, {
@@ -393,26 +482,40 @@ const nodeParent = <S, Sel, T>(
   node: Node<S, Sel, T>,
 ): Node<S, Sel, T> | undefined => (node.parentId === null ? undefined : nodes.get(node.parentId))
 
-// The map is copied per operation. It never holds more than the retention budget,
-// so the copy is cheaper than the persistent-structure bookkeeping it replaces, and
-// it keeps every history value immutable for the barrier code that stashes one.
-const clone = <S, Sel, T>(history: EditorHistory<S, Sel, T>): HistoryState<S, Sel, T> => ({
-  nodes: new Map(history.nodes),
-  rootId: history.rootId,
-  currentId: history.currentId,
-  nextId: history.nextId,
-  clock: history.clock,
-  retainedStates: history.retainedStates,
-  graphRevision: history.graphRevision + 1,
-})
+// Structural mutations (commit, undo, redo, checkout) copy the retained map so
+// every prior history value stays immutable for callers and barrier snapshots.
+// Keystroke-frequency typing amends bypass this via HistoryNodesView.
+const clone = <S, Sel, T>(history: EditorHistory<S, Sel, T>): HistoryState<S, Sel, T> => {
+  let nodes: Nodes<S, Sel, T>
+  if (history.nodes instanceof HistoryNodesView) {
+    nodes = new Map(history.nodes.base)
+    nodes.set(history.nodes.tip.id, history.nodes.tip)
+  } else {
+    nodes = new Map(history.nodes)
+  }
+  return {
+    nodes,
+    rootId: history.rootId,
+    currentId: history.currentId,
+    nextId: history.nextId,
+    clock: history.clock,
+    retainedStates: history.retainedStates,
+    graphRevision: history.graphRevision + 1,
+  }
+}
 
 const finish = <S, Sel, T>(state: HistoryState<S, Sel, T>): EditorHistory<S, Sel, T> => {
   const current = state.nodes.get(state.currentId)!
   const parent = nodeParent(state.nodes, current)
   const preferred =
     current.preferredChildId === null ? undefined : state.nodes.get(current.preferredChildId)
+  let nodes: ReadonlyMap<HistoryNodeId, Node<S, Sel, T>> = state.nodes
+  if (isAmendableLeaf(current)) {
+    state.nodes.delete(current.id)
+    nodes = new HistoryNodesView(state.nodes, current)
+  }
   return {
-    nodes: state.nodes,
+    nodes,
     rootId: state.rootId,
     currentId: state.currentId,
     nextId: state.nextId,
@@ -437,3 +540,35 @@ const finish = <S, Sel, T>(state: HistoryState<S, Sel, T>): EditorHistory<S, Sel
       : null,
   }
 }
+
+const finishWithNodes = <S, Sel, T>(
+  previous: EditorHistory<S, Sel, T>,
+  nodes: ReadonlyMap<HistoryNodeId, Node<S, Sel, T>>,
+  current: Node<S, Sel, T>,
+  parent: Node<S, Sel, T> | undefined,
+  preferred: Node<S, Sel, T> | undefined,
+): EditorHistory<S, Sel, T> => ({
+  nodes,
+  rootId: previous.rootId,
+  currentId: previous.currentId,
+  nextId: previous.nextId,
+  clock: previous.clock,
+  retainedStates: previous.retainedStates,
+  graphRevision: previous.graphRevision + 1,
+  current: current.snapshot,
+  selections: current.selections,
+  undo: parent
+    ? {
+        snapshot: parent.snapshot,
+        selections: current.selectionsBefore,
+        transaction: current.transaction,
+      }
+    : null,
+  redo: preferred
+    ? {
+        snapshot: preferred.snapshot,
+        selections: preferred.selections,
+        transaction: preferred.transaction,
+      }
+    : null,
+})

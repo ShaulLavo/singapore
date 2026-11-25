@@ -285,4 +285,81 @@ describe('platform selections in the bounded textarea', () => {
     await commands.proofNativeInsertText('!')
     expect(editor.materializeFullText()).toBe('alpha 日本! charlie')
   })
+
+  it('skips hidden textarea rewrites during real sequential typing and pointer drag while preserving cursor jumps and IME', async () => {
+    const input = await inputAt(6)
+    let selectionWrites = 0
+    const origSetSelectionRange = input.setSelectionRange.bind(input)
+    input.setSelectionRange = ((
+      start: number | null,
+      end: number | null,
+      direction?: 'forward' | 'backward' | 'none',
+    ) => {
+      selectionWrites += 1
+      return origSetSelectionRange(start, end, direction)
+    }) as typeof input.setSelectionRange
+
+    // Plain sequential typing via real browser input skips per-key textarea rewrites.
+    await commands.proofNativeInsertText('x')
+    await commands.proofNativeInsertText('y')
+    await commands.proofNativeInsertText('z')
+    expect(editor.materializeFullText()).toBe('alpha xyzbravo charlie')
+    expect(selectionWrites).toBe(0)
+
+    // Moving the caret flushes the deferred textarea window.
+    await commands.proofKeyPress('ArrowLeft')
+    expect(selectionWrites).toBe(1)
+    expect(input.value).toBe('alpha xyzbravo charlie')
+    expect([input.selectionStart, input.selectionEnd]).toEqual([8, 8])
+
+    // On Chromium, real engine IME composition immediately after lazy typing commits at the real caret.
+    if (navigator.userAgent.includes('Chrome')) {
+      selectionWrites = 0
+      await commands.proofNativeInsertText('!')
+      expect(selectionWrites).toBe(0)
+      await commands.proofImeComposition('日本')
+      await commands.proofInsertText('日本')
+      expect(editor.materializeFullText()).toBe('alpha xy!日本zbravo charlie')
+      expect(input.value).toBe('alpha xy!日本zbravo charlie')
+    }
+
+    // Pointer drag mousemove skips textarea rewrites and syncs once on mouseup.
+    const row = host.querySelector<HTMLElement>('.editor-virtualized-row')!
+    const rect = row.getBoundingClientRect()
+    const y = rect.top + rect.height / 2
+    row.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        detail: 1,
+        clientX: rect.left + 2,
+        clientY: y,
+      }),
+    )
+    selectionWrites = 0
+    for (let step = 1; step <= 6; step += 1) {
+      document.dispatchEvent(
+        new MouseEvent('mousemove', {
+          bubbles: true,
+          cancelable: true,
+          buttons: 1,
+          clientX: rect.left + step * 12,
+          clientY: y,
+        }),
+      )
+    }
+    expect(selectionWrites).toBe(0)
+    document.dispatchEvent(
+      new MouseEvent('mouseup', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: rect.left + 72,
+        clientY: y,
+      }),
+    )
+    expect(selectionWrites).toBe(1)
+    expect(input.selectionEnd).toBeGreaterThan(input.selectionStart)
+  })
 })

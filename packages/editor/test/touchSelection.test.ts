@@ -63,15 +63,117 @@ describe('TouchSelectionController hold scheduling', () => {
     vi.useRealTimers()
   })
 
-  it('suppresses native row selection before host touch callbacks and restores it on release', () => {
+  it('delays native row selection suppression until a stationary hold and restores it on release', () => {
     const seen: string[] = []
     row.addEventListener('touchstart', () => seen.push(element.dataset.editorTouchSelecting ?? ''))
     dispatchTouch(row, 'touchstart')
-    expect(seen).toEqual(['true'])
+    expect(seen).toEqual([''])
+    expect(element.hasAttribute('data-editor-touch-selecting')).toBe(false)
+    vi.advanceTimersByTime(179)
+    expect(element.hasAttribute('data-editor-touch-selecting')).toBe(false)
+    vi.advanceTimersByTime(1)
     expect(element.dataset.editorTouchSelecting).toBe('true')
-    vi.advanceTimersByTime(550)
+    vi.advanceTimersByTime(370)
+    expect(word).toHaveBeenCalledOnce()
     dispatchTouch(row, 'touchend', 20, 0)
     expect(element.hasAttribute('data-editor-touch-selecting')).toBe(false)
+  })
+
+  it('never sets data-editor-touch-selecting or blocks touchmove during a scroll swipe', () => {
+    const originalAdd = element.addEventListener.bind(element)
+    const addSpy = vi.spyOn(element, 'addEventListener')
+    const fresh = new TouchSelectionController({
+      element,
+      positionAt: () => ({ offset: 8, affinity: 'after', displayRow: 0, rowX: 20 }),
+      claimPress: vi.fn(() => false),
+      begin: vi.fn(),
+      tap: vi.fn(),
+      select: word,
+      extend: vi.fn(),
+      scroll: vi.fn(() => false),
+      focus,
+      notify,
+    })
+    controller.dispose()
+    addSpy.mockClear()
+    fresh.install()
+
+    const touchstartCalls = addSpy.mock.calls.filter(([type]) => type === 'touchstart')
+    const touchmoveCalls = addSpy.mock.calls.filter(([type]) => type === 'touchmove')
+    expect(touchstartCalls).toHaveLength(1)
+    expect(touchstartCalls[0]?.[2]).toEqual({ passive: true, capture: true })
+    expect(touchmoveCalls).toHaveLength(1)
+    expect(touchmoveCalls[0]?.[2]).toEqual({ passive: true })
+
+    let sawSuppressAttr = false
+    const observer = new MutationObserver(() => {
+      if (element.dataset.editorTouchSelecting === 'true') sawSuppressAttr = true
+    })
+    observer.observe(element, {
+      attributes: true,
+      attributeFilter: ['data-editor-touch-selecting'],
+    })
+    addSpy.mockClear()
+
+    dispatchTouch(row, 'touchstart', 20)
+    vi.advanceTimersByTime(50)
+    const moveEvent = dispatchTouch(row, 'touchmove', 45)
+    expect(moveEvent.defaultPrevented).toBe(false)
+    expect(element.hasAttribute('data-editor-touch-selecting')).toBe(false)
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchmove')).toEqual([])
+
+    dispatchTouch(row, 'touchend', 45, 0)
+    vi.advanceTimersByTime(600)
+    expect(sawSuppressAttr).toBe(false)
+    expect(word).not.toHaveBeenCalled()
+
+    observer.disconnect()
+    fresh.dispose()
+    addSpy.mockImplementation(originalAdd)
+    addSpy.mockRestore()
+  })
+
+  it('attaches a non-passive touchmove listener only while selection drag is active and removes it on release', () => {
+    const addSpy = vi.spyOn(element, 'addEventListener')
+    const removeSpy = vi.spyOn(element, 'removeEventListener')
+    const fresh = new TouchSelectionController({
+      element,
+      positionAt: () => ({ offset: 8, affinity: 'after', displayRow: 0, rowX: 20 }),
+      claimPress: vi.fn(() => false),
+      begin: vi.fn(),
+      tap: vi.fn(),
+      select: word,
+      extend: vi.fn(),
+      scroll: vi.fn(() => false),
+      focus,
+      notify,
+    })
+    controller.dispose()
+    fresh.install()
+    addSpy.mockClear()
+    removeSpy.mockClear()
+
+    dispatchTouch(row, 'touchstart', 20)
+    vi.advanceTimersByTime(180)
+    expect(element.dataset.editorTouchSelecting).toBe('true')
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchmove')).toEqual([])
+
+    vi.advanceTimersByTime(370)
+    const dragListeners = addSpy.mock.calls.filter(([type]) => type === 'touchmove')
+    expect(dragListeners).toHaveLength(1)
+    expect(dragListeners[0]?.[2]).toEqual({ passive: false })
+
+    const dragMove = dispatchTouch(row, 'touchmove', 45)
+    expect(dragMove.defaultPrevented).toBe(true)
+
+    dispatchTouch(row, 'touchend', 45, 0)
+    const removedDragListeners = removeSpy.mock.calls.filter(([type]) => type === 'touchmove')
+    expect(removedDragListeners).toHaveLength(1)
+    expect(removedDragListeners[0]?.[1]).toBe(dragListeners[0]?.[1])
+
+    fresh.dispose()
+    addSpy.mockRestore()
+    removeSpy.mockRestore()
   })
 
   it('selects once at the hold deadline while the finger remains down', () => {
