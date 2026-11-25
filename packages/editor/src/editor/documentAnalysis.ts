@@ -1893,7 +1893,8 @@ function structuralLease(
     entry.synchronize()
     const currentRead = entry.read()
     const shouldRetryFailed =
-      currentRead.kind === 'failed' && failedBaseGeneration === entry.analysisGeneration
+      currentRead.kind === 'failed' &&
+      (options?.forceRetry === true || failedBaseGeneration === entry.analysisGeneration)
     const shouldForceRetryDegraded =
       options?.forceRetry === true &&
       currentRead.kind === 'ready' &&

@@ -2602,5 +2602,335 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('commits copyTokens and initialHighlightStatus when scrolling into a prefetched Markdown subrange after an authoritative multi-strip failure', async () => {
+      const buffer = createEditorTextBuffer('# heading\n'.repeat(40))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'md-subrange-copy-promote',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 20 && range.endIndex === 60) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'request-failed', message: 'records-failed' },
+            projection: {
+              ...createEmptySyntaxResult({ requestedRanges: [range] }).projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+          }
+        }
+        return answerFor(range, {
+          tokens: EditorTokenStore.fromTokens([
+            {
+              start: range.startIndex + 8,
+              end: range.startIndex + 10,
+              style: { color: 'md-tok' },
+            },
+          ]),
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex]),
+          },
+        })
+      })
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 40 }
+      let demandRanges: readonly EditorSyntaxRange[] = [
+        { startIndex: 0, endIndex: 40 },
+        { startIndex: 40, endIndex: 100 },
+      ]
+      let capturedRecords: EditorSyntaxResult['records'] = undefined
+      const getCapturedRecords = () => capturedRecords
+      let syntax!: EditorSyntaxController
+      const publishDemand = () =>
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'md-subrange-copy-promote',
+        getCurrentSessionDocumentId: () => 'md-subrange-copy-promote',
+        getLanguageId: () => 'markdown',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => publishDemand(),
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        setSyntaxCaptures: (_captures, nextRecords) => {
+          capturedRecords = nextRecords
+        },
+        notifyViewUpdate: publishDemand,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'md-subrange-copy-promote',
+          languageId: 'markdown',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        // Retain off-screen prefetch [40, 100) (contains token at 48..50).
+        syntax.prefetchVisibleRange(1, { startIndex: 40, endIndex: 100 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        await settle()
+        expect(syntax.copyTokens.toTokens().some((t) => t.start === 48 && t.end === 50)).toBe(false)
+
+        // Scroll to [20, 60) -> authoritative records query returns terminal partial -> settles degraded.
+        currentRange = { startIndex: 20, endIndex: 60 }
+        demandRanges = [{ startIndex: 20, endIndex: 60 }]
+        publishDemand()
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+        expect(syntax.initialHighlightStatus).toBe('degraded')
+
+        // Scroll into [45, 55) (wholly covered by prefetched [40, 100)) -> must promote copyTokens and settle painted!
+        currentRange = { startIndex: 45, endIndex: 55 }
+        demandRanges = [{ startIndex: 45, endIndex: 55 }]
+        publishDemand()
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        expect(syntax.status).toBe('ready')
+        expect(syntax.initialHighlightStatus).toBe('painted')
+        expect(getCapturedRecords()?.data).toEqual(new Uint32Array([40, 100]))
+        expect(syntax.copyTokens.toTokens().some((t) => t.start === 48 && t.end === 50)).toBe(true)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('recovers a prepared view on the first explicit refresh after another lease caused the shared base to fail', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prepared-shared-base-failure',
+      })
+      let mode: 'degraded' | 'throw' | 'healthy' = 'degraded'
+      const analyze = vi.fn(async (): Promise<EditorSyntaxResult> => {
+        if (mode === 'throw') throw new Error('shared-base-boom')
+        if (mode === 'degraded') {
+          return {
+            ...createEmptySyntaxResult(),
+            degraded: { kind: 'request-failed', message: 'initial-degraded' },
+          }
+        }
+        return createEmptySyntaxResult()
+      })
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze,
+        })),
+      }
+      const leaseA = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      const degradedResult = await leaseA.refresh(buffer.getTextSnapshot())
+
+      const sessionA = createEditorBufferSession(buffer)
+      const pluginHostA = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const syntaxA = new EditorSyntaxController({
+        pluginHost: pluginHostA,
+        getSession: () => sessionA,
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getDocumentId: () => 'prepared-shared-base-failure',
+        getCurrentSessionDocumentId: () => 'prepared-shared-base-failure',
+        getLanguageId: () => 'typescript',
+        getVisibleSyntaxRange: () => firstFrame,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: leaseA.runtimeSessionId,
+          provider,
+          configurationTag: [],
+          session: leaseA,
+          range: firstFrame,
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(degradedResult),
+          readyResult: degradedResult,
+          dispose: () => leaseA.dispose(),
+        },
+      }
+      const leaseB = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      try {
+        syntaxA.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-shared-base-failure',
+            languageId: 'typescript',
+            snapshot: sessionA.getSnapshot(),
+            textSnapshot: sessionA.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntaxA.adoptPreparedReadyResults(prepared)
+        expect(syntaxA.status).toBe('degraded')
+
+        // Lease B forces a retry of the shared base which throws, leaving the shared entry in 'failed'.
+        mode = 'throw'
+        await expect(leaseB.refreshBase({ forceRetry: true })).rejects.toThrow('shared-base-boom')
+        expect(analyze).toHaveBeenCalledTimes(2)
+
+        // Provider recovers; A's VERY FIRST explicit refresh must retry the failed shared base and settle ready!
+        mode = 'healthy'
+        syntaxA.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntaxA.status).toBe('ready'))
+        expect(analyze).toHaveBeenCalledTimes(3)
+      } finally {
+        leaseB.dispose()
+        syntaxA.dispose()
+        pluginHostA.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('queries the new viewport when it moves between promoted fast-path sampling and publication', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(140))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'promoted-viewport-move-race',
+      })
+      let snapshotVersion = 0
+      const baseAnalyze = vi.fn(async (read: { readonly text: { readonly length: number } }) => {
+        const previousVersion = snapshotVersion
+        snapshotVersion += 1
+        const base = createEmptySyntaxResult({
+          snapshot: {
+            documentId: 'promoted-viewport-move-race',
+            length: read.text.length,
+            version: snapshotVersion,
+          },
+        })
+        if (previousVersion === 0) return base
+        return {
+          ...base,
+          projection: {
+            ...base.projection,
+            invalidation: {
+              baseSnapshotVersion: previousVersion,
+              snapshotVersion,
+              ranges: [{ startIndex: 95, endIndex: 110 }],
+            },
+          },
+        }
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange) => answerFor(range))
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: baseAnalyze,
+          canQueryRange: () => true,
+          queryRange: query,
+        })),
+      }
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      let textVersion = 0
+      let movedAfterSample = false
+      let syntax!: EditorSyntaxController
+      syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'promoted-viewport-move-race',
+        getCurrentSessionDocumentId: () => 'promoted-viewport-move-race',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => textVersion,
+        getVisibleSyntaxRange: () => {
+          const sampled = currentRange
+          // Right when `#loadSyntaxResult` samples `[0, 20)` for the promoted fast path after
+          // base parse #2, move the viewport in a microtask BEFORE `apply` publishes!
+          if (snapshotVersion === 2 && !movedAfterSample) {
+            movedAfterSample = true
+            queueMicrotask(() => {
+              currentRange = { startIndex: 60, endIndex: 80 }
+              syntax.refreshVisibleRange(1, { delayMs: 0 })
+            })
+          }
+          return sampled
+        },
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'promoted-viewport-move-race',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        const change = session.applyEdits([{ from: 100, to: 100, text: 'Z' }])
+        textVersion += 1
+        syntax.acceptChange(change)
+        syntax.refresh(1, change, { delayMs: 0 })
+
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(movedAfterSample).toBe(true)
+        expect(syntax.renderDataReady).toBe(true)
+        expect(query.mock.calls.some(([r]) => r.startIndex === 60 && r.endIndex === 80)).toBe(true)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

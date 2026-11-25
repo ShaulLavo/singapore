@@ -1430,16 +1430,8 @@ export class EditorSyntaxController {
     if (!range) return
     const configurationGeneration = this.#initialHighlightConfigurationGeneration
 
-    // Honor terminal authoritative records failure without re-scheduling.
-    if (this.#isRecordsUnavailableFor(range)) {
-      this.#reconcileViewportScope(range, {
-        configurationGeneration,
-        preserveProvisionalPaint: true,
-      })
-      return
-    }
-
-    // Cache hit check (promotes copy eligibility for warmed/prefetched ranges when scrolled onto).
+    // Cache hit check (promotes copy eligibility for warmed/prefetched ranges when scrolled onto,
+    // and honors terminal authoritative records failure when multi-strip coverage is unavailable).
     if (this.#repaintCachedVisibleSyntaxRange(range, configurationGeneration)) return
 
     // If all missing parts of `range` are already terminally unavailable, reconcile & settle.
@@ -1954,6 +1946,11 @@ export class EditorSyntaxController {
     if (reconciled.kind === 'needs-authoritative-records-query') {
       this.options.adoptTokens(this.#currentTokens)
       return false
+    }
+    if (reconciled.kind === 'settled-degraded') {
+      this.rangeRequests.cancel()
+      this.options.notifyChange(null)
+      return true
     }
     if (reconciled.kind !== 'settled') return false
 
@@ -2697,7 +2694,10 @@ export class EditorSyntaxController {
             )
           }
         }
-      } else if (reconciled.kind === 'needs-authoritative-records-query') {
+      } else if (
+        reconciled.kind === 'needs-authoritative-records-query' ||
+        (!isOptional && reconciled.kind === 'incomplete')
+      ) {
         this.refreshVisibleRange(guard.documentVersion, { delayMs: 0, range: visibleRange })
       }
     } else if (
@@ -2819,7 +2819,8 @@ export class EditorSyntaxController {
     return true
   }
 
-  #publishPromotedViewport(visibleRange: EditorSyntaxRange, guard: RequestGuard): boolean {
+  #publishPromotedViewport(sampledRange: EditorSyntaxRange, guard: RequestGuard): boolean {
+    const visibleRange = this.options.getVisibleSyntaxRange() ?? sampledRange
     const reconciled = this.#reconcileViewportScope(visibleRange, {
       configurationGeneration: guard.configurationGeneration,
       preserveProvisionalPaint: false,
@@ -2859,7 +2860,10 @@ export class EditorSyntaxController {
       if (!this.#highlighterSession && !this.pendingWarm) {
         this.warmSyntaxAroundRange(guard.documentVersion, visibleRange)
       }
-    } else if (reconciled.kind === 'needs-authoritative-records-query') {
+    } else if (
+      reconciled.kind === 'incomplete' ||
+      reconciled.kind === 'needs-authoritative-records-query'
+    ) {
       this.refreshVisibleRange(guard.documentVersion, { delayMs: 0, range: visibleRange })
     }
     this.options.notifyChange(null)
