@@ -3707,5 +3707,77 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it.each(['superseded', 'range-unavailable'] as const)(
+      'falls back to full-document mode when an in-flight scroll query settles with %s after canQueryRange flips false',
+      async (outcome) => {
+        const buffer = createEditorTextBuffer('a'.repeat(200))
+        const analysis = createEditorDocumentAnalysis({
+          buffer,
+          documentId: `in-flight-capability-loss-${outcome}`,
+        })
+        let allowRange = true
+        let resolveScroll: ((result: EditorSyntaxResult) => void) | null = null
+        const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+          if (range.startIndex === 60 && range.endIndex === 80) {
+            return new Promise<EditorSyntaxResult>((resolve) => {
+              resolveScroll = resolve
+            })
+          }
+          return answerFor(range)
+        })
+        const provider: EditorSyntaxProvider = {
+          operation: createEditorStructuralOperation(() => ({
+            ...createEmptySyntaxRuntime(),
+            foldingSupport: 'supported' as const,
+            analyze: async () => ({
+              ...createEmptySyntaxResult(),
+              brackets: [{ index: 70, char: '{', depth: 1 }],
+            }),
+            canQueryRange: () => allowRange,
+            queryRange: query,
+          })),
+        }
+        const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+        try {
+          view.syntax.refresh(1, null, { delayMs: 0 })
+          await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+          view.setRange({ startIndex: 60, endIndex: 80 })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+          await vi.waitFor(() => expect(resolveScroll).not.toBeNull())
+
+          allowRange = false
+          const scrollRange: EditorSyntaxRange = { startIndex: 60, endIndex: 80 }
+          resolveScroll!(
+            outcome === 'superseded'
+              ? {
+                  ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
+                  projection: {
+                    ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }).projection,
+                    analysis: {
+                      kind: 'cancelled',
+                      reason: 'superseded',
+                      coveredRange: { startIndex: 0, endIndex: 0 },
+                      elapsedMs: 10,
+                      budgetMs: 50,
+                    },
+                  },
+                }
+              : {
+                  ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
+                  degraded: { kind: 'range-unavailable', message: 'range-disabled' },
+                },
+          )
+
+          await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+          expect(view.syntax.renderDataReady).toBe(true)
+          expect(view.syntax.brackets.map((b) => b.index)).toEqual([70])
+        } finally {
+          view.dispose()
+          analysis.dispose()
+        }
+      },
+    )
   })
 })

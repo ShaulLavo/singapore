@@ -1449,29 +1449,13 @@ export class EditorSyntaxController {
     if (!this.options.getSession()) return
     if (!this.#canQueryCurrentSyntaxRange()) {
       // If range capability was disabled after an earlier range-mode parse settled, scrolling to an
-      // uncached viewport must transition cleanly to full-document publication instead of stranding
-      // the editor in `loading`.
+      // uncached or unavailable viewport must transition cleanly to full-document publication
+      // instead of stranding the editor in `loading` or stale range degradation.
       if (
-        !this.#canProviderQuerySyntaxRange() &&
-        this.#parseState.kind === 'parsed' &&
-        this.#parseState.mode === 'range' &&
-        this.#parseState.contentVersion === this.#syntaxContentVersion &&
-        this.#parseState.parseGeneration === this.#parseGeneration &&
-        !this.#publishedScopeCoversViewport() &&
-        !this.#syntaxRequests.isActive()
+        !this.#publishedScopeCoversViewport() ||
+        (this.#publishedScope?.kind === 'range' && this.#publishedScope.unavailable)
       ) {
-        this.rangeRequests.cancel()
-        this.#prefetchRangeRequests.cancel()
-        this.#warmRangeRequests.cancel()
-        this.#pendingVisibleRange = null
-        this.#pendingPrefetch = null
-        this.pendingWarm = null
-        this.#refreshStructuralSyntax(
-          documentVersion,
-          null,
-          { delayMs: options.delayMs ?? 0 },
-          false,
-        )
+        this.#transitionRangeToFullOnCapabilityLoss(documentVersion, options.delayMs ?? 0)
       }
       return
     }
@@ -1935,11 +1919,14 @@ export class EditorSyntaxController {
         if (!this.#isRequestCurrent(guard)) return
         if (
           kind === 'visible' &&
-          result.skipApply &&
           !this.#canProviderQuerySyntaxRange() &&
-          !this.#publishedScopeCoversViewport()
+          (result.skipApply ||
+            isTerminalIncompleteSyntaxResult(result.result) ||
+            result.result.projection.analysis?.kind === 'cancelled' ||
+            result.result.degraded?.kind === 'range-unavailable' ||
+            !syntaxResultCoversRange(result.result, result.range)) &&
+          this.#transitionRangeToFullOnCapabilityLoss(documentVersion, 0)
         ) {
-          this.refreshVisibleRange(documentVersion, { delayMs: 0 })
           return
         }
         const applied = this.#applySyntaxResult(result, guard, startedAt)
@@ -1954,9 +1941,37 @@ export class EditorSyntaxController {
           this.#logOptionalSyntaxFailure(documentVersion, error, startedAt)
           return
         }
+        if (
+          !(error instanceof DOMException && error.name === 'AbortError') &&
+          !this.#canProviderQuerySyntaxRange() &&
+          this.#transitionRangeToFullOnCapabilityLoss(documentVersion, 0)
+        ) {
+          return
+        }
         this.#handleVisibleRangeRejection(range, error, startedAt, guard)
       }),
     })
+  }
+
+  #transitionRangeToFullOnCapabilityLoss(documentVersion: number, delayMs: number): boolean {
+    if (
+      this.#canProviderQuerySyntaxRange() ||
+      this.#parseState.kind !== 'parsed' ||
+      this.#parseState.mode !== 'range' ||
+      this.#parseState.contentVersion !== this.#syntaxContentVersion ||
+      this.#parseState.parseGeneration !== this.#parseGeneration ||
+      this.#syntaxRequests.isActive()
+    ) {
+      return false
+    }
+    this.rangeRequests.cancel()
+    this.#prefetchRangeRequests.cancel()
+    this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
+    this.#pendingPrefetch = null
+    this.pendingWarm = null
+    this.#refreshStructuralSyntax(documentVersion, null, { delayMs }, false)
+    return true
   }
 
   #handleVisibleRangeRejection(
