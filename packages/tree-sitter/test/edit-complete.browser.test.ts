@@ -375,28 +375,111 @@ browserTest(
   'aborting a queued replacement parse does not invalidate the prior parsed snapshot in the worker',
   async () => {
     const { document, backend } = rangeDocument('queued-abort.ts', 'const answer = 1;\n')
-    const snapshot = await document.run()
-    expect(snapshot.projection.analysis?.kind).not.toBe('cancelled')
+    const initial = await document.run()
+    expect(initial.projection.analysis?.kind).not.toBe('cancelled')
 
-    // Send a request-scoped supersedeDocument for a non-active request id (simulating a queued
-    // replacement that aborted before posting): snapshot version 1 must remain queryable.
     const worker = (backend as unknown as { worker: Worker | null }).worker
     expect(worker).not.toBeNull()
-    const runtimeSessionId = (document.runtime as unknown as { runtimeSessionId: string })
-      .runtimeSessionId
-    worker!.postMessage({
-      id: 999_999,
-      payload: {
-        type: 'supersedeDocument',
-        runtimeSessionId,
-        requestId: 999_998,
-      },
-    })
-    await backend.awaitIdleFence()
 
-    const ranged = await document.runtime.queryRange({ startIndex: 0, endIndex: 17 })
-    expect(ranged.projection.analysis?.kind).not.toBe('cancelled')
-    expect(tokenValues(ranged).length).toBeGreaterThan(0)
+    const origPostMessage = worker!.postMessage.bind(worker!)
+    const origOnMessage = worker!.onmessage
+    expect(origOnMessage).not.toBeNull()
+
+    let heldRequestId: number | null = null
+    let heldSnapshotVersion: number | null = null
+    let heldRuntimeSessionId: string | null = null
+    const postedDocumentRequestIds: number[] = []
+    const supersededRequestIds: number[] = []
+    let heldAck: MessageEvent | null = null
+    let resolveAckHeld!: () => void
+    const ackHeld = new Promise<void>((resolve) => {
+      resolveAckHeld = resolve
+    })
+    let resolveSupersedePosted!: () => void
+    const supersedePosted = new Promise<void>((resolve) => {
+      resolveSupersedePosted = resolve
+    })
+
+    worker!.postMessage = ((message: unknown, ...rest: unknown[]) => {
+      const payload = (
+        message as {
+          id?: number
+          payload?: {
+            type?: string
+            requestId?: number
+            snapshotVersion?: number
+            runtimeSessionId?: string
+          }
+        }
+      )?.payload
+      const id = (message as { id?: number })?.id
+      if ((payload?.type === 'parse' || payload?.type === 'edit') && typeof id === 'number') {
+        postedDocumentRequestIds.push(id)
+        if (heldRequestId === null) {
+          heldRequestId = id
+          heldSnapshotVersion = payload.snapshotVersion ?? null
+          heldRuntimeSessionId = payload.runtimeSessionId ?? null
+        }
+      } else if (payload?.type === 'supersedeDocument' && typeof payload.requestId === 'number') {
+        supersededRequestIds.push(payload.requestId)
+        resolveSupersedePosted()
+      }
+      return (origPostMessage as (...args: unknown[]) => void)(message, ...rest)
+    }) as Worker['postMessage']
+
+    worker!.onmessage = (event: MessageEvent) => {
+      const id = (event.data as { id?: number } | null)?.id
+      if (heldRequestId !== null && id === heldRequestId && heldAck === null) {
+        heldAck = event
+        resolveAckHeld()
+        return
+      }
+      origOnMessage!.call(worker!, event)
+    }
+
+    try {
+      // Start an edit parse and hold its real worker acknowledgement at the client boundary.
+      const v2Promise = document.edit([{ from: 15, to: 16, text: '2' }])
+      await ackHeld
+
+      // Queue v3 behind v2's held acknowledgement, wait for request-scoped supersedeDocument,
+      // then abort v3 before v2's acknowledgement is released.
+      const abortV3 = new AbortController()
+      const v3Promise = document.edit([{ from: 15, to: 16, text: '3' }], abortV3.signal)
+      await supersedePosted
+      expect(postedDocumentRequestIds).toHaveLength(1)
+      expect(supersededRequestIds).toEqual([heldRequestId])
+
+      abortV3.abort()
+      await expect(v3Promise).rejects.toMatchObject({ name: 'AbortError' })
+
+      // Release v2's acknowledgement and verify v2's parsed snapshot remains queryable in the worker.
+      origOnMessage!.call(worker!, heldAck!)
+      const v2Result = await v2Promise
+      expect(v2Result.projection.analysis?.kind).not.toBe('cancelled')
+
+      await backend.awaitIdleFence()
+      expect(postedDocumentRequestIds).toHaveLength(1)
+      expect(heldSnapshotVersion).not.toBeNull()
+      expect(heldRuntimeSessionId).not.toBeNull()
+
+      const ranged = await backend.queryRange({
+        documentId: 'queued-abort.ts',
+        runtimeSessionId: heldRuntimeSessionId!,
+        snapshotVersion: heldSnapshotVersion!,
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        range: { startIndex: 0, endIndex: 17 },
+      })
+      expect(ranged).toBeDefined()
+      expect(ranged!.analysis?.kind).not.toBe('cancelled')
+      const tokenCount = ranged!.tokens?.length ?? ranged!.tokensPacked?.starts.length ?? 0
+      expect(tokenCount).toBeGreaterThan(0)
+    } finally {
+      worker!.postMessage = origPostMessage as Worker['postMessage']
+      worker!.onmessage = origOnMessage
+    }
   },
 )
 

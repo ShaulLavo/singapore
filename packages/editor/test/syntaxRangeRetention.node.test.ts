@@ -271,6 +271,45 @@ describe('syntax refresh after an edit', () => {
     }
   })
 
+  it('settles an expanded uncovered viewport out of loading after external AbortError retries are exhausted', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(200))
+    const analysis = createEditorDocumentAnalysis({
+      buffer,
+      documentId: 'exhausted-scroll-abort-budget',
+    })
+    let expandedRangeCalls = 0
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: async (range) => {
+          if (range.endIndex > firstFrame.endIndex) {
+            expandedRangeCalls += 1
+            throw new DOMException('repeated expanded-viewport external abort', 'AbortError')
+          }
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            tokens: EditorTokenStore.fromTokens([rangeToken(range.startIndex)]),
+          }
+        },
+      })),
+    } satisfies EditorSyntaxProvider
+    const view = createView(buffer, analysis, provider, firstFrame)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+      view.setRange({ startIndex: 0, endIndex: 120 })
+      view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+      await vi.waitFor(() => expect(expandedRangeCalls).toBe(5))
+      await vi.waitFor(() => expect(view.syntax.status).not.toBe('loading'))
+      expect(expandedRangeCalls).toBe(5)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
   it('recovers readiness when logical-only synchronize advances parseId after reply arrival but before paint-gate drain', async () => {
     const rafCallbacks: FrameRequestCallback[] = []
     const originalRaf = globalThis.requestAnimationFrame

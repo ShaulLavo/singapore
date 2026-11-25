@@ -2118,7 +2118,9 @@ export class EditorSyntaxController {
                 this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
               }
             } else {
-              this.#handleVisibleRangeRejection(range, error, startedAt, guard)
+              this.#handleRequiredRangeFailure(range, guard, {
+                preserveProvisionalPaint: true,
+              })
             }
           }
           return

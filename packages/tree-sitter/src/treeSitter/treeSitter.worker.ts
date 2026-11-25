@@ -5175,6 +5175,10 @@ const executeRequest = async (
   }
 
   const runtimeSessionId = runtimeSessionIdForRequest(payload)
+  const source =
+    payload.type === 'parse' || payload.type === 'edit' || payload.type === 'projectMergeUnits'
+      ? resolveRequestSource(payload)
+      : undefined
   const isDocumentRequest = payload.type === 'parse' || payload.type === 'edit'
   if (isDocumentRequest) {
     activeDocumentRequestIds.add(request.id)
@@ -5183,10 +5187,6 @@ const executeRequest = async (
       Math.max(latestSnapshotVersions.get(payload.runtimeSessionId) ?? 0, payload.snapshotVersion),
     )
   }
-  const source =
-    payload.type === 'parse' || payload.type === 'edit' || payload.type === 'projectMergeUnits'
-      ? resolveRequestSource(payload)
-      : undefined
   const markdown =
     'languageId' in payload && (payload.languageId === 'markdown' || payload.languageId === 'mdx')
   const task =
