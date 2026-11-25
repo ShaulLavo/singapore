@@ -6,7 +6,7 @@ import type {
 } from '@singapore-editor/core/extensions'
 import type { EditorFindWidgetState } from './findController'
 import { createFindIcon, FIND_ICONS, type FindIcon } from './findIcons'
-import { FIND_MATCHES_LIMIT } from './search'
+import { FIND_MATCHES_LIMIT, FIND_SELECT_ALL_LIMIT } from './search'
 
 const EDITOR_THEME_VARIABLES = [
   '--editor-background',
@@ -97,7 +97,12 @@ export class EditorFindWidget {
       this.replaceInput.value = state.replaceString
     this.replaceRow.hidden = !state.replaceRevealed
     setToggleExpanded(this.replaceToggleButton, state.replaceRevealed, 'Replace')
-    this.count.textContent = resultCountText(state.matchesPosition, state.matchesCount)
+    this.count.textContent = resultCountText(
+      state.matchesPosition,
+      state.matchesCount,
+      state.highlightsTruncated,
+      state.searching === true,
+    )
     this.count.title = state.highlightsTruncated
       ? TRUNCATED_HIGHLIGHTS_TITLE
       : this.count.textContent
@@ -264,11 +269,18 @@ function toggleTooltip(label: string, active: boolean): string {
   return active ? `${label} (On)` : `${label} (Off)`
 }
 
-function resultCountText(position: number, count: number): string {
-  if (count === 0) return 'No results'
-  return `${position || '?'} of ${count}`
+function resultCountText(
+  position: number,
+  count: number,
+  truncated: boolean,
+  searching: boolean,
+): string {
+  if (count === 0) return searching ? 'Searching…' : 'No results'
+  const total = truncated || searching ? `${count}+` : `${count}`
+  return `${position || '?'} of ${total}`
 }
 
-// The count is exact; what stops at the cap is the painting, and saying so is the
-// only sign a reader gets that an unpainted match further down is still a match.
-const TRUNCATED_HIGHLIGHTS_TITLE = `Only the first ${FIND_MATCHES_LIMIT} results are highlighted. Every result is counted, and Find Next, Replace All and Select All Matches cover the entire text.`
+// Counting and painting both stop at FIND_MATCHES_LIMIT so huge repetitive
+// documents never trigger an unbounded rescan; saying so is the only sign a
+// reader gets that unpainted matches further down are still reachable.
+const TRUNCATED_HIGHLIGHTS_TITLE = `Only the first ${FIND_MATCHES_LIMIT} results are counted and highlighted. Find Next and Replace All cover the entire text; Select All Matches selects up to ${FIND_SELECT_ALL_LIMIT} matches.`

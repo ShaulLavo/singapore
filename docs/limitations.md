@@ -131,13 +131,14 @@ Each entry names its source and whether the limit is expected to change.
 
 ## Search and language tools
 
-### Find highlight count
+### Find highlight, count, and multi-cursor limits
 
-- Limit. The find widget retains and paints at most **19,999 matches**. `findMatches` uses the same default cap when called directly, and accepts a caller-supplied limit.
-- Source. `FIND_MATCHES_LIMIT` in [search.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/find/src/search.ts#L11), and `research` in [findController.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/find/src/findController.ts#L562).
-- What you see. Highlight coverage stops at the cap. The widget still counts all matches and can navigate beyond the painted list. Replace all and selection of all matches use a separate **1,073,741,824-match** limit, `FIND_REPLACE_ALL_LIMIT`; they do not reuse the painting cap.
-- Why. Retaining, tracking and painting every occurrence can stall editing in a repetitive document. Counting and navigation can operate without retaining the whole match set.
-- Outlook. Count and navigation beyond the paint cap are already implemented. No change is planned for the retained highlight cap.
+- Limits. The find widget counts, retains and paints at most **19,999 matches** (`FIND_MATCHES_LIMIT`), and `selectAllMatches` creates at most **10,000 cursors** (`FIND_SELECT_ALL_LIMIT`). `findMatches` uses `FIND_MATCHES_LIMIT` by default when called directly, and accepts a caller-supplied limit. Replace all keeps a separate **1,073,741,824-match** limit (`FIND_REPLACE_ALL_LIMIT`).
+- Large-file scanning. Documents or active scopes up to **262,144 code units** (`FIND_SYNC_THRESHOLD`) scan synchronously. Larger line-local queries scan up to **131,072 code units** (`FIND_VIEWPORT_SYNC_MAX_UNITS`) around the visible viewport first so on-screen matches paint immediately, spend at most **4 ms** (`FIND_INITIAL_SLICE_BUDGET_MS`) advancing off-screen windows in frame 0, and yield the remainder across cooperative `MessageChannel` slices (`FIND_CHUNK_SLICE_BUDGET_MS = 4`, `FIND_CHUNK_MAX_WINDOWS_PER_SLICE = 32`) with cancellation on new queries or edits.
+- Source. `FIND_MATCHES_LIMIT`, `FIND_SELECT_ALL_LIMIT`, `FIND_REPLACE_ALL_LIMIT`, `FIND_SYNC_THRESHOLD`, `FIND_VIEWPORT_SYNC_MAX_UNITS`, `partitionViewportRanges` and `createFindRangeScanner` in [search.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/find/src/search.ts#L11), and `research` and `selectAllMatches` in [findController.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/find/src/findController.ts#L580).
+- What you see. Once a search finds more than **19,999** matches, scanning stops without rescanning from offset zero and the widget shows `19999+` (with `?` for positions past the contiguous scanned prefix). Find Next, Find Previous and Replace All still cover the entire document. `selectAllMatches` selects at most the first **10,000** matches and announces truncation.
+- Why. Bounded counting and viewport-first chunked scanning keep Find responsive on multi-megabyte documents, and capping `selectAllMatches` prevents a single-frame freeze from spawning hundreds of thousands of cursors.
+- Outlook. No change is planned for the retained highlight, bounded count, or multi-cursor caps.
 
 ### Selection used to seed find
 

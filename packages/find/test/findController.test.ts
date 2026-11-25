@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import {
   FIND_MATCHES_LIMIT,
+  FIND_SELECT_ALL_LIMIT,
+  FIND_SYNC_THRESHOLD,
   findNextMatchFrom,
   findPreviousMatchFrom,
   findMatches,
@@ -67,14 +69,20 @@ describe('find navigation past the paint cap', () => {
     },
     (harness) => {
       harness.openFind()
+      const scansBeforeSearch = countLeadingScans(harness)
       harness.typeSearch('foo')
+      // Overflow stops at FIND_MATCHES_LIMIT + 1 without rescanning from offset 0.
+      expect(countLeadingScans(harness) - scansBeforeSearch).toBe(3)
+
+      const scansBeforeNext = countLeadingScans(harness)
       harness.pressEnter()
+      // Stepping past the paint cap does not rescan from offset 0 to number the match.
+      expect(countLeadingScans(harness) - scansBeforeNext).toBe(0)
       assertFindState(harness, {
         matches: FIND_MATCHES_LIMIT,
         current: cappedMatch(FIND_MATCHES_LIMIT),
         selection: cappedMatch(FIND_MATCHES_LIMIT),
-        // Numbered and totalled past the cap: only the painting stops there.
-        count: `${FIND_MATCHES_LIMIT + 1} of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `? of ${FIND_MATCHES_LIMIT}+`,
       })
 
       harness.pressEnter()
@@ -82,7 +90,7 @@ describe('find navigation past the paint cap', () => {
         matches: FIND_MATCHES_LIMIT,
         current: cappedMatch(FIND_MATCHES_LIMIT + 1),
         selection: cappedMatch(FIND_MATCHES_LIMIT + 1),
-        count: `${FIND_MATCHES_LIMIT + 2} of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `? of ${FIND_MATCHES_LIMIT}+`,
       })
 
       // Backwards from there is the match just crossed, not the last painted one:
@@ -92,7 +100,7 @@ describe('find navigation past the paint cap', () => {
         matches: FIND_MATCHES_LIMIT,
         current: cappedMatch(FIND_MATCHES_LIMIT),
         selection: cappedMatch(FIND_MATCHES_LIMIT),
-        count: `${FIND_MATCHES_LIMIT + 1} of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `? of ${FIND_MATCHES_LIMIT}+`,
       })
 
       // Onto the last match in the document, and then off the end of it.
@@ -102,7 +110,7 @@ describe('find navigation past the paint cap', () => {
         matches: FIND_MATCHES_LIMIT,
         current: cappedMatch(0),
         selection: cappedMatch(0),
-        count: `1 of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `1 of ${FIND_MATCHES_LIMIT}+`,
       })
     },
   )
@@ -123,7 +131,7 @@ describe('find navigation past the paint cap', () => {
         matches: FIND_MATCHES_LIMIT,
         current: cappedMatch(FIND_MATCHES_LIMIT + 1),
         selection: cappedMatch(FIND_MATCHES_LIMIT + 1),
-        count: `${FIND_MATCHES_LIMIT + 2} of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `? of ${FIND_MATCHES_LIMIT}+`,
       })
 
       // Nothing ahead and nothing to wrap to, so the last match is where this
@@ -133,8 +141,242 @@ describe('find navigation past the paint cap', () => {
         matches: FIND_MATCHES_LIMIT,
         current: cappedMatch(FIND_MATCHES_LIMIT + 1),
         selection: cappedMatch(FIND_MATCHES_LIMIT + 1),
-        count: `${FIND_MATCHES_LIMIT + 2} of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `? of ${FIND_MATCHES_LIMIT}+`,
       })
+    },
+  )
+
+  findTest(
+    'never rescans from offset 0 when matches exceed FIND_MATCHES_LIMIT',
+    {
+      text: CAPPED_TEXT,
+      options: CAPPED_OPTIONS,
+    },
+    (harness) => {
+      harness.openFind()
+      harness.typeSearch('fo')
+      const scansBefore = countLeadingScans(harness)
+      harness.typeSearch('o')
+
+      // One pass from offset 0 for the final keystroke, never a second countAll pass.
+      expect(countLeadingScans(harness) - scansBefore).toBe(1)
+      assertFindState(harness, {
+        matches: FIND_MATCHES_LIMIT,
+        current: null,
+        selection: [0, 0],
+        count: `? of ${FIND_MATCHES_LIMIT}+`,
+      })
+    },
+  )
+})
+
+describe('large-file viewport-first chunked find', () => {
+  // Exceeds the single-slice window cap (~2 MiB) while keeping total match count
+  // below FIND_MATCHES_LIMIT so non-truncated multi-slice completion and
+  // mid-scan cancellation are exercised deterministically regardless of CPU speed.
+  const LINE = `alpha ${'bravo charlie delta echo foxtrot golf hotel '.repeat(5)}\n`
+  const LINE_COUNT = Math.ceil((FIND_SYNC_THRESHOLD * 12) / LINE.length)
+  const LARGE_TEXT = LINE.repeat(LINE_COUNT)
+  const MID_LINE = Math.floor(LINE_COUNT / 2)
+  const MID_START = MID_LINE * LINE.length
+  const MID_END = MID_START + LINE.length * 10 - 1
+
+  findTest(
+    'paints visible viewport matches immediately and completes off-screen slices asynchronously',
+    {
+      text: LARGE_TEXT,
+      selection: MID_START,
+      visibleRange: [MID_START, MID_END],
+      options: CAPPED_OPTIONS,
+    },
+    async (harness) => {
+      harness.openFind()
+      const readsBefore = harness.documentReads().length
+      harness.typeSearch('alpha')
+
+      // Frame 0: visible viewport is read first and its matches paint immediately
+      // before background slices complete the rest of the multi-megabyte file.
+      const immediate = harness.state()
+      expect(immediate.matches.length).toBe(10)
+      expect(immediate.matches[0]).toEqual([MID_START, MID_START + 5])
+      expect(immediate.count).toBe('? of 10+')
+
+      const frame0Reads = harness.documentReads().slice(readsBefore)
+      expect(frame0Reads.length).toBeGreaterThan(0)
+      expect(frame0Reads[0]![0]).toBeGreaterThanOrEqual(MID_START)
+      expect(frame0Reads[0]![1]).toBeLessThanOrEqual(MID_END)
+
+      await waitFor(() => !harness.state().count.endsWith('+'))
+
+      const settled = harness.state()
+      expect(settled.matches.length).toBe(LINE_COUNT)
+      expect(settled.count).toBe(`? of ${LINE_COUNT}`)
+      expect(settled.matches[MID_LINE]).toEqual([MID_START, MID_START + 5])
+    },
+  )
+
+  findTest(
+    'cancels in-flight large-file scans on rapid query changes without committing stale matches',
+    {
+      text: LARGE_TEXT,
+      selection: 0,
+      visibleRange: [0, LINE.length * 5 - 1],
+      options: CAPPED_OPTIONS,
+    },
+    async (harness) => {
+      harness.openFind()
+      // Type 'a' (starts chunked scan), then immediately refine to 'zznomatch'.
+      harness.typeSearch('a')
+      expect(harness.state().matches.length).toBeGreaterThan(0)
+
+      harness.typeSearch('zznomatch')
+      expect(harness.state().count).toBe('Searching…')
+
+      await waitFor(() => harness.state().count === 'No results')
+
+      assertFindState(harness, {
+        matches: [],
+        current: null,
+        selection: [0, 0],
+        count: 'No results',
+      })
+    },
+  )
+
+  findTest(
+    'cancels an in-flight large-file scan when a document edit arrives',
+    {
+      text: LARGE_TEXT,
+      selection: 0,
+      visibleRange: [0, LINE.length * 5 - 1],
+      options: CAPPED_OPTIONS,
+    },
+    async (harness) => {
+      harness.openFind()
+      harness.typeSearch('alpha')
+      // Viewport matches painted, background scan still pending.
+      expect(harness.state().count).toBe('? of 5+')
+
+      // Edit the document mid-scan; old scan must cancel and deferred re-search
+      // must pick up the edited document instead of committing stale offsets.
+      harness.typeInDocument(0, 'alpha ')
+
+      await waitFor(() => harness.state().count === `? of ${LINE_COUNT + 1}`)
+
+      const settled = harness.state()
+      expect(settled.matches[0]).toEqual([0, 5])
+      expect(settled.matches[1]).toEqual([6, 11])
+    },
+  )
+
+  findTest(
+    'preserves viewport highlights and avoids rescanning past FIND_MATCHES_LIMIT on dense large files',
+    {
+      // > 256 KiB and > FIND_MATCHES_LIMIT matches ('a' appears 5 times per line * 6000 lines = 30,000 matches)
+      text: 'a a a a a xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n'.repeat(6_000),
+      selection: 53 * 5_000,
+      visibleRange: [53 * 5_000, 53 * 5_005 - 1],
+      options: CAPPED_OPTIONS,
+    },
+    async (harness) => {
+      const lineLen = 53
+      const vpStart = lineLen * 5_000
+      harness.openFind()
+      harness.typeSearch('a')
+
+      await waitFor(() => harness.state().count === `? of ${FIND_MATCHES_LIMIT}+`)
+
+      const settled = harness.state()
+      expect(settled.matches.length).toBe(FIND_MATCHES_LIMIT)
+      // On-screen viewport matches survive truncation even though prefix filled the cap.
+      expect(settled.matches.some(([start, end]) => start === vpStart && end === vpStart + 1)).toBe(
+        true,
+      )
+      // At most one pass started at offset 0 (no second countAll pass).
+      expect(countLeadingScans(harness)).toBe(1)
+
+      // selectAllMatches caps cleanly at FIND_SELECT_ALL_LIMIT and announces it.
+      expect(harness.selectAllMatches()).toBe(true)
+      expect(harness.state().selections.length).toBe(FIND_SELECT_ALL_LIMIT)
+      expect(harness.announcements()).toContain(
+        `Selected the first ${FIND_SELECT_ALL_LIMIT} matches`,
+      )
+    },
+  )
+
+  findTest(
+    'moves cursor to an off-screen sparse match once chunked scanning finishes',
+    {
+      text: `${LARGE_TEXT.slice(0, MID_START)}needle_unique_7f3a\n${LARGE_TEXT.slice(MID_START)}`,
+      selection: 0,
+      visibleRange: [0, LINE.length * 5 - 1],
+      options: { seedSearchStringFromSelection: 'never', cursorMoveOnType: true },
+    },
+    async (harness) => {
+      harness.openFind()
+      harness.typeSearch('needle_unique_7f3a')
+      expect(harness.state().count).toBe('Searching…')
+
+      await waitFor(() => harness.state().count === '1 of 1')
+
+      assertFindState(harness, {
+        matches: [[MID_START, MID_START + 'needle_unique_7f3a'.length]],
+        current: [MID_START, MID_START + 'needle_unique_7f3a'.length],
+        selection: [MID_START, MID_START + 'needle_unique_7f3a'.length],
+        count: '1 of 1',
+      })
+    },
+  )
+
+  findTest(
+    'preserves an explicit findNext jump made while a chunked scan is still running',
+    {
+      text: `${LARGE_TEXT.slice(0, MID_START)}needle_unique_7f3a\n${LARGE_TEXT.slice(MID_START)}`,
+      selection: 0,
+      visibleRange: [0, LINE.length * 5 - 1],
+      options: { seedSearchStringFromSelection: 'never', cursorMoveOnType: true },
+    },
+    async (harness) => {
+      const needleRange: FindRangeTuple = [MID_START, MID_START + 'needle_unique_7f3a'.length]
+      harness.openFind()
+      harness.typeSearch('needle_unique_7f3a')
+      harness.pressEnter()
+
+      // Explicit Enter jumps immediately even before the background scan finishes.
+      expect(harness.state().current).toEqual(needleRange)
+      expect(harness.state().selections[0]).toEqual(needleRange)
+
+      await waitFor(() => harness.state().count === '1 of 1')
+
+      assertFindState(harness, {
+        matches: [needleRange],
+        current: needleRange,
+        selection: needleRange,
+        count: '1 of 1',
+      })
+    },
+  )
+
+  findTest(
+    'cancels an in-flight chunked scan cleanly on close',
+    {
+      text: LARGE_TEXT,
+      selection: 0,
+      visibleRange: [0, LINE.length * 5 - 1],
+      options: CAPPED_OPTIONS,
+    },
+    async (harness) => {
+      harness.openFind()
+      harness.typeSearch('alpha')
+      expect(harness.state().count).toBe('? of 5+')
+
+      expect(harness.closeFind()).toBe(true)
+      const readsAtClose = harness.documentReads().length
+      await new Promise<void>((resolve) => setTimeout(resolve, 30))
+
+      // No background slices ran after close and highlights stay cleared.
+      expect(harness.documentReads().length).toBe(readsAtClose)
+      expect(harness.state().matches).toEqual([])
     },
   )
 })
@@ -555,4 +797,12 @@ function cappedMatch(index: number): FindRangeTuple {
 // went back to the top to list the whole document.
 function countLeadingScans(harness: FindHarness): number {
   return harness.documentReads().filter(([start]) => start === 0).length
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for async find scan')
+    await new Promise<void>((resolve) => setTimeout(resolve, 5))
+  }
 }

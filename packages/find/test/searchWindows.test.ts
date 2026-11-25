@@ -8,6 +8,7 @@ import {
 } from '@singapore-editor/core/document'
 import {
   countMatches,
+  createFindRangeScanner,
   escapeRegExpCharacters,
   FIND_REPLACE_ALL_LIMIT,
   FIND_WINDOW_UNITS,
@@ -15,6 +16,7 @@ import {
   findNextMatchFrom,
   findPreviousMatchFrom,
   findTextSourceFromSnapshot,
+  partitionViewportRanges,
   type FindQuery,
   type FindTextSource,
 } from '../src/search'
@@ -195,6 +197,52 @@ describe('windowed search against the line-at-a-time oracle', () => {
 
     expect(countMatches(source, literal('ab'), scope)).toBe(29_998)
     expect(findMatches(source, literal('ab'), scope)).toHaveLength(19_999)
+  })
+
+  it('matches the oracle across single-window slices and viewport partitions', () => {
+    const random = seededRandom(11)
+    const source = fragmentedSource(randomText(random, LENGTH), random)
+    const text = source.readRange(0, source.length)
+    const visible = {
+      start: Math.floor(source.length * 0.4),
+      end: Math.floor(source.length * 0.45),
+    }
+
+    for (const query of QUERIES) {
+      const expected = oracle(text, query)
+      const scanner = createFindRangeScanner(source, query, null, FIND_REPLACE_ALL_LIMIT)
+      const stepped: FindRangeTuple[] = []
+      let steps = 0
+      while (true) {
+        const result = scanner.step(10_000, 1)
+        steps += 1
+        for (const match of result.matches) stepped.push([match.start, match.end])
+        if (result.done) {
+          expect(result.truncated, JSON.stringify(query)).toBe(false)
+          break
+        }
+      }
+      expect(stepped, JSON.stringify(query)).toEqual(expected)
+      if (!query.crossesLines) {
+        expect(steps, JSON.stringify(query)).toBeGreaterThan(1)
+        const part = partitionViewportRanges(source, null, visible, visible.start)
+        const combined = (
+          part.prefixRanges.length > 0
+            ? findMatches(source, query, part.prefixRanges, false, FIND_REPLACE_ALL_LIMIT)
+            : []
+        )
+          .concat(
+            part.viewportRanges.length > 0
+              ? findMatches(source, query, part.viewportRanges, false, FIND_REPLACE_ALL_LIMIT)
+              : [],
+            part.suffixRanges.length > 0
+              ? findMatches(source, query, part.suffixRanges, false, FIND_REPLACE_ALL_LIMIT)
+              : [],
+          )
+          .map((match): FindRangeTuple => [match.start, match.end])
+        expect(combined, `partition ${JSON.stringify(query)}`).toEqual(expected)
+      }
+    }
   })
 })
 
