@@ -5208,5 +5208,87 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clips out-of-bounds tokens from prefetch answers on an empty paint store in both paint and copy stores', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prefetch-empty-store-clip',
+      })
+      let prefetchMode: 'partial' | 'complete' = 'partial'
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 60 && range.endIndex === 120) {
+          return {
+            ...answerFor(range),
+            degraded: { kind: 'range-unavailable', message: 'unavailable' },
+          }
+        }
+        if (range.startIndex === 50 && range.endIndex === 120) {
+          const base = answerFor(range, {
+            tokens: [{ start: 115, end: 125, style: { color: 'keyword' } }],
+          })
+          return prefetchMode === 'partial'
+            ? {
+                ...base,
+                projection: {
+                  ...base.projection,
+                  analysis: { kind: 'partial', coveredRange: range },
+                },
+              }
+            : base
+        }
+        return answerFor(range)
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 60,
+        endIndex: 120,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.syntax.tokens.length).toBe(0)
+
+        // Partial prefetch crossing [50, 120) with token [115, 125) must clip to [115, 120).
+        view.syntax.prefetchVisibleRange(1, { startIndex: 50, endIndex: 120 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+        expect(view.syntax.tokens.toTokens()).toEqual([
+          { start: 115, end: 120, style: { color: 'keyword' } },
+        ])
+        expect(view.syntax.copyTokens.toTokens()).toEqual([
+          { start: 115, end: 120, style: { color: 'keyword' } },
+        ])
+
+        // Complete prefetch on a fresh empty store must also clip both paint and promoted copyTokens.
+        prefetchMode = 'complete'
+        const analysis2 = createEditorDocumentAnalysis({
+          buffer,
+          documentId: 'prefetch-empty-store-clip-complete',
+        })
+        const view2 = createView(buffer, analysis2, structuralProvider(query), {
+          startIndex: 60,
+          endIndex: 120,
+        })
+        try {
+          view2.syntax.refresh(1, null, { delayMs: 0 })
+          await vi.waitFor(() => expect(view2.syntax.status).toBe('degraded'))
+          expect(view2.syntax.tokens.length).toBe(0)
+
+          view2.syntax.prefetchVisibleRange(1, { startIndex: 50, endIndex: 120 }, { delayMs: 0 })
+          await vi.waitFor(() => expect(view2.syntax.status).toBe('ready'))
+          expect(view2.syntax.tokens.toTokens()).toEqual([
+            { start: 115, end: 120, style: { color: 'keyword' } },
+          ])
+          expect(view2.syntax.copyTokens.toTokens()).toEqual([
+            { start: 115, end: 120, style: { color: 'keyword' } },
+          ])
+        } finally {
+          view2.dispose()
+          analysis2.dispose()
+        }
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

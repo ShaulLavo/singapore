@@ -3462,13 +3462,7 @@ export class EditorSyntaxController {
           evictedPrefetches.length > 0 && canOwnRanges
             ? compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(keptEntries))
             : this.#currentTokens
-        const nextTokens =
-          nextEntries.length === 1 &&
-          canOwnRanges &&
-          this.#currentTokens.length === 0 &&
-          sameSyntaxRanges(claimable, [range])
-            ? incomingTokens
-            : mergeTokensOnStrips(baseTokens, incomingTokens, claimable)
+        const nextTokens = mergeTokensOnStrips(baseTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
         setRangeTokenOwner(nextTokens)
 

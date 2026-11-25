@@ -855,15 +855,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       readonly snapshot: DocumentTextSnapshot
       readonly point: DocumentSyncPoint
       readonly generation: number
-      readonly order: number
     }
   >()
   private ranges = new Map<string, ReadyRange>()
-  private latestRangeOrder = new Map<string, number>()
   private queries = new Map<string, PendingRangeQuery>()
   /** Identifies each range query, so its release timer belongs to it alone. */
   private nextQueryId = 0
-  private nextOriginOrder = 0
   private rangePoint: DocumentSyncPoint | null = null
   private stoppedWarmGeneration: number | null = null
   private static readonly MAX_INCREMENTAL_STEPS = 16
@@ -1056,7 +1053,6 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
         protectedSlots.add(existing)
         return
       }
-      if (origin.order < (this.latestRangeOrder.get(key) ?? 0)) return
       cached = { ...contributor, point: origin.point }
       this.ranges.set(key, cached)
     }
@@ -1222,7 +1218,6 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     this.contributors.clear()
     this.queryWaiters.clear()
     this.ranges.clear()
-    this.latestRangeOrder.clear()
     for (const query of this.queries.values()) query.release?.cancel()
     this.queries.clear()
     super.dispose()
@@ -1368,12 +1363,10 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
           syntaxResultCoversRange(result, range) &&
           this.isCurrentPendingRange(key, pending)
         ) {
-          const order = ++this.nextOriginOrder
           this.resultOrigins.set(result, {
             snapshot: pending.snapshot,
             point,
             generation: this.generation,
-            order,
           })
           if (pending.admission === 'cache' && !isTerminalIncompleteSyntaxResult(result)) {
             const cacheKey = rangeKey(range)
@@ -1381,7 +1374,13 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
             if (previous && previous.result !== result) {
               this.resultOrigins.delete(previous.result)
             }
-            this.latestRangeOrder.set(cacheKey, order)
+            for (const list of this.contributors.values()) {
+              for (const contributor of list) {
+                if (contributor.result !== result && rangeKey(contributor.range) === cacheKey) {
+                  this.resultOrigins.delete(contributor.result)
+                }
+              }
+            }
             this.ranges.set(cacheKey, { point, range, result })
           }
         }
@@ -1452,7 +1451,6 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   protected override runtimeResultChanged(): void {
     this.generation += 1
     this.ranges.clear()
-    this.latestRangeOrder.clear()
     this.previousRanges = null
     this.incrementalSteps = []
     for (const query of this.queries.values()) query.admission = 'return-only'
@@ -1511,16 +1509,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
           for (const cached of this.previousRanges.entries.values()) {
             const promoted = syntaxRangeProjector(cached.range, cached.result, steps)
             if (!promoted) continue
-            const order = ++this.nextOriginOrder
-            const cacheKey = rangeKey(promoted.range)
             this.resultOrigins.set(promoted.result, {
               snapshot: state.snapshot,
               point: read.revision.point,
               generation,
-              order,
             })
-            this.latestRangeOrder.set(cacheKey, order)
-            this.ranges.set(cacheKey, {
+            this.ranges.set(rangeKey(promoted.range), {
               point: read.revision.point,
               range: promoted.range,
               result: promoted.result,
@@ -1554,7 +1548,6 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }
     }
     this.ranges = new Map()
-    this.latestRangeOrder.clear()
     super.changed(read)
   }
 }
