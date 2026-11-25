@@ -4,8 +4,10 @@ import { init, MarkdownDocument } from 'tree-sitter-md'
 import { markdownInlineReplacements } from '../../markdown/src/replacements'
 import '../../markdown/src/style.css'
 import { Editor } from '../src/editor/Editor'
+import { createInlineMap } from '../src/inlineMap'
 import { decodePaintSnapshot, mountPaintSnapshot } from '../src/paint'
 import { createPaintSnapshotPlugin } from '../src/paintSnapshotPlugin'
+import { createPieceTableSnapshot } from '../src/public/document'
 import { VirtualizedTextView } from '../src/virtualization'
 import '../src/style.css'
 
@@ -344,4 +346,21 @@ it('preserves native browser selection across async token arrival in spans mode'
     { start: 6, end: 11, style: { color: '#001080' } },
   ])
   expect(sel.toString()).toBe('st value')
+
+  // Inline replacement (`X` -> `HELLO`): selecting `E` must not collapse when tokens arrive.
+  view.setTokens([])
+  view.setText('X')
+  view.setInlineMap(
+    createInlineMap(createPieceTableSnapshot('X'), [
+      { id: 'hello', startIndex: 0, endIndex: 1, text: 'HELLO' },
+    ]),
+  )
+  const replacedRow = view.getState().mountedRows[0]!
+  const replacedPart = replacedRow.chunks[0]!.parts[0]!
+  assert(replacedPart.kind === 'text')
+  sel.setBaseAndExtent(replacedPart.node, 1, replacedPart.node, 2)
+  expect(sel.toString()).toBe('E')
+  view.setTokens([{ start: 0, end: 1, style: { color: '#ff0000' } }])
+  expect(sel.isCollapsed).toBe(false)
+  expect(sel.toString()).toBe('E')
 })

@@ -253,6 +253,7 @@ class CssHighlightRowTokenPainter implements RowTokenPainter {
     )
     for (const group of this.#tokenGroups.values()) shared?.release(group.styleKey)
     this.#tokenGroups.clear()
+    shared?.flush()
   }
 
   public flushStyles(): void {
@@ -573,11 +574,11 @@ class SpanRowTokenPainter implements RowTokenPainter {
     const shared = getSharedTokenSpanStyles(this.#view.scrollElement.ownerDocument)
     for (const paintKey of this.#acquiredStyles.keys()) shared.release(paintKey)
     this.#acquiredStyles.clear()
+    shared.flush()
   }
 
   public flushStyles(): void {
-    if (this.#acquiredStyles.size === 0) return
-    getSharedTokenSpanStyles(this.#view.scrollElement.ownerDocument).flush()
+    sharedSpanStylesByDocument.get(this.#view.scrollElement.ownerDocument)?.flush()
   }
 
   public restore(): boolean {
@@ -939,58 +940,113 @@ function clampLocal(chunk: VirtualizedTextChunk, local: number): number {
   return local
 }
 
-type SweepEdge = {
-  readonly at: number
+type OrderedPaintProperty = {
   readonly order: number
-  readonly style: PaintStyle | null
+  readonly end: number
+  readonly value: string
+}
+
+/** Binary max-heap keyed by `order` with lazy expiration of intervals ended at or before `at`. */
+class PropertyMaxHeap {
+  readonly #items: OrderedPaintProperty[] = []
+
+  public push(entry: OrderedPaintProperty): void {
+    const items = this.#items
+    let index = items.length
+    items.push(entry)
+    while (index > 0) {
+      const parent = (index - 1) >> 1
+      if (items[parent]!.order >= entry.order) break
+      items[index] = items[parent]!
+      index = parent
+    }
+    items[index] = entry
+  }
+
+  public activeValue(at: number): string | undefined {
+    const items = this.#items
+    while (items.length > 0 && items[0]!.end <= at) {
+      const last = items.pop()!
+      if (items.length === 0) break
+      let index = 0
+      const length = items.length
+      while (true) {
+        const left = (index << 1) + 1
+        if (left >= length) break
+        const right = left + 1
+        const best = right < length && items[right]!.order > items[left]!.order ? right : left
+        if (items[best]!.order <= last.order) break
+        items[index] = items[best]!
+        index = best
+      }
+      items[index] = last
+    }
+    return items.length > 0 ? items[0]!.value : undefined
+  }
 }
 
 /** O(k log k) endpoint sweep for overlapping syntax tokens; later interval wins per paint property. */
 function flattenOverlappingIntervals(
   intervals: readonly LocalPaintInterval[],
 ): readonly LocalPaintInterval[] {
-  const edges: SweepEdge[] = []
-  for (let order = 0; order < intervals.length; order += 1) {
+  const count = intervals.length
+  const coords: number[] = []
+  const byStart: {
+    readonly start: number
+    readonly end: number
+    readonly order: number
+    readonly style: PaintStyle
+  }[] = []
+
+  for (let order = 0; order < count; order += 1) {
     const interval = intervals[order]!
-    edges.push(
-      { at: interval.start, order, style: interval.style },
-      { at: interval.end, order, style: null },
-    )
+    coords.push(interval.start, interval.end)
+    byStart.push({ start: interval.start, end: interval.end, order, style: interval.style })
   }
-  edges.sort((left, right) => left.at - right.at || left.order - right.order)
+  coords.sort((left, right) => left - right)
+  byStart.sort((left, right) => left.start - right.start || left.order - right.order)
 
-  const active = new Map<number, PaintStyle>()
+  const colorHeap = new PropertyMaxHeap()
+  const backgroundHeap = new PropertyMaxHeap()
+  const decorationHeap = new PropertyMaxHeap()
   const result: LocalPaintInterval[] = []
-  let previous = edges[0]!.at
 
-  for (let index = 0; index < edges.length;) {
-    const at = edges[index]!.at
-    if (at > previous && active.size > 0) {
-      const merged = mergeActivePaintStyles(active)
-      if (merged) result.push({ start: previous, end: at, style: merged })
+  let startCursor = 0
+  let previousCoord = coords[0]!
+  for (let coordIndex = 1; coordIndex < coords.length; coordIndex += 1) {
+    const nextCoord = coords[coordIndex]!
+    if (nextCoord === previousCoord) continue
+
+    while (startCursor < count && byStart[startCursor]!.start <= previousCoord) {
+      const item = byStart[startCursor++]!
+      if (item.end <= previousCoord) continue
+      const { style, order, end } = item
+      if (style.color) colorHeap.push({ order, end, value: style.color })
+      if (style.backgroundColor) {
+        backgroundHeap.push({ order, end, value: style.backgroundColor })
+      }
+      if (style.textDecoration) {
+        decorationHeap.push({ order, end, value: style.textDecoration })
+      }
     }
-    while (index < edges.length && edges[index]!.at === at) {
-      const edge = edges[index++]!
-      if (edge.style) active.set(edge.order, edge.style)
-      else active.delete(edge.order)
+
+    const color = colorHeap.activeValue(previousCoord)
+    const backgroundColor = backgroundHeap.activeValue(previousCoord)
+    const textDecoration = decorationHeap.activeValue(previousCoord)
+    if (color || backgroundColor || textDecoration) {
+      const style = resolvePaintStyle({ color, backgroundColor, textDecoration })
+      if (style) {
+        const tail = result.at(-1)
+        if (tail && tail.end === previousCoord && tail.style.paintKey === style.paintKey) {
+          result[result.length - 1] = { start: tail.start, end: nextCoord, style: tail.style }
+        } else {
+          result.push({ start: previousCoord, end: nextCoord, style })
+        }
+      }
     }
-    previous = at
+    previousCoord = nextCoord
   }
   return result
-}
-
-function mergeActivePaintStyles(active: ReadonlyMap<number, PaintStyle>): PaintStyle | null {
-  if (active.size === 1) return active.values().next().value ?? null
-  let color: string | undefined
-  let backgroundColor: string | undefined
-  let textDecoration: string | undefined
-  const ordered = [...active.entries()].sort((left, right) => left[0] - right[0])
-  for (const [, style] of ordered) {
-    if (style.color) color = style.color
-    if (style.backgroundColor) backgroundColor = style.backgroundColor
-    if (style.textDecoration) textDecoration = style.textDecoration
-  }
-  return resolvePaintStyle({ color, backgroundColor, textDecoration })
 }
 
 function coalesceAdjacentIntervals(

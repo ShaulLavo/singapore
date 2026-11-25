@@ -49,7 +49,11 @@ import {
 } from './virtualizedTextViewRows'
 import { renderHiddenCharacters } from './virtualizedTextViewHiddenCharacters'
 import { clearSelectionLayer, renderSelectionLayer } from './virtualizedTextViewSelectionLayer'
-import { createDomRangeForChunkRange } from './virtualizedTextViewGeometry'
+import {
+  createDomRangeForChunkRange,
+  domBoundaryForRowLocalOffset,
+  localOffsetFromDomBoundary,
+} from './virtualizedTextViewGeometry'
 import type {
   EditorTokenPainting,
   MountedVirtualizedTextRow,
@@ -540,6 +544,20 @@ export function setTokenPaintingMode(
   return true
 }
 
+export function syncTokenPainterAfterProvisionalCommit(view: VirtualizedTextViewInternal): void {
+  if (view.provisional) return
+  const mountedRows = getMountedRows(view)
+  const desired = resolveTokenPainterKind(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    mountedRows.length,
+    0,
+  )
+  switchTokenPainterIfNeeded(view, desired, mountedRows)
+}
+
 function switchTokenPainterIfNeeded(
   view: VirtualizedTextViewInternal,
   desired: RowTokenPainterKind,
@@ -548,9 +566,11 @@ function switchTokenPainterIfNeeded(
   if (desired === view.tokenPainter.kind) return false
 
   preserveNativeSelectionAroundDomMutation(view, () => {
-    const previousPaintsOverlayBase = view.tokenPainter.paintsOverlayBase
-    const wasSpans = view.tokenPainter.kind === 'spans'
-    view.tokenPainter.clearAll(mountedRows)
+    const outgoing = view.tokenPainter
+    const previousPaintsOverlayBase = outgoing.paintsOverlayBase
+    const wasSpans = outgoing.kind === 'spans'
+    outgoing.clearAll(mountedRows)
+    outgoing.flushStyles()
     view.rowTokenSignatures.clear()
     view.tokenPainter = createRowTokenPainter(view, desired)
     view.scrollElement.dataset.editorTokenPainting = desired
@@ -573,6 +593,11 @@ function refreshRangeHighlightsAfterTokenDomChange(view: VirtualizedTextViewInte
 
 type CapturedSelectionEndpoint =
   | { readonly kind: 'dom'; readonly node: Node | null; readonly offset: number }
+  | {
+      readonly kind: 'row-local'
+      readonly row: MountedVirtualizedTextRow
+      readonly localOffset: number
+    }
   | { readonly kind: 'editor'; readonly offset: number }
 
 function isPreservedInlineSubtreeNode(node: Node, boundary: HTMLElement): boolean {
@@ -584,6 +609,16 @@ function isPreservedInlineSubtreeNode(node: Node, boundary: HTMLElement): boolea
   return preserved !== null && boundary.contains(preserved)
 }
 
+function mountedRowContainingNode(
+  view: VirtualizedTextViewInternal,
+  node: Node,
+): MountedVirtualizedTextRow | null {
+  for (const row of view.rowElements.values()) {
+    if (row.element === node || row.element.contains(node)) return row
+  }
+  return null
+}
+
 function captureSelectionEndpoint(
   view: VirtualizedTextViewInternal,
   node: Node | null,
@@ -592,6 +627,11 @@ function captureSelectionEndpoint(
   if (!node || !view.scrollElement.contains(node)) return { kind: 'dom', node, offset }
   if (isPreservedInlineSubtreeNode(node, view.scrollElement)) {
     return { kind: 'dom', node, offset }
+  }
+  const row = mountedRowContainingNode(view, node)
+  if (row) {
+    const localOffset = localOffsetFromDomBoundary(row, node, offset)
+    if (localOffset !== null) return { kind: 'row-local', row, localOffset }
   }
   const textOffset = textOffsetFromDomBoundary(view, node, offset)
   if (textOffset === null) return { kind: 'dom', node, offset }
@@ -605,6 +645,10 @@ function resolveSelectionEndpoint(
   if (endpoint.kind === 'dom') {
     if (!endpoint.node || !endpoint.node.isConnected) return null
     return { node: endpoint.node, offset: endpoint.offset }
+  }
+  if (endpoint.kind === 'row-local') {
+    if (!endpoint.row.element.isConnected) return null
+    return domBoundaryForRowLocalOffset(endpoint.row, endpoint.localOffset)
   }
   return resolveMountedOffset(view, endpoint.offset)
 }
@@ -692,25 +736,23 @@ export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
   const reconcileStats = createTokenRangeReconcileStats(view, mountedRows)
   const reconcileStartedAt = reconcileStats ? performanceNow() : 0
   let segmentsByRow = tokenSegmentsForRows(view, mountedRows)
-  if (view.tokenPainting === 'auto') {
-    const desired = resolveTokenPainterKind(
-      view.tokenPainting,
-      view.highlightRegistry,
-      view.scrollMode,
-      view.tokenPainter.kind,
-      mountedRows.length,
-      tokenSegmentCount(segmentsByRow),
-    )
-    const previousPaintsOverlayBase = view.tokenPainter.paintsOverlayBase
-    if (switchTokenPainterIfNeeded(view, desired, mountedRows)) {
-      if (
-        previousPaintsOverlayBase !== view.tokenPainter.paintsOverlayBase &&
-        view.highlightOverlayMask.length > 0
-      ) {
-        segmentsByRow = tokenSegmentsForRows(view, mountedRows)
-      } else {
-        syncTokenGroupsToPalette(view)
-      }
+  const desired = resolveTokenPainterKind(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    mountedRows.length,
+    tokenSegmentCount(segmentsByRow),
+  )
+  const previousPaintsOverlayBase = view.tokenPainter.paintsOverlayBase
+  if (switchTokenPainterIfNeeded(view, desired, mountedRows)) {
+    if (
+      previousPaintsOverlayBase !== view.tokenPainter.paintsOverlayBase &&
+      view.highlightOverlayMask.length > 0
+    ) {
+      segmentsByRow = tokenSegmentsForRows(view, mountedRows)
+    } else {
+      syncTokenGroupsToPalette(view)
     }
   }
 

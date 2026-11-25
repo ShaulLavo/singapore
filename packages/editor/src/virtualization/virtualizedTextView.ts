@@ -103,6 +103,7 @@ import {
   setSelections,
   setTokenPaintingMode,
   setTokens as setViewTokens,
+  syncTokenPainterAfterProvisionalCommit,
 } from './virtualizedTextViewHighlights'
 import {
   createRowTokenPainter,
@@ -852,6 +853,7 @@ export class VirtualizedTextView {
     view.gutterContributionWidths = new Map()
     view.gutterWidthDirty = true
     clearRowTokenState(view)
+    syncTokenPainterAfterProvisionalCommit(view)
     clearRowGeometryCaches(view)
     resetContentWidthScan(view)
     this.renderSnapshot(view.virtualizer.getSnapshot())

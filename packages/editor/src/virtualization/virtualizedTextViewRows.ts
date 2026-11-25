@@ -1929,13 +1929,18 @@ function reuseRowChunks(
   if (row.chunks[0]?.localStart !== window.start) return false
   if (row.chunks.at(-1)?.localEnd !== window.end) return false
 
-  let rebuilt = false
+  let rebuiltCount = 0
   for (const chunk of row.chunks) {
     if (chunk.element === null) return false
-    rebuilt = updateRowChunk(view, row, chunk, chunk.element, text, startOffset, mapping) || rebuilt
+    if (updateRowChunk(view, row, chunk, chunk.element, text, startOffset, mapping)) {
+      rebuiltCount += 1
+    }
   }
 
-  if (rebuilt) markRowBaseDomReplaced(row)
+  if (rebuiltCount > 0) {
+    if (rebuiltCount === row.chunks.length) markRowBaseDomReplaced(row)
+    else markRowPartialBaseDomReplaced(row)
+  }
   updateMutableRowChunks(row, row.chunks)
   return true
 }
@@ -2785,6 +2790,11 @@ function setCoreBidiRefusal(row: MountedVirtualizedTextRow, active: boolean): vo
 function markRowBaseDomReplaced(row: MountedVirtualizedTextRow): void {
   const mutable = row as { hasTokenSpans: boolean; baseDomRevision: number }
   mutable.hasTokenSpans = false
+  mutable.baseDomRevision += 1
+}
+
+function markRowPartialBaseDomReplaced(row: MountedVirtualizedTextRow): void {
+  const mutable = row as { baseDomRevision: number }
   mutable.baseDomRevision += 1
 }
 

@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Editor } from '../src/editor/Editor'
 import { setHighlightRegistry } from '../src/editor/runtime'
-import { createVisibleEditor } from './factories/visibleEditor'
 import { createInlineMap } from '../src/inlineMap'
+import { decodePaintSnapshot } from '../src/paint'
+import { createPaintSnapshotPlugin, paintSnapshotSupport } from '../src/paintSnapshotPlugin'
 import { createPieceTableSnapshot } from '../src/public/document'
 import { VirtualizedTextView } from '../src/virtualization'
+import { createVisibleEditor } from './factories/visibleEditor'
 import type { HighlightRegistry } from '../src/virtualization/virtualizedTextViewTypes'
 
 class MockHighlight extends Set<AbstractRange> {
@@ -409,5 +411,142 @@ describe('RowTokenPainter seam & spans painter', () => {
     expect(scrollEl.dataset.editorTokenPainting).toBe('spans')
     expect(map.size).toBe(0)
     expect(host.querySelectorAll('span[class^="editor-token-"]')).toHaveLength(1)
+  })
+
+  it('preserves native selections inside inline text replacements across async token paint', () => {
+    const { registry } = createMockRegistry()
+    const view = createView({ highlightRegistry: registry, tokenPainting: 'spans' })
+    const text = 'X'
+    view.setText(text)
+    view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(text), [
+        { id: 'hello', startIndex: 0, endIndex: 1, text: 'HELLO' },
+      ]),
+    )
+    view.setScrollMetrics(0, 100, 400)
+
+    const row = view.getState().mountedRows[0]!
+    const textNode = row.chunks[0]!.parts[0]!
+    expect(textNode.kind).toBe('text')
+    if (textNode.kind !== 'text') return
+    const selection = window.getSelection()!
+    selection.setBaseAndExtent(textNode.node, 1, textNode.node, 2)
+    expect(selection.toString()).toBe('E')
+
+    view.setTokens([{ start: 0, end: 1, style: { color: '#ff0000' } }])
+    expect(selection.isCollapsed).toBe(false)
+    expect(selection.toString()).toBe('E')
+    selection.removeAllRanges()
+  })
+
+  it('unwraps untouched chunks when a partial long-line edit removes their tokens', () => {
+    const { registry } = createMockRegistry()
+    const view = createView({
+      highlightRegistry: registry,
+      tokenPainting: 'spans',
+      longLineChunkThreshold: 100,
+      longLineChunkSize: 60,
+    })
+    const initial = `${'a'.repeat(60)}${'b'.repeat(60)}`
+    view.setText(initial)
+    view.setScrollMetrics(0, 100, 1000)
+    view.setTokens([
+      { start: 0, end: 10, style: { color: '#ff0000' } },
+      { start: 70, end: 80, style: { color: '#00ff00' } },
+    ])
+    const row = view.getState().mountedRows[0]!
+    expect(row.chunks.length).toBeGreaterThanOrEqual(2)
+    expect(row.chunks[1]!.element?.querySelectorAll('span.editor-token').length).toBe(1)
+
+    // Edit only chunk 0 (same length so chunk 1 stays untouched) and remove chunk 1's token.
+    const edited = `X${initial.slice(1)}`
+    view.applyEdit({ from: 0, to: 1, text: 'X' }, edited)
+    view.setTokens([{ start: 0, end: 10, style: { color: '#ff0000' } }])
+
+    const updatedRow = view.getState().mountedRows[0]!
+    expect(updatedRow.chunks[0]!.element?.querySelectorAll('span.editor-token').length).toBe(1)
+    expect(updatedRow.chunks[1]!.element?.querySelectorAll('span.editor-token').length).toBe(0)
+  })
+
+  it('detaches the shared token span stylesheet on painter switch and last view disposal', () => {
+    const { registry } = createMockRegistry()
+    const spanStyleElements = () =>
+      Array.from(document.head.querySelectorAll('style')).filter((el) =>
+        (el.textContent ?? '').includes('.editor-token-'),
+      )
+
+    const view = createView({ highlightRegistry: registry, tokenPainting: 'spans' })
+    view.setText('const x = 1')
+    view.setScrollMetrics(0, 100, 400)
+    view.setTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
+    expect(spanStyleElements()).toHaveLength(1)
+
+    // Switching to css-highlight flushes and detaches the outgoing span stylesheet.
+    view.setTokenPainting('css-highlight')
+    expect(spanStyleElements()).toHaveLength(0)
+
+    // Switching back re-attaches, and disposing the last spans view detaches it cleanly.
+    view.setTokenPainting('spans')
+    expect(spanStyleElements()).toHaveLength(1)
+    view.dispose()
+    expect(spanStyleElements()).toHaveLength(0)
+  })
+
+  it('handles 2,000 nested overlapping tokens in O(k log k) time with minimal spans', () => {
+    const { registry } = createMockRegistry()
+    const view = createView({ highlightRegistry: registry, tokenPainting: 'spans' })
+    const line = 'x'.repeat(200)
+    view.setText(line)
+    view.setScrollMetrics(0, 100, 400)
+
+    const tokens = []
+    for (let i = 0; i < 2000; i += 1) {
+      tokens.push({
+        start: 0,
+        end: 200,
+        style: { color: i === 1999 ? '#00ff00' : '#ff0000' },
+      })
+    }
+    tokens.push({ start: 50, end: 150, style: { color: '#0000ff' } })
+
+    const started = performance.now()
+    view.setTokens(tokens)
+    const elapsedMs = performance.now() - started
+
+    expect(elapsedMs).toBeLessThan(100)
+    const spans = view.getState().mountedRows[0]!.element.querySelectorAll('span.editor-token')
+    expect(spans).toHaveLength(3)
+    expect(Array.from(spans, (s) => s.textContent?.length)).toEqual([50, 100, 50])
+  })
+
+  it('applies explicit setTokenPainting made during provisional paint after commit', () => {
+    const { registry } = createMockRegistry()
+    setHighlightRegistry(registry)
+    const hostA = mountHost()
+    const saved = new Editor(hostA, {
+      plugins: [createPaintSnapshotPlugin()],
+      textMetrics: { characterWidth: 8, rowHeight: 20 },
+    })
+    createdEditors.push(saved)
+    const savedView: unknown = Reflect.get(saved, 'view')
+    if (savedView instanceof VirtualizedTextView) savedView.setScrollMetrics(0, 100, 400)
+    saved.openDocument({ documentId: 'provisional-176', text: 'const x = 1' })
+    saved.setTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
+    const paint = decodePaintSnapshot(saved.captureSnapshot()!.paint)!
+
+    const view = createView({ highlightRegistry: registry, tokenPainting: 'auto' })
+    view.setScrollMetrics(0, 100, 400)
+    expect(view.restorePaint(paint, paintSnapshotSupport)).toBe(true)
+    expect(view.isProvisional).toBe(true)
+
+    expect(view.setTokenPainting('spans')).toBe(true)
+    view.setText('const x = 1')
+    view.setTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
+    view.commitProvisionalPaint()
+
+    expect(view.isProvisional).toBe(false)
+    expect(view.getActiveTokenPainting()).toBe('spans')
+    expect(view.scrollElement.dataset.editorTokenPainting).toBe('spans')
+    expect(view.scrollElement.querySelectorAll('span.editor-token')).toHaveLength(1)
   })
 })

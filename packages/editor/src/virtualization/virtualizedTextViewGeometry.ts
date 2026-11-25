@@ -1557,10 +1557,42 @@ export function domBoundaryForOffset(
   row: MountedVirtualizedTextRow,
   offset: number,
 ): DomBoundary | null {
-  const local = clamp(rowLocalIndexForOffset(row, offset), 0, row.text.length)
+  return domBoundaryForRowLocalOffset(row, rowLocalIndexForOffset(row, offset))
+}
+
+export function domBoundaryForRowLocalOffset(
+  row: MountedVirtualizedTextRow,
+  localOffset: number,
+): DomBoundary | null {
+  const local = clamp(localOffset, 0, row.text.length)
   const chunk = chunkForLocalOffset(row, local)
   if (!chunk) return null
   return domBoundaryForChunkLocalOffset(chunk, local)
+}
+
+export function localOffsetFromDomBoundary(
+  row: MountedVirtualizedTextRow,
+  node: Node,
+  offset: number,
+): number | null {
+  const textPart = textPartForNode(row, node)
+  if (textPart) return textPart.localStart + clamp(offset, 0, textPart.node.length)
+  if (!isHtmlElement(node)) return null
+  if (!row.element.contains(node) && node !== row.element) return null
+  if (node === row.element && offset <= 0) return 0
+  if (node === row.element && offset >= node.childNodes.length) return row.text.length
+
+  const chunk = chunkForElement(row, node)
+  if (chunk && offset <= 0) return chunk.localStart
+  if (chunk && offset >= node.childNodes.length) return chunk.localEnd
+
+  const part = partAtElementChildBoundary(row, node, offset)
+  if (part) return part.localStart
+  if (node !== row.element) {
+    const trailing = lastPartInElement(row, node)
+    if (trailing) return trailing.localEnd
+  }
+  return row.text.length
 }
 
 function domBoundariesForGeometryIndex(
