@@ -405,4 +405,97 @@ describe('platform selections in the bounded textarea', () => {
       editor.materializeFullText().slice(rightSelection.startOffset, rightSelection.endOffset),
     ).toBe('b')
   })
+
+  it('flushes deferred typing before browser-handled deleteWordBackward and preserves native range on immediate cut', async () => {
+    // 1. Native deleteWordBackward after deferred typing removes only the newly typed word.
+    editor.setText('hello ')
+    const input = await inputAt(6)
+    input.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: 'x',
+      }),
+    )
+    expect(editor.materializeFullText()).toBe('hello x')
+    expect(input.value).toBe('hello ')
+
+    // Simulate a browser-handled deleteWordBackward (beforeinput followed by textarea mutation + input).
+    input.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteWordBackward',
+      }),
+    )
+    expect(input.value).toBe('hello x')
+    expect(input.selectionStart).toBe(7)
+    input.setRangeText('', 6, 7, 'end')
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteWordBackward' }))
+    expect(editor.materializeFullText()).toBe('hello ')
+
+    // 2. Cutting a newly set native textarea range before `select` fires cuts only that character,
+    // not the entire line.
+    editor.setText('alpha bravo\ncharlie')
+    const cutInput = await inputAt(6)
+    cutInput.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: 'x',
+      }),
+    )
+    expect(editor.materializeFullText()).toBe('alpha xbravo\ncharlie')
+    expect(cutInput.value).toBe('alpha bravo\ncharlie')
+
+    cutInput.setSelectionRange(6, 7)
+    let copiedText = ''
+    const readCopy = (event: ClipboardEvent): void => {
+      copiedText = event.clipboardData?.getData('text/plain') ?? ''
+    }
+    host.addEventListener('copy', readCopy)
+    cutInput.dispatchEvent(
+      new ClipboardEvent('copy', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: new DataTransfer(),
+      }),
+    )
+    host.removeEventListener('copy', readCopy)
+    expect(copiedText).toBe('b')
+    expect(editor.materializeFullText()).toBe('alpha xbravo\ncharlie')
+
+    // Repeat with a fresh deferred insert and immediate cut (before `select` fires).
+    editor.setText('alpha bravo\ncharlie')
+    const cutInput2 = await inputAt(6)
+    cutInput2.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: 'x',
+      }),
+    )
+    expect(editor.materializeFullText()).toBe('alpha xbravo\ncharlie')
+    expect(cutInput2.value).toBe('alpha bravo\ncharlie')
+
+    cutInput2.setSelectionRange(6, 7)
+    let cutText = ''
+    const readCut = (event: ClipboardEvent): void => {
+      cutText = event.clipboardData?.getData('text/plain') ?? ''
+    }
+    host.addEventListener('cut', readCut)
+    cutInput2.dispatchEvent(
+      new ClipboardEvent('cut', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: new DataTransfer(),
+      }),
+    )
+    host.removeEventListener('cut', readCut)
+    expect(cutText).toBe('b')
+    expect(editor.materializeFullText()).toBe('alpha xravo\ncharlie')
+  })
 })

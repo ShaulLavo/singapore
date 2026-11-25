@@ -162,6 +162,19 @@ export class TouchSelectionController {
     } | null,
   ): void {
     this.#lastTap = tap
+    this.scheduler.cancel('touch-tap-window')
+    if (tap !== null && this.#installed) {
+      // Expire the multi-tap window after TAP_DELAY so touchstart returns to passive for later swipes.
+      this.scheduler.schedule({
+        key: 'touch-tap-window',
+        taskClass: 'idle-cache',
+        delayMs: TAP_DELAY,
+        isCurrent: () => this.#lastTap === tap,
+        run: () => {
+          this.#setLastTap(null)
+        },
+      })
+    }
     this.#syncTouchStartPassivity()
   }
 
@@ -239,6 +252,7 @@ export class TouchSelectionController {
   private start = (event: TouchEvent): void => {
     this.pointerType = 'touch'
     const previous = this.#lastTap
+    this.scheduler.cancel('touch-tap-window')
     this.#stopGesture()
     delete this.options.element.dataset.editorTouchSelecting
     this.#endFrame?.cancel()
@@ -255,9 +269,15 @@ export class TouchSelectionController {
       return
     }
     const finger = event.touches[0]
-    if (!finger) return
+    if (!finger) {
+      this.#setLastTap(null)
+      return
+    }
     const position = this.options.positionAt(finger.clientX, finger.clientY)
-    if (!position) return
+    if (!position) {
+      this.#setLastTap(null)
+      return
+    }
     const repeated =
       previous &&
       event.timeStamp - previous.time <= TAP_DELAY &&
@@ -290,6 +310,7 @@ export class TouchSelectionController {
       this.options.notify('start', granularity)
       return
     }
+    if (previous !== null) this.#setLastTap(null)
     // See browser-quirks.md#ios-native-long-press-selection for delayed stationary-hold suppression.
     // Chained under one scheduler key so a scroll swipe cancels before setting the attribute.
     this.scheduler.schedule({

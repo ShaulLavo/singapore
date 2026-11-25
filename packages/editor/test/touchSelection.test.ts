@@ -223,6 +223,48 @@ describe('TouchSelectionController hold scheduling', () => {
     addSpy.mockRestore()
   })
 
+  it('restores touchstart to passive after the multi-tap window expires following a single tap', () => {
+    const addSpy = vi.spyOn(element, 'addEventListener')
+    const fresh = new TouchSelectionController({
+      element,
+      positionAt: () => ({ offset: 8, affinity: 'after', displayRow: 0, rowX: 20 }),
+      claimPress: vi.fn(() => false),
+      begin: vi.fn(),
+      tap: vi.fn(),
+      select: word,
+      extend: vi.fn(),
+      scroll: vi.fn(() => false),
+      focus,
+      notify,
+    })
+    controller.dispose()
+    fresh.install()
+    addSpy.mockClear()
+
+    dispatchTouch(row, 'touchstart', 20)
+    dispatchTouch(row, 'touchend', 20, 0)
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchstart').at(-1)?.[2]).toEqual({
+      passive: false,
+      capture: true,
+    })
+
+    vi.advanceTimersByTime(349)
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchstart').at(-1)?.[2]).toEqual({
+      passive: false,
+      capture: true,
+    })
+
+    vi.advanceTimersByTime(1)
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchstart').at(-1)?.[2]).toEqual({
+      passive: true,
+      capture: true,
+    })
+    expect(vi.getTimerCount()).toBe(0)
+
+    fresh.dispose()
+    addSpy.mockRestore()
+  })
+
   it('selects once at the hold deadline while the finger remains down', () => {
     dispatchTouch(row, 'touchstart')
     vi.advanceTimersByTime(549)
@@ -247,8 +289,11 @@ describe('TouchSelectionController hold scheduling', () => {
       if (action === 'touchend') dispatchTouch(row, action, 20, 0)
       if (action === 'touchcancel') dispatchTouch(row, action)
       expect(element.hasAttribute('data-editor-touch-selecting')).toBe(false)
-      expect(vi.getTimerCount()).toBe(0)
+      // A single-tap touchend keeps only the 350 ms multi-tap passivity expiry timer; all other
+      // actions leave zero timers immediately.
+      expect(vi.getTimerCount()).toBe(action === 'touchend' ? 1 : 0)
       vi.advanceTimersByTime(1000)
+      expect(vi.getTimerCount()).toBe(0)
       expect(word).not.toHaveBeenCalled()
     },
   )

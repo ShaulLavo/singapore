@@ -3175,7 +3175,19 @@ export class InputSelectionController {
     }
 
     const inserted = beforeInputText(event)
-    if (inserted === null) return
+    if (inserted === null) {
+      // Browser-handled beforeinput mutations (deleteWordBackward, deleteHardLineBackward,
+      // insertReplacementText, etc.) act on the textarea immediately after this event. Flush any
+      // deferred typing so the browser computes its edit against the live document text.
+      if (!this.#inputState.compositionActive) {
+        const selectionChange = this.#isInputFocused() ? this.#selectionChangeBeforeEdit() : null
+        if (selectionChange) {
+          this.applyChange(selectionChange, 'input.nativeSelection', eventStartMs(event))
+        }
+        this.#flushHiddenInputIfStale()
+      }
+      return
+    }
 
     const start = eventStartMs(event)
     if (this.#inputState.compositionActive) {
@@ -3413,14 +3425,23 @@ export class InputSelectionController {
     })
   })
 
-  #handleBeforeCopy = (): void => {
+  #handleBeforeCopy = (event: Event): void => {
+    if (this.#selectionLeavesEditor()) return
+    const selectionChange = this.#isInputFocused() ? this.#selectionChangeBeforeEdit() : null
+    if (selectionChange) {
+      this.applyChange(selectionChange, 'input.nativeSelection', eventStartMs(event))
+    }
     this.#flushHiddenInputIfStale()
   }
 
   private handleCopy = (event: ClipboardEvent): void => {
-    this.#flushHiddenInputIfStale()
     // A page selection that reaches past the editor is copied whole by the document's handler.
     if (this.#selectionLeavesEditor()) return
+    const selectionChange = this.#isInputFocused() ? this.#selectionChangeBeforeEdit() : null
+    if (selectionChange) {
+      this.applyChange(selectionChange, 'input.nativeSelection', eventStartMs(event))
+    }
+    this.#flushHiddenInputIfStale()
     const payload = this.#clipboardPayload()
     if (!payload) return
     if (!event.clipboardData) return
@@ -3450,10 +3471,10 @@ export class InputSelectionController {
     if (!event.clipboardData) return
     if (!this.options.canEditDocument()) return
     if (this.#selectionLeavesEditor()) return
-    this.#flushHiddenInputIfStale()
 
     const start = eventStartMs(event)
     const selectionChange = this.#selectionChangeBeforeEdit()
+    this.#flushHiddenInputIfStale()
     const payload = this.#clipboardPayload()
     if (!payload) return
 
