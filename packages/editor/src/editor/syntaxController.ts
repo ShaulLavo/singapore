@@ -3309,7 +3309,7 @@ export class EditorSyntaxController {
             this.options.adoptTokens(nextTokens)
           }
         }
-        if (this.#copyOwner === 'range' && (gaps.length > 0 || entriesChanged)) {
+        if (this.#copyOwner !== 'external' && (gaps.length > 0 || entriesChanged)) {
           const currentRangeOwned =
             snapshot !== null &&
             this.#rangeTokenOwner?.store === this.#currentTokens &&
@@ -4400,7 +4400,7 @@ export class EditorSyntaxController {
             : EditorTokenStore.empty()
         this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, priorUnownedStrips)
         this.#pendingUnownedStrips = []
-        if (this.#copyOwner === 'range') {
+        if (this.#copyOwner !== 'external') {
           this.#rangeCopyTokens = EditorTokenStore.empty()
           this.rangeCopyOwner = null
           this.#copyOwner = 'none'
@@ -4415,7 +4415,7 @@ export class EditorSyntaxController {
       } else {
         this.#pendingUnownedStrips = []
         if (previousEntries.length > 0) {
-          if (this.#copyOwner === 'range') {
+          if (this.#copyOwner !== 'external') {
             this.#rangeCopyTokens = EditorTokenStore.empty()
             this.rangeCopyOwner = null
             this.#copyOwner = 'none'

@@ -6725,5 +6725,118 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears provisional copyTokens when background completion transitions to range-unavailable', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'background-completion-range-unavailable-clears-copy',
+      })
+      let completed = false
+      let lastRead: Parameters<ReturnType<typeof createEmptySyntaxRuntime>['analyze']>[0] | null =
+        null
+      let producedListener:
+        | ((
+            read: Parameters<ReturnType<typeof createEmptySyntaxRuntime>['analyze']>[0],
+            result: EditorSyntaxResult,
+          ) => void)
+        | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (!completed) {
+          const base = createEmptySyntaxResult({ requestedRanges: [range] })
+          return {
+            ...base,
+            projection: {
+              ...base.projection,
+              analysis: {
+                kind: 'partial',
+                coveredRange: range,
+              },
+            },
+            tokens: EditorTokenStore.fromTokens([{ start: 5, end: 7, style: { color: 'blue' } }]),
+          }
+        }
+        return {
+          ...answerFor(range),
+          degraded: { kind: 'range-unavailable', message: 'complete base range unavailable' },
+        }
+      })
+      const provider = structuralProvider(query, {
+        analyze: async (read) => {
+          lastRead = read
+          if (completed) return createEmptySyntaxResult()
+          const base = createEmptySyntaxResult()
+          return {
+            ...base,
+            projection: {
+              ...base.projection,
+              analysis: {
+                kind: 'partial',
+                coveredRange: { startIndex: 0, endIndex: 20 },
+              },
+            },
+          }
+        },
+        canQueryRange: () => true,
+        subscribeResults: (listener) => {
+          producedListener = listener
+          return () => {
+            if (producedListener === listener) producedListener = null
+          }
+        },
+      })
+      let lastAdopted = EditorTokenStore.empty()
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'background-completion-range-unavailable-clears-copy',
+        getCurrentSessionDocumentId: () => 'background-completion-range-unavailable-clears-copy',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => ({ startIndex: 0, endIndex: 20 }),
+        adoptTokens: (tokens) => {
+          lastAdopted = tokens
+        },
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'background-completion-range-unavailable-clears-copy',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(syntax.tokens.toTokens()).toEqual([{ start: 5, end: 7, style: { color: 'blue' } }])
+          expect(syntax.copyTokens.toTokens()).toEqual([
+            { start: 5, end: 7, style: { color: 'blue' } },
+          ])
+        })
+        expect(producedListener).not.toBeNull()
+        expect(lastRead).not.toBeNull()
+
+        completed = true
+        producedListener!(lastRead!, createEmptySyntaxResult())
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+        expect(syntax.tokens.length).toBe(0)
+        expect(lastAdopted.length).toBe(0)
+        expect(syntax.copyTokens.length).toBe(0)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
