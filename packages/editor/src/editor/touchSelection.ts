@@ -68,10 +68,17 @@ export class TouchSelectionController {
   #endFrame: ScheduledFrame | null = null
   #selectionState: { session: object; snapshot: object; selections: object } | null = null
   #installed = false
+  #hasPressParticipants = false
   #touchStartNonPassive = false
   #touchMoveDragAttached = false
 
   constructor(private readonly options: TouchSelectionOptions) {}
+
+  setHasPressParticipants(hasParticipants: boolean): void {
+    if (this.#hasPressParticipants === hasParticipants) return
+    this.#hasPressParticipants = hasParticipants
+    this.#syncTouchStartPassivity()
+  }
 
   selectionChanged(session: object, snapshot: object, selections: object): void {
     const previous = this.#selectionState
@@ -107,12 +114,14 @@ export class TouchSelectionController {
   install(): void {
     const element = this.options.element
     this.#installed = true
-    this.#touchStartNonPassive = false
+    const wantNonPassive = this.#lastTap !== null || this.#hasPressParticipants
+    this.#touchStartNonPassive = wantNonPassive
     this.#touchMoveDragAttached = false
     element.ownerDocument.addEventListener('pointerdown', this.#pointerDown, { capture: true })
     // Keep touchstart and touchmove passive at rest so mobile scroll swipes stay on the compositor.
-    // Non-passive listeners are attached only while a multi-tap window or selection drag is active.
-    element.addEventListener('touchstart', this.start, { passive: true, capture: true })
+    // Non-passive listeners are attached only while press participants, a multi-tap window, or a
+    // selection drag require preventDefault().
+    element.addEventListener('touchstart', this.start, { passive: !wantNonPassive, capture: true })
     element.addEventListener('touchmove', this.#watchScrollMove, { passive: true })
     element.addEventListener('touchend', this.end, { passive: false })
     element.addEventListener('touchcancel', this.cancel)
@@ -158,7 +167,7 @@ export class TouchSelectionController {
 
   #syncTouchStartPassivity(): void {
     if (!this.#installed) return
-    const wantNonPassive = this.#lastTap !== null
+    const wantNonPassive = this.#lastTap !== null || this.#hasPressParticipants
     if (wantNonPassive === this.#touchStartNonPassive) return
     const element = this.options.element
     element.removeEventListener('touchstart', this.start, { capture: true })

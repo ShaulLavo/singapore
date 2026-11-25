@@ -176,6 +176,53 @@ describe('TouchSelectionController hold scheduling', () => {
     removeSpy.mockRestore()
   })
 
+  it('keeps touchstart non-passive while press participants are registered and restores passive when removed', () => {
+    const addSpy = vi.spyOn(element, 'addEventListener')
+    const claimPress = vi.fn((event: TouchEvent) => {
+      event.preventDefault()
+      return true
+    })
+    const fresh = new TouchSelectionController({
+      element,
+      positionAt: () => ({ offset: 8, affinity: 'after', displayRow: 0, rowX: 20 }),
+      claimPress,
+      begin: vi.fn(),
+      tap: vi.fn(),
+      select: word,
+      extend: vi.fn(),
+      scroll: vi.fn(() => false),
+      focus,
+      notify,
+    })
+    controller.dispose()
+    addSpy.mockClear()
+    fresh.install()
+
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchstart').at(-1)?.[2]).toEqual({
+      passive: true,
+      capture: true,
+    })
+
+    fresh.setHasPressParticipants(true)
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchstart').at(-1)?.[2]).toEqual({
+      passive: false,
+      capture: true,
+    })
+
+    const firstTap = dispatchTouch(row, 'touchstart', 20)
+    expect(claimPress).toHaveBeenCalledOnce()
+    expect(firstTap.defaultPrevented).toBe(true)
+
+    fresh.setHasPressParticipants(false)
+    expect(addSpy.mock.calls.filter(([type]) => type === 'touchstart').at(-1)?.[2]).toEqual({
+      passive: true,
+      capture: true,
+    })
+
+    fresh.dispose()
+    addSpy.mockRestore()
+  })
+
   it('selects once at the hold deadline while the finger remains down', () => {
     dispatchTouch(row, 'touchstart')
     vi.advanceTimersByTime(549)

@@ -542,9 +542,10 @@ long-press selection is expected browser behavior. The defect is allowing two
 selection owners to handle the same editor contact.
 
 [TouchSelectionController](../../packages/editor/src/editor/touchSelection.ts)
-keeps `touchstart` and `touchmove` passive at rest so ordinary mobile scroll
-swipes stay on the compositor without blocking on script or triggering a frame-0
-full-editor style recalc. For a single-finger stationary hold, it delays setting
+keeps `touchstart` and `touchmove` passive at rest (switching `touchstart` to
+non-passive only while press participants or a multi-tap window are active) so
+ordinary mobile scroll swipes stay on the compositor without blocking on script
+or triggering a frame-0 full-editor style recalc. For a single-finger stationary hold, it delays setting
 `data-editor-touch-selecting` for 180 ms (cancelling immediately if the contact
 moves past `MOVE_SLOP`), which lands well before iOS's native long-press
 recognition while leaving scroll swipes untouched. Multi-tap contacts

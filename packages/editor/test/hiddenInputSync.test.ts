@@ -283,23 +283,75 @@ describe('hidden textarea lazy sync and pointer-drag suppression', () => {
     expect(input.value).toBe('alpha XY日本beta gamma')
     expect(input.selectionStart).toBe(10)
 
-    // Type lazily again, then receive a browser-mutated native input event (dead key / dictation).
+    // First ASCII char after CJK ('本') flushes so the textarea prefix ends in ASCII, then the
+    // next ASCII char is deferred before receiving a browser-mutated native input event.
     dispatchBeforeInput(input, 'Z')
-    expect(input.value).toBe('alpha XY日本beta gamma')
+    expect(input.value).toBe('alpha XY日本Zbeta gamma')
+    dispatchBeforeInput(input, 'W')
+    expect(input.value).toBe('alpha XY日本Zbeta gamma')
     const caret = input.selectionStart
     input.value = `${input.value.slice(0, caret)}!${input.value.slice(caret)}`
     input.setSelectionRange(caret + 1, caret + 1)
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }))
-    expect(editor.materializeFullText()).toBe('alpha XY日本Z!beta gamma')
-    expect(input.value).toBe('alpha XY日本Z!beta gamma')
+    expect(editor.materializeFullText()).toBe('alpha XY日本ZW!beta gamma')
+    expect(input.value).toBe('alpha XY日本ZW!beta gamma')
 
     // Type lazily again, then move the native selection directly in the textarea.
     dispatchBeforeInput(input, 'Q')
-    expect(editor.materializeFullText()).toBe('alpha XY日本Z!Qbeta gamma')
+    expect(editor.materializeFullText()).toBe('alpha XY日本ZW!Qbeta gamma')
     input.setSelectionRange(0, 5)
     input.dispatchEvent(new Event('select', { bubbles: true }))
     expect(editor.getSelections()[0]).toMatchObject({ anchorOffset: 0, headOffset: 5 })
-    expect(input.value).toBe('alpha XY日本Z!Qbeta gamma')
+    expect(input.value).toBe('alpha XY日本ZW!Qbeta gamma')
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, 5])
+  })
+
+  it('flushes immediately on non-ASCII/emoji inserts and disambiguates right-side native selections at the stale caret', () => {
+    editor.setSelection(6, 6)
+    editor.focus()
+    const input = editor.getInputElement() as HTMLTextAreaElement
+
+    // Emoji insert flushes immediately so a native backward delete removes the full surrogate pair.
+    dispatchBeforeInput(input, '😀')
+    expect(editor.materializeFullText()).toBe('alpha 😀beta gamma')
+    expect(input.value).toBe('alpha 😀beta gamma')
+    expect(input.selectionStart).toBe(8)
+
+    // Typing ASCII immediately after an emoji also flushes so the textarea does not hold a trailing
+    // surrogate behind a lazily deferred ASCII character.
+    dispatchBeforeInput(input, 'x')
+    expect(input.value).toBe('alpha 😀xbeta gamma')
+    expect(input.selectionStart).toBe(9)
+
+    // Subsequent ASCII typing is deferred, and selecting the character immediately to the right of
+    // the stale caret selects only 'b' (not 'yzb'), while selecting left selects only 'x'.
+    dispatchBeforeInput(input, 'y')
+    dispatchBeforeInput(input, 'z')
+    expect(editor.materializeFullText()).toBe('alpha 😀xyzbeta gamma')
+    expect(input.value).toBe('alpha 😀xbeta gamma')
+    expect(input.selectionStart).toBe(9)
+
+    input.setSelectionRange(9, 10)
+    input.dispatchEvent(new Event('select', { bubbles: true }))
+    const rightSelection = editor.getSelections()[0]!
+    expect(rightSelection).toMatchObject({ anchorOffset: 11, headOffset: 12 })
+    expect(
+      editor.materializeFullText().slice(rightSelection.startOffset, rightSelection.endOffset),
+    ).toBe('b')
+    expect(input.value).toBe('alpha 😀xyzbeta gamma')
+    expect([input.selectionStart, input.selectionEnd]).toEqual([11, 12])
+
+    // Left-adjacent selection at the stale caret boundary selects only the character before the insert.
+    editor.setSelection(11, 11)
+    dispatchBeforeInput(input, '1')
+    dispatchBeforeInput(input, '2')
+    expect(editor.materializeFullText()).toBe('alpha 😀xyz12beta gamma')
+    input.setSelectionRange(10, 11)
+    input.dispatchEvent(new Event('select', { bubbles: true }))
+    const leftSelection = editor.getSelections()[0]!
+    expect(leftSelection).toMatchObject({ anchorOffset: 10, headOffset: 11 })
+    expect(
+      editor.materializeFullText().slice(leftSelection.startOffset, leftSelection.endOffset),
+    ).toBe('z')
   })
 })

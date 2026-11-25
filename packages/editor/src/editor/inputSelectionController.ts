@@ -29,6 +29,7 @@ import {
   pointToOffset,
   readPieceTableTextRange,
 } from '@singapore-editor/textbuffer'
+import { splitsSurrogatePair } from '@singapore-editor/textbuffer/internal/reads'
 
 import {
   SelectionGoal,
@@ -468,6 +469,10 @@ export class InputSelectionController {
     }
 
     this.#uninstallNativeInputHandlers()
+  }
+
+  setHasPressParticipants(hasParticipants: boolean): void {
+    this.touchSelection.setHasPressParticipants(hasParticipants)
   }
 
   applyNewlineCommand(context: EditorCommandContext): boolean {
@@ -1863,10 +1868,15 @@ export class InputSelectionController {
     if (this.options.view.editContext) return null
     if (!isTextareaElement(this.options.view.inputElement) || !this.#isInputFocused()) return null
     if (this.#hiddenInputDirty) return null
-    if (inserted.length === 0 || inserted.includes('\n') || inserted.includes('\r')) return null
-    // Require text in front of the caret in the textarea so native backward delete still fires input.
-    if (this.#hiddenInputContent.selectionStart <= 0) return null
-    if (this.#hiddenInputContent.selectionStart !== this.#hiddenInputContent.selectionEnd) {
+    // Only defer single printable ASCII characters while the character immediately before the
+    // textarea caret is also single-unit ASCII. Emoji, surrogates, combining sequences, and
+    // multi-code-unit runs sync immediately so native delete/autocorrect counts stay aligned.
+    if (inserted.length !== 1 || !isPlainAsciiCode(inserted.charCodeAt(0))) return null
+    const writtenStart = this.#hiddenInputContent.selectionStart
+    if (writtenStart <= 0 || writtenStart !== this.#hiddenInputContent.selectionEnd) {
+      return null
+    }
+    if (!isPlainAsciiCode(this.#hiddenInputContent.value.charCodeAt(writtenStart - 1))) {
       return null
     }
 
@@ -3698,8 +3708,10 @@ export class InputSelectionController {
         start: selection.startOffset - deduced.replacePrevCharCnt,
         end: selection.endOffset + deduced.replaceNextCharCnt,
       })
-      const from = clamp(reached.start, replacedThrough, snapshot.length)
-      const to = clamp(reached.end, from, snapshot.length)
+      let from = clamp(reached.start, replacedThrough, snapshot.length)
+      let to = clamp(reached.end, from, snapshot.length)
+      if (from > replacedThrough && splitsSurrogatePair(snapshot, from)) from -= 1
+      if (to < snapshot.length && splitsSurrogatePair(snapshot, to)) to += 1
       edits.push({ from, text: deduced.text, to })
       const caret = from + shift + deduced.text.length
       selections.push(selectionOffsetsWithAffinity(selection, caret, caret))
@@ -4087,12 +4099,18 @@ export class InputSelectionController {
       return null
 
     const lazy = this.#hiddenInputLazy
-    const start = lazy
-      ? lazyHiddenInputOffsetToDocument(snapshot, lazy, written, input.selectionStart)
-      : hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionStart)
-    const end = lazy
-      ? lazyHiddenInputOffsetToDocument(snapshot, lazy, written, input.selectionEnd)
-      : hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionEnd)
+    const { start, end } = lazy
+      ? lazyHiddenInputRangeToDocument(
+          snapshot,
+          lazy,
+          written,
+          input.selectionStart,
+          input.selectionEnd,
+        )
+      : {
+          start: hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionStart),
+          end: hiddenInputOffsetToDocument(snapshot, selection, written, input.selectionEnd),
+        }
     return session.setSelection(backward ? end : start, backward ? start : end)
   }
 
@@ -4471,17 +4489,29 @@ function beforeInputText(event: InputEvent): string | null {
   return null
 }
 
-function lazyHiddenInputOffsetToDocument(
+function isPlainAsciiCode(code: number): boolean {
+  return code >= 0x20 && code <= 0x7e
+}
+
+function lazyHiddenInputRangeToDocument(
   snapshot: PieceTableSnapshot,
   lazy: LazyHiddenInputState,
   written: HiddenInputState,
-  offset: number,
-): number {
-  const mapped =
-    offset <= written.selectionStart
-      ? lazy.baseOffset + (offset - written.selectionStart)
-      : lazy.expectedOffset + (offset - written.selectionEnd)
-  return clamp(mapped, 0, snapshot.length)
+  rawStart: number,
+  rawEnd: number,
+): { readonly start: number; readonly end: number } {
+  const caret = written.selectionStart
+  const mapLeft = (offset: number) => clamp(lazy.baseOffset + (offset - caret), 0, snapshot.length)
+  const mapRight = (offset: number) =>
+    clamp(lazy.expectedOffset + (offset - caret), 0, snapshot.length)
+  // A non-empty selection starting at the stale caret boundary and extending right targets text
+  // after the lazily inserted characters, so its start belongs on the right side of the insert.
+  const start =
+    rawStart > caret || (rawStart === caret && rawEnd > caret)
+      ? mapRight(rawStart)
+      : mapLeft(rawStart)
+  const end = rawEnd > caret ? mapRight(rawEnd) : mapLeft(rawEnd)
+  return { start, end }
 }
 
 function isSelectionList(

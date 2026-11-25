@@ -362,4 +362,47 @@ describe('platform selections in the bounded textarea', () => {
     expect(selectionWrites).toBe(1)
     expect(input.selectionEnd).toBeGreaterThan(input.selectionStart)
   })
+
+  it('handles native backward delete after emoji input and right-side native selection after lazy typing', async () => {
+    editor.setText('abc')
+    const input = await inputAt(3)
+
+    // Inserting an emoji syncs the textarea so Chromium native backward delete removes the full pair.
+    await commands.proofNativeInsertText('😀')
+    expect(editor.materializeFullText()).toBe('abc😀')
+    expect(input.value).toBe('abc😀')
+    document.execCommand('delete')
+    expect(editor.materializeFullText()).toBe('abc')
+
+    // Typing ASCII immediately after an emoji also keeps native delete aligned.
+    await commands.proofNativeInsertText('😀')
+    await commands.proofNativeInsertText('a')
+    expect(editor.materializeFullText()).toBe('abc😀a')
+    document.execCommand('delete')
+    expect(editor.materializeFullText()).toBe('abc😀')
+
+    // Selecting the textarea character immediately to the right of a lazily typed burst selects
+    // only that character, not the lazily inserted prefix.
+    editor.setText('alpha bravo charlie')
+    const focused = await inputAt(6)
+    for (const ch of ['x', 'y', 'z']) {
+      focused.dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: ch,
+        }),
+      )
+    }
+    expect(editor.materializeFullText()).toBe('alpha xyzbravo charlie')
+    expect(focused.value).toBe('alpha bravo charlie')
+    focused.setSelectionRange(6, 7)
+    focused.dispatchEvent(new Event('select', { bubbles: true }))
+    const rightSelection = editor.getSelections()[0]!
+    expect(rightSelection).toMatchObject({ anchorOffset: 9, headOffset: 10 })
+    expect(
+      editor.materializeFullText().slice(rightSelection.startOffset, rightSelection.endOffset),
+    ).toBe('b')
+  })
 })
