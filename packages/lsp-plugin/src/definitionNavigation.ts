@@ -7,7 +7,7 @@ import { type OffsetRange, identifierRangeAtOffset } from '@singapore-editor/plu
 import type { EditorSetSelectionOptions } from '@singapore-editor/core/editor'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { documentUriToFileName } from './paths'
+import { documentUriToFileName, sameFileUri } from './paths'
 import { rangeAroundOffset } from './sourceText'
 import type { LanguageServerFeatureRouter } from './serverSet'
 import type { LanguageServerDefinitionTarget, LanguageServerNavigationKind } from './types'
@@ -195,7 +195,7 @@ function preferredTarget(
   targets: readonly LanguageServerDefinitionTarget[],
 ): LanguageServerDefinitionTarget | null {
   return (
-    targets.find((target) => target.uri === activeUri) ??
+    targets.find((target) => sameFileUri(target.uri, activeUri)) ??
     targets.find((target) => !target.path.includes('/node_modules/')) ??
     targets[0] ??
     null
@@ -209,7 +209,7 @@ function targetWithOffset(
 ): readonly (OffsetRange & {
   readonly target: LanguageServerDefinitionTarget
 })[] {
-  if (target.uri !== activeUri) return []
+  if (!sameFileUri(target.uri, activeUri)) return []
 
   return [
     {
@@ -226,7 +226,7 @@ function targetIsSourceRange(
   sourceRange: OffsetRange,
   target: LanguageServerDefinitionTarget,
 ): boolean {
-  if (target.uri !== activeUri) return false
+  if (!sameFileUri(target.uri, activeUri)) return false
 
   const targetStart = lspPositionToOffsetInSnapshot(activeDocument, target.range.start)
   const targetEnd = lspPositionToOffsetInSnapshot(activeDocument, target.range.end)

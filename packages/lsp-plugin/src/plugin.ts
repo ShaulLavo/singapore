@@ -72,7 +72,11 @@ import {
   type LspTextDocumentSnapshot,
 } from '@singapore-editor/lsp'
 import { rangeAroundOffset } from './sourceText'
-import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
+import type {
+  LspConnectionProvider,
+  LspConnectionTransportFactory,
+  LspReconnectOptions,
+} from './lspConnection'
 import { resolveLanguageServerLaneOptions, type LanguageServerResolvedLaneOptions } from './lane'
 import {
   allLanguageServerFeatures,
@@ -155,6 +159,11 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
   /** See LanguageServerPluginOptions.serverRequestHandlers. */
   readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
   createTransport(): ReturnType<LspConnectionTransportFactory>
+  /**
+   * Calls `createTransport` again after the server goes away on its own, so a factory that starts
+   * a server process restarts it. Off unless given.
+   */
+  readonly reconnect?: LspReconnectOptions
   /** Borrows the connection instead of constructing one per view. See LspConnectionProvider. */
   readonly connectionProvider?: LspConnectionProvider
   readonly documentSync?: LanguageServerDocumentSyncOptions
@@ -1186,6 +1195,7 @@ function resolvedLaneFromAdapterOptions(
     notificationHandlers: options.notificationHandlers,
     serverRequestHandlers: options.serverRequestHandlers,
     createTransport: options.createTransport,
+    reconnect: options.reconnect,
     connectionProvider: options.connectionProvider,
     onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     onConnectionCreated: options.onConnectionCreated,

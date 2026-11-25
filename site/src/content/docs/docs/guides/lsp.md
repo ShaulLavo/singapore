@@ -57,6 +57,44 @@ editor.openDocument({
 
 `upsertWorkspaceFiles` and `deleteWorkspaceFiles` update that file set. Types for external imports must be available to the worker's project.
 
+## 4. Connect a server process over its standard streams
+
+A server that speaks LSP on stdin and stdout needs a host that holds the process. `createStdioLspTransport` adds and removes the `Content-Length` framing and gives you three things to wire to that process.
+
+```ts
+import { createStdioLspTransport } from '@singapore-editor/lsp'
+import { createLanguageServerAdapterPlugin, pathToFileUri } from '@singapore-editor/lsp-plugin'
+
+type ServerProcess = { kill(): void; exited: Promise<Error> }
+declare function startServer(
+  stdin: ReadableStream<Uint8Array>,
+  onStdout: (bytes: Uint8Array) => void,
+): ServerProcess
+
+function connectServer() {
+  const stdio = createStdioLspTransport({ stop: () => server.kill() })
+  const server = startServer(stdio.stdin, stdio.stdout)
+  void server.exited.then(stdio.exited)
+  return stdio.transport
+}
+
+const plugin = createLanguageServerAdapterPlugin({
+  name: 'typescript',
+  rootUri: pathToFileUri('/project'),
+  createTransport: connectServer,
+  reconnect: { delaysMs: [250, 1000, 4000] },
+  documentSync: { uriForDocument: (snapshot) => pathToFileUri(snapshot.documentId ?? '') },
+})
+```
+
+`startServer` is yours. It pipes `stdin` into the process and calls `onStdout` with each chunk the process writes.
+
+- Call `exited` once the process and everything it started are gone, with the reason it ended. That is when the connection learns of the loss, so `reconnect` never starts a second server beside one that is still stopping. The new server receives `initialize` and every open document.
+- `stop` is called at most once: when the connection is disposed, when the server writes bytes that are not a frame, sends a message over `maxMessageBytes`, stops reading its stdin until `maxPendingStdinBytes` are waiting, or closes its stdin.
+- Keep the server's stderr away from `stdout`. A stray log line there is a protocol failure, reported as an `LspFramingError` that quotes it.
+
+`pathToFileUri` and `fileUriToPath` map absolute POSIX paths to `file:` URIs exactly, for a host whose document ids are paths in the file tree the server reads. Open a definition in another file from `onOpenDefinition` with `fileUriToPath(target.uri)`.
+
 ## If it doesn't work
 
 ### Completion and hover are absent

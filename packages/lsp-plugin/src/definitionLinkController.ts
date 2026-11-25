@@ -16,6 +16,7 @@ import {
   requestNavigationTargets,
   type DefinitionResult,
 } from './definitionNavigation'
+import { sameFileUri } from './paths'
 import { LINK_HIGHLIGHT_STYLE } from './plugin.styles'
 import { rangeAroundOffset } from './sourceText'
 import type { ActiveDocument, LanguageServerNavigationCommand } from './pluginTypes'
@@ -273,10 +274,11 @@ export class DefinitionLinkController {
     target: LanguageServerDefinitionTarget,
     command: LanguageServerNavigationCommand,
   ): void {
-    const shouldOfferExternalOpen = target.uri !== active.uri || command.openMode !== 'default'
+    const sameDocument = sameFileUri(target.uri, active.uri)
+    const shouldOfferExternalOpen = !sameDocument || command.openMode !== 'default'
     const handled = shouldOfferExternalOpen ? this.openDefinitionTarget(target, command) : false
     if (handled || !this.navigationIsCurrent(requestId, active)) return
-    if (target.uri !== active.uri) return
+    if (!sameDocument) return
 
     navigateToTarget(
       target,
