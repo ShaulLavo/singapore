@@ -614,6 +614,7 @@ export class Editor {
       sizing: editorSizing(options.height, options.maxHeight, options.scrollMode),
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
+      theme: this.configuredTheme,
       inputRoute: options.inputRoute,
       inputLabel: options.inputLabel,
       inputKind: options.inputKind,
@@ -806,7 +807,7 @@ export class Editor {
       navigation: (command, context) =>
         this.inputSelection.applyNavigationCommand(command, context),
     })
-    this.applyResolvedTheme()
+    if (this.syntax.providerTheme || this.syntax.theme) this.applyResolvedTheme()
     if (this.pluginHost.hasHighlighterProviders()) this.syntax.refreshHighlighterTheme()
     this.createInitialCommandContributions(this.pluginHost.getCommandContributionProviders())
     this.createInitialCapabilityContributions(this.pluginHost.getCapabilityContributionProviders())

@@ -28,6 +28,13 @@ export const PROPORTIONAL_WRAP_MARGIN_PX = 1
 
 let advancesCache = new WeakMap<Document, Map<string, GlyphAdvances>>()
 
+/** Cache key for the face and spacing of `element`, or null without computed styles. */
+export function glyphAdvancesCacheKey(element: HTMLElement): string | null {
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element)
+  if (!style) return null
+  return `${fontShorthand(style)}\n${style.letterSpacing}`
+}
+
 /** Null where no canvas can measure (no layout engine), which leaves wrap on columns. */
 export function glyphAdvancesFor(element: HTMLElement): GlyphAdvances | null {
   const style = element.ownerDocument.defaultView?.getComputedStyle(element)
@@ -51,6 +58,13 @@ export function glyphAdvancesFor(element: HTMLElement): GlyphAdvances | null {
   byKey.set(key, advances)
   advancesCache.set(element.ownerDocument, byKey)
   return advances
+}
+
+/** Drops one cached face when a late web font replaces its fallback without disturbing other faces. */
+export function invalidateGlyphAdvancesKey(document: Document, key: string): void {
+  advancesCache.get(document)?.delete(key)
+  // WebKit retains a canvas context's fallback face after the requested web font loads.
+  sharedContext = null
 }
 
 /** Dropped with the metrics cache: a late web font changes every advance without changing a style. */

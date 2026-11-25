@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Node, Query, Range as TreeSitterRange, Tree } from 'web-tree-sitter'
 
 import {
@@ -1027,5 +1027,28 @@ describe('parse document reuse', () => {
     ).toBeNull()
     expect(deleted).toEqual([])
     disposeDocument(runtimeSessionId)
+  })
+
+  it('yields worker macrotasks via MessageChannel without using setTimeout(0)', async () => {
+    const { yieldWorker } = __treeSitterWorkerInternalsForTests
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      let settled = false
+      const first = yieldWorker().then(() => {
+        settled = true
+      })
+      // Microtasks alone must not settle a worker yield; it must return to the event loop.
+      await settleMicrotasks()
+      expect(settled).toBe(false)
+      await first
+      expect(settled).toBe(true)
+
+      for (let i = 0; i < 20; i += 1) {
+        await yieldWorker()
+      }
+      expect(timeoutSpy).not.toHaveBeenCalled()
+    } finally {
+      timeoutSpy.mockRestore()
+    }
   })
 })

@@ -1,6 +1,10 @@
 import { EditorDisposableStore, MutableEditorDisposable } from '../editor/disposables'
 import type { EditorDisposable } from '../editor/disposables'
-import { clearGlyphAdvancesCache } from './glyphAdvances'
+import {
+  clearGlyphAdvancesCache,
+  glyphAdvancesCacheKey,
+  invalidateGlyphAdvancesKey,
+} from './glyphAdvances'
 
 export type BrowserTextMetrics = {
   readonly rowHeight: number
@@ -10,10 +14,16 @@ export type BrowserTextMetrics = {
 /** Glyphs a whitespace marker can be drawn with: U+00B7 middle dot, U+2E31 word separator dot. */
 export type WhitespaceDotGlyph = '·' | '⸱'
 
+type WatchedSize = {
+  readonly width: number
+  readonly height: number
+}
+
 // The measured record carries more than callers may hand in as an override, so it stays internal.
 type MeasuredTextMetrics = BrowserTextMetrics & {
   readonly whitespaceDotGlyph: WhitespaceDotGlyph
   readonly monospace: boolean
+  readonly watchedSize: WatchedSize
 }
 
 const DEFAULT_ROW_HEIGHT = 24
@@ -33,8 +43,11 @@ const MONOSPACE_PROBE_TEXTS = MONOSPACE_PROBE_GLYPHS.map((glyph) => glyph.repeat
 const WATCHED_PROBE_TEXT = `m ${MONOSPACE_PROBE_GLYPHS.join('')}`
 // Layout reports 1/64 px; over the 16-glyph probe that bounds one advance to about 0.001 px.
 const MONOSPACE_EPSILON = 0.002
+// `getBoundingClientRect` and ResizeObserver `borderBoxSize` can differ by sub-pixel rounding.
+const WATCHED_SIZE_EPSILON = 0.05
 const NO_INVALIDATION: EditorDisposable = { dispose: () => {} }
 let metricsCache = new WeakMap<Document, Map<string, MeasuredTextMetrics>>()
+const unmeasuredElements = new WeakSet<HTMLElement>()
 
 export function measureBrowserTextMetrics(element: HTMLElement): BrowserTextMetrics {
   return measureTextMetrics(element)
@@ -99,6 +112,7 @@ function measureTextMetrics(element: HTMLElement): MeasuredTextMetrics {
   const document = element.ownerDocument
   const probe = appendProbe(element, PROBE_TEXT)
   const spaceProbe = appendProbe(element, SPACE_PROBE_TEXT)
+  const watchedProbe = appendProbe(element, WATCHED_PROBE_TEXT)
   const dotProbes = WHITESPACE_DOT_GLYPHS.map((glyph) =>
     appendProbe(element, glyph.repeat(PROBE_LENGTH)),
   )
@@ -106,21 +120,28 @@ function measureTextMetrics(element: HTMLElement): MeasuredTextMetrics {
 
   // Every probe is attached before the first read, so the whole set costs one layout.
   const rect = probe.getBoundingClientRect()
+  const watchedRect = watchedProbe.getBoundingClientRect()
   const style = readComputedStyle(probe)
   const spaceWidth = measuredAdvance(spaceProbe)
   const dotWidths = dotProbes.map(measuredAdvance)
   const monospaceWidths = [spaceWidth].concat(monospaceProbes.map(measuredAdvance))
-  for (const attached of [probe, spaceProbe].concat(dotProbes, monospaceProbes)) attached.remove()
+  for (const attached of [probe, spaceProbe, watchedProbe].concat(dotProbes, monospaceProbes)) {
+    attached.remove()
+  }
 
-  const metrics = {
+  const metrics: MeasuredTextMetrics = {
     rowHeight: measuredRowHeight(rect, style),
     characterWidth: measuredCharacterWidth(rect),
     whitespaceDotGlyph: nearestWhitespaceDotGlyph(spaceWidth, dotWidths),
     monospace: advancesAgree(rect.width / PROBE_LENGTH, monospaceWidths),
+    watchedSize: { width: watchedRect.width, height: watchedRect.height },
   }
   // A hidden probe reports zero geometry; its fallback must not become a shared font measurement.
   if (cacheKey && rect.width > 0 && rect.height > 0) {
+    unmeasuredElements.delete(element)
     cacheBrowserTextMetrics(document, cacheKey, metrics)
+  } else {
+    unmeasuredElements.add(element)
   }
   return metrics
 }
@@ -261,7 +282,22 @@ type FaceObserver = {
   dispose(): void
 }
 
-type WatchedFace = { size: string | null; readonly onChange: () => void }
+type WatchedFace = {
+  readonly element: HTMLElement
+  size: string | null
+  cacheKey: string | null
+  glyphKey: string | null
+  baseline: WatchedSize | null
+  wasUnmeasured: boolean
+  readonly onChange: () => void
+}
+
+type StaleFaceChange = {
+  readonly probe: Element
+  readonly face: WatchedFace
+  readonly invalidateMetricsKey: string | null
+  readonly invalidateGlyphKey: string | null
+}
 
 const invalidationSources = new WeakMap<Window, BrowserTextMetricsInvalidationSource>()
 
@@ -293,26 +329,47 @@ function createInvalidationSource(view: Window): BrowserTextMetricsInvalidationS
 /**
  * Watches a sample of the measured glyphs in each editor instead of guessing at causes: a host may
  * change the font through any stylesheet or variable, and nothing announces a system face. One
- * observer serves the window, so a change several editors share clears the cache once.
+ * observer serves the window, and invalidation is scoped to the affected font key so mounting or
+ * restyling one editor leaves every other editor's cached metrics and glyph advances intact.
  */
 function createFaceObserver(): FaceObserver | null {
   if (typeof ResizeObserver === 'undefined') return null
 
   const watched = new Map<Element, WatchedFace>()
   const observer = new ResizeObserver((entries) => {
-    const stale = entries.flatMap((entry) => staleFace(watched.get(entry.target), entry))
+    const stale: StaleFaceChange[] = []
+    for (const entry of entries) {
+      const change = staleFace(watched.get(entry.target), entry)
+      if (change) stale.push(change)
+    }
     if (stale.length === 0) return
 
-    clearBrowserTextMetricsCache()
+    invalidateChangedFaces(stale)
     // Checked again at the call: a listener can dispose another editor before its turn comes.
-    for (const [probe, face] of stale) {
+    for (const { probe, face } of stale) {
       if (watched.get(probe) === face) face.onChange()
     }
   })
   return {
     watch: (element, onChange) => {
       const { host, probe } = appendWatchedProbe(element)
-      watched.set(probe, { size: null, onChange })
+      const document = element.ownerDocument
+      const cacheKey = browserTextMetricsCacheKey(element)
+      const glyphKey = glyphAdvancesCacheKey(element)
+      const wasUnmeasured = unmeasuredElements.has(element)
+      const baseline =
+        wasUnmeasured || !cacheKey
+          ? null
+          : (cachedBrowserTextMetrics(document, cacheKey)?.watchedSize ?? null)
+      watched.set(probe, {
+        element,
+        size: null,
+        cacheKey,
+        glyphKey,
+        baseline,
+        wasUnmeasured,
+        onChange,
+      })
       observer.observe(probe)
       return {
         dispose: () => {
@@ -326,22 +383,114 @@ function createFaceObserver(): FaceObserver | null {
   }
 }
 
+function invalidateChangedFaces(changes: readonly StaleFaceChange[]): void {
+  const invalidatedMetrics = new Set<string>()
+  const invalidatedGlyphs = new Set<string>()
+  for (const { face, invalidateMetricsKey, invalidateGlyphKey } of changes) {
+    const document = face.element.ownerDocument
+    if (invalidateMetricsKey && !invalidatedMetrics.has(invalidateMetricsKey)) {
+      invalidatedMetrics.add(invalidateMetricsKey)
+      metricsCache.get(document)?.delete(invalidateMetricsKey)
+    }
+    if (invalidateGlyphKey && !invalidatedGlyphs.has(invalidateGlyphKey)) {
+      invalidatedGlyphs.add(invalidateGlyphKey)
+      invalidateGlyphAdvancesKey(document, invalidateGlyphKey)
+    }
+  }
+}
+
+function watchedSizeMatches(box: ResizeObserverSize, expected: WatchedSize): boolean {
+  return (
+    Math.abs(box.inlineSize - expected.width) <= WATCHED_SIZE_EPSILON &&
+    Math.abs(box.blockSize - expected.height) <= WATCHED_SIZE_EPSILON
+  )
+}
+
 /**
- * A face whose box moved since it was last seen, or that is seen for the first time: the metrics
- * were read when the editor was built, and a font can land before the first frame. A hidden element
- * reports no size, which says nothing about the font; the view re-measures when it is shown.
+ * A face whose box moved since it was last seen, or whose first observed box disagrees with what
+ * was measured at mount (for example, a web font that finished loading before the first frame, or
+ * a hidden editor that was just shown). When the first frame matches the mount measurement, the
+ * observer seeds `face.size` without invalidating caches or forcing a re-measure.
  */
 function staleFace(
   face: WatchedFace | undefined,
   entry: ResizeObserverEntry,
-): (readonly [Element, WatchedFace])[] {
+): StaleFaceChange | null {
   const box = entry.borderBoxSize[0]
-  if (!face || !box || box.inlineSize <= 0) return []
+  if (!face || !box || box.inlineSize <= 0) return null
 
   const size = `${box.inlineSize}x${box.blockSize}`
-  if (face.size === size) return []
+  if (face.size === size) return null
+
+  const firstObservation = face.size === null
   face.size = size
-  return [[entry.target, face]]
+  const document = face.element.ownerDocument
+  const currentCacheKey = browserTextMetricsCacheKey(face.element)
+  const currentGlyphKey = glyphAdvancesCacheKey(face.element)
+  const styleChanged = currentCacheKey !== face.cacheKey || currentGlyphKey !== face.glyphKey
+  face.cacheKey = currentCacheKey
+  face.glyphKey = currentGlyphKey
+
+  const cachedForCurrent = currentCacheKey
+    ? cachedBrowserTextMetrics(document, currentCacheKey)
+    : null
+  const currentCacheStale =
+    cachedForCurrent !== null && !watchedSizeMatches(box, cachedForCurrent.watchedSize)
+  // Without a metrics baseline for the target key (e.g. a styled row that only cached glyph
+  // advances), we cannot verify that any cached glyph table matches the observed face.
+  const currentGlyphStale = cachedForCurrent === null || currentCacheStale
+
+  if (firstObservation) {
+    const wasUnmeasured = face.wasUnmeasured
+    const baseline = face.baseline
+    face.wasUnmeasured = false
+    face.baseline = null
+    unmeasuredElements.delete(face.element)
+
+    if (wasUnmeasured || styleChanged) {
+      return {
+        probe: entry.target,
+        face,
+        invalidateMetricsKey: currentCacheStale ? currentCacheKey : null,
+        invalidateGlyphKey: currentGlyphStale ? currentGlyphKey : null,
+      }
+    }
+    if (baseline !== null) {
+      if (watchedSizeMatches(box, baseline)) return null
+      return {
+        probe: entry.target,
+        face,
+        invalidateMetricsKey: currentCacheKey,
+        invalidateGlyphKey: currentGlyphKey,
+      }
+    }
+    // No trusted metrics baseline (e.g. a styled row face that only cached glyph advances):
+    // a pre-loaded FontFace may have been added before this first observation, so invalidate
+    // only this face's keys and notify the listener without touching any other font key.
+    return {
+      probe: entry.target,
+      face,
+      invalidateMetricsKey: currentCacheKey,
+      invalidateGlyphKey: currentGlyphKey,
+    }
+  }
+
+  // Same CSS style with a different box size means a web or system font changed under this key.
+  if (!styleChanged) {
+    return {
+      probe: entry.target,
+      face,
+      invalidateMetricsKey: currentCacheKey,
+      invalidateGlyphKey: currentGlyphKey,
+    }
+  }
+
+  return {
+    probe: entry.target,
+    face,
+    invalidateMetricsKey: currentCacheStale ? currentCacheKey : null,
+    invalidateGlyphKey: currentGlyphStale ? currentGlyphKey : null,
+  }
 }
 
 // A shadow root inherits the font but keeps the sample out of the editor's own text content.

@@ -362,10 +362,18 @@ export class VirtualizedTextView {
     // Before the first measurement, so the metrics are read from the face the host asked for.
     setFontVariable(scrollElement, '--editor-font-size', fontSizeValue(options.fontSize))
     setFontVariable(scrollElement, '--editor-font-family', fontFamilyValue(options.fontFamily))
+    if (options.theme !== undefined) applyEditorTheme(scrollElement, options.theme)
+    const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null
+    if (lineHeightOverride !== null) {
+      setStyleValue(
+        scrollElement,
+        '--editor-row-height',
+        `${normalizeRowHeight(lineHeightOverride)}px`,
+      )
+    }
     const textMetrics = options.textMetrics ?? null
     const measuredFace = measuredTextFace(scrollElement, textMetrics)
     const measuredMetrics = measuredFace.metrics
-    const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null
     const rowHeight = normalizeRowHeight(lineHeightOverride ?? measuredMetrics.rowHeight)
     const rowGap = normalizeRowGap(options.rowGap)
     const sizing = options.sizing ?? null
