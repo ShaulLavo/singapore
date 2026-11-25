@@ -51,6 +51,7 @@ import {
 } from './editChain'
 import { LineStartsView } from '../virtualization/lineStartIndex'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
+import { EditorWorkScheduler } from './workScheduler'
 import { appendTiming, nowMs } from './timing'
 import { scheduleFrame, type ScheduledFrame } from './scheduleFrame'
 import { projectTokensThroughEdit, projectTokensThroughEdits } from './tokenProjection'
@@ -427,7 +428,9 @@ export class Editor {
   private readonly keymap: EditorHotkeys
   private readonly environmentRegistrations = new EditorDisposableStore()
   private readonly viewContributions: EditorViewContributionController
-  private readonly secondaryWork = new EditorSecondaryWorkScheduler()
+  private readonly workScheduler: EditorWorkScheduler
+  private readonly ownsWorkScheduler: boolean
+  private readonly secondaryWork: EditorSecondaryWorkScheduler
   private readonly detachedEditChain = new DocumentEditChain(0, 0)
   private unsubscribeBufferChanges: (() => void) | null = null
   private transactionAttachment: TransactionAttachment | null = null
@@ -592,10 +595,14 @@ export class Editor {
     // in one order rather than one of them being a fallback the other cannot get in front of.
     registerBuiltInPasteHandlers(this.languageFeatures)
     this.highlightPrefix = nextEditorHighlightPrefix()
+    this.workScheduler = options.workScheduler ?? new EditorWorkScheduler()
+    this.ownsWorkScheduler = !options.workScheduler
+    this.secondaryWork = new EditorSecondaryWorkScheduler(this.workScheduler)
     this.document = new EditorDocumentController({
       defaultDocumentMode: options.documentMode,
       defaultEditability: options.editability,
       highlightPrefix: this.highlightPrefix,
+      workScheduler: this.workScheduler,
     })
     this.setGutterProjection(this.pluginHost.getGutterContributions())
     this.view = new VirtualizedTextView(container, {
@@ -619,6 +626,7 @@ export class Editor {
       inputLabel: options.inputLabel,
       inputKind: options.inputKind,
       scrollPastEnd: options.scrollPastEnd,
+      workScheduler: this.workScheduler,
       onContentHeightChange: (height) => this.notifyContentHeight(height),
       wrap: options.wordWrap ?? false,
       wrapBreak: options.wordWrapBreak,
@@ -649,6 +657,7 @@ export class Editor {
     )
     this.syntaxOptions = {
       pluginHost: this.pluginHost,
+      workScheduler: this.workScheduler,
       getDocumentVersion: () => this.documentVersion,
       getDocumentId: () => this.documentId,
       getTextVersion: () => this.textVersion,
@@ -727,6 +736,7 @@ export class Editor {
         return tabMovesFocus()
       },
       view: this.view,
+      workScheduler: this.workScheduler,
       getLanguageId: () => this.languageId,
       getSyntaxInjections: () => this.syntax.injections,
       getSession: () => this.session,
@@ -2665,7 +2675,11 @@ export class Editor {
       this.ambientPlugins.dispose()
       this.pluginHost.dispose()
     } finally {
-      this.view.dispose()
+      try {
+        this.view.dispose()
+      } finally {
+        if (this.ownsWorkScheduler) this.workScheduler.dispose()
+      }
     }
   }
 
@@ -3677,6 +3691,7 @@ export class Editor {
       contentElement: this.view.contentElement,
       viewportOverlayElement: this.view.viewportOverlayElement,
       highlightPrefix: this.highlightPrefix,
+      workScheduler: this.workScheduler,
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
       getDocumentContributions: () => this.analysis?.contributions ?? null,
@@ -3996,6 +4011,7 @@ export class Editor {
     const interest = acquireEditorDocumentAnalysis({
       buffer,
       documentId: this.currentSessionDocumentId(),
+      workScheduler: this.workScheduler,
     })
     this.analysisInterest = interest
     this.analysis = interest.analysis

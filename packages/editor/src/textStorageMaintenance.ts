@@ -55,8 +55,11 @@ function maintainerLoaded(loaded: Maintainer | null, error: unknown): void {
   for (const owner of owners) owner?.resume()
 }
 
+let nextMaintenanceId = 0
+
 export class TextStorageMaintenance {
-  private readonly scheduler = new EditorWorkScheduler()
+  private readonly scheduler: EditorWorkScheduler
+  readonly #key: string
   #job: Generator<void, StorageMaintenanceResult> | null = null
   #waitRef: WeakRef<TextStorageMaintenance> | null = null
   #runMaxSliceMs = 0
@@ -76,7 +79,11 @@ export class TextStorageMaintenance {
   constructor(
     private readonly snapshots: () => Iterable<PieceTableSnapshot>,
     private readonly current: () => PieceTableSnapshot,
-  ) {}
+    scheduler?: EditorWorkScheduler,
+  ) {
+    this.scheduler = scheduler ?? new EditorWorkScheduler()
+    this.#key = scheduler ? `text-storage:${++nextMaintenanceId}` : 'text-storage'
+  }
 
   // `force` is for events that release retained snapshots without deleting text.
   request(deletedUnits: number, force = false): void {
@@ -104,7 +111,7 @@ export class TextStorageMaintenance {
   }
 
   suspend(): void {
-    this.scheduler.cancel('text-storage', 'detached')
+    this.scheduler.cancel(this.#key, 'detached')
     if (this.#waitRef) waiting.delete(this.#waitRef)
     this.#waitRef = null
     if (this.#job) this.stats.cancelled++
@@ -121,7 +128,7 @@ export class TextStorageMaintenance {
       return
     }
     this.scheduler.schedule({
-      key: 'text-storage',
+      key: this.#key,
       taskClass: 'idle-cache',
       defer: true,
       delayMs,

@@ -30,6 +30,7 @@ type TouchGesture = {
 
 type TouchSelectionOptions = {
   readonly element: HTMLElement
+  readonly scheduler?: EditorWorkScheduler
   positionAt(x: number, y: number): VirtualizedTextHitPosition | null
   claimPress(event: TouchEvent): boolean
   begin(): void
@@ -52,10 +53,15 @@ type TouchSelectionOptions = {
   ): void
 }
 
+let nextTouchSelectionId = 0
+
 /** Touch recognizes gestures; selection, word boundaries, painting and scrolling belong to the editor. */
 export class TouchSelectionController {
   #gesture: TouchGesture | null = null
-  private readonly scheduler = new EditorWorkScheduler()
+  private readonly scheduler: EditorWorkScheduler
+  readonly #ownsScheduler: boolean
+  readonly #holdKey: string
+  readonly #tapWindowKey: string
   #lastTap: {
     readonly x: number
     readonly y: number
@@ -72,7 +78,13 @@ export class TouchSelectionController {
   #touchStartNonPassive = false
   #touchMoveDragAttached = false
 
-  constructor(private readonly options: TouchSelectionOptions) {}
+  constructor(private readonly options: TouchSelectionOptions) {
+    this.scheduler = options.scheduler ?? new EditorWorkScheduler()
+    this.#ownsScheduler = !options.scheduler
+    const suffix = options.scheduler ? `:${++nextTouchSelectionId}` : ''
+    this.#holdKey = `touch-selection-hold${suffix}`
+    this.#tapWindowKey = `touch-tap-window${suffix}`
+  }
 
   setHasPressParticipants(hasParticipants: boolean): void {
     if (this.#hasPressParticipants === hasParticipants) return
@@ -149,7 +161,7 @@ export class TouchSelectionController {
     element.removeEventListener('beforeinput', this.#cancelNotification)
     this.#touchStartNonPassive = false
     this.clearSelection()
-    this.scheduler.dispose()
+    if (this.#ownsScheduler) this.scheduler.dispose()
     this.#pendingMousePress = null
   }
 
@@ -162,11 +174,11 @@ export class TouchSelectionController {
     } | null,
   ): void {
     this.#lastTap = tap
-    this.scheduler.cancel('touch-tap-window')
+    this.scheduler.cancel(this.#tapWindowKey)
     if (tap !== null && this.#installed) {
       // Expire the multi-tap window after TAP_DELAY so touchstart returns to passive for later swipes.
       this.scheduler.schedule({
-        key: 'touch-tap-window',
+        key: this.#tapWindowKey,
         taskClass: 'idle-cache',
         delayMs: TAP_DELAY,
         isCurrent: () => this.#lastTap === tap,
@@ -252,7 +264,7 @@ export class TouchSelectionController {
   private start = (event: TouchEvent): void => {
     this.pointerType = 'touch'
     const previous = this.#lastTap
-    this.scheduler.cancel('touch-tap-window')
+    this.scheduler.cancel(this.#tapWindowKey)
     this.#stopGesture()
     delete this.options.element.dataset.editorTouchSelecting
     this.#endFrame?.cancel()
@@ -314,14 +326,14 @@ export class TouchSelectionController {
     // See browser-quirks.md#ios-native-long-press-selection for delayed stationary-hold suppression.
     // Chained under one scheduler key so a scroll swipe cancels before setting the attribute.
     this.scheduler.schedule({
-      key: 'touch-selection-hold',
+      key: this.#holdKey,
       taskClass: 'input-critical',
       delayMs: SUPPRESS_DELAY,
       isCurrent: () => this.#gesture === gesture,
       run: () => {
         this.options.element.dataset.editorTouchSelecting = 'true'
         this.scheduler.schedule({
-          key: 'touch-selection-hold',
+          key: this.#holdKey,
           taskClass: 'input-critical',
           delayMs: HOLD_DELAY - SUPPRESS_DELAY,
           isCurrent: () => this.#gesture === gesture,
@@ -441,7 +453,7 @@ export class TouchSelectionController {
   }
 
   #stopGesture(): void {
-    this.scheduler.cancel('touch-selection-hold')
+    this.scheduler.cancel(this.#holdKey)
     this.#disableSelectionDragMove()
     this.#scrollFrame?.cancel()
     this.#scrollFrame = null

@@ -113,9 +113,13 @@ export type TreeSitterSyntaxPluginOptions = {
 }
 
 type TreeSitterProviderRegistration = {
+  readonly owner: TreeSitterWorkerOwner
   readonly provider: TreeSitterSyntaxProvider
   readonly contextReferences: WeakMap<EditorPluginContext, TreeSitterContextReference>
   readonly languageReferences: Map<string, TreeSitterLanguageReference>
+  activeContexts: number
+  idleDisposeTimer: ReturnType<typeof setTimeout> | null
+  disposed: boolean
 }
 
 type TreeSitterContextReference = {
@@ -131,6 +135,15 @@ type TreeSitterLanguageReference = {
 const DEFAULT_TREE_SITTER_PROVIDER_KEY = Symbol.for(
   '@singapore-editor/tree-sitter/default-provider',
 )
+
+/**
+ * Keeps the shared default Tree-sitter worker warm across brief SPA route transitions, then
+ * terminates the worker and releases its WASM heap once no mounted editors retain it.
+ */
+const DEFAULT_PROVIDER_IDLE_GRACE_MS = 5_000
+
+const loaderIdentityIds = new WeakMap<() => Promise<TreeSitterLanguageAssets>, number>()
+let nextLoaderIdentityId = 0
 
 export const createTreeSitterSyntaxProvider = (
   options: TreeSitterSyntaxProviderOptions = {},
@@ -202,11 +215,33 @@ export const createTreeSitterLanguagePlugin = (
   name: options.name ?? 'tree-sitter-languages',
   activate(context) {
     const registration = defaultProviderRegistration()
-    return [retainSyntaxProvider(context, registration)].concat(
-      contributions.map((contribution) => retainLanguage(registration, contribution)),
-    )
+    const disposables: EditorDisposable[] = []
+    try {
+      disposables.push(retainSyntaxProvider(context, registration))
+      for (const contribution of contributions) {
+        disposables.push(retainLanguage(registration, contribution))
+      }
+      return disposables
+    } catch (error) {
+      for (const disposable of disposables.toReversed()) disposable.dispose()
+      throw error
+    }
   },
 })
+
+/**
+ * Immediately disposes the idle default Tree-sitter provider (and terminates its worker) if no
+ * active editors or language registrations currently retain it. Useful for deterministic teardown
+ * in tests or route-exit cleanup.
+ */
+export const flushDefaultTreeSitterProvider = (): Promise<void> => {
+  const state = globalThis as Record<PropertyKey, unknown>
+  const registration = state[DEFAULT_TREE_SITTER_PROVIDER_KEY] as
+    | TreeSitterProviderRegistration
+    | undefined
+  if (!registration) return Promise.resolve()
+  return disposeDefaultProviderRegistration(registration)
+}
 
 /** Registers an already-configured provider with an editor without constructing another backend. */
 export const createTreeSitterSyntaxPlugin = (
@@ -222,12 +257,17 @@ const defaultProviderRegistration = (): TreeSitterProviderRegistration => {
   const existing = state[DEFAULT_TREE_SITTER_PROVIDER_KEY] as
     | TreeSitterProviderRegistration
     | undefined
-  if (existing) return existing
+  if (existing && !existing.disposed) return existing
 
-  const registration = {
-    provider: createTreeSitterSyntaxProvider(),
+  const owner = createTreeSitterWorkerOwner()
+  const registration: TreeSitterProviderRegistration = {
+    owner,
+    provider: createTreeSitterSyntaxProvider({ workerOwner: owner }),
     contextReferences: new WeakMap<EditorPluginContext, TreeSitterContextReference>(),
     languageReferences: new Map<string, TreeSitterLanguageReference>(),
+    activeContexts: 0,
+    idleDisposeTimer: null,
+    disposed: false,
   }
   state[DEFAULT_TREE_SITTER_PROVIDER_KEY] = registration
   return registration
@@ -237,18 +277,25 @@ const retainSyntaxProvider = (
   context: EditorPluginContext,
   registration: TreeSitterProviderRegistration,
 ): EditorDisposable => {
+  cancelIdleDispose(registration)
   const existing = registration.contextReferences.get(context)
   if (existing) {
     existing.references += 1
-    return { dispose: () => releaseSyntaxProvider(context, registration) }
+  } else {
+    registration.contextReferences.set(context, {
+      contributions: contributeToEditor(context, registration.provider),
+      references: 1,
+    })
+    registration.activeContexts += 1
   }
 
-  registration.contextReferences.set(context, {
-    contributions: contributeToEditor(context, registration.provider),
-    references: 1,
-  })
+  let released = false
   return {
-    dispose: () => releaseSyntaxProvider(context, registration),
+    dispose: () => {
+      if (released) return
+      released = true
+      releaseSyntaxProvider(context, registration)
+    },
   }
 }
 
@@ -268,18 +315,26 @@ const retainLanguage = (
   registration: TreeSitterProviderRegistration,
   contribution: TreeSitterLanguageContribution,
 ): EditorDisposable => {
+  cancelIdleDispose(registration)
   const key = languageRegistrationKey(contribution)
   const existing = registration.languageReferences.get(key)
   if (existing) {
     existing.references += 1
-    return { dispose: () => releaseLanguage(registration, key) }
+  } else {
+    registration.languageReferences.set(key, {
+      disposable: registration.provider.registerLanguage(contribution, { replace: true }),
+      references: 1,
+    })
   }
 
-  registration.languageReferences.set(key, {
-    disposable: registration.provider.registerLanguage(contribution, { replace: true }),
-    references: 1,
-  })
-  return { dispose: () => releaseLanguage(registration, key) }
+  let released = false
+  return {
+    dispose: () => {
+      if (released) return
+      released = true
+      releaseLanguage(registration, key)
+    },
+  }
 }
 
 const releaseSyntaxProvider = (
@@ -294,6 +349,8 @@ const releaseSyntaxProvider = (
 
   for (const contribution of reference.contributions.toReversed()) contribution.dispose()
   registration.contextReferences.delete(context)
+  registration.activeContexts = Math.max(0, registration.activeContexts - 1)
+  scheduleIdleDisposeIfUnused(registration)
 }
 
 const releaseLanguage = (registration: TreeSitterProviderRegistration, key: string): void => {
@@ -305,6 +362,54 @@ const releaseLanguage = (registration: TreeSitterProviderRegistration, key: stri
 
   reference.disposable.dispose()
   registration.languageReferences.delete(key)
+  scheduleIdleDisposeIfUnused(registration)
+}
+
+const cancelIdleDispose = (registration: TreeSitterProviderRegistration): void => {
+  if (registration.idleDisposeTimer === null) return
+
+  clearTimeout(registration.idleDisposeTimer)
+  registration.idleDisposeTimer = null
+}
+
+const scheduleIdleDisposeIfUnused = (registration: TreeSitterProviderRegistration): void => {
+  if (registration.disposed) return
+  if (registration.activeContexts > 0 || registration.languageReferences.size > 0) return
+  if (registration.idleDisposeTimer !== null) return
+
+  const timer = setTimeout(() => {
+    void disposeDefaultProviderRegistration(registration)
+  }, DEFAULT_PROVIDER_IDLE_GRACE_MS)
+  unrefTimer(timer)
+  registration.idleDisposeTimer = timer
+}
+
+const unrefTimer = (timer: unknown): void => {
+  if (
+    typeof timer === 'object' &&
+    timer !== null &&
+    'unref' in timer &&
+    typeof (timer as { readonly unref?: unknown }).unref === 'function'
+  ) {
+    ;(timer as { unref(): void }).unref()
+  }
+}
+
+const disposeDefaultProviderRegistration = (
+  registration: TreeSitterProviderRegistration,
+): Promise<void> => {
+  cancelIdleDispose(registration)
+  if (registration.disposed) return Promise.resolve()
+  if (registration.activeContexts > 0 || registration.languageReferences.size > 0) {
+    return Promise.resolve()
+  }
+
+  registration.disposed = true
+  const state = globalThis as Record<PropertyKey, unknown>
+  if (state[DEFAULT_TREE_SITTER_PROVIDER_KEY] === registration) {
+    delete state[DEFAULT_TREE_SITTER_PROVIDER_KEY]
+  }
+  return registration.owner.dispose()
 }
 
 const languageRegistrationKey = (contribution: TreeSitterLanguageContribution): string =>
@@ -312,14 +417,30 @@ const languageRegistrationKey = (contribution: TreeSitterLanguageContribution): 
     aliases: sortedItems(contribution.aliases),
     assets: inlineAssetSignature(contribution),
     extensions: sortedItems(contribution.extensions),
+    filenames: sortedItems(contribution.filenames),
     id: contribution.id,
+    injectionDependencies: sortedItems(contribution.injectionDependencies),
     loader: lazyLoaderSignature(contribution),
   })
 
-const lazyLoaderSignature = (contribution: TreeSitterLanguageContribution): string | null => {
-  if (!('load' in contribution)) return null
+const lazyLoaderSignature = (
+  contribution: TreeSitterLanguageContribution,
+):
+  | { readonly kind: 'cacheKey'; readonly key: string }
+  | { readonly kind: 'fn'; readonly id: number }
+  | null => {
+  if (!('load' in contribution) || !contribution.load) return null
 
-  return contribution.load?.toString() ?? null
+  if (contribution.cacheKey !== undefined) {
+    return { kind: 'cacheKey', key: contribution.cacheKey }
+  }
+
+  let id = loaderIdentityIds.get(contribution.load)
+  if (id === undefined) {
+    id = ++nextLoaderIdentityId
+    loaderIdentityIds.set(contribution.load, id)
+  }
+  return { kind: 'fn', id }
 }
 
 const inlineAssetSignature = (

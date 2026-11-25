@@ -1,5 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { Editor } from '@singapore-editor/core/editor'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { Editor, EditorWorkScheduler } from '@singapore-editor/core/editor'
 import type {
   EditorPlugin,
   EditorViewContributionContext,
@@ -227,6 +227,63 @@ describe('find inside a real editor', () => {
       resolved: onScreen,
       count: `1 of ${MATCH_LINES}`,
     })
+    expect(probe.context.workScheduler).toBeInstanceOf(EditorWorkScheduler)
+  })
+})
+
+describe('find shares EditorWorkScheduler with its host editor', () => {
+  it('schedules find re-search on the editor workScheduler and isolates sibling editors', () => {
+    vi.useFakeTimers()
+    const scheduledKeys: string[] = []
+    const workScheduler = new EditorWorkScheduler({
+      onEvent: (event) => {
+        if (event.type === 'scheduled') scheduledKeys.push(event.key)
+      },
+    })
+
+    const containerA = document.createElement('div')
+    const containerB = document.createElement('div')
+    document.body.append(containerA, containerB)
+
+    const editorA = new Editor(containerA, {
+      defaultText: 'foo bar\n',
+      workScheduler,
+      plugins: [createEditorFindPlugin({ seedSearchStringFromSelection: 'never' })],
+    })
+    const editorB = new Editor(containerB, {
+      defaultText: 'foo baz\n',
+      workScheduler,
+      plugins: [createEditorFindPlugin({ seedSearchStringFromSelection: 'never' })],
+    })
+
+    try {
+      editorA.openFind()
+      editorB.openFind()
+      typeSearch(containerA, 'foo')
+      typeSearch(containerB, 'foo')
+      expect(containerB.querySelector('.editor-find-count')?.textContent).toBe('1 of 1')
+
+      scheduledKeys.length = 0
+      editorA.edit({ from: 0, to: 0, text: 'foo ' })
+      editorB.edit({ from: 0, to: 0, text: 'foo ' })
+
+      const findKeys = scheduledKeys.filter((key) => key.startsWith('find.research:'))
+      expect(new Set(findKeys).size).toBe(2)
+
+      // Disposing editorA cancels editorA's pending re-search without breaking editorB.
+      editorA.dispose()
+      vi.advanceTimersByTime(150)
+
+      const countB = containerB.querySelector('.editor-find-count')?.textContent
+      expect(countB).toBe('2 of 2')
+    } finally {
+      editorA.dispose()
+      editorB.dispose()
+      workScheduler.dispose()
+      containerA.remove()
+      containerB.remove()
+      vi.useRealTimers()
+    }
   })
 })
 

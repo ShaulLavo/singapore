@@ -45,6 +45,7 @@ import { foldRangeKey } from './folds'
 import { projectTokensThroughEdit, projectTokensThroughEdits } from './tokenProjection'
 import type { EditorSyntaxStatus } from './types'
 import { LatestAsyncRequest, SingleFlightAsyncRequest } from './latestAsyncRequest'
+import { EditorWorkScheduler } from './workScheduler'
 import {
   appendCachedSyntaxRange,
   compactSyntaxRangeTokens,
@@ -100,6 +101,7 @@ export type EditorPreparedDocumentBorrowOptions = {
 
 export type EditorSyntaxControllerOptions = {
   readonly pluginHost: EditorPluginHost
+  readonly workScheduler?: EditorWorkScheduler
   getDocumentVersion(): number
   getDocumentId(): string | null
   getTextVersion(): number
@@ -351,6 +353,8 @@ const syntaxWorkTags = (
   viewport: range ? `${range.startIndex}:${range.endIndex}` : null,
 })
 
+let nextSyntaxControllerId = 0
+
 export class EditorSyntaxController {
   private analysis: EditorDocumentAnalysis | null = null
   private retainedSyntax: EditorRetainedSyntaxSession | null = null
@@ -409,30 +413,14 @@ export class EditorSyntaxController {
   #unavailableRecordsRange: EditorSyntaxRange | null = null
   #unavailableRecordsClearsScope = false
   #observingPreparedStructural = false
-  readonly #syntaxRequests = new SingleFlightAsyncRequest<EditorSyntaxLoadResult>({
-    key: 'editor.syntax.document',
-    taskClass: 'background-derived',
-  })
-  private readonly rangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
-    key: 'editor.syntax.visibleRange',
-    taskClass: 'viewport-derived',
-  })
-  readonly #prefetchRangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
-    key: 'editor.syntax.prefetchRange',
-    taskClass: 'idle-cache',
-  })
-  readonly #warmRangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
-    key: 'editor.syntax.warmRange',
-    taskClass: 'idle-cache',
-  })
-  readonly #highlightRequests = new SingleFlightAsyncRequest<EditorHighlightResult>({
-    key: 'editor.syntax.highlight',
-    taskClass: 'background-derived',
-  })
-  readonly #highlighterThemeRequests = new LatestAsyncRequest<EditorTheme | null | undefined>({
-    key: 'editor.syntax.highlighterTheme',
-    taskClass: 'background-derived',
-  })
+  readonly #workScheduler: EditorWorkScheduler
+  readonly #ownsWorkScheduler: boolean
+  readonly #syntaxRequests: SingleFlightAsyncRequest<EditorSyntaxLoadResult>
+  private readonly rangeRequests: LatestAsyncRequest<EditorSyntaxLoadResult>
+  readonly #prefetchRangeRequests: LatestAsyncRequest<EditorSyntaxLoadResult>
+  readonly #warmRangeRequests: LatestAsyncRequest<EditorSyntaxLoadResult>
+  readonly #highlightRequests: SingleFlightAsyncRequest<EditorHighlightResult>
+  readonly #highlighterThemeRequests: LatestAsyncRequest<EditorTheme | null | undefined>
   #currentTokens = EditorTokenStore.empty()
   #rangeTokenOwner: {
     readonly store: EditorTokenStore
@@ -487,6 +475,40 @@ export class EditorSyntaxController {
 
   constructor(private readonly options: EditorSyntaxControllerOptions) {
     installSyntaxRangeProjector(projectResultThroughSteps)
+    const scheduler = options.workScheduler ?? new EditorWorkScheduler()
+    const keyPrefix = options.workScheduler ? `syntax.${++nextSyntaxControllerId}:` : ''
+    this.#workScheduler = scheduler
+    this.#ownsWorkScheduler = !options.workScheduler
+    this.#syntaxRequests = new SingleFlightAsyncRequest<EditorSyntaxLoadResult>({
+      key: `${keyPrefix}editor.syntax.document`,
+      taskClass: 'viewport-derived',
+      scheduler,
+    })
+    this.rangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
+      key: `${keyPrefix}editor.syntax.visibleRange`,
+      taskClass: 'viewport-derived',
+      scheduler,
+    })
+    this.#prefetchRangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
+      key: `${keyPrefix}editor.syntax.prefetchRange`,
+      taskClass: 'idle-cache',
+      scheduler,
+    })
+    this.#warmRangeRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
+      key: `${keyPrefix}editor.syntax.warmRange`,
+      taskClass: 'idle-cache',
+      scheduler,
+    })
+    this.#highlightRequests = new SingleFlightAsyncRequest<EditorHighlightResult>({
+      key: `${keyPrefix}editor.syntax.highlight`,
+      taskClass: 'viewport-derived',
+      scheduler,
+    })
+    this.#highlighterThemeRequests = new LatestAsyncRequest<EditorTheme | null | undefined>({
+      key: `${keyPrefix}editor.syntax.highlighterTheme`,
+      taskClass: 'background-derived',
+      scheduler,
+    })
   }
 
   /**
@@ -1233,9 +1255,15 @@ export class EditorSyntaxController {
     this.#parseState = { kind: 'plain' }
     this.#lastFrameDemand = null
     this.analysis = null
+    this.#syntaxRequests.dispose()
+    this.rangeRequests.dispose()
+    this.#prefetchRangeRequests.dispose()
+    this.#warmRangeRequests.dispose()
+    this.#highlightRequests.dispose()
     this.#highlighterThemeRequests.dispose()
     this.#disposeSyntaxSession()
     this.#disposeHighlighterSession()
+    if (this.#ownsWorkScheduler) this.#workScheduler.dispose()
   }
 
   /**

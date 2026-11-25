@@ -15,11 +15,21 @@ type ScheduledSecondaryWork = {
   cancel(): void
 }
 
+let nextSecondarySchedulerId = 0
+
 export class EditorSecondaryWorkScheduler {
-  private readonly scheduler = new EditorWorkScheduler()
+  private readonly scheduler: EditorWorkScheduler
+  readonly #ownsScheduler: boolean
+  readonly #keyPrefix: string
   private readonly scheduled = new Map<string, ScheduledSecondaryWork>()
   private nextVersion = 0
   private disposed = false
+
+  constructor(scheduler?: EditorWorkScheduler) {
+    this.scheduler = scheduler ?? new EditorWorkScheduler()
+    this.#ownsScheduler = !scheduler
+    this.#keyPrefix = scheduler ? `secondary.${++nextSecondarySchedulerId}:` : ''
+  }
 
   schedule(options: EditorSecondaryWorkOptions): void {
     if (this.disposed) return
@@ -30,7 +40,7 @@ export class EditorSecondaryWorkScheduler {
     // on every keystroke.
     const version = options.version ?? this.#nextWorkVersion()
     const handle = this.scheduler.schedule({
-      key: options.key,
+      key: `${this.#keyPrefix}${options.key}`,
       taskClass: 'background-derived',
       delayMs: normalizeDelayMs(options.delayMs),
       maxDelayMs: normalizeDelayMs(options.maxDelayMs),
@@ -67,7 +77,7 @@ export class EditorSecondaryWorkScheduler {
 
     this.disposed = true
     for (const key of this.scheduled.keys()) this.cancel(key)
-    this.scheduler.dispose()
+    if (this.#ownsScheduler) this.scheduler.dispose()
   }
 
   #clearScheduledHandle(key: string, token: number): void {

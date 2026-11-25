@@ -113,6 +113,8 @@ const PRIORITY_RANK: Record<EditorWorkPriority, number> = {
   idle: 4,
 }
 
+export type EditorWorkSchedulerLike = Pick<EditorWorkScheduler, 'schedule' | 'cancel' | 'dispose'>
+
 export class EditorWorkScheduler {
   private readonly now: () => number
   private readonly onEvent?: (event: EditorWorkEvent) => void

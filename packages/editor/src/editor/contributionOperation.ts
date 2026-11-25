@@ -1,7 +1,7 @@
 import type { EditorTextBuffer } from '../documentSession'
 import type { DocumentDelivery, DocumentRead, DocumentContributionScope } from './documentDelivery'
 import type { RetentionChanges, EditorAnalysisRead } from './documentAnalysis'
-import type { EditorWorkScheduler } from './workScheduler'
+import type { EditorWorkSchedulerLike } from './workScheduler'
 
 export type DocumentOperationOptions = {
   readonly configurationTag?: readonly (string | number | boolean | null)[]
@@ -36,7 +36,7 @@ export type DocumentOperationHost = {
   readonly buffer: EditorTextBuffer
   readonly documentId: string
   readonly delivery: DocumentDelivery
-  readonly scheduler: EditorWorkScheduler
+  readonly scheduler: EditorWorkSchedulerLike
   readonly retention: RetentionChanges
   readonly signal: AbortSignal
   subscribe(): void

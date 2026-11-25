@@ -196,6 +196,7 @@ export type InputSelectionControllerOptions = {
   /** What typing an opener over a selection wraps it with; the auto-closing pairs when unset. */
   readonly surroundingPairs?: readonly EditorAutoClosingPair[]
   readonly view: VirtualizedTextView
+  readonly workScheduler?: EditorWorkScheduler
   getLanguageId(): EditorSyntaxLanguageId | null
   getSyntaxInjections(): readonly EditorSyntaxInjection[]
   getSession(): DocumentSession | null
@@ -326,6 +327,8 @@ const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
   'cursorColumnSelectPageDown',
 ])
 
+let nextInputSelectionId = 0
+
 export class InputSelectionController {
   readonly #nodeConstructor: typeof Node | undefined
   readonly #elementConstructor: typeof Element | undefined
@@ -354,7 +357,9 @@ export class InputSelectionController {
   #hiddenInputDirty = false
   #hiddenInputLazy: LazyHiddenInputState | null = null
   #pendingLazyTyping: PendingLazyTypingState | null = null
-  readonly #hiddenInputScheduler = new EditorWorkScheduler()
+  readonly #hiddenInputScheduler: EditorWorkScheduler
+  readonly #ownsHiddenInputScheduler: boolean
+  readonly #hiddenInputKey: string
   /** What a textarea composition replaces in the written window, read when it starts. */
   #compositionRange: { readonly start: number; readonly end: number } | null = null
   /** The window range an EditContext composition replaces, and where its candidate now ends. */
@@ -367,8 +372,14 @@ export class InputSelectionController {
   constructor(private readonly options: InputSelectionControllerOptions) {
     this.#nodeConstructor = options.el.ownerDocument.defaultView?.Node
     this.#elementConstructor = options.el.ownerDocument.defaultView?.Element
+    this.#hiddenInputScheduler = options.workScheduler ?? new EditorWorkScheduler()
+    this.#ownsHiddenInputScheduler = !options.workScheduler
+    this.#hiddenInputKey = options.workScheduler
+      ? `lazy-hidden-input-flush:${++nextInputSelectionId}`
+      : 'lazy-hidden-input-flush'
     this.touchSelection = new TouchSelectionController({
       element: options.el,
+      scheduler: this.#hiddenInputScheduler,
       positionAt: (x, y) => options.view.textPositionFromPoint(x, y),
       claimPress: (event) => {
         this.#pressClaimed = event.defaultPrevented || options.claimPress(event)
@@ -456,7 +467,7 @@ export class InputSelectionController {
     el.removeEventListener('mouseup', this.#syncSessionSelectionFromDom)
     el.ownerDocument.removeEventListener('selectionchange', this.#syncCustomSelectionFromDom)
     this.#clearLazyHiddenInput()
-    this.#hiddenInputScheduler.dispose()
+    if (this.#ownsHiddenInputScheduler) this.#hiddenInputScheduler.dispose()
     this.#hiddenInputDirty = false
     this.#stopMouseSelectionDrag('cancel', false)
     this.#stopMouseTextMoveDrag('cancel', false)
@@ -1844,12 +1855,12 @@ export class InputSelectionController {
   #clearLazyHiddenInput(): void {
     this.#hiddenInputLazy = null
     this.#pendingLazyTyping = null
-    this.#hiddenInputScheduler.cancel('lazy-hidden-input-flush')
+    this.#hiddenInputScheduler.cancel(this.#hiddenInputKey)
   }
 
   #scheduleLazyHiddenInputFlush(): void {
     this.#hiddenInputScheduler.schedule({
-      key: 'lazy-hidden-input-flush',
+      key: this.#hiddenInputKey,
       taskClass: 'visible-render',
       delayMs: LAZY_HIDDEN_INPUT_IDLE_FLUSH_MS,
       run: () => {

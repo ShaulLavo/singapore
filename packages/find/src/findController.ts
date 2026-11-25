@@ -157,6 +157,7 @@ export type EditorFindHost = {
     style: VirtualizedTextHighlightStyle,
   ): void
   clearRangeHighlight(name: string): void
+  readonly workScheduler?: EditorSecondaryViewScheduler
 }
 
 export type EditorFindEditHost = {
@@ -254,6 +255,8 @@ type ActiveCursorScan = {
   channel: MessageChannel | null
 }
 
+let nextFindControllerId = 0
+
 export class EditorFindController {
   private readonly options: ResolvedFindOptions
   private readonly listeners = new Set<EditorFindUiListener>()
@@ -273,7 +276,9 @@ export class EditorFindController {
     replaceRevealed: false,
     inSelection: false,
   }
-  private readonly scheduler = new EditorSecondaryViewScheduler()
+  private ownScheduler: EditorSecondaryViewScheduler | null = null
+  private readonly researchKey: string
+  private readonly scanSliceKey: string
   private matches: readonly FindMatch[] = []
   private highlightsTruncated = false
   // True while a chunked scan is running OR was cancelled by an edit before
@@ -298,10 +303,17 @@ export class EditorFindController {
 
   public constructor(options: EditorFindOptions = {}) {
     this.options = resolveFindOptions(options)
+    const id = ++nextFindControllerId
+    this.researchKey = `${FIND_RESEARCH_KEY}:${id}`
+    this.scanSliceKey = `${FIND_SCAN_SLICE_KEY}:${id}`
   }
 
   public attachHost(host: EditorFindHost, highlightPrefix: string): EditorDisposable {
-    if (this.host && this.host !== host) this.clearHighlights()
+    if (this.host && this.host !== host) {
+      this.cancelActiveScan()
+      this.activeScheduler()?.cancel(this.researchKey)
+      this.clearHighlights()
+    }
 
     this.host = host
     this.matchHighlightName = `${highlightPrefix}-find-match`
@@ -325,7 +337,9 @@ export class EditorFindController {
     this.searchDirty = false
     this.matchesIncomplete = false
     this.cancelActiveScan()
-    this.scheduler.dispose()
+    this.activeScheduler()?.cancel(this.researchKey)
+    this.ownScheduler?.dispose()
+    this.ownScheduler = null
     this.clearHighlights()
     this.listeners.clear()
     this.host = null
@@ -361,7 +375,7 @@ export class EditorFindController {
     this.scope = null
     this.trackedMatches = null
     this.currentMatch = null
-    this.scheduler.cancel(FIND_RESEARCH_KEY)
+    this.activeScheduler()?.cancel(this.researchKey)
     this.clearHighlights()
     this.emit({ type: 'hide' })
     host.focusEditor()
@@ -618,6 +632,7 @@ export class EditorFindController {
     this.searchDirty = false
     this.matchesIncomplete = false
     this.cancelActiveScan()
+    this.activeScheduler()?.cancel(this.researchKey)
     this.clearHighlights()
     this.host = null
     this.matchHighlightName = ''
@@ -630,7 +645,6 @@ export class EditorFindController {
     this.scope = null
     this.trackedMatches = null
     this.currentMatch = null
-    this.scheduler.cancel(FIND_RESEARCH_KEY)
   }
 
   private detachEditHost(host: EditorFindEditHost): void {
@@ -677,7 +691,7 @@ export class EditorFindController {
 
     // Whatever a deferred run or background scan was going to answer, this run
     // supersedes it now.
-    this.scheduler.cancel(FIND_RESEARCH_KEY)
+    this.activeScheduler()?.cancel(this.researchKey)
     this.cancelActiveScan()
 
     const search = this.searchTarget()
@@ -935,8 +949,8 @@ export class EditorFindController {
       return
     }
 
-    this.scheduler.schedule({
-      key: FIND_SCAN_SLICE_KEY,
+    this.ensureScheduler().schedule({
+      key: this.scanSliceKey,
       taskClass: 'background-derived',
       defer: true,
       run: () => this.runScanSlice(scan),
@@ -1019,7 +1033,7 @@ export class EditorFindController {
     if (this.activeScan !== scan || scan.generation !== this.scanGeneration) return
 
     this.closeScanChannel(scan)
-    this.scheduler.cancel(FIND_SCAN_SLICE_KEY)
+    this.activeScheduler()?.cancel(this.scanSliceKey)
     this.activeScan = null
 
     const finalMatches = scan.prefixMatches.concat(scan.viewportMatches, scan.suffixMatches)
@@ -1149,8 +1163,8 @@ export class EditorFindController {
       return
     }
 
-    this.scheduler.schedule({
-      key: FIND_SCAN_SLICE_KEY,
+    this.ensureScheduler().schedule({
+      key: this.scanSliceKey,
       taskClass: 'background-derived',
       defer: true,
       run: () => this.runCursorScanSlice(cursorScan),
@@ -1204,7 +1218,7 @@ export class EditorFindController {
     const scan = this.activeScan
     const cursorScan = this.activeCursorScan
     this.scanGeneration += 1
-    this.scheduler.cancel(FIND_SCAN_SLICE_KEY)
+    this.activeScheduler()?.cancel(this.scanSliceKey)
     if (scan) {
       this.activeScan = null
       this.closeScanChannel(scan)
@@ -1221,7 +1235,7 @@ export class EditorFindController {
 
     this.activeCursorScan = null
     this.closeScanChannel(cursorScan)
-    if (!this.activeScan) this.scheduler.cancel(FIND_SCAN_SLICE_KEY)
+    if (!this.activeScan) this.activeScheduler()?.cancel(this.scanSliceKey)
   }
 
   private closeScanChannel(scan: { channel: MessageChannel | null }): void {
@@ -1236,13 +1250,21 @@ export class EditorFindController {
 
   private scheduleResearch(): void {
     this.followPendingMatches()
-    this.scheduler.schedule({
-      key: FIND_RESEARCH_KEY,
+    this.ensureScheduler().schedule({
+      key: this.researchKey,
       taskClass: 'background-derived',
       delayMs: FIND_RESEARCH_DELAY_MS,
       maxDelayMs: FIND_RESEARCH_MAX_DELAY_MS,
       run: () => this.research(false),
     })
+  }
+
+  private activeScheduler(): EditorSecondaryViewScheduler | null {
+    return this.host?.workScheduler ?? this.ownScheduler
+  }
+
+  private ensureScheduler(): EditorSecondaryViewScheduler {
+    return this.host?.workScheduler ?? (this.ownScheduler ??= new EditorSecondaryViewScheduler())
   }
 
   /**

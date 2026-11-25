@@ -11,6 +11,7 @@ export type LatestAsyncRequestOptions<T> = {
   readonly delayMs?: number
   readonly maxDelayMs?: number
   readonly budgetMs?: number
+  readonly defer?: boolean
   readonly taskClass?: EditorWorkTaskClass
   readonly priority?: EditorWorkPriority
   readonly tags?: EditorWorkTags
@@ -37,6 +38,8 @@ export type LatestAsyncRequestControllerOptions = {
   readonly scheduler?: EditorWorkScheduler
 }
 
+let nextRequestSlotId = 0
+
 export class LatestAsyncRequest<T> {
   private readonly key: string
   readonly #taskClass: EditorWorkTaskClass
@@ -46,7 +49,11 @@ export class LatestAsyncRequest<T> {
   private disposed = false
 
   constructor(options: LatestAsyncRequestControllerOptions = {}) {
-    this.key = options.key ?? 'editor.latestAsyncRequest'
+    this.key =
+      options.key ??
+      (options.scheduler
+        ? `editor.latestAsyncRequest:${++nextRequestSlotId}`
+        : 'editor.latestAsyncRequest')
     this.#taskClass = options.taskClass ?? 'background-derived'
     this.scheduler = options.scheduler ?? new EditorWorkScheduler()
     this.#ownsScheduler = !options.scheduler
@@ -62,13 +69,15 @@ export class LatestAsyncRequest<T> {
     // No explicit cancel first: scheduling the same key already replaces the
     // pending work, and cancelling would drop the burst deadline that
     // maxDelayMs relies on.
+    const delayMs = normalizeDelay(options.delayMs)
     this.handle = this.scheduler.schedule({
       key: this.key,
       taskClass: options.taskClass ?? this.#taskClass,
       priority: options.priority,
-      delayMs: normalizeDelay(options.delayMs),
+      delayMs,
       maxDelayMs: normalizeDelay(options.maxDelayMs),
       budgetMs: options.budgetMs,
+      defer: delayMs === 0 && options.defer === true,
       tags: options.tags,
       run: (context) => options.run(context.signal),
       apply: (result, context) =>
@@ -138,7 +147,11 @@ export class SingleFlightAsyncRequest<T> {
   #disposed = false
 
   constructor(options: LatestAsyncRequestControllerOptions = {}) {
-    this.#key = options.key ?? 'editor.singleFlightAsyncRequest'
+    this.#key =
+      options.key ??
+      (options.scheduler
+        ? `editor.singleFlightAsyncRequest:${++nextRequestSlotId}`
+        : 'editor.singleFlightAsyncRequest')
     this.#taskClass = options.taskClass ?? 'background-derived'
     this.#scheduler = options.scheduler ?? new EditorWorkScheduler()
     this.#ownsScheduler = !options.scheduler

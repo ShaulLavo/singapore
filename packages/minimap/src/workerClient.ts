@@ -50,7 +50,10 @@ export type MinimapWorkerClientOptions = {
   readonly onLayoutWidth: (width: number) => void
   readonly reservedLane: () => number
   readonly contributions: EditorDocumentContributions | null
+  readonly workScheduler?: EditorSecondaryViewScheduler
 }
+
+let nextMinimapClientId = 0
 
 export class MinimapWorkerClient {
   private readonly host: MinimapHost
@@ -66,7 +69,11 @@ export class MinimapWorkerClient {
     lastError: null,
   }
   private readonly colorResolver: ColorResolver
-  private readonly scheduler = new EditorSecondaryViewScheduler()
+  private readonly scheduler: EditorSecondaryViewScheduler
+  private readonly ownsScheduler: boolean
+  private readonly frameFlushKey: string
+  private readonly quietFlushKey: string
+  private readonly renderKey: string
   private readonly onLayoutWidth: (width: number) => void
   private readonly reservedLane: () => number
   private externalDecorations: readonly EditorMinimapDecoration[]
@@ -89,6 +96,12 @@ export class MinimapWorkerClient {
   public constructor(options: MinimapWorkerClientOptions) {
     this.host = options.host
     this.options = options.options
+    this.scheduler = options.workScheduler ?? new EditorSecondaryViewScheduler()
+    this.ownsScheduler = !options.workScheduler
+    const suffix = options.workScheduler ? `:${++nextMinimapClientId}` : ''
+    this.frameFlushKey = `${MINIMAP_FRAME_FLUSH_KEY}${suffix}`
+    this.quietFlushKey = `${MINIMAP_QUIET_FLUSH_KEY}${suffix}`
+    this.renderKey = `${MINIMAP_RENDER_KEY}${suffix}`
     this.onLayoutWidth = options.onLayoutWidth
     this.reservedLane = options.reservedLane
     this.externalDecorations = options.decorations
@@ -191,7 +204,8 @@ export class MinimapWorkerClient {
 
     this.disposed = true
     this.cancelScheduledFlush()
-    this.scheduler.dispose()
+    this.scheduler.cancel(this.renderKey)
+    if (this.ownsScheduler) this.scheduler.dispose()
     this.releaseDocumentSource()
     this.colorResolver.dispose()
   }
@@ -211,7 +225,7 @@ export class MinimapWorkerClient {
     this.activeRenderSource = null
     this.latestTokenSource = null
     this.cancelScheduledFlush()
-    this.scheduler.cancel(MINIMAP_RENDER_KEY)
+    this.scheduler.cancel(this.renderKey)
   }
 
   private replaceTransferredCanvases(): void {
@@ -265,7 +279,7 @@ export class MinimapWorkerClient {
 
   private scheduleFrameFlush(): void {
     this.scheduler.schedule({
-      key: MINIMAP_FRAME_FLUSH_KEY,
+      key: this.frameFlushKey,
       taskClass: 'visible-render',
       priority: 'high',
       tags: { configuration: 'frame', version: this.latestSnapshot.textVersion },
@@ -279,7 +293,7 @@ export class MinimapWorkerClient {
     // quiet delay, which previously needed a second non-replacing key running
     // the same callback.
     this.scheduler.schedule({
-      key: MINIMAP_QUIET_FLUSH_KEY,
+      key: this.quietFlushKey,
       taskClass: 'background-derived',
       priority: 'low',
       defer: true,
@@ -475,7 +489,7 @@ export class MinimapWorkerClient {
     this.pendingRender = false
     let renderToken = 0
     const handle = this.scheduler.schedule({
-      key: MINIMAP_RENDER_KEY,
+      key: this.renderKey,
       taskClass: 'visible-render',
       priority: 'high',
       defer: true,
@@ -668,7 +682,7 @@ export class MinimapWorkerClient {
     if (response.type === 'rendered') {
       if (!this.isCurrentRenderResponse(response)) return
 
-      this.scheduler.cancel(MINIMAP_RENDER_KEY)
+      this.scheduler.cancel(this.renderKey)
       this.renderInFlight = false
       this.activeRenderToken = 0
       this.activeRenderSource = null
@@ -710,11 +724,11 @@ export class MinimapWorkerClient {
   }
 
   private cancelScheduledFrame(): void {
-    this.scheduler.cancel(MINIMAP_FRAME_FLUSH_KEY)
+    this.scheduler.cancel(this.frameFlushKey)
   }
 
   private cancelDeferredFlush(): void {
-    this.scheduler.cancel(MINIMAP_QUIET_FLUSH_KEY)
+    this.scheduler.cancel(this.quietFlushKey)
   }
 
   private isCurrentRenderResponse(

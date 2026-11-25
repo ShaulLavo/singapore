@@ -23,6 +23,7 @@ import {
   createTreeSitterLanguagePlugin,
   createTreeSitterSyntaxPlugin,
   createTreeSitterSyntaxProvider,
+  flushDefaultTreeSitterProvider,
   resolveTreeSitterLanguageAlias,
   resolveTreeSitterLanguageContribution,
   TreeSitterLanguageRegistry,
@@ -47,11 +48,13 @@ import type {
   TreeSitterParseResult,
   TreeSitterRangeResult,
 } from '../src/treeSitter/types'
-import type {
-  TreeSitterBackend,
-  TreeSitterBackendParsePayload,
-  TreeSitterEditPayload,
-  TreeSitterRangePayload,
+import {
+  treeSitterBackendForOwner,
+  type TreeSitterBackend,
+  type TreeSitterBackendParsePayload,
+  type TreeSitterEditPayload,
+  type TreeSitterRangePayload,
+  type TreeSitterWorkerOwner,
 } from '../src/treeSitter/workerClient'
 
 afterEach(disposeTreeDocuments)
@@ -158,7 +161,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     host.dispose()
   })
 
-  it('shares language plugin registrations across editor plugin hosts', () => {
+  it('shares language plugin registrations across editor plugin hosts', async () => {
     const plugin = createTreeSitterLanguagePlugin([testLanguage('sql', ['.sql'])], {
       name: 'sql-language',
     })
@@ -181,6 +184,223 @@ describe('Tree-sitter syntax capture conversion', () => {
     const nextHost = new EditorPluginHost([plugin])
     expect(createSqlSyntaxSession(nextHost)).not.toBeNull()
     nextHost.dispose()
+    await flushDefaultTreeSitterProvider()
+  })
+
+  it('disposes the default Tree-sitter worker and clears globalThis after the last editor releases it', async () => {
+    vi.useFakeTimers()
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    try {
+      const plugin = createTreeSitterLanguagePlugin([testLanguage('sql', ['.sql'])], {
+        name: 'sql-language',
+      })
+      const firstHost = new EditorPluginHost([plugin])
+      const secondHost = new EditorPluginHost([plugin])
+
+      const initialRegistration = state[key] as
+        | { readonly owner: { inspect(): { readonly lifecycle: string } } }
+        | undefined
+      expect(initialRegistration).toBeDefined()
+
+      // Disposing only one host keeps the shared default provider live.
+      firstHost.dispose()
+      vi.advanceTimersByTime(10_000)
+      expect(state[key]).toBe(initialRegistration)
+      expect(initialRegistration?.owner.inspect().lifecycle).not.toBe('disposed')
+
+      // Disposing the last host starts the idle grace window; mounting again before expiry
+      // cancels disposal and keeps the warm registration alive.
+      secondHost.dispose()
+      vi.advanceTimersByTime(2_000)
+      expect(state[key]).toBe(initialRegistration)
+
+      const reattachedHost = new EditorPluginHost([plugin])
+      vi.advanceTimersByTime(10_000)
+      expect(state[key]).toBe(initialRegistration)
+      expect(initialRegistration?.owner.inspect().lifecycle).not.toBe('disposed')
+
+      // Flushing while an active editor holds the provider is a no-op.
+      await flushDefaultTreeSitterProvider()
+      expect(state[key]).toBe(initialRegistration)
+
+      // Once the last host releases and the grace period elapses, the worker owner is disposed
+      // and the globalThis slot is cleared.
+      reattachedHost.dispose()
+      vi.advanceTimersByTime(5_000)
+      expect(state[key]).toBeUndefined()
+      expect(initialRegistration?.owner.inspect().lifecycle).toBe('disposed')
+
+      // Mounting a subsequent editor creates a fresh provider cleanly.
+      const freshHost = new EditorPluginHost([plugin])
+      const freshRegistration = state[key] as
+        | { readonly owner: { inspect(): { readonly lifecycle: string } } }
+        | undefined
+      expect(freshRegistration).toBeDefined()
+      expect(freshRegistration).not.toBe(initialRegistration)
+      expect(createSqlSyntaxSession(freshHost)).not.toBeNull()
+
+      freshHost.dispose()
+      // Immediate flush helper disposes an idle default provider without waiting for the timer.
+      await flushDefaultTreeSitterProvider()
+      expect(state[key]).toBeUndefined()
+      expect(freshRegistration?.owner.inspect().lifecycle).toBe('disposed')
+    } finally {
+      await flushDefaultTreeSitterProvider()
+      vi.useRealTimers()
+    }
+  })
+
+  it('terminates an active default Web Worker when the idle grace window expires', async () => {
+    vi.useFakeTimers()
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    const terminated: number[] = []
+    class FakeWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null
+      onerror: ((event: ErrorEvent) => void) | null = null
+      postMessage(message: { id?: number; payload?: { type?: string } }): void {
+        if (message.id !== undefined) {
+          queueMicrotask(() => {
+            this.onmessage?.({
+              data: { id: message.id, ok: true, result: { type: message.payload?.type ?? 'init' } },
+            } as MessageEvent)
+          })
+        }
+      }
+      terminate(): void {
+        terminated.push(1)
+      }
+    }
+    vi.stubGlobal('Worker', FakeWorker)
+
+    try {
+      const plugin = createTreeSitterLanguagePlugin([testLanguage('sql', ['.sql'])], {
+        name: 'sql-worker-lifecycle',
+      })
+      const host = new EditorPluginHost([plugin])
+      const registration = state[key] as {
+        readonly owner: TreeSitterWorkerOwner
+        readonly provider: {
+          resolveTreeSitterLanguage(
+            id: string,
+          ): Promise<Awaited<ReturnType<TreeSitterLanguageRegistry['resolveTreeSitterLanguage']>>>
+        }
+      }
+      const descriptor = await registration.provider.resolveTreeSitterLanguage('sql')
+      expect(descriptor).not.toBeNull()
+      await treeSitterBackendForOwner(registration.owner).registerLanguages([descriptor!])
+      expect(registration.owner.inspect().workerGeneration).toBe(1)
+
+      host.dispose()
+      expect(terminated).toHaveLength(0)
+
+      vi.advanceTimersByTime(5_000)
+      expect(terminated).toHaveLength(1)
+      expect(state[key]).toBeUndefined()
+      expect(registration.owner.inspect().lifecycle).toBe('disposed')
+    } finally {
+      await flushDefaultTreeSitterProvider()
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not collide lazy language loaders that have identical toString() output', async () => {
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    const makeLoader = (wasmUrl: string) => async () => ({
+      wasmUrl,
+      highlightQuerySource: '(identifier) @variable',
+    })
+    const loaderA = makeLoader('/grammar-a.wasm')
+    const loaderB = makeLoader('/grammar-b.wasm')
+    expect(loaderA.toString()).toBe(loaderB.toString())
+
+    const hostA = new EditorPluginHost([
+      createTreeSitterLanguagePlugin([{ id: 'custom-lang', load: loaderA }], {
+        name: 'custom-lang-a',
+      }),
+    ])
+    const hostB = new EditorPluginHost([
+      createTreeSitterLanguagePlugin([{ id: 'custom-lang', load: loaderB }], {
+        name: 'custom-lang-b',
+      }),
+    ])
+
+    try {
+      const registration = state[key] as {
+        readonly provider: {
+          resolveTreeSitterLanguage(id: string): Promise<{ readonly wasmUrl: string } | null>
+        }
+      }
+      // Second distinct closure must register its own loader rather than colliding with loaderA.
+      await expect(
+        registration.provider.resolveTreeSitterLanguage('custom-lang'),
+      ).resolves.toMatchObject({
+        wasmUrl: '/grammar-b.wasm',
+      })
+
+      // Disposing hostB restores hostA's registration cleanly.
+      hostB.dispose()
+      await expect(
+        registration.provider.resolveTreeSitterLanguage('custom-lang'),
+      ).resolves.toMatchObject({
+        wasmUrl: '/grammar-a.wasm',
+      })
+    } finally {
+      hostB.dispose()
+      hostA.dispose()
+      await flushDefaultTreeSitterProvider()
+    }
+  })
+
+  it('deduplicates lazy language loaders by function reference or explicit cacheKey', async () => {
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    const loadByKey = vi.fn(async () => ({
+      wasmUrl: '/shared-key.wasm',
+      highlightQuerySource: '(identifier) @variable',
+    }))
+    const hostA = new EditorPluginHost([
+      createTreeSitterLanguagePlugin(
+        [{ id: 'cached-lang', cacheKey: 'cached-lang:v1', load: () => loadByKey() }],
+        { name: 'cached-a' },
+      ),
+    ])
+    const hostB = new EditorPluginHost([
+      createTreeSitterLanguagePlugin(
+        [{ id: 'cached-lang', cacheKey: 'cached-lang:v1', load: () => loadByKey() }],
+        { name: 'cached-b' },
+      ),
+    ])
+
+    try {
+      const registration = state[key] as {
+        readonly provider: {
+          resolveTreeSitterLanguage(id: string): Promise<{ readonly wasmUrl: string } | null>
+        }
+        readonly languageReferences: Map<string, { readonly references: number }>
+      }
+      expect(registration.languageReferences.size).toBe(1)
+      expect([...registration.languageReferences.values()][0]?.references).toBe(2)
+      await expect(
+        registration.provider.resolveTreeSitterLanguage('cached-lang'),
+      ).resolves.toMatchObject({ wasmUrl: '/shared-key.wasm' })
+      expect(loadByKey).toHaveBeenCalledTimes(1)
+    } finally {
+      hostA.dispose()
+      hostB.dispose()
+      await flushDefaultTreeSitterProvider()
+    }
   })
 
   it('converts non-empty captures to editor tokens', () => {

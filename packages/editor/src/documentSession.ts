@@ -53,6 +53,7 @@ import {
 import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
 import { TextStorageMaintenance, type TextStorageMaintenanceStats } from './textStorageMaintenance'
+import type { EditorWorkScheduler } from './editor/workScheduler'
 import {
   applyBatchToPieceTable,
   createPieceTableSnapshot,
@@ -200,6 +201,7 @@ export type EditorTextBufferOptions = {
   // Retained history states other than the current one, across the whole graph.
   readonly retainedHistoryStates?: number
   readonly now?: () => number
+  readonly workScheduler?: EditorWorkScheduler
 }
 
 export type EditorHistoryGraphNode = {
@@ -708,14 +710,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private readonly retainedHistoryStates: number | undefined
   private readonly now: () => number
   private subscribers = 0
-  private readonly storageMaintenance = new TextStorageMaintenance(
-    () => this.storageSnapshots(),
-    () => this.history.current,
-  )
+  private readonly storageMaintenance: TextStorageMaintenance
 
   public constructor(initial: InitialBufferSource, options: EditorTextBufferOptions = {}) {
     this.retainedHistoryStates = options.retainedHistoryStates
     this.now = options.now ?? Date.now
+    this.storageMaintenance = new TextStorageMaintenance(
+      () => this.storageSnapshots(),
+      () => this.history.current,
+      options.workScheduler,
+    )
     const snapshot = initial.snapshot
     const selections = createInitialSelectionSet(snapshot, createSelectionIdFactory())
     this.history = this.createHistory(snapshot, selections)
@@ -2675,12 +2679,13 @@ export function createStaticDocumentSession(text: string): DocumentSession {
 export function createEditorDocumentSession(
   text: string,
   documentMode: 'session' | 'static',
+  options: EditorTextBufferOptions = {},
 ): { readonly session: DocumentSession; readonly text: string } {
   const initial = ingestBufferSource(text)
   const session =
     documentMode === 'static'
       ? new StaticDocumentSession(initial)
-      : createEditorBufferSession(new PieceTableEditorTextBuffer(initial))
+      : createEditorBufferSession(new PieceTableEditorTextBuffer(initial, options))
   return { session, text: initial.text }
 }
 
