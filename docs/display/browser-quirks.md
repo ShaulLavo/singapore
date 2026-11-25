@@ -793,3 +793,34 @@ rows then paint the editor's part from `selectionchange`.
   // Firefox: "Title\nfirst line\nsecond line".
 </script>
 ```
+
+<a id="firefox-beforeinput-textarea-rewrite"></a>
+
+## Rewriting a textarea inside `beforeinput` drops Firefox's native `input` event
+
+Verified 2026-11-25 on Linux with Firefox 157 (Playwright). Chromium recomputes the native edit
+against the updated textarea value and fires `input`; Firefox aborts the native edit and emits no
+`input` event.
+
+### Symptom
+
+After lazy sequential typing leaves the hidden `<textarea>` behind the live document, pressing a
+native deletion shortcut whose editor keybinding is unbound (for example `Ctrl+Backspace` firing a
+trusted `deleteWordBackward` `beforeinput`) drops the deletion completely in Firefox when the
+`beforeinput` listener flushes `textarea.value`.
+
+### Root cause
+
+When script assigns `textarea.value` inside a trusted delete `beforeinput` listener, Gecko cancels
+the pending native editor mutation instead of re-running it on the new value, so the follow-up
+`input` event never fires.
+
+### Fix
+
+In `InputSelectionController.#handleBeforeInput`
+([inputSelectionController.ts](../../packages/editor/src/editor/inputSelectionController.ts)),
+whenever the hidden textarea is stale and a cancelable native delete `beforeinput` arrives
+(`deleteContentBackward`, `deleteContentForward`, `deleteWordBackward`, `deleteWordForward`,
+`deleteSoftLineBackward`, `deleteHardLineBackward`, `deleteSoftLineForward`,
+`deleteHardLineForward`), the editor cancels the native event with `event.preventDefault()`,
+applies the deletion directly against the live `DocumentSession`, and flushes the hidden textarea.

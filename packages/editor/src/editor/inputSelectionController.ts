@@ -3166,6 +3166,87 @@ export class InputSelectionController {
     return createNavigationLineReader(session.getSnapshot(), session.getTextSnapshot())(offset)
   }
 
+  #applyStaleBeforeInputDelete(event: InputEvent): boolean {
+    switch (event.inputType) {
+      case 'deleteContentBackward':
+        event.preventDefault()
+        return this.applyDeleteCommand('backward', {})
+      case 'deleteContentForward':
+        event.preventDefault()
+        return this.applyDeleteCommand('forward', {})
+      case 'deleteWordBackward':
+        event.preventDefault()
+        return this.applyEditActionCommand('deleteWordLeft', {})
+      case 'deleteWordForward':
+        event.preventDefault()
+        return this.applyEditActionCommand('deleteWordRight', {})
+      case 'deleteSoftLineBackward':
+      case 'deleteHardLineBackward':
+        event.preventDefault()
+        return this.#applyLineBoundaryDelete('backward', event)
+      case 'deleteSoftLineForward':
+      case 'deleteHardLineForward':
+        event.preventDefault()
+        return this.#applyLineBoundaryDelete('forward', event)
+      default:
+        return false
+    }
+  }
+
+  #applyLineBoundaryDelete(direction: 'backward' | 'forward', event: InputEvent): boolean {
+    const session = this.session
+    if (!session || !this.options.canEditDocument()) return false
+    const start = eventStartMs(event)
+    const selectionChange = this.#selectionChangeBeforeEdit()
+    const snapshot = session.getSnapshot()
+    const rawRanges: { from: number; to: number }[] = []
+    for (const selection of session.getSelections().selections) {
+      const resolved = resolveSelection(snapshot, selection)
+      if (resolved.startOffset !== resolved.endOffset) {
+        rawRanges.push({ from: resolved.startOffset, to: resolved.endOffset })
+        continue
+      }
+      const line = this.#readLineAt(resolved.headOffset)
+      if (!line) continue
+      const from = direction === 'backward' ? line.start : resolved.headOffset
+      const to = direction === 'backward' ? resolved.headOffset : line.start + line.text.length
+      if (from < to) rawRanges.push({ from, to })
+    }
+    if (rawRanges.length === 0) {
+      if (selectionChange) {
+        this.applyChange(selectionChange, 'input.nativeSelection', start)
+      }
+      return true
+    }
+    rawRanges.sort((left, right) => left.from - right.from || left.to - right.to)
+    const edits: TextEdit[] = []
+    for (const range of rawRanges) {
+      const previous = edits.at(-1)
+      if (previous && range.from <= previous.to) {
+        edits[edits.length - 1] = {
+          from: previous.from,
+          to: Math.max(previous.to, range.to),
+          text: '',
+        }
+      } else {
+        edits.push({ from: range.from, to: range.to, text: '' })
+      }
+    }
+    let removed = 0
+    const nextSelections = edits.map((edit) => {
+      const caret = edit.from - removed
+      removed += edit.to - edit.from
+      return { anchor: caret, affinity: 'after' as const, head: caret }
+    })
+    const change = session.applyEdits(edits, { selections: nextSelections })
+    this.applyChange(
+      mergeChangeTimings(change, selectionChange),
+      direction === 'backward' ? 'input.deleteLineBackward' : 'input.deleteLineForward',
+      start,
+    )
+    return true
+  }
+
   #handleBeforeInput = this.#traceInput('input.beforeinput', (event: InputEvent): void => {
     const session = this.session
     if (!session) return
@@ -3177,9 +3258,18 @@ export class InputSelectionController {
     const inserted = beforeInputText(event)
     if (inserted === null) {
       // Browser-handled beforeinput mutations (deleteWordBackward, deleteHardLineBackward,
-      // insertReplacementText, etc.) act on the textarea immediately after this event. Flush any
-      // deferred typing so the browser computes its edit against the live document text.
-      if (!this.#inputState.compositionActive) {
+      // insertReplacementText, etc.) act on the textarea immediately after this event.
+      if (
+        !this.#inputState.compositionActive &&
+        (this.#hiddenInputLazy !== null || this.#hiddenInputDirty)
+      ) {
+        // See browser-quirks.md#firefox-beforeinput-textarea-rewrite: rewriting textarea.value
+        // inside a trusted delete beforeinput aborts Firefox's native input event, so apply
+        // cancelable native deletions directly in the editor while the textarea is stale.
+        if (event.cancelable && this.#applyStaleBeforeInputDelete(event)) {
+          this.#flushHiddenInputIfStale()
+          return
+        }
         const selectionChange = this.#isInputFocused() ? this.#selectionChangeBeforeEdit() : null
         if (selectionChange) {
           this.applyChange(selectionChange, 'input.nativeSelection', eventStartMs(event))

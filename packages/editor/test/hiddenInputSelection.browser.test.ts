@@ -406,34 +406,21 @@ describe('platform selections in the bounded textarea', () => {
     ).toBe('b')
   })
 
-  it('flushes deferred typing before browser-handled deleteWordBackward and preserves native range on immediate cut', async () => {
-    // 1. Native deleteWordBackward after deferred typing removes only the newly typed word.
+  it('handles native deleteWordBackward after deferred typing with trusted keys and preserves native range on immediate copy/cut', async () => {
+    // 1. Unbind editor keybindings so the browser handles Ctrl+Backspace (Alt+Backspace on macOS)
+    // via a trusted native deleteWordBackward beforeinput while the hidden textarea is stale.
+    editor.setKeymap({ packs: [] })
     editor.setText('hello ')
     const input = await inputAt(6)
-    input.dispatchEvent(
-      new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: 'x',
-      }),
-    )
+    await commands.proofKeyPress('x')
     expect(editor.materializeFullText()).toBe('hello x')
     expect(input.value).toBe('hello ')
 
-    // Simulate a browser-handled deleteWordBackward (beforeinput followed by textarea mutation + input).
-    input.dispatchEvent(
-      new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'deleteWordBackward',
-      }),
-    )
-    expect(input.value).toBe('hello x')
-    expect(input.selectionStart).toBe(7)
-    input.setRangeText('', 6, 7, 'end')
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteWordBackward' }))
+    const wordDeleteKey = /Mac/i.test(navigator.platform) ? 'Alt+Backspace' : 'Control+Backspace'
+    await commands.proofKeyPress(wordDeleteKey)
     expect(editor.materializeFullText()).toBe('hello ')
+    expect(input.value).toBe('hello ')
+    expect(input.selectionStart).toBe(6)
 
     // 2. Cutting a newly set native textarea range before `select` fires cuts only that character,
     // not the entire line.
