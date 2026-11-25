@@ -61,6 +61,7 @@ const internalScopeNameByKey = new Map<string, string>()
 const langKeyByInternalName = new Map<string, string>()
 const langKeyByScopeName = new Map<string, string>()
 const claimedLangNamesAndAliases = new Set<string>()
+const canonicalNameByAlias = new Map<string, string>()
 const pendingLanguageLoads = new Map<string, Promise<void>>()
 const scheduledPreloadLanguages = new Set<string>()
 const preloadLanguageQueue: {
@@ -347,39 +348,105 @@ const ensureHighlighter = async (
   return { highlighter, internalLang, internalTheme }
 }
 
+const canonicalLoadedLanguages = (highlighter: HighlighterGeneric<string, string>): Set<string> => {
+  const canonical = new Set<string>()
+  for (const name of highlighter.getLoadedLanguages()) {
+    if (!canonicalNameByAlias.has(name)) canonical.add(name)
+  }
+  return canonical
+}
+
+const recordLoadedLanguages = (
+  registrations: readonly ShikiWorkerLanguageRegistration[],
+  generation: number,
+): void => {
+  if (generation !== workerGeneration) return
+  for (const registration of registrations) {
+    for (const alias of registration.aliases ?? []) {
+      if (alias !== registration.name) canonicalNameByAlias.set(alias, registration.name)
+    }
+  }
+}
+
+const assertEmbeddedDependenciesSatisfiable = (
+  registrations: readonly ShikiWorkerLanguageRegistration[],
+  canonicalLoaded: ReadonlySet<string>,
+): void => {
+  const batchCanonicalNames = new Set(registrations.map((registration) => registration.name))
+  const missingDeps: string[] = []
+  const missingDepSet = new Set<string>()
+  const dependents: string[] = []
+  const dependentSet = new Set<string>()
+
+  for (const registration of registrations) {
+    for (const depName of embeddedLanguageNames(registration)) {
+      if (canonicalLoaded.has(depName) || batchCanonicalNames.has(depName)) continue
+      if (!missingDepSet.has(depName)) {
+        missingDepSet.add(depName)
+        missingDeps.push(depName)
+      }
+      if (!dependentSet.has(registration.name)) {
+        dependentSet.add(registration.name)
+        dependents.push(registration.name)
+      }
+    }
+  }
+
+  if (missingDeps.length > 0) {
+    throw new Error(
+      `Missing languages ${missingDeps.join(', ')}, required by ${dependents.join(', ')}`,
+    )
+  }
+}
+
 const ensureLanguages = async (
   highlighter: HighlighterGeneric<string, string>,
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): Promise<void> => {
   const unique = uniqueBy(registrations, (registration) => registration.name)
-  const loaded = new Set(highlighter.getLoadedLanguages())
-  const toWait: Promise<void>[] = []
-  const missing: ShikiWorkerLanguageRegistration[] = []
 
-  for (const registration of unique) {
-    if (loaded.has(registration.name)) continue
-    const pending = pendingLanguageLoads.get(registration.name)
-    if (pending) {
-      toWait.push(pending)
+  while (true) {
+    const loaded = canonicalLoadedLanguages(highlighter)
+    const toWait: Promise<void>[] = []
+    const missing: ShikiWorkerLanguageRegistration[] = []
+
+    for (const registration of unique) {
+      if (loaded.has(registration.name)) continue
+      const pending = pendingLanguageLoads.get(registration.name)
+      if (pending) {
+        toWait.push(pending)
+        continue
+      }
+      missing.push(registration)
+    }
+
+    if (toWait.length > 0) {
+      await Promise.all(toWait)
+      if (missing.length === 0) return
       continue
     }
-    missing.push(registration)
-  }
 
-  if (missing.length > 0) {
+    if (missing.length === 0) return
+
+    assertEmbeddedDependenciesSatisfiable(missing, loaded)
+
+    const generation = workerGeneration
     const names = missing.map((registration) => registration.name)
     const load = Promise.resolve(
       highlighter.loadLanguage(...(missing as unknown as LanguageRegistration[])),
-    ).finally(() => {
-      for (const name of names) {
-        if (pendingLanguageLoads.get(name) === load) pendingLanguageLoads.delete(name)
-      }
-    })
+    )
+      .then(() => {
+        recordLoadedLanguages(missing, generation)
+      })
+      .finally(() => {
+        for (const name of names) {
+          if (pendingLanguageLoads.get(name) === load) pendingLanguageLoads.delete(name)
+        }
+      })
     for (const name of names) pendingLanguageLoads.set(name, load)
-    toWait.push(load)
+    await load
+    return
   }
-
-  if (toWait.length > 0) await Promise.all(toWait)
 }
 
 const ensureThemes = async (
@@ -433,14 +500,14 @@ const scheduleCooperativeLanguagePreload = (
   highlighter: HighlighterGeneric<string, string>,
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): void => {
-  const alreadyAvailable = new Set(highlighter.getLoadedLanguages())
+  const alreadyAvailable = canonicalLoadedLanguages(highlighter)
   for (const name of scheduledPreloadLanguages) alreadyAvailable.add(name)
   const groups = planCooperativeLanguageGroups(registrations, alreadyAvailable)
   if (groups.length === 0) return
 
-  const resolvedBatch = resolveLanguageBatch(groups.flat())
-  const resolvedByKey = new Map<string, ShikiWorkerLanguageRegistration>()
   const acceptedFlat = groups.flat()
+  const resolvedBatch = resolveLanguageBatch(acceptedFlat)
+  const resolvedByKey = new Map<string, ShikiWorkerLanguageRegistration>()
   for (let index = 0; index < acceptedFlat.length; index += 1) {
     const resolved = resolvedBatch.registrations[index]
     if (resolved) resolvedByKey.set(languageRegistrationKey(acceptedFlat[index]!), resolved)
@@ -452,7 +519,6 @@ const scheduleCooperativeLanguagePreload = (
     )
     for (const registration of resolvedGroup) {
       scheduledPreloadLanguages.add(registration.name)
-      for (const alias of registration.aliases ?? []) scheduledPreloadLanguages.add(alias)
     }
     preloadLanguageQueue.push({ highlighter, group: resolvedGroup })
   }
@@ -466,25 +532,21 @@ const scheduleCooperativeLanguagePreload = (
         if (generation !== workerGeneration) return
         const next = preloadLanguageQueue.shift()
         if (!next) return
-        const loadedNow = new Set(next.highlighter.getLoadedLanguages())
-        const groupNames = new Set<string>()
-        for (const registration of next.group) {
-          groupNames.add(registration.name)
-          for (const alias of registration.aliases ?? []) groupNames.add(alias)
-        }
+        const loadedNow = canonicalLoadedLanguages(next.highlighter)
+        const groupCanonicalNames = new Set(next.group.map((registration) => registration.name))
         const canLoad = next.group.every((registration) =>
           embeddedLanguageNames(registration).every(
-            (depName) => loadedNow.has(depName) || groupNames.has(depName),
+            (depName) => loadedNow.has(depName) || groupCanonicalNames.has(depName),
           ),
         )
         if (!canLoad) {
-          for (const name of groupNames) scheduledPreloadLanguages.delete(name)
+          for (const name of groupCanonicalNames) scheduledPreloadLanguages.delete(name)
           continue
         }
         try {
           await ensureLanguages(next.highlighter, next.group)
         } catch {
-          for (const name of groupNames) scheduledPreloadLanguages.delete(name)
+          for (const name of groupCanonicalNames) scheduledPreloadLanguages.delete(name)
           // Failed background warming never fails paint; opening a document retries on demand.
         }
       }
@@ -503,6 +565,7 @@ const ensureSharedHighlighter = async (
   const uniqueThemes = uniqueBy(themes, (theme) => theme.name)
   if (!sharedHighlighterPromise) {
     const uniqueLanguages = uniqueBy(languages, (registration) => registration.name)
+    assertEmbeddedDependenciesSatisfiable(uniqueLanguages, new Set())
     const initialThemeNames = uniqueThemes.map((theme) => theme.name)
     const generation = workerGeneration
     const created = (
@@ -515,6 +578,7 @@ const ensureSharedHighlighter = async (
       (highlighter) => {
         if (generation === workerGeneration) {
           for (const name of initialThemeNames) loadedInternalThemes.add(name)
+          recordLoadedLanguages(uniqueLanguages, generation)
         }
         return highlighter
       },
@@ -620,6 +684,7 @@ const disposeAll = (): void => {
   langKeyByInternalName.clear()
   langKeyByScopeName.clear()
   claimedLangNamesAndAliases.clear()
+  canonicalNameByAlias.clear()
   pendingLanguageLoads.clear()
   scheduledPreloadLanguages.clear()
   preloadLanguageQueue.length = 0
@@ -770,70 +835,162 @@ type ResolvedLanguageBatch = {
 /**
  * Maps each distinct grammar registration to a unique internal name (and scopeName when two
  * distinct grammars also share a scopeName) inside the single shared highlighter so custom
- * grammars that share a public name never shadow each other across documents.
+ * grammars that share a public name or embedded scope never shadow each other across documents.
+ *
+ * Dependencies are resolved before dependents so parent grammars rewrite their `embeddedLangs`
+ * and TextMate `include`/`injectTo` scope references onto the batch's resolved variants and fold
+ * those resolved dependencies into their own cache key.
  */
 const resolveLanguageBatch = (
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): ResolvedLanguageBatch => {
   const unique = uniqueLanguageRegistrations(registrations)
-  const batchNameToInternal = new Map<string, string>()
-  const assigned: {
+  if (unique.length === 0) return { registrations: [], nameMap: new Map() }
+
+  const order = dependencyFirstIndices(unique)
+  const originalCandidates = unique.slice()
+
+  let batchNameToInternal = new Map<string, string>()
+  let batchScopeToInternal = new Map<string, string>()
+  let assigned: {
     readonly original: ShikiWorkerLanguageRegistration
+    readonly candidate: ShikiWorkerLanguageRegistration
     readonly key: string
     readonly internalName: string
     readonly internalScopeName: string
   }[] = []
+  let tentativeNameByKey = new Map<string, string>()
+  let tentativeScopeByKey = new Map<string, string>()
+  let tentativeKeyByName = new Map<string, string>()
+  let tentativeKeyByScope = new Map<string, string>()
+  let tentativeClaimed = new Set<string>()
+  let nextVariantPreview = nextInternalLangVariant
 
-  for (const registration of unique) {
-    const key = languageRegistrationKey(registration)
-    let internalName = internalLangNameByKey.get(key)
-    let internalScopeName = internalScopeNameByKey.get(key)
+  // Run at most `unique.length + 1` fixpoint passes (1 pass for acyclic batches; 2 passes for
+  // mutually cyclic colliding batches) without mutating global maps until convergence.
+  const maxPasses = Math.max(2, unique.length + 1)
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const prevNameMap = batchNameToInternal
+    const prevScopeMap = batchScopeToInternal
+    batchNameToInternal = new Map<string, string>()
+    batchScopeToInternal = new Map<string, string>()
+    tentativeNameByKey = new Map<string, string>()
+    tentativeScopeByKey = new Map<string, string>()
+    tentativeKeyByName = new Map<string, string>()
+    tentativeKeyByScope = new Map<string, string>()
+    tentativeClaimed = new Set<string>()
+    nextVariantPreview = nextInternalLangVariant
+    assigned = new Array(unique.length)
 
-    if (internalName === undefined || internalScopeName === undefined) {
-      if (!claimedLangNamesAndAliases.has(registration.name)) {
-        internalName = registration.name
-      } else {
-        do {
-          nextInternalLangVariant += 1
-          internalName = `${registration.name}#${nextInternalLangVariant}`
-        } while (claimedLangNamesAndAliases.has(internalName))
+    let changed = false
+    const activeNameMap = (name: string): string | undefined =>
+      batchNameToInternal.get(name) ?? prevNameMap.get(name) ?? canonicalNameByAlias.get(name)
+    const activeScopeRenames = (): Map<string, string> => {
+      const merged = new Map<string, string>()
+      for (const [scope, target] of prevScopeMap) {
+        if (scope !== target) merged.set(scope, target)
       }
-
-      const existingScopeOwner = langKeyByScopeName.get(registration.scopeName)
-      if (existingScopeOwner === undefined || existingScopeOwner === key) {
-        internalScopeName = registration.scopeName
-      } else {
-        do {
-          nextInternalLangVariant += 1
-          internalScopeName = `${registration.scopeName}.shiki-variant-${nextInternalLangVariant}`
-        } while (langKeyByScopeName.has(internalScopeName))
+      for (const [scope, target] of batchScopeToInternal) {
+        if (scope !== target) merged.set(scope, target)
+        else merged.delete(scope)
       }
-
-      internalLangNameByKey.set(key, internalName)
-      internalScopeNameByKey.set(key, internalScopeName)
-      langKeyByInternalName.set(internalName, key)
-      langKeyByScopeName.set(internalScopeName, key)
-      claimedLangNamesAndAliases.add(internalName)
+      return merged
     }
 
-    batchNameToInternal.set(registration.name, internalName)
-    for (const alias of registration.aliases ?? []) {
-      if (!batchNameToInternal.has(alias)) batchNameToInternal.set(alias, internalName)
+    for (const index of order) {
+      const original = originalCandidates[index]!
+      const scopeRenames = activeScopeRenames()
+      const candidate = rewriteGrammarDependencies(original, activeNameMap, scopeRenames)
+      const key = languageRegistrationKey(candidate)
+
+      let internalName = internalLangNameByKey.get(key) ?? tentativeNameByKey.get(key)
+      let internalScopeName = internalScopeNameByKey.get(key) ?? tentativeScopeByKey.get(key)
+
+      if (internalName === undefined || internalScopeName === undefined) {
+        if (
+          !claimedLangNamesAndAliases.has(original.name) &&
+          !tentativeClaimed.has(original.name)
+        ) {
+          internalName = original.name
+        } else {
+          do {
+            nextVariantPreview += 1
+            internalName = `${original.name}#${nextVariantPreview}`
+          } while (
+            claimedLangNamesAndAliases.has(internalName) ||
+            tentativeClaimed.has(internalName)
+          )
+        }
+
+        const existingScopeOwner =
+          langKeyByScopeName.get(original.scopeName) ?? tentativeKeyByScope.get(original.scopeName)
+        if (existingScopeOwner === undefined || existingScopeOwner === key) {
+          internalScopeName = original.scopeName
+        } else {
+          do {
+            nextVariantPreview += 1
+            internalScopeName = `${original.scopeName}.shiki-variant-${nextVariantPreview}`
+          } while (
+            langKeyByScopeName.has(internalScopeName) ||
+            tentativeKeyByScope.has(internalScopeName)
+          )
+        }
+
+        tentativeNameByKey.set(key, internalName)
+        tentativeScopeByKey.set(key, internalScopeName)
+        tentativeKeyByName.set(internalName, key)
+        tentativeKeyByScope.set(internalScopeName, key)
+        tentativeClaimed.add(internalName)
+      }
+
+      if (prevNameMap.get(original.name) !== internalName) changed = true
+      if (prevScopeMap.get(original.scopeName) !== internalScopeName) changed = true
+
+      batchNameToInternal.set(original.name, internalName)
+      for (const alias of original.aliases ?? []) {
+        if (!batchNameToInternal.has(alias)) batchNameToInternal.set(alias, internalName)
+      }
+      batchScopeToInternal.set(original.scopeName, internalScopeName)
+      assigned[index] = { original, candidate, key, internalName, internalScopeName }
     }
-    assigned.push({ original: registration, key, internalName, internalScopeName })
+
+    if (!changed) break
   }
+
+  nextInternalLangVariant = nextVariantPreview
+  for (const [key, internalName] of tentativeNameByKey) {
+    internalLangNameByKey.set(key, internalName)
+  }
+  for (const [key, internalScopeName] of tentativeScopeByKey) {
+    internalScopeNameByKey.set(key, internalScopeName)
+  }
+  for (const [internalName, key] of tentativeKeyByName) {
+    langKeyByInternalName.set(internalName, key)
+  }
+  for (const [internalScopeName, key] of tentativeKeyByScope) {
+    langKeyByScopeName.set(internalScopeName, key)
+  }
+  for (const name of tentativeClaimed) claimedLangNamesAndAliases.add(name)
+
+  const finalScopeRenames = new Map<string, string>()
+  for (const [scope, target] of batchScopeToInternal) {
+    if (scope !== target) finalScopeRenames.set(scope, target)
+  }
+  const finalNameLookup = (name: string): string | undefined =>
+    batchNameToInternal.get(name) ?? canonicalNameByAlias.get(name)
 
   const resolvedRegistrations = assigned.map(
     ({ original, key, internalName, internalScopeName }) => {
+      const rewritten = rewriteGrammarDependencies(original, finalNameLookup, finalScopeRenames)
       let aliasesChanged = false
-      let nextAliases: readonly string[] | undefined = original.aliases
-      if (original.aliases && original.aliases.length > 0) {
+      let nextAliases: readonly string[] | undefined = rewritten.aliases
+      if (rewritten.aliases && rewritten.aliases.length > 0) {
         if (internalName !== original.name) {
           aliasesChanged = true
           nextAliases = undefined
         } else {
           const kept: string[] = []
-          for (const alias of original.aliases) {
+          for (const alias of rewritten.aliases) {
             const owner = langKeyByInternalName.get(alias)
             if (owner !== undefined && owner !== key) {
               aliasesChanged = true
@@ -847,24 +1004,17 @@ const resolveLanguageBatch = (
         }
       }
 
-      const embeddedLangs = rewriteEmbeddedNames(original.embeddedLangs, batchNameToInternal)
-      const embeddedLanguages = rewriteEmbeddedNames(
-        original.embeddedLanguages,
-        batchNameToInternal,
-      )
-
       if (
+        rewritten === original &&
         internalName === original.name &&
         internalScopeName === original.scopeName &&
-        !aliasesChanged &&
-        embeddedLangs === original.embeddedLangs &&
-        embeddedLanguages === original.embeddedLanguages
+        !aliasesChanged
       ) {
         return original
       }
 
       const updated: Record<string, unknown> = {
-        ...original,
+        ...rewritten,
         name: internalName,
         scopeName: internalScopeName,
       }
@@ -872,9 +1022,6 @@ const resolveLanguageBatch = (
         if (nextAliases) updated.aliases = nextAliases
         else delete updated.aliases
       }
-      if (embeddedLangs !== original.embeddedLangs) updated.embeddedLangs = embeddedLangs
-      if (embeddedLanguages !== original.embeddedLanguages)
-        updated.embeddedLanguages = embeddedLanguages
       return updated as ShikiWorkerLanguageRegistration
     },
   )
@@ -882,14 +1029,187 @@ const resolveLanguageBatch = (
   return { registrations: resolvedRegistrations, nameMap: batchNameToInternal }
 }
 
+const dependencyFirstIndices = (
+  registrations: readonly ShikiWorkerLanguageRegistration[],
+): number[] => {
+  const indexByName = new Map<string, number>()
+  const indexByScope = new Map<string, number>()
+  for (let index = 0; index < registrations.length; index += 1) {
+    const registration = registrations[index]!
+    indexByName.set(registration.name, index)
+    for (const alias of registration.aliases ?? []) {
+      if (!indexByName.has(alias)) indexByName.set(alias, index)
+    }
+    if (!indexByScope.has(registration.scopeName)) {
+      indexByScope.set(registration.scopeName, index)
+    }
+  }
+
+  const visited = new Uint8Array(registrations.length)
+  const order: number[] = []
+  const visit = (index: number): void => {
+    if (visited[index]) return
+    visited[index] = 1
+    const registration = registrations[index]!
+    for (const depName of embeddedLanguageNames(registration)) {
+      const depIndex = indexByName.get(depName)
+      if (depIndex !== undefined && depIndex !== index) visit(depIndex)
+    }
+    for (const scope of collectIncludedScopes(registration)) {
+      const depIndex = indexByScope.get(scope)
+      if (depIndex !== undefined && depIndex !== index) visit(depIndex)
+    }
+    order.push(index)
+  }
+
+  for (let index = 0; index < registrations.length; index += 1) visit(index)
+  return order
+}
+
+const collectIncludedScopes = (registration: ShikiWorkerLanguageRegistration): Set<string> => {
+  const scopes = new Set<string>()
+  const record = registration as Record<string, unknown>
+  const walk = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item)
+      return
+    }
+    const obj = value as Record<string, unknown>
+    const include = obj.include
+    if (typeof include === 'string' && !include.startsWith('#') && !include.startsWith('$')) {
+      const hashIndex = include.indexOf('#')
+      scopes.add(hashIndex >= 0 ? include.slice(0, hashIndex) : include)
+    }
+    for (const key of Object.keys(obj)) {
+      if (key === 'include') continue
+      walk(obj[key])
+    }
+  }
+  walk(record.patterns)
+  walk(record.repository)
+  walk(record.injections)
+  if (Array.isArray(record.injectTo)) {
+    for (const scope of record.injectTo) {
+      if (typeof scope === 'string') scopes.add(scope)
+    }
+  }
+  return scopes
+}
+
+const rewriteGrammarDependencies = (
+  registration: ShikiWorkerLanguageRegistration,
+  nameLookup: (name: string) => string | undefined,
+  scopeRenames: ReadonlyMap<string, string>,
+): ShikiWorkerLanguageRegistration => {
+  const embeddedLangs = rewriteEmbeddedNames(registration.embeddedLangs, nameLookup)
+  const embeddedLanguages = rewriteEmbeddedNames(registration.embeddedLanguages, nameLookup)
+  const record = registration as Record<string, unknown>
+  const embeddedLangsLazy = Array.isArray(record.embeddedLangsLazy)
+    ? rewriteEmbeddedNames(record.embeddedLangsLazy as readonly string[], nameLookup)
+    : record.embeddedLangsLazy
+
+  const hasScopeRenames = scopeRenames.size > 0
+  const patterns = hasScopeRenames
+    ? rewriteIncludedScopes(record.patterns, scopeRenames)
+    : record.patterns
+  const repository = hasScopeRenames
+    ? rewriteIncludedScopes(record.repository, scopeRenames)
+    : record.repository
+  const injections = hasScopeRenames
+    ? rewriteIncludedScopes(record.injections, scopeRenames)
+    : record.injections
+  const injectTo =
+    hasScopeRenames && Array.isArray(record.injectTo)
+      ? rewriteScopeList(record.injectTo as readonly string[], scopeRenames)
+      : record.injectTo
+
+  if (
+    embeddedLangs === registration.embeddedLangs &&
+    embeddedLanguages === registration.embeddedLanguages &&
+    embeddedLangsLazy === record.embeddedLangsLazy &&
+    patterns === record.patterns &&
+    repository === record.repository &&
+    injections === record.injections &&
+    injectTo === record.injectTo
+  ) {
+    return registration
+  }
+
+  const updated: Record<string, unknown> = { ...registration }
+  if (embeddedLangs !== registration.embeddedLangs) updated.embeddedLangs = embeddedLangs
+  if (embeddedLanguages !== registration.embeddedLanguages)
+    updated.embeddedLanguages = embeddedLanguages
+  if (embeddedLangsLazy !== record.embeddedLangsLazy) updated.embeddedLangsLazy = embeddedLangsLazy
+  if (patterns !== record.patterns) updated.patterns = patterns
+  if (repository !== record.repository) updated.repository = repository
+  if (injections !== record.injections) updated.injections = injections
+  if (injectTo !== record.injectTo) updated.injectTo = injectTo
+  return updated as ShikiWorkerLanguageRegistration
+}
+
+const rewriteScopeRef = (value: string, scopeRenames: ReadonlyMap<string, string>): string => {
+  if (value.startsWith('#') || value.startsWith('$')) return value
+  const hashIndex = value.indexOf('#')
+  const baseScope = hashIndex >= 0 ? value.slice(0, hashIndex) : value
+  const renamed = scopeRenames.get(baseScope)
+  if (!renamed) return value
+  return hashIndex >= 0 ? `${renamed}${value.slice(hashIndex)}` : renamed
+}
+
+const rewriteScopeList = (
+  scopes: readonly string[],
+  scopeRenames: ReadonlyMap<string, string>,
+): readonly string[] => {
+  let changed = false
+  const mapped = scopes.map((scope) => {
+    const next = scopeRenames.get(scope) ?? scope
+    if (next !== scope) changed = true
+    return next
+  })
+  return changed ? mapped : scopes
+}
+
+const rewriteIncludedScopes = (
+  value: unknown,
+  scopeRenames: ReadonlyMap<string, string>,
+): unknown => {
+  if (!value || typeof value !== 'object') return value
+  if (Array.isArray(value)) {
+    let changed = false
+    const mapped = value.map((item) => {
+      const next = rewriteIncludedScopes(item, scopeRenames)
+      if (next !== item) changed = true
+      return next
+    })
+    return changed ? mapped : value
+  }
+  const obj = value as Record<string, unknown>
+  let changed = false
+  const nextObj: Record<string, unknown> = {}
+  for (const key of Object.keys(obj)) {
+    const current = obj[key]
+    if (key === 'include' && typeof current === 'string') {
+      const next = rewriteScopeRef(current, scopeRenames)
+      if (next !== current) changed = true
+      nextObj[key] = next
+      continue
+    }
+    const next = rewriteIncludedScopes(current, scopeRenames)
+    if (next !== current) changed = true
+    nextObj[key] = next
+  }
+  return changed ? nextObj : value
+}
+
 const rewriteEmbeddedNames = (
   names: readonly string[] | undefined,
-  nameMap: ReadonlyMap<string, string>,
+  nameLookup: (name: string) => string | undefined,
 ): readonly string[] | undefined => {
   if (!names || names.length === 0) return names
   let changed = false
   const mapped = names.map((name) => {
-    const replacement = nameMap.get(name)
+    const replacement = nameLookup(name)
     if (replacement && replacement !== name) {
       changed = true
       return replacement
@@ -907,7 +1227,7 @@ const rewriteEmbeddedNames = (
  */
 const planCooperativeLanguageGroups = (
   registrations: readonly ShikiWorkerLanguageRegistration[],
-  loaded: ReadonlySet<string>,
+  loadedCanonical: ReadonlySet<string>,
 ): readonly (readonly ShikiWorkerLanguageRegistration[])[] => {
   const byName = new Map<string, ShikiWorkerLanguageRegistration>()
   const unloaded: ShikiWorkerLanguageRegistration[] = []
@@ -916,10 +1236,14 @@ const planCooperativeLanguageGroups = (
     for (const alias of registration.aliases ?? []) {
       if (!byName.has(alias)) byName.set(alias, registration)
     }
-    if (!loaded.has(registration.name)) unloaded.push(registration)
+    const canonicalName = canonicalNameByAlias.get(registration.name) ?? registration.name
+    if (!loadedCanonical.has(canonicalName)) unloaded.push(registration)
   }
   if (unloaded.length === 0) return []
   const unloadedSet = new Set(unloaded)
+
+  const canonicalDepName = (depName: string): string =>
+    byName.get(depName)?.name ?? canonicalNameByAlias.get(depName) ?? depName
 
   // Tarjan's SCC outputs components in reverse topological order (dependencies first).
   let nextIndex = 0
@@ -936,9 +1260,10 @@ const planCooperativeLanguageGroups = (
     stack.push(node)
     onStack.add(node)
 
-    for (const depName of embeddedLanguageNames(node)) {
-      if (loaded.has(depName)) continue
-      const dep = byName.get(depName)
+    for (const rawDepName of embeddedLanguageNames(node)) {
+      const depName = canonicalDepName(rawDepName)
+      if (loadedCanonical.has(depName)) continue
+      const dep = byName.get(rawDepName) ?? byName.get(depName)
       if (!dep || dep === node || !unloadedSet.has(dep)) continue
       if (!indices.has(dep)) {
         strongConnect(dep)
@@ -964,23 +1289,20 @@ const planCooperativeLanguageGroups = (
     if (!indices.has(registration)) strongConnect(registration)
   }
 
-  // Evaluate satisfiability per SCC bottom-up so a cycle containing any missing dependency
-  // rejects the entire SCC and all transitive dependents cleanly.
-  const available = new Set<string>(loaded)
+  // Evaluate satisfiability per SCC bottom-up using canonical names so a cycle containing any
+  // missing dependency rejects the entire SCC and all transitive dependents cleanly.
+  const available = new Set<string>(loadedCanonical)
   const groups: ShikiWorkerLanguageRegistration[][] = []
   for (const component of components) {
-    const componentNames = new Set<string>()
-    for (const registration of component) {
-      componentNames.add(registration.name)
-      for (const alias of registration.aliases ?? []) componentNames.add(alias)
-    }
+    const componentCanonicalNames = new Set(component.map((registration) => registration.name))
     const satisfiable = component.every((registration) =>
-      embeddedLanguageNames(registration).every(
-        (depName) => available.has(depName) || componentNames.has(depName),
-      ),
+      embeddedLanguageNames(registration).every((rawDepName) => {
+        const depName = canonicalDepName(rawDepName)
+        return available.has(depName) || componentCanonicalNames.has(depName)
+      }),
     )
     if (!satisfiable) continue
-    for (const name of componentNames) available.add(name)
+    for (const name of componentCanonicalNames) available.add(name)
     groups.push(component)
   }
 
