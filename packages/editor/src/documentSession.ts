@@ -663,6 +663,19 @@ const transactionSources = new WeakMap<
   EditorEventSource<EditorTextBufferChange>
 >()
 
+const bufferWorkSchedulerAttachers = new WeakMap<
+  EditorTextBuffer,
+  (scheduler: EditorWorkScheduler) => () => void
+>()
+
+/** Temporarily lends an attached editor's scheduler to this buffer's storage maintenance. */
+export function attachBufferWorkScheduler(
+  buffer: EditorTextBuffer,
+  scheduler: EditorWorkScheduler,
+): () => void {
+  return bufferWorkSchedulerAttachers.get(buffer)?.(scheduler) ?? (() => undefined)
+}
+
 /** Capture commits before change callbacks can author another transition. */
 export function subscribeDocumentTransactions(
   buffer: EditorTextBuffer,
@@ -719,6 +732,9 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       () => this.storageSnapshots(),
       () => this.history.current,
       options.workScheduler,
+    )
+    bufferWorkSchedulerAttachers.set(this, (scheduler) =>
+      this.storageMaintenance.attachScheduler(scheduler),
     )
     const snapshot = initial.snapshot
     const selections = createInitialSelectionSet(snapshot, createSelectionIdFactory())

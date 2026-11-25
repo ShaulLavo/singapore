@@ -113,6 +113,20 @@ const PRIORITY_RANK: Record<EditorWorkPriority, number> = {
   idle: 4,
 }
 
+const SCHEDULER_SCOPE_COUNTER_KEY = Symbol.for('@singapore-editor/core/work-scheduler-scope-id')
+
+/**
+ * Allocates a collision-free numeric scope id on a shared scheduler instance, even when multiple
+ * bundle copies of the editor or plugins share the same host `EditorWorkScheduler`.
+ */
+export function nextWorkSchedulerScopeId(scheduler: object): number {
+  const holder = scheduler as Record<PropertyKey, unknown>
+  const current = holder[SCHEDULER_SCOPE_COUNTER_KEY]
+  const next = (typeof current === 'number' ? current : 0) + 1
+  holder[SCHEDULER_SCOPE_COUNTER_KEY] = next
+  return next
+}
+
 export type EditorWorkSchedulerLike = Pick<EditorWorkScheduler, 'schedule' | 'cancel' | 'dispose'>
 
 export class EditorWorkScheduler {
@@ -299,6 +313,7 @@ export class EditorWorkScheduler {
 
     this.startBudgetTimer(work)
     this.emit(work, 'started')
+    if (!this.isCurrentWork(work)) return
     this.runWork(work, context)
   }
 

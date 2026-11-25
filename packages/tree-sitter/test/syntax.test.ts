@@ -479,6 +479,40 @@ describe('Tree-sitter syntax capture conversion', () => {
     }
   })
 
+  it('does not dispose an activating default provider if flushDefaultTreeSitterProvider runs inside registerSyntaxProvider', async () => {
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    const plugin = createTreeSitterLanguagePlugin([testLanguage('sql', ['.sql'])], {
+      name: 'sql-reentrant-flush',
+    })
+    let flushPromise: Promise<void> | null = null
+    const context = {
+      registerSyntaxProvider: () => {
+        flushPromise = flushDefaultTreeSitterProvider()
+        return { dispose: () => undefined }
+      },
+      registerSelectionRangeProvider: () => ({ dispose: () => undefined }),
+    } as unknown as Parameters<NonNullable<typeof plugin.activate>>[0]
+
+    const disposables = plugin.activate(context)
+    try {
+      await flushPromise
+      const registration = state[key] as
+        | { readonly owner: TreeSitterWorkerOwner; readonly activeContexts: number }
+        | undefined
+      expect(registration).toBeDefined()
+      expect(registration?.activeContexts).toBe(1)
+      expect(registration?.owner.inspect().lifecycle).not.toBe('disposed')
+    } finally {
+      if (Array.isArray(disposables)) {
+        for (const disposable of disposables.toReversed()) disposable.dispose()
+      }
+      await flushDefaultTreeSitterProvider()
+    }
+  })
+
   it('converts non-empty captures to editor tokens', () => {
     const tokens = treeSitterCapturesToEditorTokens([
       { startIndex: 0, endIndex: 5, captureName: 'keyword.declaration' },

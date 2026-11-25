@@ -1880,15 +1880,19 @@ class DelegatingDocumentWorkScheduler implements EditorWorkSchedulerLike {
     return target.schedule({
       ...options,
       run: (context) => {
-        if (this.#active.get(task.key) !== task || task.cancelled) return undefined
+        if (task.scheduler !== target || this.#active.get(task.key) !== task || task.cancelled) {
+          return undefined
+        }
         task.started = true
         return options.run(context)
       },
       apply: (result, context) => {
+        if (task.scheduler !== target) return
         if (this.#active.get(task.key) === task) this.#active.delete(task.key)
         options.apply?.(result, context)
       },
       fail: (error, context) => {
+        if (task.scheduler !== target) return
         if (this.#active.get(task.key) === task) this.#active.delete(task.key)
         options.fail?.(error, context)
       },

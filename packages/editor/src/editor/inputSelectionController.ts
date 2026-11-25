@@ -1,7 +1,7 @@
 import { isTextareaElement } from '../dom'
 import { registerSelectionCopySource, selectionLeavesElement } from './selectionCopy'
 import { scheduleFrame, type ScheduledFrame } from './scheduleFrame'
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from './workScheduler'
 import {
   TouchSelectionController,
   type TouchSelectionGranularity,
@@ -327,8 +327,6 @@ const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
   'cursorColumnSelectPageDown',
 ])
 
-let nextInputSelectionId = 0
-
 export class InputSelectionController {
   readonly #nodeConstructor: typeof Node | undefined
   readonly #elementConstructor: typeof Element | undefined
@@ -375,7 +373,7 @@ export class InputSelectionController {
     this.#hiddenInputScheduler = options.workScheduler ?? new EditorWorkScheduler()
     this.#ownsHiddenInputScheduler = !options.workScheduler
     this.#hiddenInputKey = options.workScheduler
-      ? `lazy-hidden-input-flush:${++nextInputSelectionId}`
+      ? `lazy-hidden-input-flush:${nextWorkSchedulerScopeId(options.workScheduler)}`
       : 'lazy-hidden-input-flush'
     this.touchSelection = new TouchSelectionController({
       element: options.el,

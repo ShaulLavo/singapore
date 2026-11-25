@@ -1,6 +1,6 @@
 import type { TextOffsetRange } from '../textRanges'
 import type { VirtualizedTextHitPosition } from '../virtualization/virtualizedTextViewTypes'
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from './workScheduler'
 import { scheduleFrame, type ScheduledFrame } from './scheduleFrame'
 
 // A stationary hold selects; a swipe crossing the slop stays with the browser's scroll gesture.
@@ -53,8 +53,6 @@ type TouchSelectionOptions = {
   ): void
 }
 
-let nextTouchSelectionId = 0
-
 /** Touch recognizes gestures; selection, word boundaries, painting and scrolling belong to the editor. */
 export class TouchSelectionController {
   #gesture: TouchGesture | null = null
@@ -81,7 +79,7 @@ export class TouchSelectionController {
   constructor(private readonly options: TouchSelectionOptions) {
     this.scheduler = options.scheduler ?? new EditorWorkScheduler()
     this.#ownsScheduler = !options.scheduler
-    const suffix = options.scheduler ? `:${++nextTouchSelectionId}` : ''
+    const suffix = options.scheduler ? `:${nextWorkSchedulerScopeId(options.scheduler)}` : ''
     this.#holdKey = `touch-selection-hold${suffix}`
     this.#tapWindowKey = `touch-tap-window${suffix}`
   }

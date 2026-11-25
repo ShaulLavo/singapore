@@ -45,7 +45,7 @@ import { foldRangeKey } from './folds'
 import { projectTokensThroughEdit, projectTokensThroughEdits } from './tokenProjection'
 import type { EditorSyntaxStatus } from './types'
 import { LatestAsyncRequest, SingleFlightAsyncRequest } from './latestAsyncRequest'
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from './workScheduler'
 import {
   appendCachedSyntaxRange,
   compactSyntaxRangeTokens,
@@ -353,8 +353,6 @@ const syntaxWorkTags = (
   viewport: range ? `${range.startIndex}:${range.endIndex}` : null,
 })
 
-let nextSyntaxControllerId = 0
-
 export class EditorSyntaxController {
   private analysis: EditorDocumentAnalysis | null = null
   private retainedSyntax: EditorRetainedSyntaxSession | null = null
@@ -476,7 +474,9 @@ export class EditorSyntaxController {
   constructor(private readonly options: EditorSyntaxControllerOptions) {
     installSyntaxRangeProjector(projectResultThroughSteps)
     const scheduler = options.workScheduler ?? new EditorWorkScheduler()
-    const keyPrefix = options.workScheduler ? `syntax.${++nextSyntaxControllerId}:` : ''
+    const keyPrefix = options.workScheduler
+      ? `syntax.${nextWorkSchedulerScopeId(options.workScheduler)}:`
+      : ''
     this.#workScheduler = scheduler
     this.#ownsWorkScheduler = !options.workScheduler
     this.#syntaxRequests = new SingleFlightAsyncRequest<EditorSyntaxLoadResult>({

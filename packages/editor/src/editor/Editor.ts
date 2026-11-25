@@ -9,6 +9,7 @@ import type { DocumentPaintCapture } from './documentPaint'
 import { EDITOR_PAINT_SNAPSHOT_FEATURE } from './paintSnapshotSupport'
 import { detectPlatform } from '@shaulavo/hotkeys'
 import {
+  attachBufferWorkScheduler,
   documentSessionChangeTextSnapshot,
   getDocumentMutationLeaseState,
   subscribeDocumentMutationLeaseState,
@@ -433,6 +434,7 @@ export class Editor {
   private readonly secondaryWork: EditorSecondaryWorkScheduler
   private readonly detachedEditChain = new DocumentEditChain(0, 0)
   private unsubscribeBufferChanges: (() => void) | null = null
+  private detachBufferWorkScheduler: (() => void) | null = null
   private transactionAttachment: TransactionAttachment | null = null
   private unsubscribeLeaseChanges: (() => void) | null = null
   private lineStartsViewCache: {
@@ -602,7 +604,6 @@ export class Editor {
       defaultDocumentMode: options.documentMode,
       defaultEditability: options.editability,
       highlightPrefix: this.highlightPrefix,
-      workScheduler: this.workScheduler,
     })
     this.setGutterProjection(this.pluginHost.getGutterContributions())
     this.view = new VirtualizedTextView(container, {
@@ -4037,6 +4038,10 @@ export class Editor {
     if (!bufferSession) return
 
     this.syncTransactionSubscription()
+    this.detachBufferWorkScheduler = attachBufferWorkScheduler(
+      bufferSession.buffer,
+      this.workScheduler,
+    )
     this.unsubscribeBufferChanges = bufferSession.buffer.subscribe((event) =>
       this.handleBufferChange(bufferSession, event),
     )
@@ -4087,8 +4092,10 @@ export class Editor {
     this.bufferPublication = null
     this.unsubscribeBufferChanges?.()
     this.unsubscribeLeaseChanges?.()
+    this.detachBufferWorkScheduler?.()
     this.unsubscribeBufferChanges = null
     this.unsubscribeLeaseChanges = null
+    this.detachBufferWorkScheduler = null
   }
 
   private syncViewEditability(): void {

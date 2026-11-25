@@ -19,7 +19,7 @@ import { IndentationFoldIndex } from './indentationFoldIndex'
 import { guessedTabSize } from './indentationGuess'
 import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
 import { fallbackFoldReason, installEditorSyntaxController } from './syntaxController'
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from './workScheduler'
 
 export type EditorPreparedTagValue = string | number | boolean | null
 
@@ -277,8 +277,6 @@ function preparedFallbackSelection(
   }
 }
 
-let nextPreparedFallbackId = 0
-
 class PreparedFallbackIndex {
   readonly #work: EditorWorkScheduler
   readonly #ownsWork: boolean
@@ -298,7 +296,7 @@ class PreparedFallbackIndex {
     this.#work = scheduler ?? new EditorWorkScheduler()
     this.#ownsWork = !scheduler
     this.#workKey = scheduler
-      ? `editor.prepared.fallbackFolds:${++nextPreparedFallbackId}`
+      ? `editor.prepared.fallbackFolds:${nextWorkSchedulerScopeId(scheduler)}`
       : 'editor.prepared.fallbackFolds'
     if (!index) this.#resolveReady(false)
     this.advance()

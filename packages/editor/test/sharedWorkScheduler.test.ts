@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createEditorBufferSession, createEditorTextBuffer } from '../src/documentSession'
 import { Editor } from '../src/editor'
+import { LatestAsyncRequest } from '../src/editor/latestAsyncRequest'
+import { EditorSecondaryWorkScheduler } from '../src/editor/secondaryWorkScheduler'
 import { createEditorStructuralOperation } from '../src/editor/syntaxOperations'
 import { EditorWorkScheduler, type EditorWorkEvent } from '../src/editor/workScheduler'
 import { createEmptySyntaxResult, type EditorSyntaxRuntime } from '../src/syntax/session'
@@ -438,5 +440,149 @@ describe('shared EditorWorkScheduler per Editor', () => {
 
     schedulerA.dispose()
     schedulerB.dispose()
+  })
+
+  it('does not start duplicate analyses when a view detaches synchronously from a scheduler started callback', async () => {
+    const buffer = createEditorTextBuffer('const a = 1\n')
+    let activeAnalyses = 0
+    let maxConcurrentAnalyses = 0
+    const resolvers: Array<() => void> = []
+    const result = createEmptySyntaxResult()
+    let lastStartedKeyOnA: string | null = null
+    let analysisKey: string | null = null
+    const runtime: EditorSyntaxRuntime = {
+      foldingSupport: 'unsupported',
+      analyze: () => {
+        if (analysisKey === null && lastStartedKeyOnA !== null) {
+          analysisKey = lastStartedKeyOnA
+        }
+        activeAnalyses += 1
+        maxConcurrentAnalyses = Math.max(maxConcurrentAnalyses, activeAnalyses)
+        return new Promise((resolve) => {
+          resolvers.push(() => {
+            activeAnalyses -= 1
+            resolve(result)
+          })
+        })
+      },
+      getResult: () => result,
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    const operation = createEditorStructuralOperation(() => runtime)
+    const syntaxPlugin = {
+      activate: (context: {
+        registerSyntaxProvider: (provider: {
+          operation: ReturnType<typeof createEditorStructuralOperation>
+        }) => { dispose(): void }
+      }) =>
+        context.registerSyntaxProvider({
+          operation,
+        }),
+    }
+
+    let triggerDetachOnStart = false
+    let triggered = false
+    let editorA!: Editor
+    let editorB!: Editor
+    const schedulerA = new EditorWorkScheduler({
+      onEvent: (event) => {
+        if (event.type === 'started') {
+          lastStartedKeyOnA = event.key
+        }
+        if (triggerDetachOnStart && event.type === 'started' && event.key === analysisKey) {
+          triggerDetachOnStart = false
+          triggered = true
+          editorA.dispose()
+          editorB.edit([{ from: 0, to: 0, text: '// second\n' }])
+        }
+      },
+    })
+    const schedulerB = new EditorWorkScheduler()
+
+    editorA = mountEditor({ workScheduler: schedulerA, plugins: [syntaxPlugin] })
+    editorB = mountEditor({ workScheduler: schedulerB, plugins: [syntaxPlugin] })
+
+    editorA.attachSession(createEditorBufferSession(buffer), {
+      documentId: 'started-reentrant',
+      languageId: 'fixture',
+    })
+    editorB.attachSession(createEditorBufferSession(buffer), {
+      documentId: 'started-reentrant',
+      languageId: 'fixture',
+    })
+    await vi.waitFor(() => expect(resolvers.length).toBeGreaterThan(0))
+    expect(analysisKey).not.toBeNull()
+    while (resolvers.length > 0) resolvers.shift()!()
+    await vi.waitFor(() => expect(editorB.getState().syntaxStatus).toBe('ready'))
+
+    maxConcurrentAnalyses = 0
+    triggerDetachOnStart = true
+    editorB.edit([{ from: 0, to: 0, text: '// first\n' }])
+    await vi.waitFor(() => expect(resolvers.length).toBeGreaterThan(0))
+    expect(triggered).toBe(true)
+    expect(maxConcurrentAnalyses).toBe(1)
+    while (resolvers.length > 0) resolvers.shift()!()
+    await vi.waitFor(() => expect(editorB.getState().syntaxStatus).toBe('ready'))
+
+    schedulerA.dispose()
+    schedulerB.dispose()
+  })
+
+  it('keeps storage maintenance working on a shared buffer after its creating editor disposes', async () => {
+    const editorA = mountEditor({ defaultText: 'a'.repeat(160_000) })
+    const sharedSession = editorA.getBufferSession()
+    expect(sharedSession).not.toBeNull()
+
+    const editorB = mountEditor()
+    editorB.attachSession(createEditorBufferSession(sharedSession!.buffer))
+    editorA.dispose()
+
+    editorB.edit({ from: 0, to: 140_000, text: '' })
+
+    await vi.waitFor(
+      () => expect(sharedSession!.buffer.getStorageMaintenanceStats().completed).toBeGreaterThan(0),
+      { timeout: 3000 },
+    )
+  })
+
+  it('cancels work cleanly when LatestAsyncRequest or EditorSecondaryWorkScheduler is disposed from a scheduled callback', async () => {
+    vi.useFakeTimers()
+    let request!: LatestAsyncRequest<string>
+    let secondary!: EditorSecondaryWorkScheduler
+    let disposeRequest = false
+    let disposeSecondary = false
+    const workScheduler = new EditorWorkScheduler({
+      onEvent: (event) => {
+        if (event.type !== 'scheduled') return
+        if (disposeRequest) {
+          disposeRequest = false
+          request.dispose()
+        }
+        if (disposeSecondary) {
+          disposeSecondary = false
+          secondary.dispose()
+        }
+      },
+    })
+
+    request = new LatestAsyncRequest<string>({ scheduler: workScheduler })
+    const requestRun = vi.fn(async () => 'should-not-run')
+    const requestApply = vi.fn()
+    disposeRequest = true
+    request.schedule({ delayMs: 10, run: requestRun, apply: requestApply })
+
+    secondary = new EditorSecondaryWorkScheduler(workScheduler)
+    const secondaryRun = vi.fn()
+    disposeSecondary = true
+    secondary.schedule({ key: 'editor.featureContributions', delayMs: 10, run: secondaryRun })
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(requestRun).not.toHaveBeenCalled()
+    expect(requestApply).not.toHaveBeenCalled()
+    expect(secondaryRun).not.toHaveBeenCalled()
+
+    workScheduler.dispose()
   })
 })

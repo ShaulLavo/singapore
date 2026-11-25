@@ -255,7 +255,15 @@ type ActiveCursorScan = {
   channel: MessageChannel | null
 }
 
-let nextFindControllerId = 0
+const SCHEDULER_SCOPE_COUNTER_KEY = Symbol.for('@singapore-editor/core/work-scheduler-scope-id')
+
+function nextSchedulerScopeId(scheduler: object): number {
+  const holder = scheduler as Record<PropertyKey, unknown>
+  const current = holder[SCHEDULER_SCOPE_COUNTER_KEY]
+  const next = (typeof current === 'number' ? current : 0) + 1
+  holder[SCHEDULER_SCOPE_COUNTER_KEY] = next
+  return next
+}
 
 export class EditorFindController {
   private readonly options: ResolvedFindOptions
@@ -277,8 +285,8 @@ export class EditorFindController {
     inSelection: false,
   }
   private ownScheduler: EditorSecondaryViewScheduler | null = null
-  private readonly researchKey: string
-  private readonly scanSliceKey: string
+  private researchKey: string = FIND_RESEARCH_KEY
+  private scanSliceKey: string = FIND_SCAN_SLICE_KEY
   private matches: readonly FindMatch[] = []
   private highlightsTruncated = false
   // True while a chunked scan is running OR was cancelled by an edit before
@@ -303,9 +311,6 @@ export class EditorFindController {
 
   public constructor(options: EditorFindOptions = {}) {
     this.options = resolveFindOptions(options)
-    const id = ++nextFindControllerId
-    this.researchKey = `${FIND_RESEARCH_KEY}:${id}`
-    this.scanSliceKey = `${FIND_SCAN_SLICE_KEY}:${id}`
   }
 
   public attachHost(host: EditorFindHost, highlightPrefix: string): EditorDisposable {
@@ -316,6 +321,14 @@ export class EditorFindController {
     }
 
     this.host = host
+    if (host.workScheduler) {
+      const scopeId = nextSchedulerScopeId(host.workScheduler)
+      this.researchKey = `${FIND_RESEARCH_KEY}:${scopeId}`
+      this.scanSliceKey = `${FIND_SCAN_SLICE_KEY}:${scopeId}`
+    } else {
+      this.researchKey = FIND_RESEARCH_KEY
+      this.scanSliceKey = FIND_SCAN_SLICE_KEY
+    }
     this.matchHighlightName = `${highlightPrefix}-find-match`
     this.currentHighlightName = `${highlightPrefix}-find-current`
     this.scopeHighlightName = `${highlightPrefix}-find-scope`

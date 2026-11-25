@@ -1,5 +1,5 @@
 import { scheduleFrame, type ScheduledFrame } from '../editor/scheduleFrame'
-import { EditorWorkScheduler } from '../editor/workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from '../editor/workScheduler'
 import { installNativeWheelScrollOwner } from './wheelScrollTarget'
 import { observePageViewport, readPageViewport, type PageViewportMetrics } from './pageViewport'
 import {
@@ -153,8 +153,6 @@ export function computeFixedRowVirtualItems(options: {
   return items
 }
 
-let nextVirtualizerId = 0
-
 export class FixedRowVirtualizer {
   private options: NormalizedFixedRowVirtualizerOptions
   private scrollTop = 0
@@ -194,7 +192,7 @@ export class FixedRowVirtualizer {
     this.#trailingScrollScheduler = options.scheduler ?? new EditorWorkScheduler()
     this.#ownsTrailingScrollScheduler = !options.scheduler
     this.#trailingScrollKey = options.scheduler
-      ? `${TRAILING_SCROLL_EMIT_KEY}:${++nextVirtualizerId}`
+      ? `${TRAILING_SCROLL_EMIT_KEY}:${nextWorkSchedulerScopeId(options.scheduler)}`
       : TRAILING_SCROLL_EMIT_KEY
   }
 

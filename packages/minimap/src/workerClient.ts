@@ -53,7 +53,15 @@ export type MinimapWorkerClientOptions = {
   readonly workScheduler?: EditorSecondaryViewScheduler
 }
 
-let nextMinimapClientId = 0
+const SCHEDULER_SCOPE_COUNTER_KEY = Symbol.for('@singapore-editor/core/work-scheduler-scope-id')
+
+function nextSchedulerScopeId(scheduler: object): number {
+  const holder = scheduler as Record<PropertyKey, unknown>
+  const current = holder[SCHEDULER_SCOPE_COUNTER_KEY]
+  const next = (typeof current === 'number' ? current : 0) + 1
+  holder[SCHEDULER_SCOPE_COUNTER_KEY] = next
+  return next
+}
 
 export class MinimapWorkerClient {
   private readonly host: MinimapHost
@@ -98,7 +106,7 @@ export class MinimapWorkerClient {
     this.options = options.options
     this.scheduler = options.workScheduler ?? new EditorSecondaryViewScheduler()
     this.ownsScheduler = !options.workScheduler
-    const suffix = options.workScheduler ? `:${++nextMinimapClientId}` : ''
+    const suffix = options.workScheduler ? `:${nextSchedulerScopeId(options.workScheduler)}` : ''
     this.frameFlushKey = `${MINIMAP_FRAME_FLUSH_KEY}${suffix}`
     this.quietFlushKey = `${MINIMAP_QUIET_FLUSH_KEY}${suffix}`
     this.renderKey = `${MINIMAP_RENDER_KEY}${suffix}`

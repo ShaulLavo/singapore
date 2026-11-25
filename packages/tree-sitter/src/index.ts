@@ -120,6 +120,7 @@ type TreeSitterProviderRegistration = {
   readonly loaderIdentityIds: WeakMap<() => Promise<TreeSitterLanguageAssets>, number>
   nextLoaderIdentityId: number
   activeContexts: number
+  pendingActivations: number
   idleDisposeTimer: ReturnType<typeof setTimeout> | null
   disposed: boolean
 }
@@ -268,6 +269,7 @@ const defaultProviderRegistration = (): TreeSitterProviderRegistration => {
     loaderIdentityIds: new WeakMap<() => Promise<TreeSitterLanguageAssets>, number>(),
     nextLoaderIdentityId: 0,
     activeContexts: 0,
+    pendingActivations: 0,
     idleDisposeTimer: null,
     disposed: false,
   }
@@ -284,13 +286,18 @@ const retainSyntaxProvider = (
     cancelIdleDispose(registration)
     existing.references += 1
   } else {
-    const contributions = contributeToEditor(context, registration.provider)
-    cancelIdleDispose(registration)
-    registration.contextReferences.set(context, {
-      contributions,
-      references: 1,
-    })
-    registration.activeContexts += 1
+    registration.pendingActivations += 1
+    try {
+      const contributions = contributeToEditor(context, registration.provider)
+      cancelIdleDispose(registration)
+      registration.contextReferences.set(context, {
+        contributions,
+        references: 1,
+      })
+      registration.activeContexts += 1
+    } finally {
+      registration.pendingActivations -= 1
+    }
   }
 
   let released = false
@@ -329,12 +336,17 @@ const retainLanguage = (
     cancelIdleDispose(registration)
     existing.references += 1
   } else {
-    const disposable = registration.provider.registerLanguage(contribution, { replace: true })
-    cancelIdleDispose(registration)
-    registration.languageReferences.set(key, {
-      disposable,
-      references: 1,
-    })
+    registration.pendingActivations += 1
+    try {
+      const disposable = registration.provider.registerLanguage(contribution, { replace: true })
+      cancelIdleDispose(registration)
+      registration.languageReferences.set(key, {
+        disposable,
+        references: 1,
+      })
+    } finally {
+      registration.pendingActivations -= 1
+    }
   }
 
   let released = false
@@ -382,9 +394,14 @@ const cancelIdleDispose = (registration: TreeSitterProviderRegistration): void =
   registration.idleDisposeTimer = null
 }
 
+const isRegistrationInUse = (registration: TreeSitterProviderRegistration): boolean =>
+  registration.activeContexts > 0 ||
+  registration.languageReferences.size > 0 ||
+  registration.pendingActivations > 0
+
 const scheduleIdleDisposeIfUnused = (registration: TreeSitterProviderRegistration): void => {
   if (registration.disposed) return
-  if (registration.activeContexts > 0 || registration.languageReferences.size > 0) return
+  if (isRegistrationInUse(registration)) return
   if (registration.idleDisposeTimer !== null) return
 
   const timer = setTimeout(() => {
@@ -408,11 +425,11 @@ const unrefTimer = (timer: unknown): void => {
 const disposeDefaultProviderRegistration = (
   registration: TreeSitterProviderRegistration,
 ): Promise<void> => {
-  cancelIdleDispose(registration)
-  if (registration.disposed) return Promise.resolve()
-  if (registration.activeContexts > 0 || registration.languageReferences.size > 0) {
+  if (isRegistrationInUse(registration)) {
     return Promise.resolve()
   }
+  cancelIdleDispose(registration)
+  if (registration.disposed) return Promise.resolve()
 
   registration.disposed = true
   const state = globalThis as Record<PropertyKey, unknown>

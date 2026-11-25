@@ -16,13 +16,11 @@ import type {
   EditorSessionOptions,
 } from './types'
 import type { EditorSyntaxLanguageId } from '../syntax/session'
-import type { EditorWorkScheduler } from './workScheduler'
 
 export type EditorDocumentControllerOptions = {
   readonly defaultDocumentMode?: EditorDocumentMode
   readonly defaultEditability?: EditorEditability
   readonly highlightPrefix: string
-  readonly workScheduler?: EditorWorkScheduler
 }
 
 export type EditorDocumentAttachment = {
@@ -36,7 +34,6 @@ export type EditorDocumentAttachment = {
 export class EditorDocumentController {
   readonly #defaultDocumentMode: EditorDocumentMode | undefined
   private readonly highlightPrefix: string
-  readonly #workScheduler: EditorWorkScheduler | undefined
   #currentTextSnapshot: TextSnapshot = createStringTextSnapshot('')
   #currentSession: DocumentSession | null = null
   #currentSessionOptions: EditorSessionOptions = {}
@@ -50,7 +47,6 @@ export class EditorDocumentController {
   constructor(options: EditorDocumentControllerOptions) {
     this.#defaultDocumentMode = options.defaultDocumentMode
     this.highlightPrefix = options.highlightPrefix
-    this.#workScheduler = options.workScheduler
     this.#currentDocumentMode = normalizeEditorDocumentMode(options.defaultDocumentMode)
     this.#currentEditability = normalizeEditorEditability(options.defaultEditability)
   }
@@ -158,9 +154,7 @@ export class EditorDocumentController {
       document.documentMode ?? this.#defaultDocumentMode,
     )
     this.#currentLanguageId = document.languageId ?? null
-    const created = createEditorDocumentSession(document.text, this.#currentDocumentMode, {
-      workScheduler: this.#workScheduler,
-    })
+    const created = createEditorDocumentSession(document.text, this.#currentDocumentMode)
     this.#currentSession = created.session
     this.#currentSessionOptions = {}
     this.setRenderedTextSnapshot(this.#currentSession.getTextSnapshot())
