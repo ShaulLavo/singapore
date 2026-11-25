@@ -48,10 +48,15 @@ const documentTasks = new Map<string, Promise<ShikiWorkerTransportResult | undef
 const disposedRuntimeSessions = new Set<string>()
 const activeWorkerTasks = new Set<Promise<void>>()
 let sharedHighlighterPromise: Promise<HighlighterGeneric<string, string>> | null = null
-const loadedThemeKeys = new Set<string>()
-const pendingThemeLoads = new Map<string, Promise<void>>()
+const loadedThemeKeyByName = new Map<string, string>()
+const pendingThemeLoadsByName = new Map<string, Promise<void>>()
 const pendingLanguageLoads = new Map<string, Promise<void>>()
 const scheduledPreloadLanguages = new Set<string>()
+const preloadLanguageQueue: {
+  readonly highlighter: HighlighterGeneric<string, string>
+  readonly group: readonly ShikiWorkerLanguageRegistration[]
+}[] = []
+let preloadRunner: Promise<void> | null = null
 let workerGeneration = 0
 let yieldChannel: MessageChannel | null = null
 let pendingYieldResolvers: (() => void)[] = []
@@ -344,76 +349,100 @@ const ensureThemes = async (
   highlighter: HighlighterGeneric<string, string>,
   registrations: readonly ShikiWorkerThemeRegistration[],
 ): Promise<void> => {
-  const unique = uniqueThemeRegistrations(registrations)
-  const generation = workerGeneration
-  const tasks: Promise<void>[] = []
+  const unique = uniqueThemesByName(registrations)
+  if (unique.length === 0) return
 
-  for (const registration of unique) {
-    const key = themeRegistrationKey(registration)
-    if (loadedThemeKeys.has(key)) continue
-    const pending = pendingThemeLoads.get(key)
+  await Promise.all(unique.map((registration) => ensureThemeByName(highlighter, registration)))
+}
+
+const ensureThemeByName = async (
+  highlighter: HighlighterGeneric<string, string>,
+  registration: ShikiWorkerThemeRegistration,
+): Promise<void> => {
+  const name = registration.name
+  const key = themeRegistrationKey(registration)
+
+  while (true) {
+    const pending = pendingThemeLoadsByName.get(name)
     if (pending) {
-      tasks.push(pending)
+      await pending.catch(() => undefined)
       continue
     }
+    if (loadedThemeKeyByName.get(name) === key) return
+
+    const generation = workerGeneration
     if (typeof highlighter.loadTheme !== 'function') {
-      if (generation === workerGeneration) loadedThemeKeys.add(key)
-      continue
+      if (generation === workerGeneration) loadedThemeKeyByName.set(name, key)
+      return
     }
     const load = Promise.resolve(highlighter.loadTheme(registration as ThemeRegistrationAny))
       .then(() => {
-        if (generation === workerGeneration) loadedThemeKeys.add(key)
+        if (generation === workerGeneration) loadedThemeKeyByName.set(name, key)
       })
       .finally(() => {
-        if (pendingThemeLoads.get(key) === load) pendingThemeLoads.delete(key)
+        if (pendingThemeLoadsByName.get(name) === load) pendingThemeLoadsByName.delete(name)
       })
-    pendingThemeLoads.set(key, load)
-    tasks.push(load)
+    pendingThemeLoadsByName.set(name, load)
+    await load
+    return
   }
-
-  if (tasks.length > 0) await Promise.all(tasks)
 }
 
 /**
- * Loads explicitly requested preload grammars cooperatively one at a time, yielding between each
- * grammar via MessageChannel so urgent open/edit requests preempt background warming instead of
- * waiting behind a monolithic delayed burst.
+ * Loads explicitly requested preload grammars cooperatively in dependency-safe groups
+ * (dependencies before dependents; mutual cycles atomic), yielding via MessageChannel between
+ * groups so urgent open/edit requests preempt warming and never observe half-loaded dependencies.
  */
 const scheduleCooperativeLanguagePreload = (
   highlighter: HighlighterGeneric<string, string>,
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): void => {
-  const loaded = new Set(highlighter.getLoadedLanguages())
-  const fresh = registrations.filter(
-    (registration) =>
-      !loaded.has(registration.name) && !scheduledPreloadLanguages.has(registration.name),
-  )
-  if (fresh.length === 0) return
+  const alreadyAvailable = new Set(highlighter.getLoadedLanguages())
+  for (const name of scheduledPreloadLanguages) alreadyAvailable.add(name)
+  const groups = planCooperativeLanguageGroups(registrations, alreadyAvailable)
+  if (groups.length === 0) return
 
-  for (const registration of fresh) scheduledPreloadLanguages.add(registration.name)
+  for (const group of groups) {
+    for (const registration of group) {
+      scheduledPreloadLanguages.add(registration.name)
+      for (const alias of registration.aliases ?? []) scheduledPreloadLanguages.add(alias)
+    }
+    preloadLanguageQueue.push({ highlighter, group })
+  }
+
+  if (preloadRunner) return
   const generation = workerGeneration
-  const task = (async () => {
-    for (const registration of fresh) {
-      await yieldWorkerMacrotask()
-      if (generation !== workerGeneration) return
-      try {
-        await ensureLanguages(highlighter, [registration])
-      } catch {
-        // Failed background warming never fails paint; opening a document retries on demand.
+  const runner = (async () => {
+    try {
+      while (preloadLanguageQueue.length > 0) {
+        await yieldWorkerMacrotask()
+        if (generation !== workerGeneration) return
+        const next = preloadLanguageQueue.shift()
+        if (!next) return
+        try {
+          await ensureLanguages(next.highlighter, next.group)
+        } catch {
+          // Failed background warming never fails paint; opening a document retries on demand.
+        }
       }
+    } finally {
+      if (generation === workerGeneration) preloadRunner = null
     }
   })()
-  trackWorkerTask(task)
+  preloadRunner = runner
+  trackWorkerTask(runner)
 }
 
 const ensureSharedHighlighter = async (
   languages: readonly ShikiWorkerLanguageRegistration[],
   themes: readonly ShikiWorkerThemeRegistration[],
 ): Promise<HighlighterGeneric<string, string>> => {
-  const uniqueThemes = uniqueThemeRegistrations(themes)
+  const uniqueThemes = uniqueThemesByName(themes)
   if (!sharedHighlighterPromise) {
     const uniqueLanguages = uniqueLanguageRegistrations(languages)
-    const initialThemeKeys = uniqueThemes.map(themeRegistrationKey)
+    const initialThemeEntries = uniqueThemes.map(
+      (theme) => [theme.name, themeRegistrationKey(theme)] as const,
+    )
     const generation = workerGeneration
     const created = (
       createHighlighterCore({
@@ -424,7 +453,7 @@ const ensureSharedHighlighter = async (
     ).then(
       (highlighter) => {
         if (generation === workerGeneration) {
-          for (const key of initialThemeKeys) loadedThemeKeys.add(key)
+          for (const [name, key] of initialThemeEntries) loadedThemeKeyByName.set(name, key)
         }
         return highlighter
       },
@@ -494,10 +523,12 @@ const disposeAll = (): void => {
   documentTasks.clear()
   activeWorkerTasks.clear()
   disposedRuntimeSessions.clear()
-  loadedThemeKeys.clear()
-  pendingThemeLoads.clear()
+  loadedThemeKeyByName.clear()
+  pendingThemeLoadsByName.clear()
   pendingLanguageLoads.clear()
   scheduledPreloadLanguages.clear()
+  preloadLanguageQueue.length = 0
+  preloadRunner = null
   const promise = sharedHighlighterPromise
   sharedHighlighterPromise = null
   if (promise) {
@@ -568,6 +599,106 @@ const uniqueLanguageRegistrations = (
 const uniqueThemeRegistrations = (
   registrations: readonly ShikiWorkerThemeRegistration[],
 ): ShikiWorkerThemeRegistration[] => uniqueBy(registrations, themeRegistrationKey)
+
+/** First registration per theme name wins so the active document's own theme takes precedence. */
+const uniqueThemesByName = (
+  registrations: readonly ShikiWorkerThemeRegistration[],
+): ShikiWorkerThemeRegistration[] => uniqueBy(registrations, (theme) => theme.name)
+
+/**
+ * Orders unloaded preload grammars into strongly connected dependency groups (dependencies before
+ * dependents) and skips grammars whose embedded dependencies are absent from both the highlighter
+ * and the preload batch so partial loads never poison Shiki's shared language graph.
+ */
+const planCooperativeLanguageGroups = (
+  registrations: readonly ShikiWorkerLanguageRegistration[],
+  loaded: ReadonlySet<string>,
+): readonly (readonly ShikiWorkerLanguageRegistration[])[] => {
+  const byName = new Map<string, ShikiWorkerLanguageRegistration>()
+  const unloaded: ShikiWorkerLanguageRegistration[] = []
+  for (const registration of registrations) {
+    byName.set(registration.name, registration)
+    for (const alias of registration.aliases ?? []) {
+      if (!byName.has(alias)) byName.set(alias, registration)
+    }
+    if (!loaded.has(registration.name)) unloaded.push(registration)
+  }
+  if (unloaded.length === 0) return []
+
+  const embeddedNames = (registration: ShikiWorkerLanguageRegistration): readonly string[] =>
+    registration.embeddedLanguages ?? registration.embeddedLangs ?? []
+
+  // Determine which registrations have all transitive embedded dependencies satisfiable.
+  const satisfiable = new Map<ShikiWorkerLanguageRegistration, boolean>()
+  const checking = new Set<ShikiWorkerLanguageRegistration>()
+  const isSatisfiable = (registration: ShikiWorkerLanguageRegistration): boolean => {
+    const cached = satisfiable.get(registration)
+    if (cached !== undefined) return cached
+    if (checking.has(registration)) return true
+    checking.add(registration)
+    let ok = true
+    for (const depName of embeddedNames(registration)) {
+      if (loaded.has(depName)) continue
+      const dep = byName.get(depName)
+      if (!dep || !isSatisfiable(dep)) {
+        ok = false
+        break
+      }
+    }
+    checking.delete(registration)
+    satisfiable.set(registration, ok)
+    return ok
+  }
+
+  const eligible = unloaded.filter(isSatisfiable)
+  if (eligible.length === 0) return []
+  const eligibleSet = new Set(eligible)
+
+  // Tarjan's SCC outputs components in reverse topological order (dependencies first).
+  let nextIndex = 0
+  const indices = new Map<ShikiWorkerLanguageRegistration, number>()
+  const lowlink = new Map<ShikiWorkerLanguageRegistration, number>()
+  const onStack = new Set<ShikiWorkerLanguageRegistration>()
+  const stack: ShikiWorkerLanguageRegistration[] = []
+  const groups: ShikiWorkerLanguageRegistration[][] = []
+
+  const strongConnect = (node: ShikiWorkerLanguageRegistration): void => {
+    const nodeIndex = nextIndex++
+    indices.set(node, nodeIndex)
+    lowlink.set(node, nodeIndex)
+    stack.push(node)
+    onStack.add(node)
+
+    for (const depName of embeddedNames(node)) {
+      if (loaded.has(depName)) continue
+      const dep = byName.get(depName)
+      if (!dep || dep === node || !eligibleSet.has(dep)) continue
+      if (!indices.has(dep)) {
+        strongConnect(dep)
+        lowlink.set(node, Math.min(lowlink.get(node)!, lowlink.get(dep)!))
+      } else if (onStack.has(dep)) {
+        lowlink.set(node, Math.min(lowlink.get(node)!, indices.get(dep)!))
+      }
+    }
+
+    if (lowlink.get(node) === nodeIndex) {
+      const component: ShikiWorkerLanguageRegistration[] = []
+      while (stack.length > 0) {
+        const member = stack.pop()!
+        onStack.delete(member)
+        component.push(member)
+        if (member === node) break
+      }
+      groups.push(component)
+    }
+  }
+
+  for (const registration of eligible) {
+    if (!indices.has(registration)) strongConnect(registration)
+  }
+
+  return groups
+}
 
 const uniqueBy = <T>(items: readonly T[], keyFor: (item: T) => string): T[] => {
   const seen = new Set<string>()

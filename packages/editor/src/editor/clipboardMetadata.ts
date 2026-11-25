@@ -6,7 +6,7 @@ export type ClipboardMetadata = {
   readonly pasteOnNewLine: boolean
 }
 
-const CLIPBOARD_METADATA_TYPE = 'application/x-editor-clipboard'
+export const CLIPBOARD_METADATA_TYPE = 'application/x-editor-clipboard'
 
 /**
  * The last copy this process wrote, keyed by the exact text that went out with it.

@@ -465,6 +465,73 @@ describe('clipboard', () => {
         else Reflect.deleteProperty(document, 'execCommand')
       }
     })
+
+    it('writes syntax-colored HTML via ClipboardItem on copy and forwards HTML/image paste via clipboard.read', async () => {
+      const writtenItems: Record<string, Blob>[] = []
+      class MockClipboardItem {
+        readonly types: readonly string[]
+        readonly #entries: Record<string, Blob>
+        constructor(entries: Record<string, Blob>) {
+          this.#entries = entries
+          this.types = Object.keys(entries)
+        }
+        async getType(type: string): Promise<Blob> {
+          return this.#entries[type]!
+        }
+      }
+      const write = vi.fn(async (items: MockClipboardItem[]) => {
+        for (const item of items) {
+          const entry: Record<string, Blob> = {}
+          for (const type of item.types) entry[type] = await item.getType(type)
+          writtenItems.push(entry)
+        }
+      })
+      const read = vi.fn(async () => [
+        new MockClipboardItem({
+          'image/png': new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' }),
+        }),
+      ])
+      const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      const previousClipboardItem = Object.getOwnPropertyDescriptor(globalThis, 'ClipboardItem')
+      Object.defineProperty(globalThis, 'ClipboardItem', {
+        configurable: true,
+        value: MockClipboardItem,
+      })
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { write, read },
+      })
+
+      try {
+        editor.openDocument({
+          documentId: 'notes.md',
+          languageId: 'markdown',
+          text: 'const x = 1',
+        })
+        editor.setTokens([{ start: 0, end: 5, style: { color: '#569cd6' } }])
+        editor.setSelection(0, 7)
+
+        expect(editor.dispatchCommand('copy')).toBe(true)
+        await vi.waitFor(() => expect(writtenItems).toHaveLength(1))
+        expect(write).toHaveBeenCalledOnce()
+        expect(await writtenItems[0]!['text/plain']!.text()).toBe('const x')
+        expect(await writtenItems[0]!['text/html']!.text()).toContain(
+          '<span style="color: #569cd6;">const</span>',
+        )
+
+        editor.setSelection(11, 11)
+        expect(editor.dispatchCommand('paste')).toBe(true)
+        await vi.waitFor(() =>
+          expect(editor.materializeFullText()).toBe('const x = 1![clipboard.png](clipboard.png)'),
+        )
+      } finally {
+        if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+        if (previousClipboardItem)
+          Object.defineProperty(globalThis, 'ClipboardItem', previousClipboardItem)
+        else Reflect.deleteProperty(globalThis, 'ClipboardItem')
+      }
+    })
   })
 })
 

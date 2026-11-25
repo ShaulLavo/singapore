@@ -287,6 +287,129 @@ describe('shiki worker', () => {
     })
   })
 
+  it('reloads a custom theme when the same theme name alternates between definitions', async () => {
+    const themesByName = new Map<string, { bg: string; fg: string }>()
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    setupScope(postMessage)
+    createHighlighterCore.mockImplementation(
+      async (options: { themes?: { name: string; bg?: string; fg?: string }[] }) => {
+        for (const theme of options.themes ?? []) {
+          themesByName.set(theme.name, { bg: theme.bg ?? '#000000', fg: theme.fg ?? '#ffffff' })
+        }
+        return {
+          ...externalHighlighter(languageApi()),
+          loadTheme: vi.fn(async (theme: { name: string; bg?: string; fg?: string }) => {
+            themesByName.set(theme.name, { bg: theme.bg ?? '#000000', fg: theme.fg ?? '#ffffff' })
+          }),
+          getTheme: (name: string) => {
+            const theme = themesByName.get(name) ?? { bg: '#000000', fg: '#ffffff' }
+            return {
+              ...theme,
+              settings: [{ settings: { foreground: theme.fg, background: theme.bg } }],
+            }
+          },
+        }
+      },
+    )
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = workerHandler()
+    const requestTheme = (id: number, fg: string) =>
+      onmessage(
+        new MessageEvent('message', {
+          data: {
+            id,
+            payload: {
+              type: 'theme',
+              theme: 'custom',
+              themeRegistration: { name: 'custom', bg: '#111111', fg },
+              themeRegistrations: [],
+            },
+          },
+        }),
+      )
+
+    requestTheme(1, '#ff0000')
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
+    requestTheme(2, '#00ff00')
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
+    requestTheme(3, '#ff0000')
+    await waitFor(() => responseWithId(postMessage, 3) !== undefined)
+
+    expect(createHighlighterCore).toHaveBeenCalledOnce()
+    expect(
+      [1, 2, 3].map((id) => {
+        const res = responseWithId(postMessage, id)
+        return res?.ok ? res.result?.theme?.foregroundColor : undefined
+      }),
+    ).toEqual(['#ff0000', '#00ff00', '#ff0000'])
+  })
+
+  it('loads embedded grammar dependencies before dependents and keeps cycles atomic during preload', async () => {
+    const loaded = new Set<string>()
+    const loadOrder: string[][] = []
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    setupScope(postMessage)
+    createHighlighterCore.mockResolvedValue(
+      externalHighlighter({
+        getLoadedLanguages: () => [...loaded],
+        loadLanguage: vi.fn(
+          async (
+            ...registrations: {
+              readonly name: string
+              readonly embeddedLangs?: readonly string[]
+            }[]
+          ) => {
+            const batchNames = new Set(registrations.map((r) => r.name))
+            for (const registration of registrations) {
+              for (const dep of registration.embeddedLangs ?? []) {
+                if (!loaded.has(dep) && !batchNames.has(dep)) {
+                  throw new Error(`Missing languages ${dep}, required by ${registration.name}`)
+                }
+              }
+            }
+            for (const registration of registrations) loaded.add(registration.name)
+            loadOrder.push(registrations.map((r) => r.name))
+          },
+        ),
+      }),
+    )
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = workerHandler()
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          id: 1,
+          payload: {
+            type: 'preload',
+            languageRegistrations: [
+              { ...languageRegistration('html'), embeddedLangs: ['css', 'javascript'] },
+              languageRegistration('css'),
+              languageRegistration('javascript'),
+              { ...languageRegistration('cycA'), embeddedLangs: ['cycB'] },
+              { ...languageRegistration('cycB'), embeddedLangs: ['cycA'] },
+              // Unsatisfiable dependency should be skipped rather than poisoning the registry.
+              { ...languageRegistration('orphan'), embeddedLangs: ['missing-dep'] },
+            ],
+            themeRegistrations: [themeRegistration('github-dark')],
+          },
+        },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
+    onmessage(new MessageEvent('message', { data: { id: 2, payload: { type: 'idleFence' } } }))
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
+
+    const flatOrder = loadOrder.flat()
+    expect(flatOrder.indexOf('css')).toBeLessThan(flatOrder.indexOf('html'))
+    expect(flatOrder.indexOf('javascript')).toBeLessThan(flatOrder.indexOf('html'))
+    expect(loadOrder).toContainEqual(['cycB', 'cycA'])
+    expect(flatOrder).not.toContain('orphan')
+  })
+
   it('tokenizes opened documents line-by-line without calling materializeFullText', async () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()

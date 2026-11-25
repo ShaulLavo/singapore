@@ -446,3 +446,23 @@ it('scales linearly with bounded TextReadSnapshot.readRange calls on large Markd
   expect(readRangeCalls).toBeLessThan(specs.length / 4)
   expect(elapsedMs).toBeLessThan(500)
 })
+
+it('avoids comparison-sorting all replacements when a single table precedes thousands of paragraphs', () => {
+  const table = '| head | other |\n| --- | --- |\n| **bold** | `code` |\n\n'
+  const paragraphs = Array.from({ length: 4_000 }, () => 'text **with _emphasis_**').join('\n\n')
+  const source = table + paragraphs
+  const records = parseMarkdown(source)
+  const sortSpy = Uint32Array.prototype.sort
+  let sortCalls = 0
+  Uint32Array.prototype.sort = function (...args: Parameters<typeof sortSpy>) {
+    sortCalls += 1
+    return sortSpy.apply(this, args)
+  }
+  try {
+    const specs = markdownInlineReplacements(createStringTextSnapshot(source), records)
+    expect(specs.length).toBeGreaterThan(16_000)
+    expect(sortCalls).toBe(0)
+  } finally {
+    Uint32Array.prototype.sort = sortSpy
+  }
+})

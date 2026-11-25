@@ -88,8 +88,34 @@ function preserveTableWidths(
 ): InlineReplacementSpec[] {
   if (tables.length === 0 || specs.length === 0) return specs
 
-  const sortedTables = sortSpansByStart(tables)
-  const specOrder = sortedSpecIndices(specs)
+  const sortedTables = radixOrderByOffset(tables, (table) => table.start)
+  if (sortedTables.length === 1) {
+    const table = sortedTables[0]!
+    for (let i = 0; i < specs.length; i++) {
+      const spec = specs[i]!
+      if (table.start <= spec.startIndex && table.end >= spec.endIndex) {
+        specs[i] = padTableSpec(spec, source.length)
+      }
+    }
+    return specs
+  }
+
+  const minTableStart = sortedTables[0]!.start
+  let maxTableEnd = 0
+  for (const table of sortedTables) {
+    if (table.end > maxTableEnd) maxTableEnd = table.end
+  }
+
+  const candidateIndices: number[] = []
+  for (let i = 0; i < specs.length; i++) {
+    const spec = specs[i]!
+    if (spec.startIndex >= minTableStart && spec.endIndex <= maxTableEnd) {
+      candidateIndices.push(i)
+    }
+  }
+  if (candidateIndices.length === 0) return specs
+
+  const specOrder = radixOrderSpecIndices(specs, candidateIndices)
   let tableIndex = 0
   const activeTables: Container[] = []
 
@@ -113,19 +139,23 @@ function preserveTableWidths(
     activeTables.length = write
     if (!insideTable) continue
 
-    const width = Math.max(0, Math.min(source.length, spec.endIndex) - Math.max(0, spec.startIndex))
-    const padding = ' '.repeat(Math.max(0, width - spec.text.length))
-    if (!padding) continue
-    const render = spec.render
-    specs[specIndex] = {
-      ...spec,
-      text: spec.text + padding,
-      className: 'editor-markdown-text',
-      render: paddedRender(render, spec.text.length),
-    }
+    specs[specIndex] = padTableSpec(spec, source.length)
   }
 
   return specs
+}
+
+function padTableSpec(spec: InlineReplacementSpec, sourceLength: number): InlineReplacementSpec {
+  const width = Math.max(0, Math.min(sourceLength, spec.endIndex) - Math.max(0, spec.startIndex))
+  const padding = ' '.repeat(Math.max(0, width - spec.text.length))
+  if (!padding) return spec
+  const render = spec.render
+  return {
+    ...spec,
+    text: spec.text + padding,
+    className: 'editor-markdown-text',
+    render: paddedRender(render, spec.text.length),
+  }
 }
 
 function paddedRender(
@@ -293,8 +323,9 @@ function assignMarkerOwners(
   markers: readonly PendingMarkerOwner[],
   containers: readonly Container[],
 ): void {
-  const sortedContainers = sortContainersByStart(containers)
-  const sortedMarkers = sortSpansByStart(markers)
+  // Stable radix order by `start` preserves original `order` for ties in O(N + M) time.
+  const sortedContainers = radixOrderByOffset(containers, (container) => container.start)
+  const sortedMarkers = radixOrderByOffset(markers, (marker) => marker.start)
   let containerIndex = 0
   const active: Container[] = []
   let activeNested = true
@@ -346,37 +377,83 @@ function assignMarkerOwners(
   }
 }
 
-function sortContainersByStart(containers: readonly Container[]): readonly Container[] {
-  for (let i = 1; i < containers.length; i++) {
-    const prev = containers[i - 1]!
-    const curr = containers[i]!
-    if (prev.start > curr.start || (prev.start === curr.start && prev.order > curr.order)) {
-      return containers.toSorted(
-        (left, right) => left.start - right.start || left.order - right.order,
-      )
-    }
-  }
-  return containers
-}
-
-function sortSpansByStart<T extends Span>(spans: readonly T[]): readonly T[] {
-  for (let i = 1; i < spans.length; i++) {
-    if (spans[i - 1]!.start > spans[i]!.start) {
-      return spans.toSorted((left, right) => left.start - right.start)
-    }
-  }
-  return spans
-}
-
-function sortedSpecIndices(specs: readonly InlineReplacementSpec[]): Uint32Array {
-  const order = new Uint32Array(specs.length)
+/** Stable O(N) 32-bit radix ordering over non-negative parser offsets, with an O(N) sorted fast path. */
+function radixOrderByOffset<T>(values: readonly T[], offset: (value: T) => number): readonly T[] {
+  const length = values.length
+  if (length <= 1) return values
+  const keys = new Uint32Array(length)
   let sorted = true
-  for (let i = 0; i < specs.length; i++) {
-    order[i] = i
-    if (i > 0 && specs[i - 1]!.startIndex > specs[i]!.startIndex) sorted = false
+  let maxKey = 0
+  for (let i = 0; i < length; i++) {
+    const key = offset(values[i]!) >>> 0
+    keys[i] = key
+    if (key > maxKey) maxKey = key
+    if (i > 0 && keys[i - 1]! > key) sorted = false
+  }
+  if (sorted) return values
+
+  let order = new Uint32Array(length)
+  for (let i = 0; i < length; i++) order[i] = i
+  let next = new Uint32Array(length)
+  const counts = new Uint32Array(256)
+  for (let shift = 0; shift < 32 && (shift === 0 || maxKey >>> shift > 0); shift += 8) {
+    counts.fill(0)
+    for (let i = 0; i < length; i++) counts[(keys[order[i]!]! >>> shift) & 255]!++
+    let start = 0
+    for (let bucket = 0; bucket < 256; bucket++) {
+      const count = counts[bucket]!
+      counts[bucket] = start
+      start += count
+    }
+    for (let i = 0; i < length; i++) {
+      const idx = order[i]!
+      next[counts[(keys[idx]! >>> shift) & 255]!++] = idx
+    }
+    ;[order, next] = [next, order]
+  }
+  return Array.from(order, (index) => values[index]!)
+}
+
+function radixOrderSpecIndices(
+  specs: readonly InlineReplacementSpec[],
+  indices: readonly number[],
+): Uint32Array {
+  const length = indices.length
+  const keys = new Uint32Array(length)
+  const order = new Uint32Array(length)
+  let sorted = true
+  let maxKey = 0
+  for (let i = 0; i < length; i++) {
+    const specIndex = indices[i]!
+    const key = specs[specIndex]!.startIndex >>> 0
+    order[i] = specIndex
+    keys[i] = key
+    if (key > maxKey) maxKey = key
+    if (i > 0 && keys[i - 1]! > key) sorted = false
   }
   if (sorted) return order
-  return order.sort((left, right) => specs[left]!.startIndex - specs[right]!.startIndex)
+
+  let slotOrder = new Uint32Array(length)
+  for (let i = 0; i < length; i++) slotOrder[i] = i
+  let next = new Uint32Array(length)
+  const counts = new Uint32Array(256)
+  for (let shift = 0; shift < 32 && (shift === 0 || maxKey >>> shift > 0); shift += 8) {
+    counts.fill(0)
+    for (let i = 0; i < length; i++) counts[(keys[slotOrder[i]!]! >>> shift) & 255]!++
+    let start = 0
+    for (let bucket = 0; bucket < 256; bucket++) {
+      const count = counts[bucket]!
+      counts[bucket] = start
+      start += count
+    }
+    for (let i = 0; i < length; i++) {
+      const slot = slotOrder[i]!
+      next[counts[(keys[slot]! >>> shift) & 255]!++] = slot
+    }
+    ;[slotOrder, next] = [next, slotOrder]
+  }
+  for (let i = 0; i < length; i++) order[i] = indices[slotOrder[i]!]!
+  return order
 }
 
 function markerParentKind(kind: number): number | undefined {

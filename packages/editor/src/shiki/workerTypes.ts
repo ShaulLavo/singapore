@@ -22,6 +22,8 @@ export type ShikiWorkerLanguageRegistration = {
   readonly name: string
   readonly scopeName: string
   readonly aliases?: readonly string[]
+  readonly embeddedLangs?: readonly string[]
+  readonly embeddedLanguages?: readonly string[]
   readonly patterns?: readonly unknown[]
   readonly repository?: Readonly<Record<string, unknown>>
 }
