@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   LspClient,
   LspTransportClosedError,
+  createStdioLspTransport,
   createWebSocketLspTransport,
   createWorkerLspTransport,
+  encodeLspFrame,
   type LspManagedTransport,
   type LspTransportHandler,
   type LspWebSocketLike,
@@ -341,7 +343,32 @@ type TransportFixture = {
   receive(message: unknown): void
 }
 
-async function transportFixture(kind: 'worker' | 'socket'): Promise<TransportFixture> {
+/** Sends are recorded at the call, since the process reads its stdin stream later. */
+function stdioFixture(): TransportFixture {
+  const stdio = createStdioLspTransport({ stop: () => undefined })
+  const sent: string[] = []
+  const transport: LspManagedTransport = {
+    send(message) {
+      sent.push(message)
+      stdio.transport.send(message)
+    },
+    subscribe: (handler) => stdio.transport.subscribe(handler),
+    unsubscribe: (handler) => stdio.transport.unsubscribe(handler),
+    onDidClose: (handler) => stdio.transport.onDidClose(handler),
+    close: () => stdio.transport.close(),
+  }
+  return {
+    transport,
+    sent,
+    receive(message) {
+      const text = typeof message === 'string' ? message : JSON.stringify(message)
+      stdio.stdout(encodeLspFrame(text))
+    },
+  }
+}
+
+async function transportFixture(kind: 'worker' | 'socket' | 'stdio'): Promise<TransportFixture> {
+  if (kind === 'stdio') return stdioFixture()
   if (kind === 'worker') {
     const worker = new FakeWorker()
     return {
@@ -381,100 +408,108 @@ function answerInitialization(fixture: TransportFixture): void {
   fixture.receive(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: { capabilities: {} } }))
 }
 
-describe.each(['worker', 'socket'] as const)('%s dispatch registration lifetimes', (kind) => {
-  it.each([false, true])(
-    'does not redeliver a frame after same-transport reconnect, throw %s',
-    async (throws) => {
-      const fixture = await transportFixture(kind)
-      let calls = 0
-      let reconnect: Promise<void> | undefined
-      const client = new LspClient({
-        serverRequestHandlers: {
-          'test/reconnect': (client) => {
-            calls++
-            if (calls === 1) reconnect = client.connect(fixture.transport)
-            if (throws) throw new Error('retired request failure')
-            return 'retired result'
+describe.each(['worker', 'socket', 'stdio'] as const)(
+  '%s dispatch registration lifetimes',
+  (kind) => {
+    it.each([false, true])(
+      'does not redeliver a frame after same-transport reconnect, throw %s',
+      async (throws) => {
+        const fixture = await transportFixture(kind)
+        let calls = 0
+        let reconnect: Promise<void> | undefined
+        const client = new LspClient({
+          serverRequestHandlers: {
+            'test/reconnect': (client) => {
+              calls++
+              if (calls === 1) reconnect = client.connect(fixture.transport)
+              if (throws) throw new Error('retired request failure')
+              return 'retired result'
+            },
+            'test/current': () => 'current result',
           },
-          'test/current': () => 'current result',
-        },
-      })
-      try {
-        const connected = client.connect(fixture.transport)
-        answerInitialization(fixture)
-        await connected
-        fixture.receive(JSON.stringify({ jsonrpc: '2.0', id: 'retired', method: 'test/reconnect' }))
-        answerInitialization(fixture)
-        await reconnect
-        await Promise.resolve()
-        expect(calls).toBe(1)
-        expect(
-          fixture.sent.some((frame) => typeof frame === 'string' && frame.includes('"retired"')),
-        ).toBe(false)
-        fixture.receive(JSON.stringify({ jsonrpc: '2.0', id: 'current', method: 'test/current' }))
-        await Promise.resolve()
-        expect(lastSentFrame(fixture)).toEqual({
-          jsonrpc: '2.0',
-          id: 'current',
-          result: 'current result',
         })
-        expect(client.initialized).toBe(true)
+        try {
+          const connected = client.connect(fixture.transport)
+          answerInitialization(fixture)
+          await connected
+          fixture.receive(
+            JSON.stringify({ jsonrpc: '2.0', id: 'retired', method: 'test/reconnect' }),
+          )
+          answerInitialization(fixture)
+          await reconnect
+          await Promise.resolve()
+          expect(calls).toBe(1)
+          expect(
+            fixture.sent.some((frame) => typeof frame === 'string' && frame.includes('"retired"')),
+          ).toBe(false)
+          fixture.receive(JSON.stringify({ jsonrpc: '2.0', id: 'current', method: 'test/current' }))
+          await Promise.resolve()
+          expect(lastSentFrame(fixture)).toEqual({
+            jsonrpc: '2.0',
+            id: 'current',
+            result: 'current result',
+          })
+          expect(client.initialized).toBe(true)
+        } finally {
+          client.disconnect()
+          fixture.transport.close()
+        }
+      },
+    )
+
+    it('does not deliver an old frame to added or renewed registrations', async () => {
+      const fixture = await transportFixture(kind)
+      const received: string[] = []
+      const renewed = (message: string): void => {
+        received.push(`renewed:${message}`)
+      }
+      const added = (message: string): void => {
+        received.push(`added:${message}`)
+      }
+      let first = true
+      fixture.transport.subscribe((message) => {
+        received.push(`first:${message}`)
+        if (!first) return
+        first = false
+        fixture.transport.unsubscribe(renewed)
+        fixture.transport.subscribe(renewed)
+        fixture.transport.subscribe(added)
+      })
+      fixture.transport.subscribe(renewed)
+      try {
+        fixture.receive('old')
+        expect(received).toEqual(['first:old'])
+        fixture.receive('new')
+        expect(received).toEqual(['first:old', 'first:new', 'renewed:new', 'added:new'])
       } finally {
-        client.disconnect()
         fixture.transport.close()
       }
-    },
-  )
-
-  it('does not deliver an old frame to added or renewed registrations', async () => {
-    const fixture = await transportFixture(kind)
-    const received: string[] = []
-    const renewed = (message: string): void => {
-      received.push(`renewed:${message}`)
-    }
-    const added = (message: string): void => {
-      received.push(`added:${message}`)
-    }
-    let first = true
-    fixture.transport.subscribe((message) => {
-      received.push(`first:${message}`)
-      if (!first) return
-      first = false
-      fixture.transport.unsubscribe(renewed)
-      fixture.transport.subscribe(renewed)
-      fixture.transport.subscribe(added)
     })
-    fixture.transport.subscribe(renewed)
-    try {
-      fixture.receive('old')
-      expect(received).toEqual(['first:old'])
-      fixture.receive('new')
-      expect(received).toEqual(['first:old', 'first:new', 'renewed:new', 'added:new'])
-    } finally {
-      fixture.transport.close()
-    }
-  })
 
-  it('admits new registrations for a genuinely nested new frame only', async () => {
-    const fixture = await transportFixture(kind)
-    const received: string[] = []
-    const added = (message: string): void => {
-      received.push(`added:${message}`)
-    }
-    fixture.transport.subscribe((message) => {
-      received.push(`first:${message}`)
-      if (message !== 'outer') return
-      fixture.transport.subscribe(added)
-      fixture.receive('inner')
+    it('admits new registrations for a genuinely nested new frame only', async () => {
+      const fixture = await transportFixture(kind)
+      const received: string[] = []
+      const added = (message: string): void => {
+        received.push(`added:${message}`)
+      }
+      fixture.transport.subscribe((message) => {
+        received.push(`first:${message}`)
+        if (message !== 'outer') return
+        fixture.transport.subscribe(added)
+        fixture.receive('inner')
+      })
+      try {
+        fixture.receive('outer')
+        expect(received).toEqual(['first:outer', 'first:inner', 'added:inner'])
+      } finally {
+        fixture.transport.close()
+      }
     })
-    try {
-      fixture.receive('outer')
-      expect(received).toEqual(['first:outer', 'first:inner', 'added:inner'])
-    } finally {
-      fixture.transport.close()
-    }
-  })
+  },
+)
 
+// Only these two turn an object message into text themselves, which is where the reentry is.
+describe.each(['worker', 'socket'] as const)('%s dispatch registration lifetimes', (kind) => {
   it('captures registrations before object-message normalization reentry', async () => {
     const fixture = await transportFixture(kind)
     const received: string[] = []

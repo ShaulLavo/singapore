@@ -92,8 +92,9 @@ const plugin = createLanguageServerAdapterPlugin({
 `startServer` is yours. It pipes `stdin` into the process and calls `onStdout` with each chunk the process writes.
 
 - Always call `exited` once the process and everything it started are gone, with the reason it ended, even after the connection was closed. The connection learns of a failed or exited server then, and it waits for that call before it starts a replacement, so two servers never run side by side. The new server receives `initialize` and every open document.
-- `stop` is called at most once: when the connection is disposed, when the server writes bytes that are not a frame, sends a message over `maxMessageBytes`, stops reading its stdin until `maxPendingStdinBytes` are waiting, or closes its stdin. It may return a promise. A throw or rejection is reported as the reason for the loss.
-- Keep handing over stdout until the process is gone. Output written after the server closed its stdin is still delivered, and a server that exits on its own partway through a message is reported as an `LspFramingError` whose `cause` is your reason.
+- `stop` is called at most once: when the connection is disposed, when the server writes bytes that are not a frame, sends a message over `maxMessageBytes`, stops reading its stdin until `maxPendingStdinBytes` are waiting, or closes its stdin. It may return a promise. A throw is reported as the reason for the loss. A rejection is reported only if it has settled by the time you call `exited`.
+- Keep handing over stdout until the process is gone. Output written after the server closed its stdin is still delivered, and output that ends partway through a message is reported as an `LspFramingError` whose `cause` is your reason.
+- A connection pool waits the same way: after a connection is evicted or gives up, the next one for its key starts only once the old server is gone.
 - Keep the server's stderr away from `stdout`. A stray log line there is a protocol failure, reported as an `LspFramingError` that quotes it.
 
 `pathToFileUri` and `fileUriToPath` map absolute POSIX paths to `file:` URIs exactly, for a host whose document ids are paths in the file tree the server reads. Nothing is normalized: `..` stays in the path for the file tree to resolve. Open a definition in another file from `onOpenDefinition` with `fileUriToPath(target.uri)`.

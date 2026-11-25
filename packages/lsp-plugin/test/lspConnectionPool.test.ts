@@ -62,6 +62,25 @@ class FakeTransport implements LspManagedTransport {
   }
 }
 
+/** A transport whose server keeps running after `close()` until the host confirms it is gone. */
+class StoppingTransport extends FakeTransport {
+  public readonly gone: Promise<void>
+  public confirmGone!: () => void
+  public failGone!: (error: unknown) => void
+
+  public constructor() {
+    super()
+    this.gone = new Promise((resolve, reject) => {
+      this.confirmGone = resolve
+      this.failGone = reject
+    })
+  }
+}
+
+function stoppingOptions(overrides: Partial<LspConnectionOptions> = {}): LspConnectionOptions {
+  return connectionOptions({ createTransport: () => new StoppingTransport(), ...overrides })
+}
+
 function connectionOptions(overrides: Partial<LspConnectionOptions> = {}): LspConnectionOptions {
   return {
     capabilities: {},
@@ -217,6 +236,79 @@ describe('LspConnectionPool', () => {
     vi.advanceTimersByTime(60_000)
 
     expect(FakeTransport.created[0]?.closed).toBe(true)
+  })
+
+  it('waits for the server of an evicted connection to be gone before starting one for the same key', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    provider.acquire(stoppingOptions(), callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+    const evicted = FakeTransport.created[0] as StoppingTransport
+    expect(evicted.closed).toBe(true)
+
+    const lease = provider.acquire(stoppingOptions(), callbacks())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(FakeTransport.created).toHaveLength(1)
+
+    evicted.confirmGone()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(FakeTransport.created).toHaveLength(2)
+    lease.release()
+  })
+
+  it('waits for a server that failed to initialize to be gone before starting one for the same key', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    const gaveUp = callbacks()
+    provider.acquire(stoppingOptions(), gaveUp)
+    await vi.advanceTimersByTimeAsync(5_000)
+    const silent = FakeTransport.created[0] as StoppingTransport
+    expect(gaveUp.onUnavailable).toHaveBeenCalledTimes(1)
+    expect(silent.closed).toBe(true)
+
+    provider.acquire(stoppingOptions(), callbacks())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(FakeTransport.created).toHaveLength(1)
+
+    silent.confirmGone()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(FakeTransport.created).toHaveLength(2)
+  })
+
+  it('starts a key at once when no server of it is still going', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    provider.acquire(stoppingOptions(), callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+    ;(FakeTransport.created[0] as StoppingTransport).confirmGone()
+    await vi.advanceTimersByTimeAsync(0)
+
+    provider.acquire(stoppingOptions(), callbacks())
+
+    expect(FakeTransport.created).toHaveLength(2)
+  })
+
+  it('does not leave a rejection unhandled when the server of a closed transport fails to go', async () => {
+    vi.useFakeTimers()
+    const connection = new LspConnection(
+      stoppingOptions({ reconnect: { delaysMs: [100] } }),
+      callbacks(),
+    )
+    connection.connect()
+    const first = FakeTransport.created[0] as StoppingTransport
+    completeHandshake(first)
+    await vi.advanceTimersByTimeAsync(0)
+
+    first.fail()
+    first.failGone(new Error('teardown failed'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(FakeTransport.created).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(FakeTransport.created).toHaveLength(2)
+    connection.dispose()
   })
 
   it('tells a view that joined a live connection it is already connected', async () => {

@@ -59,6 +59,16 @@ describe('language server path helpers', () => {
     expect(sameFileUri('file:///work/link/../a.ts', 'file:///work/a.ts')).toBe(false)
   })
 
+  it('keeps leading slashes, which an empty authority leaves to the path', () => {
+    const path = '//project/a.ts'
+    const uri = pathToFileUri(path)
+
+    expect(uri).toBe('file:////project/a.ts')
+    expect(fileUriToPath(uri)).toBe(path)
+    expect(fileUriToPath(pathToFileUri('///deep//a.ts'))).toBe('///deep//a.ts')
+    expect(fileUriToPath('file://project/a.ts')).toBeNull()
+  })
+
   it('reads the short local form and drops a query or fragment', () => {
     expect(fileUriToPath('file:/work/a.ts')).toBe('/work/a.ts')
     expect(fileUriToPath('FILE:///work/a.ts#L10')).toBe('/work/a.ts')

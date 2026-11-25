@@ -175,6 +175,40 @@ describe('a language server process behind a stdio transport', () => {
     }
   })
 
+  it('starts one replacement, however often connect is called while the old server is going', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = harness([0], 1)
+      h.connection.connect()
+      await vi.advanceTimersByTimeAsync(6000)
+
+      h.connection.connect()
+      h.connection.connect()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(h.processes).toHaveLength(1)
+
+      h.processes[0]!.exit(new Error('killed'))
+      await until(() => h.statuses.at(-1) === 'ready')
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(h.processes).toHaveLength(2)
+      h.connection.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not start a second server when connect is called on a live connection', async () => {
+    const h = await connectedHarness([0])
+
+    h.connection.connect()
+    await Promise.resolve()
+
+    expect(h.processes).toHaveLength(1)
+    expect(h.statuses.at(-1)).toBe('ready')
+    h.connection.dispose()
+  })
+
   it('ends stdin and stops the process once when the connection is disposed', async () => {
     const h = await connectedHarness([0])
 

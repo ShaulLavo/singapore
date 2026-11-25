@@ -173,6 +173,30 @@ describe('stdio LSP transport', () => {
   it.each([
     ['a header', (frame: Uint8Array) => frame.slice(0, 10)],
     ['a body', (frame: Uint8Array) => frame.slice(0, frame.length - 3)],
+  ])(
+    'reports a crash that closed stdin first and cut %s as a protocol failure caused by the exit',
+    async (_, cut) => {
+      const server = new ServerProcess({ readsStdin: false })
+      const closes = closesOf(server)
+      const received = messagesOf(server)
+      const crashed = new Error('language server exited with code 134')
+
+      await server.closeStdin()
+      server.send({ id: 1 })
+      server.write(cut(encodeLspFrame('{"id":2,"result":"cut short"}')))
+      server.exit(crashed)
+
+      expect(received).toEqual(['{"id":1}'])
+      expect(closes).toHaveLength(1)
+      expect(closes[0]).toBeInstanceOf(LspFramingError)
+      expect(closes[0]).toMatchObject({ cause: crashed })
+      expect(server.stops).toBe(1)
+    },
+  )
+
+  it.each([
+    ['a header', (frame: Uint8Array) => frame.slice(0, 10)],
+    ['a body', (frame: Uint8Array) => frame.slice(0, frame.length - 3)],
   ])('reports output that ended inside %s as a protocol failure caused by the exit', (_, cut) => {
     const server = new ServerProcess()
     const closes = closesOf(server)

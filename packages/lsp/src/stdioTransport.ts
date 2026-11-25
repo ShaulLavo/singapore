@@ -10,8 +10,9 @@ export type LspStdioOptions = {
   /**
    * Stops the server process. Called at most once, and only while the process may still be
    * running: on `close()`, when the server breaks the protocol or closes its stdin, and when a
-   * limit is exceeded. A throw or a rejection is kept and reported as the reason for the loss,
-   * unless something earlier already was.
+   * limit is exceeded. A throw is kept and reported as the reason for the loss, unless something
+   * earlier already was. So is a rejection, but only one that has settled by the time `exited`
+   * reports the loss; a later one is observed and dropped.
    */
   stop(): void | Promise<void>
   /** Largest message accepted from the server. Defaults to 64 MiB. */
@@ -61,7 +62,9 @@ class StdioLspTransport implements LspManagedTransport {
   public readonly stdin: ReadableStream<Uint8Array>
   public readonly gone: Promise<void>
 
-  private readonly handlers = new Set<LspTransportHandler>()
+  /** Each handler with the order it registered in, so a message reaches only those before it. */
+  private readonly handlers = new Map<LspTransportHandler, number>()
+  private nextRegistration = 0
   private readonly closeHandlers = new Set<(error?: unknown) => void>()
   /** Null once the output is no longer read: it broke the protocol, or the transport closed. */
   private decoder: LspFrameDecoder | null
@@ -111,7 +114,8 @@ class StdioLspTransport implements LspManagedTransport {
   }
 
   public subscribe(handler: LspTransportHandler): void {
-    this.handlers.add(handler)
+    if (this.handlers.has(handler)) return
+    this.handlers.set(handler, ++this.nextRegistration)
   }
 
   public unsubscribe(handler: LspTransportHandler): void {
@@ -157,8 +161,12 @@ class StdioLspTransport implements LspManagedTransport {
   private readonly deliver = (message: string): void => {
     if (!this.decoder) return
 
+    // A handler that subscribes or resubscribes while this message is out waits for the next one.
+    const cutoff = this.nextRegistration
     this.receivedCount += 1
-    for (const handler of this.handlers) handler(message)
+    for (const [handler, registration] of this.handlers) {
+      if (registration <= cutoff) handler(message)
+    }
   }
 
   /** The one way a running server is told to go. */
@@ -184,12 +192,10 @@ class StdioLspTransport implements LspManagedTransport {
   }
 
   /**
-   * A server that exited on its own partway through a message broke the protocol. One that was
-   * told to stop is expected to be cut off anywhere.
+   * Output still being read that ends partway through a message broke the protocol. That holds
+   * after a stdin hangup too, which is how an exiting process usually first shows.
    */
   private truncation(reason: unknown): unknown {
-    if (this.state !== 'open') return undefined
-
     try {
       this.decoder?.finish(reason)
       return undefined

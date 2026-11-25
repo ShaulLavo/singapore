@@ -94,8 +94,12 @@ export class LspConnection {
   private reconnectAttempts = 0
   private readyAt: number | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  /** Settles when the server behind the last closed transport is gone. */
+  /** Settles when the server behind the attached transport is gone; null when it has none. */
+  private transportGone: Promise<void> | null = null
+  /** The same for the last closed transport, kept until it settles: the next start waits for it. */
   private retiring: Promise<void> | null = null
+  /** A start is under way: waiting on `retiring`, or in the factory, until a transport attaches. */
+  private starting = false
   /** Why the server said it is going, reported as the reason for the close that follows. */
   private exit: LspServerExitedParams | null = null
 
@@ -106,9 +110,22 @@ export class LspConnection {
     this.client = this.createClient()
   }
 
+  /** Starts the connection. A no-op while it is connected or already on its way to being. */
   public connect(): void {
+    if (this.transport || this.starting) return
+
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
     this.setStatus('loading')
     this.connectTransport()
+  }
+
+  /**
+   * Pending while the server behind this connection's last closed transport is still going, null
+   * otherwise. It never rejects. Whoever starts another server for the same work waits for it.
+   */
+  public get retirement(): Promise<void> | null {
+    return this.retiring
   }
 
   public dispose(): void {
@@ -120,8 +137,7 @@ export class LspConnection {
     this.removeTransportCloseListener?.()
     this.removeTransportCloseListener = null
     this.client.disconnect()
-    this.transport?.close()
-    this.transport = null
+    this.closeTransport()
     this.setStatus('idle')
   }
 
@@ -166,8 +182,21 @@ export class LspConnection {
     })
   }
 
+  /** The one gate every start goes through: one at a time, and never beside a server still going. */
   private connectTransport(): void {
-    if (this.awaitsRetirement()) return
+    if (this.transport || this.starting) return
+
+    this.starting = true
+    const retiring = this.retiring
+    if (retiring) {
+      void retiring.then(this.startTransport)
+      return
+    }
+    this.startTransport()
+  }
+
+  private readonly startTransport = (): void => {
+    if (this.disposed) return
 
     try {
       const transport = this.options.createTransport()
@@ -187,12 +216,16 @@ export class LspConnection {
   }
 
   private connectManagedTransport(transport: LspManagedTransport): void {
+    this.starting = false
+    // Observed from the first moment, so a server that fails to go never rejects unheard.
+    const gone = settled(transport.gone)
     if (this.disposed) {
       transport.close()
       return
     }
 
     this.transport = transport
+    this.transportGone = gone
     this.exit = null
     this.removeTransportCloseListener = transport.onDidClose((error) =>
       this.handleTransportClose(error),
@@ -224,6 +257,7 @@ export class LspConnection {
   }
 
   private handleConnectError(error: unknown): void {
+    this.starting = false
     if (this.disposed) return
 
     this.detachTransport()
@@ -248,23 +282,21 @@ export class LspConnection {
     this.removeTransportCloseListener = null
     this.transport?.unsubscribe(this.forgetExitOnLaterMessage)
     this.client.disconnect()
+    this.closeTransport()
+  }
+
+  /** Closes the transport and keeps its server's going as what the next start waits for. */
+  private closeTransport(): void {
     this.transport?.close()
-    this.retiring = this.transport?.gone ?? this.retiring
     this.transport = null
-  }
+    const gone = this.transportGone
+    this.transportGone = null
+    if (!gone) return
 
-  /** Whether a closed transport's server is still going away; the next transport waits for it. */
-  private awaitsRetirement(): boolean {
-    const retiring = this.retiring
-    if (!retiring) return false
-
-    this.retiring = null
-    void retiring.then(this.connectAfterRetirement, this.connectAfterRetirement)
-    return true
-  }
-
-  private readonly connectAfterRetirement = (): void => {
-    if (!this.disposed) this.connectTransport()
+    this.retiring = gone
+    void gone.then(() => {
+      if (this.retiring === gone) this.retiring = null
+    })
   }
 
   private giveUpOrReconnect(error: unknown): void {
@@ -331,6 +363,13 @@ export function createWorkerLspTransportFactory(
 function now(): number {
   return typeof performance === 'undefined' ? Date.now() : performance.now()
 }
+
+/** `gone` as a signal only: a server that failed to go is still not one to wait on any longer. */
+function settled(gone: Promise<void> | undefined): Promise<void> | null {
+  return gone ? gone.then(ignore, ignore) : null
+}
+
+const ignore = (): void => undefined
 
 function isTransportPromise(
   value: LspManagedTransport | Promise<LspManagedTransport>,
