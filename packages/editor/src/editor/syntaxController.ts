@@ -1065,15 +1065,16 @@ export class EditorSyntaxController {
       cachedRange.endIndex >= visible.endIndex
         ? cachedRange
         : visible
+    const range = canRange ? adoptedRange : null
     this.#applySyntaxResult(
       {
         contentVersion: guard.contentVersion,
         parseGeneration: guard.parseGeneration,
         parseId: this.retainedSyntax?.currentParseId() ?? null,
-        baseResult: structural.result,
-        range: canRange ? adoptedRange : null,
+        baseResult: (range ? this.retainedSyntax?.readBaseResult() : null) ?? structural.result,
+        range,
         result: structural.result,
-        source: canRange && adoptedRange ? 'visible' : 'full',
+        source: range ? 'visible' : 'full',
         suppressWarm: true,
         updatesDocument: true,
       },
@@ -1718,7 +1719,7 @@ export class EditorSyntaxController {
         contentVersion: guard.contentVersion,
         parseGeneration: guard.parseGeneration,
         parseId: this.retainedSyntax?.currentParseId() ?? null,
-        baseResult: result,
+        baseResult: (range ? this.retainedSyntax?.readBaseResult() : null) ?? result,
         range,
         result,
         source: range ? 'visible' : 'full',
@@ -2582,8 +2583,16 @@ export class EditorSyntaxController {
     }
 
     // Full-document mode (strictly determined by the result's own scope, never by mid-flight
-    // capability changes on a range-scoped reply).
+    // capability changes on a range-scoped reply). In range mode with no visible viewport yet,
+    // accept the base parse without publishing full-document coverage so the editor stays loading
+    // until an actual viewport range settles.
     if (loadResult.range === null) {
+      if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'range') {
+        const visibleRange = this.options.getVisibleSyntaxRange()
+        if (visibleRange) return this.#publishPromotedViewport(visibleRange, guard)
+        this.options.notifyChange(null)
+        return true
+      }
       return this.#publishFullDocumentResult(result, guard)
     }
 

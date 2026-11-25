@@ -151,6 +151,7 @@ export type EditorRetainedSyntaxSession = Omit<EditorSyntaxSession, 'queryRange'
   setDisplayDemand(demand: EditorAnalysisDisplayDemand): void
   refreshBase(options?: { readonly forceRetry?: boolean }): Promise<EditorRetainedSyntaxBase>
   currentParseId(): number | null
+  readBaseResult(): EditorSyntaxResult | null
   clearDegradedOrPartialRanges(): void
   hasDegradedOrFailedBase(): boolean
   invalidationStepsSince(
@@ -1219,6 +1220,11 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return this.lastBase.snapshot === this.buffer.getTextSnapshot() ? this.lastBase.parseId : null
   }
 
+  readBaseResult(): EditorSyntaxResult | null {
+    const state = this.read()
+    return state.kind === 'ready' ? state.result : null
+  }
+
   hasDegradedOrFailedBase(): boolean {
     const state = this.read()
     return (
@@ -1924,6 +1930,7 @@ function structuralLease(
     },
     refreshBase: (options) => lease.wait(() => refreshBase(options)),
     currentParseId: () => (lease.signal.aborted ? null : entry.currentParseId()),
+    readBaseResult: () => (lease.signal.aborted ? null : entry.readBaseResult()),
     clearDegradedOrPartialRanges: () => {
       if (!lease.signal.aborted) entry.clearDegradedOrPartialRanges()
     },

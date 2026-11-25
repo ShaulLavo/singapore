@@ -2932,5 +2932,186 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('keeps a prepared range-mode view in range mode when its first range cancels on budget and recovers on scroll', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(120))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prepared-range-budget-cancel',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            projection: {
+              ...createEmptySyntaxResult({ requestedRanges: [range] }).projection,
+              analysis: {
+                kind: 'cancelled',
+                reason: 'budget',
+                coveredRange: { startIndex: 0, endIndex: 0 },
+                elapsedMs: 100,
+                budgetMs: 50,
+              },
+            },
+          }
+        }
+        return answerFor(range, {
+          brackets: [{ index: range.startIndex + 2, char: '{', depth: 1 }],
+        })
+      })
+      const provider = structuralProvider(query)
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeCaptures: false,
+        includeHighlights: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      await retained.refreshBase()
+      const cancelledFirst = await retained.queryRange({ startIndex: 0, endIndex: 20 })
+
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'prepared-range-budget-cancel',
+        getCurrentSessionDocumentId: () => 'prepared-range-budget-cancel',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: retained.runtimeSessionId,
+          provider,
+          configurationTag: [],
+          session: retained,
+          range: { startIndex: 0, endIndex: 20 },
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(cancelledFirst),
+          readyResult: cancelledFirst,
+          dispose: () => retained.dispose(),
+        },
+      }
+      try {
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-range-budget-cancel',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntax.adoptPreparedReadyResults(prepared)
+        expect(syntax.status).toBe('degraded')
+
+        // Scroll to [60, 80) -> must query range and recover cleanly to ready with bracket at 62!
+        currentRange = { startIndex: 60, endIndex: 80 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.brackets.map((b) => b.index)).toEqual([62])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('stays loading in range mode when base finishes with no visible viewport until the first viewport answer settles', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(120))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'range-mode-null-viewport-base',
+      })
+      let resolveRange: ((result: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(
+        async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+          new Promise<EditorSyntaxResult>((resolve) => {
+            resolveRange = resolve
+            void range
+          }),
+      )
+      const provider = structuralProvider(query)
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange | null = null
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'range-mode-null-viewport-base',
+        getCurrentSessionDocumentId: () => 'range-mode-null-viewport-base',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'range-mode-null-viewport-base',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await settle(80)
+
+        // Base finished while visibleRange was null -> must still be loading (NOT ready!).
+        expect(syntax.status).toBe('loading')
+        expect(syntax.renderDataReady).toBe(false)
+
+        // Expose viewport [60, 80) and hold its range query -> must stay loading until it resolves.
+        currentRange = { startIndex: 60, endIndex: 80 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveRange).not.toBeNull())
+        expect(syntax.status).toBe('loading')
+        expect(syntax.renderDataReady).toBe(false)
+
+        resolveRange!(
+          answerFor(
+            { startIndex: 60, endIndex: 80 },
+            { brackets: [{ index: 62, char: '{', depth: 1 }] },
+          ),
+        )
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.renderDataReady).toBe(true)
+        expect(syntax.brackets.map((b) => b.index)).toEqual([62])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
