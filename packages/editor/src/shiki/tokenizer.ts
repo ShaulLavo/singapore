@@ -1,4 +1,5 @@
 import type { TextEdit } from '../tokens'
+import type { TextReadSnapshot } from '../documentTextSnapshot'
 import type { HighlighterGeneric, ThemedToken } from 'shiki/core'
 import { createScopedLineTokenizer } from './scopedTokens'
 
@@ -50,6 +51,8 @@ export interface CreateIncrementalTokenizerOptions<
   lang: string
   theme: string
   code?: string
+  /** Streaming text source; avoids materializing a whole-document string on open. */
+  source?: TextReadSnapshot
   highlighter: Highlighter
   /** Longest line, in UTF-16 units, that is tokenized; longer lines stay plain. */
   maxLineLength: number
@@ -66,9 +69,10 @@ export interface IncrementalTokenizer {
   applyEdit(edit: TextEdit): TokenPatch
   applyEdits(edits: readonly TextEdit[]): readonly TokenPatch[]
   update(code: string): TokenPatch
-  reset(code?: string): TokenPatch
+  reset(code?: string | TextReadSnapshot): TokenPatch
   getCode(): string
   getSnapshot(): IncrementalTokenizerSnapshot
+  getLineSnapshots(): readonly TokenLineSnapshot[]
   getTokens(): readonly (readonly ThemedToken[])[]
   inspectRetention(): IncrementalTokenizerRetentionSnapshot
   /** Lines of the current text left plain by the tokenization limit. */
@@ -151,16 +155,19 @@ function tokenLinesEqual(left: readonly ThemedToken[], right: readonly ThemedTok
 }
 
 export class IncrementalShikiTokenizer implements IncrementalTokenizer {
-  private code: string
   private lines: LineState[]
+  private sourceLength = 0
   private untokenized = 0
   private readonly tokenize: TokenizeLineFn
   private readonly statesEqual: StatesEqualFn
 
-  public constructor(tokenizeLine: TokenizeLineFn, statesEqual: StatesEqualFn, code?: string) {
+  public constructor(
+    tokenizeLine: TokenizeLineFn,
+    statesEqual: StatesEqualFn,
+    code?: string | TextReadSnapshot,
+  ) {
     this.tokenize = tokenizeLine
     this.statesEqual = statesEqual
-    this.code = ''
     this.lines = []
 
     this.reset(code ?? '')
@@ -168,7 +175,6 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
   public applyEdit(edit: TextEdit): TokenPatch {
     const { from, to, text } = edit
-    const newCode = this.code.slice(0, from) + text + this.code.slice(to)
 
     const start = this.offsetToLine(from)
     const end = this.offsetToLine(to)
@@ -204,7 +210,6 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
     const fromOffset = from - start.col
     const oldEndOffset = lineOffset(this.lines, stableAt)
-    this.code = newCode
     this.replaceLines(start.line, stableAt, retokenized)
 
     return {
@@ -243,7 +248,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
   private append(chunk: string): TokenPatch {
     if (chunk.length === 0) {
-      const length = this.code.length
+      const length = this.sourceLength
       return {
         fromLine: this.lines.length,
         toLine: this.lines.length,
@@ -265,8 +270,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     )
 
     const fromOffset = lineOffset(this.lines, startLine)
-    const oldEndOffset = this.code.length
-    this.code += chunk
+    const oldEndOffset = this.sourceLength
     this.replaceLines(startLine, previousLength, nextTail)
 
     return {
@@ -275,14 +279,15 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       lines: cloneSnapshot(nextTail),
       fromOffset,
       oldEndOffset,
-      newEndOffset: this.code.length,
+      newEndOffset: this.sourceLength,
     }
   }
 
   public update(code: string): TokenPatch {
-    if (code === this.code) return emptyPatch()
+    const currentCode = this.getCode()
+    if (code === currentCode) return emptyPatch()
 
-    if (code.startsWith(this.code)) return this.append(code.slice(this.code.length))
+    if (code.startsWith(currentCode)) return this.append(code.slice(currentCode.length))
 
     const nextLines = splitLines(code)
     const previousLines = this.lines
@@ -332,7 +337,6 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
           tokenLinesEqual(tokenizedLine.tokens, previousLine.tokens) &&
           this.statesEqual(tokenizedLine.endState, previousLine.endState)
         ) {
-          this.code = code
           this.replaceLines(prefixLength, previousIndex, rebuiltMiddle)
           const nextDocument = this.lines
 
@@ -350,8 +354,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       rebuiltMiddle.push(tokenizedLine)
     }
 
-    const oldEndOffset = this.code.length
-    this.code = code
+    const oldEndOffset = this.sourceLength
     this.replaceLines(prefixLength, previousLength, rebuiltMiddle)
 
     return {
@@ -360,15 +363,18 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       lines: cloneSnapshot(rebuiltMiddle),
       fromOffset: lineOffset(previousLines, prefixLength),
       oldEndOffset,
-      newEndOffset: code.length,
+      newEndOffset: this.sourceLength,
     }
   }
 
-  public reset(code = ''): TokenPatch {
+  public reset(code: string | TextReadSnapshot = ''): TokenPatch {
     const previousLength = this.lines.length
-    const oldEndOffset = this.code.length
-    this.code = code
-    this.replaceLines(0, previousLength, this.tokenizeLines(splitLines(code)))
+    const oldEndOffset = this.sourceLength
+    const nextLines =
+      typeof code === 'string'
+        ? this.tokenizeLines(splitLines(code))
+        : this.tokenizeFromSource(code)
+    this.replaceLines(0, previousLength, nextLines)
 
     return {
       fromLine: 0,
@@ -376,31 +382,49 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       lines: cloneSnapshot(this.lines),
       fromOffset: 0,
       oldEndOffset,
-      newEndOffset: code.length,
+      newEndOffset: this.sourceLength,
     }
   }
 
   public getCode(): string {
-    return this.code
+    if (this.lines.length === 0) return ''
+    if (this.lines.length === 1) return this.lines[0]!.text + this.lines[0]!.lineEnding
+    const parts: string[] = []
+    for (const line of this.lines) {
+      parts.push(line.text)
+      if (line.lineEnding.length > 0) parts.push(line.lineEnding)
+    }
+    return parts.join('')
   }
 
   public untokenizedLineCount(): number {
     return this.untokenized
   }
 
-  // Every line replacement goes through here so the plain-line count follows the current text.
+  // Every line replacement goes through here so the plain-line count and length follow current text.
   private replaceLines(start: number, end: number, next: readonly LineState[]): void {
-    for (let index = start; index < end; index++)
-      if (this.lines[index]?.untokenized) this.untokenized--
-    for (const line of next) if (line.untokenized) this.untokenized++
+    for (let index = start; index < end; index++) {
+      const removed = this.lines[index]
+      if (!removed) continue
+      if (removed.untokenized) this.untokenized--
+      this.sourceLength -= rawLength(removed)
+    }
+    for (const line of next) {
+      if (line.untokenized) this.untokenized++
+      this.sourceLength += rawLength(line)
+    }
     this.lines = this.lines.slice(0, start).concat(next, this.lines.slice(end))
   }
 
   public getSnapshot(): IncrementalTokenizerSnapshot {
     return {
-      code: this.code,
+      code: this.getCode(),
       lines: cloneSnapshot(this.lines),
     }
+  }
+
+  public getLineSnapshots(): readonly TokenLineSnapshot[] {
+    return cloneSnapshot(this.lines)
   }
 
   public getTokens(): readonly (readonly ThemedToken[])[] {
@@ -410,7 +434,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
   public inspectRetention(): IncrementalTokenizerRetentionSnapshot {
     let tokenCount = 0
     for (const line of this.lines) tokenCount += line.tokens.length
-    return { sourceUnits: this.code.length, lineCount: this.lines.length, tokenCount }
+    return { sourceUnits: this.sourceLength, lineCount: this.lines.length, tokenCount }
   }
 
   private tokenizeLines(lines: readonly SourceLine[], initialState?: unknown): LineState[] {
@@ -423,6 +447,40 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       previousState = result.state
     }
 
+    return tokenized
+  }
+
+  /** Streams lines from piece-table chunks without allocating a single full-document string. */
+  private tokenizeFromSource(source: TextReadSnapshot): LineState[] {
+    const tokenized: LineState[] = []
+    let previousState: unknown = undefined
+    let pending = ''
+
+    const emitLine = (text: string, lineEnding: TokenLineEnding): void => {
+      const result = this.tokenize(text, previousState)
+      tokenized.push(lineState({ text, lineEnding }, result))
+      previousState = result.state
+    }
+
+    source.forEachTextChunk((chunk) => {
+      let start = 0
+      let newline = chunk.indexOf('\n')
+      while (newline !== -1) {
+        const segment = chunk.slice(start, newline)
+        const combined = pending.length > 0 ? pending + segment : segment
+        pending = ''
+        const hasCr =
+          combined.length > 0 && combined.charCodeAt(combined.length - 1) === CARRIAGE_RETURN
+        emitLine(hasCr ? combined.slice(0, -1) : combined, hasCr ? '\r\n' : '\n')
+        start = newline + 1
+        newline = chunk.indexOf('\n', start)
+      }
+      if (start < chunk.length) {
+        pending += start === 0 ? chunk : chunk.slice(start)
+      }
+    })
+
+    emitLine(pending, '')
     return tokenized
   }
 }
@@ -458,7 +516,11 @@ export async function createIncrementalTokenizer<Highlighter extends TokenizerHi
 
   return {
     tokenizer: Object.assign(
-      new IncrementalShikiTokenizer(engine.tokenize, engine.statesEqual, options.code),
+      new IncrementalShikiTokenizer(
+        engine.tokenize,
+        engine.statesEqual,
+        options.source ?? options.code,
+      ),
       { setTheme: engine.setTheme },
     ),
     highlighter,

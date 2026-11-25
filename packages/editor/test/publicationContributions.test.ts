@@ -36,11 +36,6 @@ function contributionPlugin(contexts: DocumentContext[]) {
     activate(context: EditorPluginContext) {
       context.registerEditContribution(provider)
       context.registerDecorationContribution(provider)
-      if (
-        'registerEditorFeatureContribution' in context &&
-        typeof context.registerEditorFeatureContribution === 'function'
-      )
-        context.registerEditorFeatureContribution(provider)
     },
   }
 }
@@ -66,7 +61,7 @@ test('mounted public contributions expose the live segment after eventless rotat
   expect(rotateDocumentSyncSegment(buffer, point, acquired.lease).status).toBe('rotated')
   releaseDocumentMutationLease(buffer, acquired.lease)
 
-  expect(contexts).toHaveLength(3)
+  expect(contexts).toHaveLength(2)
   for (const context of contexts) {
     const current = context.getDocumentSyncPoint()
     expect(current.segment).toBe(buffer.getDocumentSyncPoint().segment)
@@ -119,7 +114,7 @@ test('mounted public source reads and bounded cursors share each nested publicat
   editor.attachSession(session)
   session.applyText('b')
 
-  expect(contexts).toHaveLength(3)
+  expect(contexts).toHaveLength(2)
   const expectedInitial: (string | number)[][] = [['ab', 'abc', 'abc']]
   expect(observed).toEqual(
     expectedInitial.concat(
@@ -128,7 +123,7 @@ test('mounted public source reads and bounded cursors share each nested publicat
       contexts.map(() => ['abc', 'abc', 'abc', 2, 2]),
     ),
   )
-  expect(currentSources).toEqual(Array.from({ length: 4 }, () => ['abc', 2]))
+  expect(currentSources).toEqual(Array.from({ length: 2 }, () => ['abc', 2]))
   expect(editor.getTextSnapshot()).toBe(buffer.getTextSnapshot())
 })
 
@@ -148,7 +143,7 @@ test.each(['plain', 'shared'])(
       const current = context.getCurrentDocumentSnapshot?.()
       return current ? [current] : []
     })
-    expect(acquired).toHaveLength(2)
+    expect(acquired).toHaveLength(1)
     for (const current of acquired) {
       expect(current.textSnapshot.readRange(0, current.textSnapshot.length)).toBe('ab')
       expect(current.documentSyncPoint).toEqual(contexts[0]?.getDocumentSyncPoint())

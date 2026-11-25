@@ -60,6 +60,7 @@ import { dataTransferTypes, pasteHandlerMatchesTypes } from './pasteHandlers'
 import { readRichTextFont, richTextForCopy, type RichTextCopyFragment } from './richText'
 import type { EditorSyntaxInjection, EditorSyntaxLanguageId } from '../syntax/session'
 import {
+  CLIPBOARD_METADATA_TYPE,
   readClipboardMetadata,
   rememberClipboardPayload,
   writeClipboardPayload,
@@ -502,9 +503,12 @@ export class InputSelectionController {
       !event.shiftKey
     )
       return true
-    this.options.view.focusInput()
-    const document = this.options.el.ownerDocument
-    return typeof document.execCommand === 'function' && document.execCommand(command)
+    if (command !== 'paste' && !this.#clipboardPayload()) return false
+    if (this.#asyncClipboard(command)) {
+      void this.#runClipboardAction(command)
+      return true
+    }
+    return this.#execDocumentClipboardCommand(command)
   }
 
   applyHistoryCommand(command: 'undo' | 'redo', context: EditorCommandContext): boolean {
@@ -2374,43 +2378,146 @@ export class InputSelectionController {
   }
 
   async applyClipboardAction(action: 'copy' | 'cut' | 'paste'): Promise<void> {
-    const session = this.session
+    await this.#runClipboardAction(action)
+  }
+
+  #asyncClipboard(action: 'copy' | 'cut' | 'paste'): Clipboard | null {
     const clipboard = this.options.el.ownerDocument.defaultView?.navigator.clipboard
-    if (!session || !clipboard) return
-    const snapshot = session.getSnapshot()
-    const selections = session.getSelections()
-    const payload = this.#clipboardPayload()
-    if (action !== 'paste' && !payload) return
-    if (action !== 'copy' && !this.#canTypeText()) return
-    const pasted = action === 'paste' ? await clipboard.readText() : null
-    if (payload && action !== 'paste') {
-      await clipboard.writeText(payload.text)
-      rememberClipboardPayload(payload.text, payload.metadata)
+    if (!clipboard) return null
+    if (action === 'paste') {
+      return typeof clipboard.read === 'function' || typeof clipboard.readText === 'function'
+        ? clipboard
+        : null
     }
-    // A permission prompt can outlive this document or its selection; keep the user's new intent.
+    return typeof clipboard.write === 'function' || typeof clipboard.writeText === 'function'
+      ? clipboard
+      : null
+  }
+
+  #execDocumentClipboardCommand(command: 'copy' | 'cut' | 'paste'): boolean {
+    this.options.view.focusInput()
+    const document = this.options.el.ownerDocument
+    return typeof document.execCommand === 'function' && document.execCommand(command)
+  }
+
+  async #writeAsyncClipboard(
+    clipboard: Clipboard,
+    action: 'copy' | 'cut',
+    payload: ClipboardPayload,
+  ): Promise<void> {
+    const window = this.options.el.ownerDocument.defaultView
+    const ClipboardItemCtor = window?.ClipboardItem ?? globalThis.ClipboardItem
+    const BlobCtor = window?.Blob ?? globalThis.Blob
+    const html = action === 'copy' ? this.#richTextHtml(payload) : null
+    // Chromium decodes text/plain Blobs in ClipboardItem with BOM stripping, which silently drops
+    // a leading U+FEFF. Use writeText directly when no HTML is needed or a leading BOM must survive.
+    const preferClipboardItem =
+      (html !== null && !payload.text.startsWith('\uFEFF')) ||
+      typeof clipboard.writeText !== 'function'
     if (
-      this.session !== session ||
-      session.getSnapshot() !== snapshot ||
-      session.getSelections() !== selections
-    )
-      return
-    if (action === 'copy') return
-    if (pasted !== null) {
-      const window = this.options.el.ownerDocument.defaultView
-      if (!window) return
-      const transfer = new window.DataTransfer()
-      transfer.setData('text/plain', pasted)
-      this.#handlePaste(new window.ClipboardEvent('paste', { clipboardData: transfer }))
-      return
+      preferClipboardItem &&
+      typeof clipboard.write === 'function' &&
+      typeof ClipboardItemCtor === 'function' &&
+      typeof BlobCtor === 'function'
+    ) {
+      const items: Record<string, Blob> = {
+        'text/plain': new BlobCtor([payload.text], { type: 'text/plain' }),
+      }
+      if (html) items['text/html'] = new BlobCtor([html], { type: 'text/html' })
+      try {
+        await clipboard.write([new ClipboardItemCtor(items)])
+        rememberClipboardPayload(payload.text, payload.metadata)
+        return
+      } catch (error) {
+        if (typeof clipboard.writeText !== 'function') throw error
+      }
     }
-    this.options.runInOperation(() => {
-      if (!this.#canTypeText()) return
-      let change: DocumentSessionChange
-      if (payload?.metadata.pasteOnNewLine) change = this.#deleteCaretLines(session)
-      else change = this.#mirrorSelectionDelete(session) ?? session.deleteSelection()
-      this.#markSessionSelectionForNextInput()
-      this.applyChange(change, `input.clipboard.${action}`, nowMs())
-    })
+    await clipboard.writeText(payload.text)
+    rememberClipboardPayload(payload.text, payload.metadata)
+  }
+
+  async #readAsyncClipboard(clipboard: Clipboard): Promise<DataTransfer | null> {
+    const window = this.options.el.ownerDocument.defaultView
+    if (!window) return null
+    if (typeof clipboard.read === 'function') {
+      try {
+        const items = await clipboard.read()
+        const values = new Map<string, string>()
+        const files: File[] = []
+        const FileCtor = window.File ?? globalThis.File
+        for (const item of items) {
+          for (const rawType of item.types) {
+            const blob = await item.getType(rawType)
+            const type = rawType.startsWith('web ') ? rawType.slice(4) : rawType
+            if (type.startsWith('text/') || type === CLIPBOARD_METADATA_TYPE) {
+              if (!values.has(type)) values.set(type, await readClipboardTextBlob(blob))
+            } else if (typeof FileCtor === 'function') {
+              files.push(new FileCtor([blob], clipboardFilenameForType(type), { type }))
+            }
+          }
+        }
+        if (values.size > 0 || files.length > 0) {
+          return createClipboardDataTransfer(window, values, files)
+        }
+      } catch (error) {
+        if (typeof clipboard.readText !== 'function') throw error
+      }
+    }
+    const text = await clipboard.readText()
+    return createClipboardDataTransfer(window, new Map([['text/plain', text]]), [])
+  }
+
+  async #runClipboardAction(action: 'copy' | 'cut' | 'paste'): Promise<boolean> {
+    const session = this.session
+    if (!session) return false
+    if (action !== 'copy' && !this.#canTypeText()) return false
+    const payload = action === 'paste' ? null : this.#clipboardPayload()
+    if (action !== 'paste' && !payload) return false
+
+    const clipboard = this.#asyncClipboard(action)
+    if (clipboard) {
+      const snapshot = session.getSnapshot()
+      const selections = session.getSelections()
+      try {
+        const pastedTransfer = action === 'paste' ? await this.#readAsyncClipboard(clipboard) : null
+        if (payload && action !== 'paste') {
+          await this.#writeAsyncClipboard(clipboard, action, payload)
+        }
+        // A permission prompt can outlive this document or its selection; keep the user's new intent.
+        if (
+          this.session !== session ||
+          session.getSnapshot() !== snapshot ||
+          session.getSelections() !== selections
+        )
+          return false
+        if (action === 'copy') return true
+        if (pastedTransfer !== null) {
+          const window = this.options.el.ownerDocument.defaultView
+          if (!window) return false
+          this.#handlePaste(createSyntheticPasteEvent(window, pastedTransfer))
+          return true
+        }
+        this.options.runInOperation(() => {
+          if (!this.#canTypeText()) return
+          let change: DocumentSessionChange
+          if (payload?.metadata.pasteOnNewLine) change = this.#deleteCaretLines(session)
+          else change = this.#mirrorSelectionDelete(session) ?? session.deleteSelection()
+          this.#markSessionSelectionForNextInput()
+          this.applyChange(change, `input.clipboard.${action}`, nowMs())
+        })
+        return true
+      } catch {
+        // Fall back to execCommand when Async Clipboard is unavailable or denied, if state still matches.
+        if (
+          this.session !== session ||
+          session.getSnapshot() !== snapshot ||
+          session.getSelections() !== selections
+        )
+          return false
+      }
+    }
+
+    return this.#execDocumentClipboardCommand(action)
   }
 
   #setDomSelectionRange(range: Range | null, backward: boolean): void {
@@ -3550,13 +3657,17 @@ export class InputSelectionController {
     event.preventDefault()
   }
 
-  #writeRichTextPayload(data: DataTransfer, payload: ClipboardPayload): void {
-    const html = richTextForCopy({
+  #richTextHtml(payload: ClipboardPayload): string | null {
+    return richTextForCopy({
       font: readRichTextFont(this.options.el),
       fragments: payload.fragments,
       theme: this.options.getEditorTheme(),
       tokens: this.options.getSyntaxTokens(),
     })
+  }
+
+  #writeRichTextPayload(data: DataTransfer, payload: ClipboardPayload): void {
+    const html = this.#richTextHtml(payload)
     if (html) data.setData('text/html', html)
   }
 
@@ -4638,4 +4749,74 @@ function isSelectionList(
   selection: EditorSelectionRange | readonly EditorSelectionRange[] | undefined,
 ): selection is readonly EditorSelectionRange[] {
   return Array.isArray(selection)
+}
+
+/**
+ * Decodes clipboard text blobs without UTF-8 BOM stripping so leading U+FEFF characters survive
+ * Async Clipboard paste in browsers where `Blob.prototype.text()` strips a leading BOM.
+ */
+async function readClipboardTextBlob(blob: Blob): Promise<string> {
+  if (typeof blob.arrayBuffer === 'function' && typeof TextDecoder === 'function') {
+    return new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blob.arrayBuffer())
+  }
+  return blob.text()
+}
+
+function clipboardFilenameForType(type: string): string {
+  const subtype =
+    type
+      .split('/')[1]
+      ?.split(';')[0]
+      ?.replace(/[^a-z0-9.+-]/giu, '') || 'bin'
+  const extension = subtype === 'jpeg' ? 'jpg' : subtype
+  return `clipboard.${extension}`
+}
+
+function createClipboardDataTransfer(
+  window: Window & typeof globalThis,
+  values: ReadonlyMap<string, string>,
+  files: readonly File[],
+): DataTransfer {
+  if (typeof window.DataTransfer === 'function') {
+    const transfer = new window.DataTransfer()
+    for (const [type, value] of values) transfer.setData(type, value)
+    if (files.length === 0) return transfer
+    if (typeof transfer.items?.add === 'function') {
+      try {
+        for (const file of files) transfer.items.add(file)
+        if (transfer.files.length === files.length && transfer.types.includes('Files'))
+          return transfer
+      } catch {
+        // Fall through to lightweight transfer shim when DataTransfer.items.add is unsupported.
+      }
+    }
+  }
+  const map = new Map(values)
+  return {
+    files,
+    getData: (format: string): string => map.get(format) ?? '',
+    setData: (format: string, value: string): void => {
+      map.set(format, value)
+    },
+    get types(): readonly string[] {
+      return Array.from(map.keys()).concat(files.length > 0 ? ['Files'] : [])
+    },
+  } as unknown as DataTransfer
+}
+
+function createSyntheticPasteEvent(
+  window: Window & typeof globalThis,
+  transfer: DataTransfer,
+): ClipboardEvent {
+  if (typeof window.ClipboardEvent === 'function') {
+    try {
+      const event = new window.ClipboardEvent('paste', { clipboardData: transfer })
+      if (event.clipboardData === transfer) return event
+    } catch {
+      // Fall through when the environment's ClipboardEvent constructor rejects non-native transfers.
+    }
+  }
+  const event = new window.Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+  Object.defineProperty(event, 'clipboardData', { configurable: true, value: transfer })
+  return event
 }

@@ -686,6 +686,37 @@ function inlineRowForDisplayRow(row: DisplayRow | undefined): InlineRow | undefi
   return isDocumentTextDisplayRow(row) ? row.inlineRow : undefined
 }
 
+function sameInlineRow(left: InlineRow | undefined, right: InlineRow | undefined): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  if (left.sourceLength !== right.sourceLength || left.displayLength !== right.displayLength)
+    return false
+  if (left.segments.length !== right.segments.length) return false
+
+  for (let index = 0; index < left.segments.length; index += 1) {
+    const a = left.segments[index]!
+    const b = right.segments[index]!
+    if (
+      a.kind !== b.kind ||
+      a.sourceStartColumn !== b.sourceStartColumn ||
+      a.sourceEndColumn !== b.sourceEndColumn ||
+      a.displayStartColumn !== b.displayStartColumn ||
+      a.displayEndColumn !== b.displayEndColumn ||
+      a.id !== b.id ||
+      a.replacementKind !== b.replacementKind ||
+      a.className !== b.className ||
+      a.cursorStops !== b.cursorStops ||
+      a.wrap !== b.wrap ||
+      a.render !== b.render ||
+      a.key !== b.key ||
+      a.metadata !== b.metadata
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
 function displayRowSource(row: DisplayRow | undefined): EditorGutterRowContext['source'] {
   if (!row) return 'document'
   return row.source
@@ -787,7 +818,8 @@ function rowContentChanged(row: MountedVirtualizedTextRow, state: RowUpdateState
     row.injectedTextRowId !== state.injectedTextRowId ||
     row.kind !== state.kind ||
     row.text !== state.text ||
-    row.inlineMapping?.line !== state.inlineMapping?.line
+    !sameInlineRow(row.inlineMapping?.line, state.inlineMapping?.line) ||
+    row.inlineMapping?.displayStartColumn !== state.inlineMapping?.displayStartColumn
   )
 }
 
@@ -2614,7 +2646,16 @@ function rowFreshness(
   if (row.text !== text) return 'stale'
   // Display text alone does not say what is behind it: a run that changed only how it paints — the
   // box it asks for, the node it renders — leaves every column of the row exactly where it was.
-  if (row.inlineMapping?.line !== inlineRowForDisplayRow(displayRow)) return 'stale'
+  const nextInlineRow = inlineRowForDisplayRow(displayRow)
+  const nextDisplayStartColumn =
+    isDocumentTextDisplayRow(displayRow) && displayRow.inlineRow
+      ? displayRow.displayStartColumn
+      : undefined
+  if (
+    !sameInlineRow(row.inlineMapping?.line, nextInlineRow) ||
+    row.inlineMapping?.displayStartColumn !== nextDisplayStartColumn
+  )
+    return 'stale'
   if (
     row.chunkKey !==
     rowChunkKey(view, lineContent(view, item.index), snapshot, row.inlineMapping ?? null)

@@ -1,36 +1,76 @@
-import type { TextReadSnapshot } from '@singapore-editor/core/document'
+import type { TextBlockReader, TextReadSnapshot } from '@singapore-editor/core/document'
 import { decodeString } from 'micromark-util-decode-string'
 import { normalizeIdentifier } from 'micromark-util-normalize-identifier'
 import { Kind } from 'tree-sitter-md'
 
 export type MarkdownSpan = { readonly start: number; readonly end: number }
 
+export function indexMarkdownDefinitions(
+  source: TextReadSnapshot,
+  records: Uint32Array,
+  reader?: TextBlockReader,
+): ReadonlyMap<string, string | null> {
+  const definitions = new Map<string, string | null>()
+  for (let index = 0; index < records.length; index += 4) {
+    if (records[index + 2] !== Kind.Definition) continue
+    const definition = readSlice(source, reader, records[index]!, records[index + 1]!).trimStart()
+    const end = closingBracket(definition)
+    if (end < 0) continue
+    const identifier = normalizeIdentifier(definition.slice(1, end))
+    if (!definitions.has(identifier)) {
+      definitions.set(identifier, safeDestination(readDestination(definition, end + 2)))
+    }
+  }
+  return definitions
+}
+
 export function markdownLinkDestination(
   source: TextReadSnapshot,
   link: MarkdownSpan,
   label: MarkdownSpan,
   records: Uint32Array,
+  options?: {
+    readonly reader?: TextBlockReader
+    readonly definitions?: () => ReadonlyMap<string, string | null>
+  },
 ): string | null {
-  const suffix = source.readRange(label.end, link.end)
+  const reader = options?.reader
+  const suffix = readSlice(source, reader, label.end, link.end)
   if (suffix.startsWith('](')) return safeDestination(readDestination(suffix, 2))
-  const raw = source.readRange(link.start, link.end)
-  if (raw.startsWith('<') || link.start === label.start) {
-    const target = source.readRange(label.start, label.end)
+  const firstChar = reader
+    ? reader.charCodeAt(link.start)
+    : source.readRange(link.start, link.start + 1).charCodeAt(0)
+  if (firstChar === 0x3c /* '<' */ || link.start === label.start) {
+    const target = readSlice(source, reader, label.start, label.end)
     if (target.startsWith('www.')) return safeDestination(`https://${target}`)
     return safeDestination(
       target.includes('@') && !target.includes(':') ? `mailto:${target}` : target,
     )
   }
   const reference = suffix.startsWith('][') ? suffix.slice(2, -1) : ''
-  const identifier = normalizeIdentifier(reference || source.readRange(label.start, label.end))
+  const identifier = normalizeIdentifier(
+    reference || readSlice(source, reader, label.start, label.end),
+  )
+  if (options?.definitions) {
+    return options.definitions().get(identifier) ?? null
+  }
   for (let index = 0; index < records.length; index += 4) {
     if (records[index + 2] !== Kind.Definition) continue
-    const definition = source.readRange(records[index]!, records[index + 1]!).trimStart()
+    const definition = readSlice(source, reader, records[index]!, records[index + 1]!).trimStart()
     const end = closingBracket(definition)
     if (end < 0 || normalizeIdentifier(definition.slice(1, end)) !== identifier) continue
     return safeDestination(readDestination(definition, end + 2))
   }
   return null
+}
+
+function readSlice(
+  source: TextReadSnapshot,
+  reader: TextBlockReader | undefined,
+  start: number,
+  end: number,
+): string {
+  return reader ? reader.slice(start, end) : source.readRange(start, end)
 }
 
 function closingBracket(source: string): number {
