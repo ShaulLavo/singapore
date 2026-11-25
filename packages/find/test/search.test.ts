@@ -3,6 +3,7 @@ import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import { parseReplaceString } from '../src/replacePattern'
 import {
   FIND_MATCHES_LIMIT,
+  FIND_SELECT_ALL_LIMIT,
   FIND_WINDOW_UNITS,
   findMatches,
   findQueryPlan,
@@ -609,7 +610,7 @@ describe('editor find controller', () => {
   )
 
   findTest(
-    'selects every match, not just the painted ones',
+    'caps selectAllMatches at FIND_SELECT_ALL_LIMIT and announces truncation',
     {
       text: 'a'.repeat(FIND_MATCHES_LIMIT + 2),
       options: { seedSearchStringFromSelection: 'never' },
@@ -621,7 +622,7 @@ describe('editor find controller', () => {
         matches: FIND_MATCHES_LIMIT,
         current: [0, 1],
         selection: [0, 1],
-        count: `1 of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `1 of ${FIND_MATCHES_LIMIT}+`,
       })
 
       expect(harness.selectAllMatches()).toBe(true)
@@ -629,9 +630,34 @@ describe('editor find controller', () => {
         matches: FIND_MATCHES_LIMIT,
         current: [0, 1],
         selection: [0, 1],
-        count: `1 of ${FIND_MATCHES_LIMIT + 2}`,
-        selectionCount: FIND_MATCHES_LIMIT + 2,
+        count: `1 of ${FIND_MATCHES_LIMIT}+`,
+        selectionCount: FIND_SELECT_ALL_LIMIT,
       })
+      expect(harness.announcements()).toEqual([
+        `Selected the first ${FIND_SELECT_ALL_LIMIT} matches`,
+      ])
+    },
+  )
+
+  findTest(
+    'does not announce truncation when selectAllMatches hits FIND_SELECT_ALL_LIMIT exactly',
+    {
+      text: 'a'.repeat(FIND_SELECT_ALL_LIMIT),
+      options: { seedSearchStringFromSelection: 'never' },
+    },
+    (harness) => {
+      harness.openFind()
+      harness.typeSearch('a')
+
+      expect(harness.selectAllMatches()).toBe(true)
+      assertFindState(harness, {
+        matches: FIND_SELECT_ALL_LIMIT,
+        current: [0, 1],
+        selection: [0, 1],
+        count: `1 of ${FIND_SELECT_ALL_LIMIT}`,
+        selectionCount: FIND_SELECT_ALL_LIMIT,
+      })
+      expect(harness.announcements()).toEqual([])
     },
   )
 
@@ -649,7 +675,7 @@ describe('editor find controller', () => {
         matches: FIND_MATCHES_LIMIT,
         current: [0, 1],
         selection: [0, 1],
-        count: `1 of ${FIND_MATCHES_LIMIT + 2}`,
+        count: `1 of ${FIND_MATCHES_LIMIT}+`,
       })
 
       harness.clickReplaceAll()
@@ -683,7 +709,7 @@ describe('editor find controller', () => {
 })
 
 describe('editor find widget', () => {
-  it('shows an exact count and says when only the painting stopped', () => {
+  it('shows a bounded count when truncated and searching progress during chunked scans', () => {
     const container = document.createElement('div')
     const widget = new EditorFindWidget(container, container, widgetOptions())
 
@@ -693,14 +719,29 @@ describe('editor find widget', () => {
 
     widget.update(
       widgetState({
-        matchesPosition: 30_000,
-        matchesCount: 500_000,
+        matchesPosition: 1,
+        matchesCount: FIND_MATCHES_LIMIT,
         highlightsTruncated: true,
       }),
     )
-    expect(countElement(container)?.textContent).toBe('30000 of 500000')
+    expect(countElement(container)?.textContent).toBe(`1 of ${FIND_MATCHES_LIMIT}+`)
     expect(countElement(container)?.title).toContain(`first ${FIND_MATCHES_LIMIT} results`)
     expect(countElement(container)?.title).toContain('entire text')
+
+    widget.update(
+      widgetState({
+        matchesPosition: 0,
+        matchesCount: FIND_MATCHES_LIMIT,
+        highlightsTruncated: true,
+      }),
+    )
+    expect(countElement(container)?.textContent).toBe(`? of ${FIND_MATCHES_LIMIT}+`)
+
+    widget.update(widgetState({ matchesPosition: 0, matchesCount: 0, searching: true }))
+    expect(countElement(container)?.textContent).toBe('Searching…')
+
+    widget.update(widgetState({ matchesPosition: 1, matchesCount: 12, searching: true }))
+    expect(countElement(container)?.textContent).toBe('1 of 12+')
 
     widget.dispose()
   })
@@ -792,8 +833,9 @@ describe('searching text a line at a time', () => {
   it('answers a pattern whose break-matching construct nobody enumerated', () => {
     // Deciding by listing the constructs that CAN hold a break means one nobody
     // thought of answers "no results" for text that is plainly there.
-    for (const pattern of ['a[\\s\\S]b', 'a\\u000ab', 'a\\x0ab', 'a[^x]b']) {
+    for (const pattern of ['a[\\s\\S]b', 'a\\u000ab', 'a\\x0ab', 'a[^x]b', 'a[\t- ]b']) {
       expect(found('a\nb', regex(pattern))).toEqual([[0, 3]])
+      expect(findQueryPlan(regex(pattern))?.kind).toBe('range')
     }
   })
 

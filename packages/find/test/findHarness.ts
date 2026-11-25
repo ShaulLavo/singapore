@@ -36,6 +36,8 @@ export type FindFixture = {
   readonly text: string
   /** Collapsed caret offset, or an anchor/head pair. */
   readonly selection?: number | FindRangeTuple | FindSelectionFixture
+  /** Simulated mounted viewport offset span, when testing viewport-first scans. */
+  readonly visibleRange?: FindRangeTuple | null
   readonly options?: EditorFindOptions
 }
 
@@ -73,6 +75,7 @@ export type FindStateExpectation = {
 export type FindHarness = {
   openFind(): void
   openFindReplace(): void
+  toggleReplace(): void
   toggleRegex(): void
   clickRegex(): void
   clickScope(): void
@@ -92,6 +95,10 @@ export type FindHarness = {
   pressShiftEnter(): void
   pressReplaceEnter(): void
   selectAllMatches(): boolean
+  closeFind(): boolean
+  setSelection(anchor: number, head?: number): void
+  setVisibleRange(range: FindRangeTuple | null): void
+  announcements(): readonly string[]
   state(): FindObservedState
   /**
    * Every range a search has read, in order.
@@ -112,12 +119,12 @@ export type FindHarness = {
 export function findTest(
   name: string,
   fixture: FindFixture,
-  run: (harness: FindHarness) => void,
+  run: (harness: FindHarness) => void | Promise<void>,
 ): void {
-  it(name, () => {
+  it(name, async () => {
     const harness = createFindHarness(fixture)
     try {
-      run(harness)
+      await run(harness)
     } finally {
       harness.dispose()
     }
@@ -251,6 +258,10 @@ function createFindHarness(fixture: FindFixture): FindHarness {
 
   const highlights = new Map<string, readonly FindRange[]>()
   const reads: FindRangeTuple[] = []
+  const spoken: string[] = []
+  let visibleRange: FindRange | null = fixture.visibleRange
+    ? { start: fixture.visibleRange[0], end: fixture.visibleRange[1] }
+    : null
   let selections: readonly EditorFindResolvedSelection[] = [
     resolveSelection(fixture.selection ?? 0),
   ]
@@ -264,9 +275,12 @@ function createFindHarness(fixture: FindFixture): FindHarness {
     // These fixtures are small enough to be wholly on screen, so what an editor
     // would follow only within its viewport is followed here throughout.
     trackPaintedRanges: (ranges) => store.trackRanges(ranges),
+    visibleRange: () => visibleRange,
     getSelections: () => selections,
     focusEditor: () => {},
-    announce: () => {},
+    announce: (message) => {
+      spoken.push(message)
+    },
     setSelection: (anchor, head, _timingName, options) => {
       selections = [resolveSelection({ anchor, head, affinity: options?.affinity })]
     },
@@ -341,6 +355,7 @@ function createFindHarness(fixture: FindFixture): FindHarness {
   return {
     openFind: () => void controller.openFind(),
     openFindReplace: () => void controller.openFindReplace(),
+    toggleReplace: () => void controller.toggleReplace(),
     toggleRegex: () => void controller.toggleRegex(),
     clickRegex: () => clickButton(container, FIND_ICONS.regex),
     clickScope: () => clickButton(container, FIND_ICONS.scope),
@@ -361,6 +376,14 @@ function createFindHarness(fixture: FindFixture): FindHarness {
     pressShiftEnter: () => pressKey(searchInput(container), 'Enter', true),
     pressReplaceEnter: () => pressKey(replaceInput(container), 'Enter', false),
     selectAllMatches: () => controller.selectAllMatches(),
+    closeFind: () => controller.close(),
+    setSelection: (anchor, head = anchor) => {
+      selections = [resolveSelection({ anchor, head })]
+    },
+    setVisibleRange: (range) => {
+      visibleRange = range ? { start: range[0], end: range[1] } : null
+    },
+    announcements: () => spoken,
     state: () => ({
       matches: rangesNamed('match') ?? [],
       current: rangesNamed('current')?.[0] ?? null,

@@ -315,6 +315,7 @@ function createFindHost(
     hasTextSnapshot: (snapshot) => getSnapshot().textSnapshot === snapshot,
     trackRanges: (ranges) => context.trackRanges(ranges),
     trackPaintedRanges,
+    visibleRange: () => paintedSpan(getSnapshot()),
     getSelections: () => findSelections(getSnapshot().selections),
     focusEditor: () => context.focusEditor(),
     announce: (message) => context.announce(message),

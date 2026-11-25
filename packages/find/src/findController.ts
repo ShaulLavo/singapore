@@ -14,21 +14,30 @@ import type {
 import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
 import { EditorSecondaryViewScheduler } from '@singapore-editor/core/secondary-views'
 import {
-  countMatches,
+  createFindRangeScanner,
   escapeRegExpCharacters,
+  FIND_CHUNK_MAX_WINDOWS_PER_SLICE,
+  FIND_CHUNK_SLICE_BUDGET_MS,
+  FIND_INITIAL_SLICE_BUDGET_MS,
   FIND_MATCHES_LIMIT,
   FIND_REPLACE_ALL_LIMIT,
+  FIND_SELECT_ALL_LIMIT,
+  FIND_SYNC_THRESHOLD,
   findLineRange,
   findMatchIndex,
   findMatches,
   findNextMatchFrom,
   findPreviousMatchFrom,
+  findQueryPlan,
   findTextSourceFromSnapshot,
+  partitionViewportRanges,
+  searchedRangesLength,
   type FindMatch,
   type FindMatchFromOptions,
   type FindMatchFromSearcher,
   type FindQuery,
   type FindRange,
+  type FindRangeScanner,
   type FindTextSource,
 } from './search'
 import { parseReplaceString, ReplacePattern } from './replacePattern'
@@ -90,6 +99,7 @@ const SEARCH_STRING_MAX_LENGTH = 524_288
 // leaves the quiet gap, so waiting only for quiet would mean never re-searching
 // at all for as long as the user keeps going.
 const FIND_RESEARCH_KEY = 'find.research'
+const FIND_SCAN_SLICE_KEY = 'find.scanSlice'
 const FIND_RESEARCH_DELAY_MS = 100
 const FIND_RESEARCH_MAX_DELAY_MS = 400
 
@@ -124,6 +134,9 @@ export type EditorFindHost = {
   // Followed only as far as the host paints them, the rest answered with the
   // offsets they were handed; see adoptMatches.
   trackPaintedRanges(ranges: readonly FindRange[]): FindTrackedRanges
+  // The offset span of mounted viewport rows, when known. Large-file searches
+  // scan this span synchronously first so on-screen matches paint immediately.
+  visibleRange?(): FindRange | null
   getSelections(): readonly EditorFindResolvedSelection[]
   focusEditor(): void
   announce(message: string): void
@@ -170,11 +183,15 @@ export type EditorFindState = FindQuery & {
 }
 
 export type EditorFindWidgetState = EditorFindState & {
-  // Every match in the searched text, however many of them are painted.
+  // Counted up to FIND_MATCHES_LIMIT; when `highlightsTruncated` is true, more
+  // matches exist beyond the cap (displayed as e.g. `19999+`).
   readonly matchesCount: number
   readonly matchesPosition: number
-  // Painting stopped at FIND_MATCHES_LIMIT. The count and navigation did not.
+  // Counting and painting stopped at FIND_MATCHES_LIMIT; Find Next and Replace
+  // All still cover the entire document.
   readonly highlightsTruncated: boolean
+  // True while a large-file background scan is still scanning off-screen slices.
+  readonly searching?: boolean
 }
 
 export type EditorFindUiEvent =
@@ -192,6 +209,49 @@ type EditorFindUiListener = (event: EditorFindUiEvent) => void
 type FindSearchTarget = {
   readonly source: FindTextSource
   readonly scopes: readonly FindRange[] | null
+}
+
+type FindSelectionSnapshot = {
+  readonly anchorOffset: number
+  readonly headOffset: number
+  readonly affinity: EditorFindResolvedSelection['affinity']
+}
+
+type ActiveFindScan = {
+  readonly generation: number
+  readonly snapshot: TextReadSnapshot | null
+  readonly source: FindTextSource
+  readonly scopes: readonly FindRange[] | null
+  readonly query: FindQuery
+  readonly viewportSpan: FindRange | null
+  readonly viewportMatches: readonly FindMatch[]
+  readonly prefixScanner: FindRangeScanner | null
+  readonly suffixRanges: readonly FindRange[]
+  suffixScanner: FindRangeScanner | null
+  readonly prefixMatches: FindMatch[]
+  readonly suffixMatches: FindMatch[]
+  readonly remainingLimit: number
+  prefixDone: boolean
+  moveCursor: boolean
+  readonly moveCursorSelection: FindSelectionSnapshot | null
+  channel: MessageChannel | null
+}
+
+// Cooperative forward search used when cursorMoveOnType needs a match past a
+// truncated prefix on a large file without blocking the input stack or
+// rescanning from offset 0.
+type ActiveCursorScan = {
+  readonly generation: number
+  readonly snapshot: TextReadSnapshot | null
+  scanner: FindRangeScanner
+  readonly fallbackMatch: FindMatch | null
+  wrapTarget: {
+    readonly source: FindTextSource
+    readonly query: FindQuery
+    readonly scopes: readonly FindRange[] | null
+  } | null
+  readonly expectedSelection: FindSelectionSnapshot | null
+  channel: MessageChannel | null
 }
 
 export class EditorFindController {
@@ -216,8 +276,14 @@ export class EditorFindController {
   private readonly scheduler = new EditorSecondaryViewScheduler()
   private matches: readonly FindMatch[] = []
   private highlightsTruncated = false
-  // Counted rather than listed, so it is exact past the paint cap.
-  private totalMatches = 0
+  // True while a chunked scan is running OR was cancelled by an edit before
+  // completing, so followPendingMatches keeps the count provisional (`N+`)
+  // until the replacement search lands.
+  private matchesIncomplete = false
+  // Number of leading entries in `matches` that form a gap-free prefix from
+  // the start of the searched text. Positions beyond this prefix report `?`
+  // rather than rescanning from offset 0.
+  private exactPrefixMatchCount = 0
   private scope: FindTrackedRanges | null = null
   // What the host follows the painted matches by, so a deferred re-search cannot
   // leave a highlight standing on text that moved out from under it.
@@ -225,6 +291,10 @@ export class EditorFindController {
   private currentMatch: FindMatch | null = null
   private replacing = false
   private pendingResearch = false
+  private searchDirty = false
+  private scanGeneration = 0
+  private activeScan: ActiveFindScan | null = null
+  private activeCursorScan: ActiveCursorScan | null = null
 
   public constructor(options: EditorFindOptions = {}) {
     this.options = resolveFindOptions(options)
@@ -252,6 +322,9 @@ export class EditorFindController {
 
   public dispose(): void {
     this.pendingResearch = false
+    this.searchDirty = false
+    this.matchesIncomplete = false
+    this.cancelActiveScan()
     this.scheduler.dispose()
     this.clearHighlights()
     this.listeners.clear()
@@ -281,6 +354,9 @@ export class EditorFindController {
     if (!this.state.revealed || !host) return false
 
     this.pendingResearch = false
+    this.searchDirty = false
+    this.matchesIncomplete = false
+    this.cancelActiveScan()
     this.state = { ...this.state, revealed: false, inSelection: false }
     this.scope = null
     this.trackedMatches = null
@@ -393,22 +469,31 @@ export class EditorFindController {
     if (!host) return false
     if (!this.ensureFindReady('none')) return false
 
-    // Re-queried uncapped for the same reason Replace All is: FIND_MATCHES_LIMIT
-    // bounds painting, and a cursor set that silently stopped at the paint cap
-    // would let the next keystroke edit only part of what the user selected.
+    // Bounded at FIND_SELECT_ALL_LIMIT so dense matches on large files cannot
+    // freeze the tab by creating hundreds of thousands of cursors in one frame.
     const search = this.commandSearchTarget()
     if (!search) return false
-    const matches = findMatches(
+    const found = findMatches(
       search.source,
       this.state,
       search.scopes,
       false,
-      FIND_REPLACE_ALL_LIMIT,
+      FIND_SELECT_ALL_LIMIT + 1,
     )
-    if (matches.length === 0) return false
+    if (found.length === 0) return false
 
+    const truncated = found.length > FIND_SELECT_ALL_LIMIT
+    const matches = truncated ? found.slice(0, FIND_SELECT_ALL_LIMIT) : found
+    this.cancelActiveCursorScan()
+    if (this.activeScan) this.activeScan.moveCursor = false
     const selections = orderedMatchSelections(matches, this.primarySelection())
     host.setSelections(selections, 'input.findSelectAll', selections[0]?.head)
+    if (this.canPaintCurrentDocument()) {
+      this.currentMatch = matchAtSelection(matches, this.primarySelection())
+      this.updateHighlights()
+      this.updateWidget()
+    }
+    if (truncated) host.announce(`Selected the first ${FIND_SELECT_ALL_LIMIT} matches`)
     return true
   }
 
@@ -464,7 +549,22 @@ export class EditorFindController {
 
   public setSearchString(value: string): void {
     this.state = { ...this.state, searchString: value }
-    if (this.options.findOnType) this.research(this.options.cursorMoveOnType)
+    if (this.options.findOnType) {
+      this.research(this.options.cursorMoveOnType)
+      return
+    }
+    const hadIncompleteScan = this.activeScan !== null || this.matchesIncomplete
+    this.cancelActiveScan()
+    this.matchesIncomplete = false
+    this.searchDirty = true
+    if (hadIncompleteScan) {
+      this.highlightsTruncated = false
+      this.exactPrefixMatchCount = 0
+      this.adoptMatches([])
+      this.currentMatch = null
+      this.updateHighlights()
+      this.updateWidget()
+    }
   }
 
   public setReplaceString(value: string): void {
@@ -506,6 +606,8 @@ export class EditorFindController {
       this.research(false)
       return
     }
+    if (this.activeScan) this.matchesIncomplete = true
+    this.cancelActiveScan()
     this.scheduleResearch()
   }
 
@@ -513,6 +615,9 @@ export class EditorFindController {
     if (this.host !== host) return
 
     this.pendingResearch = false
+    this.searchDirty = false
+    this.matchesIncomplete = false
+    this.cancelActiveScan()
     this.clearHighlights()
     this.host = null
     this.matchHighlightName = ''
@@ -521,7 +626,7 @@ export class EditorFindController {
     this.state = { ...this.state, revealed: false, inSelection: false }
     this.matches = []
     this.highlightsTruncated = false
-    this.totalMatches = 0
+    this.exactPrefixMatchCount = 0
     this.scope = null
     this.trackedMatches = null
     this.currentMatch = null
@@ -555,33 +660,578 @@ export class EditorFindController {
 
   private ensureFindReady(focus: 'find' | 'replace' | 'none'): boolean {
     if (!this.state.revealed) return this.open({ replace: focus === 'replace', focus })
-    if (this.matches.length === 0) this.research(false)
+    if (this.searchDirty || (this.pendingResearch && !this.activeScan)) this.research(false)
     return this.state.searchString.length > 0
   }
 
   private research(moveCursor: boolean): void {
     if (!this.host) return
     if (!this.canPaintCurrentDocument()) {
+      this.cancelActiveScan()
       this.pendingResearch = true
       if (moveCursor) this.selectFirstMatchFromSelection()
       return
     }
     this.pendingResearch = false
+    this.searchDirty = false
 
-    // Whatever a deferred run was going to answer, this run answers now.
+    // Whatever a deferred run or background scan was going to answer, this run
+    // supersedes it now.
     this.scheduler.cancel(FIND_RESEARCH_KEY)
+    this.cancelActiveScan()
+
+    const search = this.searchTarget()
+    const plan = search ? findQueryPlan(this.state) : null
+    if (!search || !plan) {
+      this.highlightsTruncated = false
+      this.matchesIncomplete = false
+      this.exactPrefixMatchCount = 0
+      this.adoptMatches([])
+      this.currentMatch = null
+      this.updateHighlights()
+      this.updateWidget()
+      return
+    }
+
+    const totalLength = searchedRangesLength(search.source, search.scopes)
+    if (totalLength <= FIND_SYNC_THRESHOLD) {
+      this.runSyncSearch(search, moveCursor)
+      return
+    }
+
+    this.startChunkedSearch(search, plan.kind, moveCursor)
+  }
+
+  private runSyncSearch(search: FindSearchTarget, moveCursor: boolean): void {
     // One past the cap, so a document holding exactly FIND_MATCHES_LIMIT
-    // matches is reported as a complete count rather than an overflow.
-    const found = this.findAll(false, FIND_MATCHES_LIMIT + 1)
+    // matches is reported as a complete count rather than an overflow, without
+    // ever rescanning from offset 0.
+    const found = findMatches(
+      search.source,
+      this.state,
+      search.scopes,
+      false,
+      FIND_MATCHES_LIMIT + 1,
+    )
     this.highlightsTruncated = found.length > FIND_MATCHES_LIMIT
-    this.totalMatches = this.highlightsTruncated ? this.countAll() : found.length
-    this.adoptMatches(this.highlightsTruncated ? found.slice(0, FIND_MATCHES_LIMIT) : found)
-    this.currentMatch = matchAtSelection(this.matches, this.primarySelection())
+    this.matchesIncomplete = false
+    const adopted = this.highlightsTruncated ? found.slice(0, FIND_MATCHES_LIMIT) : found
+    this.exactPrefixMatchCount = adopted.length
+    this.adoptMatches(adopted)
+    const selection = this.primarySelection()
+    this.currentMatch = matchAtSelection(this.matches, selection)
     this.updateHighlights()
     this.updateWidget()
     // Nothing listed is nothing to land on, and asking anyway is two more passes
     // over the document for every keystroke of a query that matches nothing.
-    if (moveCursor && found.length > 0) this.selectFirstMatchFromSelection()
+    if (moveCursor && adopted.length > 0) {
+      const offset = selection?.endOffset ?? 0
+      const inList = firstMatchAtOrAfterInList(
+        adopted,
+        offset,
+        !this.highlightsTruncated && this.options.loop,
+      )
+      if (inList) {
+        this.selectMatch(inList, false)
+        return
+      }
+      if (this.highlightsTruncated) {
+        const ahead = this.searchFrom(findNextMatchFrom, offset, {
+          escapeEmptyMatchAtOffset: false,
+          loop: false,
+        })
+        this.selectMatch(ahead ?? (this.options.loop ? (adopted[0] ?? null) : null), false)
+      }
+    }
+  }
+
+  private startChunkedSearch(
+    search: FindSearchTarget,
+    planKind: 'lines' | 'anchored-lines' | 'literal-lines' | 'range',
+    moveCursor: boolean,
+  ): void {
+    const host = this.host
+    if (!host) return
+
+    const query: FindQuery = {
+      searchString: this.state.searchString,
+      isRegex: this.state.isRegex,
+      matchCase: this.state.matchCase,
+      wholeWord: this.state.wholeWord,
+    }
+    const selection = this.primarySelection()
+    const selectionSnapshot = snapshotSelection(selection)
+    const anchorOffset = selection?.endOffset ?? 0
+    const snapshot = this.editHost?.textSnapshot() ?? null
+
+    if (planKind === 'lines' || planKind === 'anchored-lines') {
+      const frame0Start = nowMs()
+      const partition = partitionViewportRanges(
+        search.source,
+        search.scopes,
+        host.visibleRange?.() ?? null,
+        anchorOffset,
+      )
+      const vpFound =
+        partition.viewportRanges.length > 0
+          ? findMatches(
+              search.source,
+              query,
+              partition.viewportRanges,
+              false,
+              FIND_MATCHES_LIMIT + 1,
+            )
+          : []
+      const vpTruncated = vpFound.length > FIND_MATCHES_LIMIT
+      const vpMatches = vpTruncated ? vpFound.slice(0, FIND_MATCHES_LIMIT) : vpFound
+      const hasBackgroundWork =
+        !vpTruncated && (partition.prefixRanges.length > 0 || partition.suffixRanges.length > 0)
+
+      if (!hasBackgroundWork) {
+        this.highlightsTruncated = vpTruncated
+        this.matchesIncomplete = false
+        this.exactPrefixMatchCount = partition.prefixRanges.length === 0 ? vpMatches.length : 0
+        this.adoptMatches(vpMatches)
+        this.currentMatch = matchAtSelection(this.matches, selection)
+        this.updateHighlights()
+        this.updateWidget()
+        if (moveCursor && vpMatches.length > 0) {
+          this.moveCursorForTruncatedLargeFile(
+            search,
+            query,
+            snapshot,
+            vpMatches,
+            partition.viewportSpan,
+            selectionSnapshot,
+            anchorOffset,
+          )
+        }
+        return
+      }
+
+      const remainingLimit = FIND_MATCHES_LIMIT - vpMatches.length
+      const prefixScanner =
+        partition.prefixRanges.length > 0
+          ? createFindRangeScanner(search.source, query, partition.prefixRanges, remainingLimit)
+          : null
+
+      const scan: ActiveFindScan = {
+        generation: ++this.scanGeneration,
+        snapshot,
+        source: search.source,
+        scopes: search.scopes,
+        query,
+        viewportSpan: partition.viewportSpan,
+        viewportMatches: vpMatches,
+        prefixScanner,
+        suffixRanges: partition.suffixRanges,
+        suffixScanner: null,
+        prefixMatches: [],
+        suffixMatches: [],
+        remainingLimit,
+        prefixDone: prefixScanner === null,
+        moveCursor,
+        moveCursorSelection: selectionSnapshot,
+        channel: null,
+      }
+      this.activeScan = scan
+
+      // For literal queries with a bounded viewport, spend any remaining sub-4 ms
+      // Frame-0 budget advancing off-screen windows so fast 1-2 MiB searches
+      // finish in Frame 1. Regex queries and oversized single lines (where
+      // viewportSpan is null) defer off-screen scanning to MessageChannel so a
+      // single RegExp.exec call cannot stall the input handler.
+      const remainingFrame0Ms = FIND_INITIAL_SLICE_BUDGET_MS - (nowMs() - frame0Start)
+      if (!query.isRegex && partition.viewportSpan !== null && remainingFrame0Ms > 0) {
+        const outcome = this.advanceScanSlice(scan, remainingFrame0Ms)
+        if (outcome.finished) {
+          this.finishActiveScan(scan, outcome.truncated, outcome.prefixComplete)
+          return
+        }
+      }
+
+      const immediateMatch = moveCursor
+        ? firstMatchInViewport(
+            vpMatches,
+            partition.viewportSpan,
+            partition.prefixRanges.length === 0,
+            anchorOffset,
+          )
+        : null
+      if (immediateMatch) scan.moveCursor = false
+
+      this.highlightsTruncated = false
+      this.matchesIncomplete = true
+      this.exactPrefixMatchCount = partition.prefixRanges.length === 0 ? vpMatches.length : 0
+      this.adoptMatches(vpMatches)
+      this.currentMatch = immediateMatch ?? matchAtSelection(vpMatches, selection)
+
+      if (immediateMatch) {
+        host.setSelection(
+          immediateMatch.start,
+          immediateMatch.end,
+          'input.findNavigate',
+          findReveal(immediateMatch, false),
+        )
+      }
+      // Re-check generation in case a selection listener edited the document
+      // and cancelled this scan synchronously.
+      if (this.activeScan !== scan) return
+
+      this.updateHighlights()
+      this.updateWidget()
+      this.scheduleNextScanSlice(scan)
+      return
+    }
+
+    // Line-crossing literals and multiline regexes need contiguous range scans
+    // to preserve non-overlap phase and multi-line anchors. Yield across slices
+    // without blocking the typing frame.
+    const prefixScanner = createFindRangeScanner(
+      search.source,
+      query,
+      search.scopes,
+      FIND_MATCHES_LIMIT,
+    )
+    this.highlightsTruncated = false
+    this.matchesIncomplete = true
+    this.exactPrefixMatchCount = 0
+    this.adoptMatches([])
+    this.currentMatch = null
+
+    const scan: ActiveFindScan = {
+      generation: ++this.scanGeneration,
+      snapshot,
+      source: search.source,
+      scopes: search.scopes,
+      query,
+      viewportSpan: null,
+      viewportMatches: [],
+      prefixScanner,
+      suffixRanges: [],
+      suffixScanner: null,
+      prefixMatches: [],
+      suffixMatches: [],
+      remainingLimit: FIND_MATCHES_LIMIT,
+      prefixDone: false,
+      moveCursor,
+      moveCursorSelection: selectionSnapshot,
+      channel: null,
+    }
+    this.activeScan = scan
+    this.updateHighlights()
+    this.updateWidget()
+    this.scheduleNextScanSlice(scan)
+  }
+
+  private scheduleNextScanSlice(scan: ActiveFindScan): void {
+    if (typeof MessageChannel !== 'undefined') {
+      if (!scan.channel) {
+        const channel = new MessageChannel()
+        channel.port1.onmessage = () => this.runScanSlice(scan)
+        scan.channel = channel
+      }
+      scan.channel.port2.postMessage(undefined)
+      return
+    }
+
+    this.scheduler.schedule({
+      key: FIND_SCAN_SLICE_KEY,
+      taskClass: 'background-derived',
+      defer: true,
+      run: () => this.runScanSlice(scan),
+    })
+  }
+
+  private runScanSlice(scan: ActiveFindScan): void {
+    if (this.activeScan !== scan || scan.generation !== this.scanGeneration) return
+    if (!this.host || !this.state.revealed) {
+      this.cancelActiveScan()
+      return
+    }
+    if (scan.snapshot && !this.host.hasTextSnapshot(scan.snapshot)) {
+      this.cancelActiveScan()
+      return
+    }
+
+    const outcome = this.advanceScanSlice(scan, FIND_CHUNK_SLICE_BUDGET_MS)
+    if (outcome.finished) {
+      this.finishActiveScan(scan, outcome.truncated, outcome.prefixComplete)
+      return
+    }
+
+    this.scheduleNextScanSlice(scan)
+  }
+
+  private advanceScanSlice(
+    scan: ActiveFindScan,
+    budgetMs: number,
+  ):
+    | { readonly finished: false }
+    | { readonly finished: true; readonly truncated: boolean; readonly prefixComplete: boolean } {
+    const sliceStart = nowMs()
+    let remainingWindows = FIND_CHUNK_MAX_WINDOWS_PER_SLICE
+    if (!scan.prefixDone) {
+      if (scan.prefixScanner) {
+        const step = scan.prefixScanner.step(budgetMs, remainingWindows)
+        remainingWindows -= step.windowsScanned
+        for (const match of step.matches) scan.prefixMatches.push(match)
+        if (step.truncated) return { finished: true, truncated: true, prefixComplete: false }
+        if (step.done) scan.prefixDone = true
+      } else {
+        scan.prefixDone = true
+      }
+    }
+
+    if (scan.prefixDone) {
+      if (scan.suffixRanges.length === 0) {
+        return { finished: true, truncated: false, prefixComplete: true }
+      }
+
+      const remainingMs = budgetMs - (nowMs() - sliceStart)
+      if ((remainingMs <= 0 || remainingWindows <= 0) && scan.prefixScanner !== null) {
+        return { finished: false }
+      }
+
+      scan.suffixScanner ??= createFindRangeScanner(
+        scan.source,
+        scan.query,
+        scan.suffixRanges,
+        scan.remainingLimit - scan.prefixMatches.length,
+      )
+      const step = scan.suffixScanner.step(
+        Math.max(0.5, remainingMs),
+        Math.max(1, remainingWindows),
+      )
+      for (const match of step.matches) scan.suffixMatches.push(match)
+      if (step.truncated) return { finished: true, truncated: true, prefixComplete: true }
+      if (step.done) return { finished: true, truncated: false, prefixComplete: true }
+    }
+
+    return { finished: false }
+  }
+
+  private finishActiveScan(
+    scan: ActiveFindScan,
+    truncated: boolean,
+    prefixComplete: boolean,
+  ): void {
+    if (this.activeScan !== scan || scan.generation !== this.scanGeneration) return
+
+    this.closeScanChannel(scan)
+    this.scheduler.cancel(FIND_SCAN_SLICE_KEY)
+    this.activeScan = null
+
+    const finalMatches = scan.prefixMatches.concat(scan.viewportMatches, scan.suffixMatches)
+    this.highlightsTruncated = truncated
+    this.matchesIncomplete = false
+    this.exactPrefixMatchCount = prefixComplete ? finalMatches.length : scan.prefixMatches.length
+    this.adoptMatches(finalMatches)
+
+    const selection = this.primarySelection()
+    const preservedCurrent =
+      this.currentMatch &&
+      selection &&
+      this.currentMatch.start === selection.startOffset &&
+      this.currentMatch.end === selection.endOffset
+        ? this.currentMatch
+        : null
+    this.currentMatch = matchAtSelection(finalMatches, selection) ?? preservedCurrent
+
+    this.updateHighlights()
+    this.updateWidget()
+
+    if (
+      scan.moveCursor &&
+      finalMatches.length > 0 &&
+      sameSelectionSnapshot(selection, scan.moveCursorSelection)
+    ) {
+      const offset = selection?.endOffset ?? 0
+      if (!truncated) {
+        const target = firstMatchAtOrAfterInList(finalMatches, offset, this.options.loop)
+        this.selectMatch(target, false)
+      } else {
+        this.moveCursorForTruncatedLargeFile(
+          { source: scan.source, scopes: scan.scopes },
+          scan.query,
+          scan.snapshot,
+          finalMatches,
+          scan.viewportSpan,
+          scan.moveCursorSelection,
+          offset,
+        )
+      }
+    }
+  }
+
+  private moveCursorForTruncatedLargeFile(
+    search: FindSearchTarget,
+    query: FindQuery,
+    snapshot: TextReadSnapshot | null,
+    listedMatches: readonly FindMatch[],
+    viewportSpan: FindRange | null,
+    expectedSelection: FindSelectionSnapshot | null,
+    offset: number,
+  ): void {
+    const exactPrefixMatches = listedMatches.slice(0, this.exactPrefixMatchCount)
+    const inExactPrefix = firstMatchAtOrAfterInList(exactPrefixMatches, offset, false)
+    if (inExactPrefix) {
+      this.selectMatch(inExactPrefix, false)
+      return
+    }
+    const inViewport = firstMatchInViewport(listedMatches, viewportSpan, false, offset)
+    if (inViewport) {
+      this.selectMatch(inViewport, false)
+      return
+    }
+
+    // Search forward from the caret's line cooperatively so a multi-megabyte
+    // empty tail never blocks the input stack and wrapping reuses `matches[0]`
+    // instead of rescanning from offset 0.
+    const plan = findQueryPlan(query)
+    const isLineLocal = plan?.kind === 'lines' || plan?.kind === 'anchored-lines'
+    const tailRanges = isLineLocal
+      ? tailRangesFromOffset(search.source, search.scopes, offset)
+      : search.scopes
+    const fallbackMatch =
+      this.options.loop && this.exactPrefixMatchCount > 0 ? (listedMatches[0] ?? null) : null
+    const wrapTarget =
+      this.options.loop && fallbackMatch === null
+        ? { source: search.source, query, scopes: search.scopes }
+        : null
+    if (tailRanges !== null && tailRanges.length === 0) {
+      if (fallbackMatch) {
+        this.selectMatch(fallbackMatch, false)
+        return
+      }
+      if (!wrapTarget) return
+      const wrapScan: ActiveCursorScan = {
+        generation: ++this.scanGeneration,
+        snapshot,
+        scanner: createFindRangeScanner(
+          wrapTarget.source,
+          wrapTarget.query,
+          wrapTarget.scopes,
+          1,
+          0,
+        ),
+        fallbackMatch: null,
+        wrapTarget: null,
+        expectedSelection,
+        channel: null,
+      }
+      this.activeCursorScan = wrapScan
+      this.scheduleNextCursorScanSlice(wrapScan)
+      return
+    }
+
+    const cursorScan: ActiveCursorScan = {
+      generation: ++this.scanGeneration,
+      snapshot,
+      scanner: createFindRangeScanner(search.source, query, tailRanges, 1, offset),
+      fallbackMatch,
+      wrapTarget,
+      expectedSelection,
+      channel: null,
+    }
+    this.activeCursorScan = cursorScan
+    this.scheduleNextCursorScanSlice(cursorScan)
+  }
+
+  private scheduleNextCursorScanSlice(cursorScan: ActiveCursorScan): void {
+    if (typeof MessageChannel !== 'undefined') {
+      if (!cursorScan.channel) {
+        const channel = new MessageChannel()
+        channel.port1.onmessage = () => this.runCursorScanSlice(cursorScan)
+        cursorScan.channel = channel
+      }
+      cursorScan.channel.port2.postMessage(undefined)
+      return
+    }
+
+    this.scheduler.schedule({
+      key: FIND_SCAN_SLICE_KEY,
+      taskClass: 'background-derived',
+      defer: true,
+      run: () => this.runCursorScanSlice(cursorScan),
+    })
+  }
+
+  private runCursorScanSlice(cursorScan: ActiveCursorScan): void {
+    if (this.activeCursorScan !== cursorScan || cursorScan.generation !== this.scanGeneration)
+      return
+    if (!this.host || !this.state.revealed) {
+      this.cancelActiveCursorScan()
+      return
+    }
+    if (cursorScan.snapshot && !this.host.hasTextSnapshot(cursorScan.snapshot)) {
+      this.cancelActiveCursorScan()
+      return
+    }
+    if (!sameSelectionSnapshot(this.primarySelection(), cursorScan.expectedSelection)) {
+      this.cancelActiveCursorScan()
+      return
+    }
+
+    const step = cursorScan.scanner.step(FIND_CHUNK_SLICE_BUDGET_MS)
+    const found = step.matches[0] ?? null
+    if (found) {
+      this.cancelActiveCursorScan()
+      this.selectMatch(found, false)
+      return
+    }
+    if (step.done) {
+      if (cursorScan.fallbackMatch) {
+        this.cancelActiveCursorScan()
+        this.selectMatch(cursorScan.fallbackMatch, false)
+        return
+      }
+      if (cursorScan.wrapTarget) {
+        const wrap = cursorScan.wrapTarget
+        cursorScan.wrapTarget = null
+        cursorScan.scanner = createFindRangeScanner(wrap.source, wrap.query, wrap.scopes, 1, 0)
+        this.scheduleNextCursorScanSlice(cursorScan)
+        return
+      }
+      this.cancelActiveCursorScan()
+      return
+    }
+
+    this.scheduleNextCursorScanSlice(cursorScan)
+  }
+
+  private cancelActiveScan(): void {
+    const scan = this.activeScan
+    const cursorScan = this.activeCursorScan
+    this.scanGeneration += 1
+    this.scheduler.cancel(FIND_SCAN_SLICE_KEY)
+    if (scan) {
+      this.activeScan = null
+      this.closeScanChannel(scan)
+    }
+    if (cursorScan) {
+      this.activeCursorScan = null
+      this.closeScanChannel(cursorScan)
+    }
+  }
+
+  private cancelActiveCursorScan(): void {
+    const cursorScan = this.activeCursorScan
+    if (!cursorScan) return
+
+    this.activeCursorScan = null
+    this.closeScanChannel(cursorScan)
+    if (!this.activeScan) this.scheduler.cancel(FIND_SCAN_SLICE_KEY)
+  }
+
+  private closeScanChannel(scan: { channel: MessageChannel | null }): void {
+    const channel = scan.channel
+    if (!channel) return
+
+    scan.channel = null
+    channel.port1.onmessage = null
+    channel.port1.close()
+    channel.port2.close()
   }
 
   private scheduleResearch(): void {
@@ -631,7 +1281,10 @@ export class EditorFindController {
 
     // The capture groups belonged to the text that was there; only the ranges
     // survive the edit, and the re-search is what recovers the rest.
+    const previousLength = this.matches.length
     this.matches = tracked.resolve().map((range) => ({ ...range, matches: null }))
+    this.exactPrefixMatchCount =
+      this.exactPrefixMatchCount === previousLength ? this.matches.length : 0
     this.currentMatch = matchAtSelection(this.matches, this.primarySelection())
     this.updateHighlights()
     this.updateWidget()
@@ -645,6 +1298,7 @@ export class EditorFindController {
     const editHost = this.editHost
     if (!editHost) return
 
+    this.cancelActiveScan()
     this.replacing = true
     try {
       editHost.applyEdits(edits, timingName, selection)
@@ -679,18 +1333,6 @@ export class EditorFindController {
   private commandSearchTarget(): FindSearchTarget | null {
     const source = this.commandTextSource()
     return source ? this.searchTarget(source) : null
-  }
-
-  private findAll(captureMatches: boolean, limit = FIND_MATCHES_LIMIT): readonly FindMatch[] {
-    const search = this.searchTarget()
-    if (!search) return []
-
-    return findMatches(search.source, this.state, search.scopes, captureMatches, limit)
-  }
-
-  private countAll(before?: number): number {
-    const search = this.searchTarget()
-    return search ? countMatches(search.source, this.state, search.scopes, before) : 0
   }
 
   private searchFrom(
@@ -739,6 +1381,10 @@ export class EditorFindController {
     const host = this.host
     if (!match || !host) return false
 
+    if (committed) {
+      this.cancelActiveCursorScan()
+      if (this.activeScan) this.activeScan.moveCursor = false
+    }
     if (this.canPaintCurrentDocument()) this.currentMatch = match
     host.setSelection(match.start, match.end, 'input.findNavigate', findReveal(match, committed))
     if (!this.canPaintCurrentDocument()) return true
@@ -783,21 +1429,22 @@ export class EditorFindController {
   private widgetState(): EditorFindWidgetState {
     return {
       ...this.state,
-      // Between an edit and its re-search the painted matches are what is known.
-      matchesCount: this.highlightsTruncated ? this.totalMatches : this.matches.length,
+      matchesCount: this.matches.length,
       matchesPosition: this.currentMatchPosition(),
       highlightsTruncated: this.highlightsTruncated,
+      searching: this.activeScan !== null || this.matchesIncomplete,
     }
   }
 
-  // Past the paint cap the match is in no list to look it up in, so its place is
-  // the number of matches in front of it.
+  // Only report an exact 1-based position when the match lies inside the
+  // contiguous prefix scanned from offset 0; matches past the cap or past an
+  // unscanned gap report `?` without rescanning from offset 0.
   private currentMatchPosition(): number {
     if (!this.currentMatch) return 0
 
     const painted = findMatchIndex(this.matches, this.currentMatch)
-    if (painted >= 0 || !this.highlightsTruncated) return painted + 1
-    return this.countAll(this.currentMatch.start) + 1
+    if (painted < 0 || painted >= this.exactPrefixMatchCount) return 0
+    return painted + 1
   }
 
   private focusWidget(focus: 'find' | 'replace' | 'none'): void {
@@ -966,4 +1613,74 @@ function mergeReplaceEdit(merged: TextEdit[], edit: TextEdit): void {
     to: edit.to,
     text: previous.text + edit.text,
   }
+}
+
+function firstMatchInViewport(
+  viewportMatches: readonly FindMatch[],
+  viewportSpan: FindRange | null,
+  noPrefixBeforeViewport: boolean,
+  offset: number,
+): FindMatch | null {
+  if (!viewportSpan || viewportMatches.length === 0) return null
+  const offsetCovered =
+    (offset >= viewportSpan.start && offset <= viewportSpan.end) ||
+    (noPrefixBeforeViewport && offset <= viewportSpan.end)
+  if (!offsetCovered) return null
+
+  return viewportMatches.find((match) => match.start >= offset) ?? null
+}
+
+function firstMatchAtOrAfterInList(
+  matches: readonly FindMatch[],
+  offset: number,
+  loop: boolean,
+): FindMatch | null {
+  const ahead = matches.find((match) => match.start >= offset)
+  if (ahead) return ahead
+  return loop ? (matches[0] ?? null) : null
+}
+
+function snapshotSelection(
+  selection: EditorFindResolvedSelection | null,
+): FindSelectionSnapshot | null {
+  if (!selection) return null
+  return {
+    anchorOffset: selection.anchorOffset,
+    headOffset: selection.headOffset,
+    affinity: selection.affinity,
+  }
+}
+
+function sameSelectionSnapshot(
+  current: EditorFindResolvedSelection | null,
+  expected: FindSelectionSnapshot | null,
+): boolean {
+  if (!current || !expected) return current === expected
+  return (
+    current.anchorOffset === expected.anchorOffset &&
+    current.headOffset === expected.headOffset &&
+    current.affinity === expected.affinity
+  )
+}
+
+function tailRangesFromOffset(
+  source: FindTextSource,
+  scopes: readonly FindRange[] | null,
+  offset: number,
+): readonly FindRange[] {
+  const clamped = Math.min(Math.max(0, offset), source.length)
+  const line = source.lineStartsView.indexForOffset(clamped)
+  const lineStart = source.lineStartsView.at(line) ?? 0
+  if (!scopes) return [{ start: lineStart, end: source.length }]
+
+  const tail: FindRange[] = []
+  for (const scope of scopes) {
+    if (scope.end < clamped) continue
+    tail.push({ start: Math.max(scope.start, lineStart), end: scope.end })
+  }
+  return tail
+}
+
+function nowMs(): number {
+  return globalThis.performance?.now() ?? Date.now()
 }
