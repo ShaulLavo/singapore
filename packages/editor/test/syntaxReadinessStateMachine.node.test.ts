@@ -4256,5 +4256,227 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears range-unavailable markers when a complete warm reply covers that strip before another strip budget-cancels', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(80_000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'warm-clears-unavailable-marker',
+      })
+      const foldAtMid: FoldRange = {
+        startIndex: 120_001,
+        endIndex: 120_019,
+        startLine: 60_000,
+        endLine: 60_009,
+        type: 'block',
+      }
+      const captureAtMid: EditorSyntaxCapture = {
+        startIndex: 120_001,
+        endIndex: 120_019,
+        captureName: 'function',
+      }
+      let resolveWarm: ((result: EditorSyntaxResult) => void) | null = null
+      let resolveRight: ((result: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 120_000 && range.endIndex === 120_020) {
+          return answerFor(range, { folds: [foldAtMid], captures: [captureAtMid] })
+        }
+        if (range.startIndex === 119_980 && range.endIndex === 120_000) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'range-unavailable', message: 'left-unavailable' },
+          }
+        }
+        if (range.startIndex === 120_020 && range.endIndex === 120_040) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            resolveRight = resolve
+          })
+        }
+        if (range.startIndex < 120_000 && range.endIndex === 120_000) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            resolveWarm = resolve
+          })
+        }
+        return answerFor(range)
+      })
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query),
+        { startIndex: 120_000, endIndex: 120_020 },
+        { needsCaptures: true },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Start warm covering [0, 120_000) and hold it in flight.
+        view.syntax.warmSyntaxAroundRange(
+          1,
+          { startIndex: 120_000, endIndex: 120_020 },
+          { delayMs: 0 },
+        )
+        await vi.waitFor(() => expect(resolveWarm).not.toBeNull())
+
+        // Widen to [119_980, 120_040): left [119_980, 120_000) returns range-unavailable,
+        // right [120_020, 120_040) is held.
+        view.setRange({ startIndex: 119_980, endIndex: 120_040 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveRight).not.toBeNull())
+
+        // Complete the warm reply covering the left strip -> clears the left unavailable marker!
+        const warmRange = query.mock.calls.find(
+          ([r]) => r.startIndex < 120_000 && r.endIndex === 120_000,
+        )![0]
+        resolveWarm!(answerFor(warmRange))
+        await settle()
+
+        // Right strip budget-cancels -> settles degraded while preserving the middle fold & capture!
+        resolveRight!({
+          ...createEmptySyntaxResult({
+            requestedRanges: [{ startIndex: 120_020, endIndex: 120_040 }],
+          }),
+          projection: {
+            ...createEmptySyntaxResult({
+              requestedRanges: [{ startIndex: 120_020, endIndex: 120_040 }],
+            }).projection,
+            analysis: {
+              kind: 'cancelled',
+              reason: 'budget',
+              coveredRange: { startIndex: 0, endIndex: 0 },
+              elapsedMs: 100,
+              budgetMs: 50,
+            },
+          },
+        })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.folds()).toEqual([foldAtMid])
+        expect(view.captures()).toEqual([captureAtMid])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('withdraws stale brackets, injections, folds, captures, and records when an authoritative Markdown records query returns range-unavailable', async () => {
+      const buffer = createEditorTextBuffer('# heading\n'.repeat(40))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'md-records-unavailable-clears-facts',
+      })
+      const injectionAtStart: EditorSyntaxInjection = {
+        parentLanguageId: 'markdown',
+        languageId: 'typescript',
+        startIndex: 0,
+        endIndex: 10,
+      }
+      const foldAtStart: FoldRange = {
+        startIndex: 0,
+        endIndex: 20,
+        startLine: 0,
+        endLine: 2,
+        type: 'block',
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 20 && range.endIndex === 60) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'range-unavailable', message: 'records-unavailable' },
+          }
+        }
+        return answerFor(range, {
+          brackets: [{ index: range.startIndex + 2, char: '(', depth: 1 }],
+          injections: range.startIndex === 0 ? [injectionAtStart] : [],
+          folds: range.startIndex === 0 ? [foldAtStart] : [],
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex]),
+          },
+        })
+      })
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 40 }
+      let demandRanges: readonly EditorSyntaxRange[] = [
+        { startIndex: 0, endIndex: 40 },
+        { startIndex: 40, endIndex: 100 },
+      ]
+      let folds: readonly FoldRange[] = []
+      let captures: readonly EditorSyntaxCapture[] = []
+      let records: EditorSyntaxResult['records'] = undefined
+      const getRecords = () => records
+      let syntax!: EditorSyntaxController
+      const publishDemand = () =>
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'md-records-unavailable-clears-facts',
+        getCurrentSessionDocumentId: () => 'md-records-unavailable-clears-facts',
+        getLanguageId: () => 'markdown',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => publishDemand(),
+        setSyntaxFolds: (next) => {
+          folds = next
+        },
+        clearSyntaxFolds: () => {
+          folds = []
+        },
+        setSyntaxCaptures: (nextCaptures, nextRecords) => {
+          captures = nextCaptures
+          records = nextRecords
+        },
+        notifyViewUpdate: publishDemand,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'md-records-unavailable-clears-facts',
+          languageId: 'markdown',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.brackets.map((b) => b.index)).toEqual([2])
+        expect(syntax.injections).toEqual([injectionAtStart])
+        expect(getRecords()?.data).toEqual(new Uint32Array([0, 40]))
+
+        // Retain complete prefetch [40, 100), then scroll to [20, 60) where authoritative records returns range-unavailable.
+        syntax.prefetchVisibleRange(1, { startIndex: 40, endIndex: 100 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        await settle()
+
+        currentRange = { startIndex: 20, endIndex: 60 }
+        demandRanges = [{ startIndex: 20, endIndex: 60 }]
+        publishDemand()
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+        expect(syntax.renderDataReady).toBe(true)
+        expect(syntax.brackets).toEqual([])
+        expect(syntax.injections).toEqual([])
+        expect(folds).toEqual([])
+        expect(captures).toEqual([])
+        expect(getRecords()).toBeUndefined()
+        // Token paint stays intact.
+        expect(syntax.tokens.length).toBeGreaterThan(0)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

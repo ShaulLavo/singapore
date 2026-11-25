@@ -386,6 +386,7 @@ export class EditorSyntaxController {
   #unavailableEmptyRange: EditorSyntaxRange | null = null
   #unavailableEmptyClearsScope = false
   #unavailableRecordsRange: EditorSyntaxRange | null = null
+  #unavailableRecordsClearsScope = false
   #observingPreparedStructural = false
   readonly #syntaxRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
     key: 'editor.syntax.document',
@@ -617,6 +618,7 @@ export class EditorSyntaxController {
       (!visible || !sameSyntaxRange(this.#unavailableRecordsRange, visible))
     ) {
       this.#unavailableRecordsRange = null
+      this.#unavailableRecordsClearsScope = false
     }
 
     const removed = nextCache.length !== oldCache.length
@@ -1368,6 +1370,7 @@ export class EditorSyntaxController {
       this.#unavailableEmptyRange = null
       this.#unavailableEmptyClearsScope = false
       this.#unavailableRecordsRange = null
+      this.#unavailableRecordsClearsScope = false
       this.#pruneDegradedAndPartialRangeEntries()
       this.retainedSyntax?.clearDegradedOrPartialRanges()
     }
@@ -1420,6 +1423,7 @@ export class EditorSyntaxController {
     this.#unavailableEmptyRange = null
     this.#unavailableEmptyClearsScope = false
     this.#unavailableRecordsRange = null
+    this.#unavailableRecordsClearsScope = false
     // Immediately clear stale pre-edit brackets and injections while reanalysis is in flight.
     this.#currentBrackets = []
     this.#currentInjections = []
@@ -2020,7 +2024,10 @@ export class EditorSyntaxController {
     }
     if (recordsGap) {
       const visible = this.options.getVisibleSyntaxRange()
-      if (visible) this.#unavailableRecordsRange = visible
+      if (visible) {
+        this.#unavailableRecordsRange = visible
+        this.#unavailableRecordsClearsScope = true
+      }
     }
     this.#recoverSyntaxError(change, error, startedAt, guard)
   }
@@ -3081,7 +3088,10 @@ export class EditorSyntaxController {
       if (!options.preserveProvisionalPaint) this.#unavailableEmptyClearsScope = true
     }
     const visibleRange = this.options.getVisibleSyntaxRange()
-    if (recordsGap && visibleRange) this.#unavailableRecordsRange = visibleRange
+    if (recordsGap && visibleRange) {
+      this.#unavailableRecordsRange = visibleRange
+      this.#unavailableRecordsClearsScope = !options.preserveProvisionalPaint
+    }
 
     if (!visibleRange) {
       this.options.notifyChange(null)
@@ -3270,6 +3280,7 @@ export class EditorSyntaxController {
           : syntaxRangeCoverage(this.#unavailableRecordsRange, [range]) === 'full')
       ) {
         this.#unavailableRecordsRange = null
+        this.#unavailableRecordsClearsScope = false
       }
 
       if (!this.#highlighterSession) {
@@ -3498,6 +3509,11 @@ export class EditorSyntaxController {
       const entry = makeEntry(claimable, claimable)
       nextEntries.push(entry)
       this.#rangeEntries = nextEntries
+      this.#unavailableRanges = subtractSyntaxRanges(this.#unavailableRanges, claimable)
+      this.#unavailableClearsScopeRanges = subtractSyntaxRanges(
+        this.#unavailableClearsScopeRanges,
+        claimable,
+      )
 
       if (!this.#highlighterSession) {
         const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
@@ -3613,11 +3629,18 @@ export class EditorSyntaxController {
       const composed = this.#composeViewportScope(visibleRange)
       if (composed.kind === 'needs-authoritative-records-query') {
         if (this.#isRecordsUnavailableFor(visibleRange)) {
+          this.#currentBrackets = []
+          this.#currentInjections = []
           this.#publishedScope = {
             kind: 'range',
             range: visibleRange,
             degraded: true,
             unavailable: true,
+          }
+          if (this.#unavailableRecordsClearsScope) {
+            this.#rangeScopeOwners = []
+            this.options.clearSyntaxFolds()
+            this.options.setSyntaxCaptures?.([], undefined)
           }
           this.#settleDegradedHighlight(options.configurationGeneration)
           return { kind: 'settled-degraded' }
@@ -4009,6 +4032,7 @@ export class EditorSyntaxController {
     this.#unavailableEmptyRange = null
     this.#unavailableEmptyClearsScope = false
     this.#unavailableRecordsRange = null
+    this.#unavailableRecordsClearsScope = false
     this.#rangeScopeOwners = []
     this.#rangeEntries = promotedEntries
 
@@ -4185,6 +4209,7 @@ export class EditorSyntaxController {
     this.#unavailableEmptyRange = null
     this.#unavailableEmptyClearsScope = false
     this.#unavailableRecordsRange = null
+    this.#unavailableRecordsClearsScope = false
   }
 
   #applyHighlightResult(
