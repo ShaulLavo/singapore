@@ -553,8 +553,18 @@ export class EditorFindController {
       this.research(this.options.cursorMoveOnType)
       return
     }
+    const hadIncompleteScan = this.activeScan !== null || this.matchesIncomplete
     this.cancelActiveScan()
+    this.matchesIncomplete = false
     this.searchDirty = true
+    if (hadIncompleteScan) {
+      this.highlightsTruncated = false
+      this.exactPrefixMatchCount = 0
+      this.adoptMatches([])
+      this.currentMatch = null
+      this.updateHighlights()
+      this.updateWidget()
+    }
   }
 
   public setReplaceString(value: string): void {
@@ -826,12 +836,13 @@ export class EditorFindController {
       }
       this.activeScan = scan
 
-      // Spend any remaining sub-4 ms Frame-0 budget advancing off-screen windows
-      // so fast 1-2 MiB searches finish in Frame 1 with zero extra frame latency,
-      // while multi-megabyte files or slow regexes paint the viewport immediately
-      // and yield the rest to MessageChannel slices.
+      // For literal queries with a bounded viewport, spend any remaining sub-4 ms
+      // Frame-0 budget advancing off-screen windows so fast 1-2 MiB searches
+      // finish in Frame 1. Regex queries and oversized single lines (where
+      // viewportSpan is null) defer off-screen scanning to MessageChannel so a
+      // single RegExp.exec call cannot stall the input handler.
       const remainingFrame0Ms = FIND_INITIAL_SLICE_BUDGET_MS - (nowMs() - frame0Start)
-      if (remainingFrame0Ms > 0) {
+      if (!query.isRegex && partition.viewportSpan !== null && remainingFrame0Ms > 0) {
         const outcome = this.advanceScanSlice(scan, remainingFrame0Ms)
         if (outcome.finished) {
           this.finishActiveScan(scan, outcome.truncated, outcome.prefixComplete)

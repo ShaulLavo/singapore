@@ -484,6 +484,54 @@ describe('large-file viewport-first chunked find', () => {
     expect(total).toBe(0)
     expect(steps).toBeGreaterThan(1)
   })
+
+  findTest(
+    'defers regex scanning on an oversized single line off the input handler',
+    {
+      text: 'a'.repeat(2_000_000),
+      selection: 0,
+      visibleRange: [0, 2_000_000],
+      options: CAPPED_OPTIONS,
+    },
+    async (harness) => {
+      harness.openFind()
+      harness.clickRegex()
+      const readsBefore = harness.documentReads().length
+      harness.typeSearch('a{1,100}Z')
+
+      // Oversized single line + regex must not execute RegExp.exec synchronously
+      // inside setSearchString.
+      expect(harness.documentReads().length).toBe(readsBefore)
+      expect(harness.state().count).toBe('Searching…')
+
+      await waitFor(() => harness.state().count === 'No results')
+      expect(harness.state().matches).toEqual([])
+    },
+  )
+
+  findTest(
+    'clears stale provisional matches when query changes mid-scan with findOnType off',
+    {
+      text: LARGE_TEXT,
+      selection: 0,
+      visibleRange: [0, LINE.length * 5 - 1],
+      options: { ...CAPPED_OPTIONS, findOnType: false },
+    },
+    (harness) => {
+      harness.openFind()
+      harness.typeSearch('alpha')
+      harness.pressEnter()
+      // Viewport matches painted provisionally while background scan is pending.
+      expect(harness.state().count).toBe('1 of 5+')
+
+      // Change query while scan is in flight and trigger a widget update; the
+      // cancelled query's provisional results must not linger under the new query.
+      harness.typeSearch('none')
+      harness.toggleReplace()
+      expect(harness.state().count).toBe('No results')
+      expect(harness.state().matches).toEqual([])
+    },
+  )
 })
 
 describe('find replace one', () => {

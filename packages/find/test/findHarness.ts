@@ -75,6 +75,7 @@ export type FindStateExpectation = {
 export type FindHarness = {
   openFind(): void
   openFindReplace(): void
+  toggleReplace(): void
   toggleRegex(): void
   clickRegex(): void
   clickScope(): void
@@ -354,6 +355,7 @@ function createFindHarness(fixture: FindFixture): FindHarness {
   return {
     openFind: () => void controller.openFind(),
     openFindReplace: () => void controller.openFindReplace(),
+    toggleReplace: () => void controller.toggleReplace(),
     toggleRegex: () => void controller.toggleRegex(),
     clickRegex: () => clickButton(container, FIND_ICONS.regex),
     clickScope: () => clickButton(container, FIND_ICONS.scope),
