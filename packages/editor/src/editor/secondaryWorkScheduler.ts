@@ -71,7 +71,6 @@ export class EditorSecondaryWorkScheduler {
     if (scheduled) {
       this.scheduled.delete(key)
       scheduled.cancel()
-      return
     }
     this.scheduler.cancel(`${this.#keyPrefix}${key}`)
   }

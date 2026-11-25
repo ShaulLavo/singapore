@@ -513,6 +513,47 @@ describe('Tree-sitter syntax capture conversion', () => {
     }
   })
 
+  it('releases active context and allows idle disposal even when syntax-provider disposal throws', async () => {
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    const plugin = createTreeSitterLanguagePlugin([testLanguage('sql', ['.sql'])], {
+      name: 'sql-dispose-throws',
+    })
+    const selectionDispose = vi.fn()
+    const context = {
+      registerSyntaxProvider: () => ({
+        dispose: () => {
+          throw new Error('onSyntaxProvidersChanged failed on removal')
+        },
+      }),
+      registerSelectionRangeProvider: () => ({ dispose: selectionDispose }),
+    } as unknown as Parameters<NonNullable<typeof plugin.activate>>[0]
+
+    const disposables = plugin.activate(context)
+    const registration = state[key] as {
+      readonly owner: TreeSitterWorkerOwner
+      readonly activeContexts: number
+    }
+    expect(registration.activeContexts).toBe(1)
+
+    try {
+      expect(() => {
+        if (Array.isArray(disposables)) {
+          for (const disposable of disposables.toReversed()) disposable.dispose()
+        }
+      }).toThrow('onSyntaxProvidersChanged failed on removal')
+      expect(selectionDispose).toHaveBeenCalledTimes(1)
+      expect(registration.activeContexts).toBe(0)
+      await flushDefaultTreeSitterProvider()
+      expect(state[key]).toBeUndefined()
+      expect(registration.owner.inspect().lifecycle).toBe('disposed')
+    } finally {
+      await flushDefaultTreeSitterProvider()
+    }
+  })
+
   it('converts non-empty captures to editor tokens', () => {
     const tokens = treeSitterCapturesToEditorTokens([
       { startIndex: 0, endIndex: 5, captureName: 'keyword.declaration' },

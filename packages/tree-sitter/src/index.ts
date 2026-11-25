@@ -369,10 +369,25 @@ const releaseSyntaxProvider = (
   reference.references -= 1
   if (reference.references > 0) return
 
-  for (const contribution of reference.contributions.toReversed()) contribution.dispose()
   registration.contextReferences.delete(context)
   registration.activeContexts = Math.max(0, registration.activeContexts - 1)
-  scheduleIdleDisposeIfUnused(registration)
+  let firstError: unknown
+  let hasError = false
+  try {
+    for (const contribution of reference.contributions.toReversed()) {
+      try {
+        contribution.dispose()
+      } catch (error) {
+        if (!hasError) {
+          firstError = error
+          hasError = true
+        }
+      }
+    }
+  } finally {
+    scheduleIdleDisposeIfUnused(registration)
+  }
+  if (hasError) throw firstError
 }
 
 const releaseLanguage = (registration: TreeSitterProviderRegistration, key: string): void => {
@@ -382,9 +397,12 @@ const releaseLanguage = (registration: TreeSitterProviderRegistration, key: stri
   reference.references -= 1
   if (reference.references > 0) return
 
-  reference.disposable.dispose()
   registration.languageReferences.delete(key)
-  scheduleIdleDisposeIfUnused(registration)
+  try {
+    reference.disposable.dispose()
+  } finally {
+    scheduleIdleDisposeIfUnused(registration)
+  }
 }
 
 const cancelIdleDispose = (registration: TreeSitterProviderRegistration): void => {

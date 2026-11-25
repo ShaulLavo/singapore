@@ -81,7 +81,12 @@ export class LatestAsyncRequest<T> {
       defer: delayMs === 0 && options.defer === true,
       tags: options.tags,
       isCurrent: () => !this.disposed && this.#scheduleGeneration === generation,
-      run: (context) => options.run(context.signal),
+      run: (context) => {
+        if (this.disposed || this.#scheduleGeneration !== generation) {
+          return Promise.resolve(undefined as T)
+        }
+        return options.run(context.signal)
+      },
       apply: (result, context) => {
         if (this.disposed || this.#scheduleGeneration !== generation) return
         this.apply(result as T, options, context.token, context.startedAt)
@@ -100,12 +105,10 @@ export class LatestAsyncRequest<T> {
 
   public cancel(): void {
     this.#scheduleGeneration += 1
-    if (this.handle) {
-      this.handle.cancel()
-      this.handle = null
-    } else {
-      this.scheduler.cancel(this.key)
-    }
+    const handle = this.handle
+    this.handle = null
+    handle?.cancel()
+    this.scheduler.cancel(this.key)
   }
 
   public dispose(): void {
@@ -225,12 +228,10 @@ export class SingleFlightAsyncRequest<T> {
 
   public cancel(): void {
     this.#scheduleGeneration += 1
-    if (this.#pendingHandle) {
-      this.#pendingHandle.cancel()
-      this.#pendingHandle = null
-    } else {
-      this.#scheduler.cancel(this.#key)
-    }
+    const pending = this.#pendingHandle
+    this.#pendingHandle = null
+    pending?.cancel()
+    this.#scheduler.cancel(this.#key)
     this.#queued = null
     const active = this.#inFlight
     if (!active) return

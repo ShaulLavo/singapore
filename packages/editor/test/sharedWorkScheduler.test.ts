@@ -571,17 +571,50 @@ describe('shared EditorWorkScheduler per Editor', () => {
     const requestRun = vi.fn(async () => 'should-not-run')
     const requestApply = vi.fn()
     disposeRequest = true
-    request.schedule({ delayMs: 10, run: requestRun, apply: requestApply })
+    request.schedule({ delayMs: 60_000, run: requestRun, apply: requestApply })
+    expect(vi.getTimerCount()).toBe(0)
 
     secondary = new EditorSecondaryWorkScheduler(workScheduler)
     const secondaryRun = vi.fn()
     disposeSecondary = true
-    secondary.schedule({ key: 'editor.featureContributions', delayMs: 10, run: secondaryRun })
+    secondary.schedule({ key: 'editor.featureContributions', delayMs: 60_000, run: secondaryRun })
+    expect(vi.getTimerCount()).toBe(0)
 
     await vi.advanceTimersByTimeAsync(100)
     expect(requestRun).not.toHaveBeenCalled()
     expect(requestApply).not.toHaveBeenCalled()
     expect(secondaryRun).not.toHaveBeenCalled()
+
+    workScheduler.dispose()
+  })
+
+  it('does not run a replacement immediate LatestAsyncRequest disposed from its started callback', async () => {
+    vi.useFakeTimers()
+    let request!: LatestAsyncRequest<string>
+    let disposeOnStart = false
+    const workScheduler = new EditorWorkScheduler({
+      onEvent: (event) => {
+        if (disposeOnStart && event.type === 'started') {
+          disposeOnStart = false
+          request.dispose()
+        }
+      },
+    })
+
+    request = new LatestAsyncRequest<string>({ scheduler: workScheduler })
+    const delayedRun = vi.fn(async () => 'delayed')
+    const immediateRun = vi.fn(async () => 'immediate')
+    const apply = vi.fn()
+
+    request.schedule({ delayMs: 50, run: delayedRun, apply })
+    disposeOnStart = true
+    request.schedule({ delayMs: 0, defer: false, run: immediateRun, apply })
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(delayedRun).not.toHaveBeenCalled()
+    expect(immediateRun).not.toHaveBeenCalled()
+    expect(apply).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
 
     workScheduler.dispose()
   })

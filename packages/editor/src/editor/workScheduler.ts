@@ -153,11 +153,12 @@ export class EditorWorkScheduler {
     // replacement must not push out.
     const firstScheduledAt = existing?.firstScheduledAt ?? null
     if (options.replace !== false) this.cancel(options.key, 'replaced')
+    if (this.disposed) return inactiveHandle(options.key)
 
     const work = this.createWork(options, firstScheduledAt)
     this.scheduled.set(options.key, work)
     this.emit(work, 'scheduled')
-    this.scheduleStart(work)
+    if (this.isCurrentWork(work)) this.scheduleStart(work)
     return this.handleFor(work)
   }
 
