@@ -1691,8 +1691,13 @@ export class Editor {
   }
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {
-    const grammarDescribedChanged = folds.length > 0 && !this.grammarDescribedFolds
-    if (!grammarDescribedChanged && foldRangesEqual(this.syntaxFoldProjection(), folds)) return
+    if (
+      folds.length > 0 &&
+      this.grammarDescribedFolds &&
+      foldRangesEqual(this.syntaxFoldProjection(), folds)
+    ) {
+      return
+    }
     this.runInOperation(() => {
       if (folds.length > 0) this.grammarDescribedFolds = true
       this.setSyntaxFoldProjection(folds)
@@ -5266,7 +5271,9 @@ export class Editor {
     measureEditorPerformance('editor.refreshSyntax', () =>
       this.refreshSyntax(documentVersion, change),
     )
-    this.secondaryWork.cancel('editor.featureContributions')
+    if (change.edits.length > 0) {
+      this.secondaryWork.cancel('editor.featureContributions')
+    }
     measureEditorPerformance('editor.notifyEditorFeatureContributions', () =>
       this.notifyEditorFeatureContributions(change),
     )

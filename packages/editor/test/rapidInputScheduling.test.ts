@@ -363,4 +363,69 @@ describe('feature debounce preservation during 0 ms syntax publication', () => {
     })
     vi.restoreAllMocks()
   })
+
+  it('preserves a pending debounced typing edit notification across selection moves', async () => {
+    vi.useFakeTimers()
+    const kinds: Array<string | null> = []
+    editor = new Editor(container, {
+      defaultText: 'abc',
+      plugins: [
+        {
+          activate: (context) =>
+            context.registerDecorationContribution({
+              createContribution: () => ({
+                handleEditorChange: (change) => {
+                  kinds.push(change?.kind ?? null)
+                },
+                dispose: () => undefined,
+              }),
+            }),
+        },
+      ],
+    })
+    kinds.length = 0
+
+    type('x')
+    editor.setSelection(0, 2)
+    expect(kinds).toEqual(['selection'])
+
+    await vi.advanceTimersByTimeAsync(200)
+    expect(kinds).toEqual(['selection', 'edit'])
+  })
+
+  it('schedules indentation fallback folds when grammar folding transitions from pending to unsupported with empty folds', async () => {
+    let support: 'pending' | 'unsupported' = 'pending'
+    let resolveAnalyze!: (value: ReturnType<typeof createEmptySyntaxResult>) => void
+    const session: EditorSyntaxRuntime = {
+      get foldingSupport() {
+        return support
+      },
+      analyze: () =>
+        new Promise((resolve) => {
+          resolveAnalyze = resolve
+        }),
+      getResult: () => createEmptySyntaxResult(),
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    editor = new Editor(container, {
+      folding: true,
+      plugins: [
+        {
+          activate: (context) =>
+            context.registerSyntaxProvider({
+              operation: createEditorStructuralOperation(() => session),
+            }),
+        },
+      ],
+    })
+    editor.setText('function f() {\n  const a = 1\n  const b = 2\n}\n', { languageId: 'fixture' })
+    await vi.waitFor(() => expect(resolveAnalyze).toBeDefined())
+
+    support = 'unsupported'
+    resolveAnalyze(createEmptySyntaxResult())
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+    await vi.waitFor(() => expect(editor.fold(0)).toBe(true))
+  })
 })

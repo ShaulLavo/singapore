@@ -164,6 +164,7 @@ export type EditorPlainSyntaxState = {
 export type EditorSyntaxRefreshOptions = {
   readonly delayMs?: number
   readonly range?: EditorSyntaxRange | null
+  readonly replacePending?: boolean
 }
 
 export type EditorFallbackFoldReason =
@@ -376,12 +377,12 @@ export class EditorSyntaxController {
   #lastInitialHighlightTerminalStatus: SettledHighlightStatus | null = 'plain'
   #externalAbortRecoveryCount = 0
   #structuralPublishToken = 0
-  #pendingEditApply: {
+  #pendingEditApplies: Array<{
     readonly token: number
     readonly guard: RequestGuard
     readonly parseId: number | null
     readonly run: () => void
-  } | null = null
+  }> = []
   #pendingKeystrokeFrame: { cancel(): void } | null = null
   private syntaxSession: EditorSyntaxSession | null = null
   #syntaxSessionIncludesCaptures = false
@@ -2302,7 +2303,9 @@ export class EditorSyntaxController {
 
     const delayMs = options.delayMs ?? 0
     const isEdit = change !== null
-    const replacePending = forceRetry && this.#syntaxRequests.isInFlight()
+    const replacePending =
+      options.replacePending ?? (forceRetry && this.#syntaxRequests.isInFlight())
+    const replaceFirstRows = options.replacePending === true
     const publishToken = this.#advanceStructuralPublishToken()
     this.#syntaxRequests.schedule({
       delayMs,
@@ -2310,7 +2313,15 @@ export class EditorSyntaxController {
       replaceInFlight: !isEdit,
       tags: syntaxWorkTags(documentVersion, guard.contentVersion, 'full'),
       run: traceEditorPerformanceTask('editor.syntax.structural.request', (signal: AbortSignal) =>
-        this.#loadSyntaxResult(guard, change, forceRetry, replacePending, publishToken, signal),
+        this.#loadSyntaxResult(
+          guard,
+          change,
+          forceRetry,
+          replacePending,
+          replaceFirstRows,
+          publishToken,
+          signal,
+        ),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) => {
         if (!this.#isRequestCurrent(guard)) return
@@ -2336,13 +2347,13 @@ export class EditorSyntaxController {
 
   #advanceStructuralPublishToken(): number {
     this.#structuralPublishToken += 1
-    this.#pendingEditApply = null
+    this.#pendingEditApplies = []
     return this.#structuralPublishToken
   }
 
   #invalidatePendingEditApply(): void {
     this.#structuralPublishToken += 1
-    this.#pendingEditApply = null
+    this.#pendingEditApplies = []
   }
 
   #armKeystrokePaintGate(): void {
@@ -2414,29 +2425,39 @@ export class EditorSyntaxController {
       this.retainedSyntax &&
       this.retainedSyntax.currentParseId() !== parseId
     ) {
+      if (this.#canRecoverExternalAbort(guard)) {
+        this.#refreshStructuralSyntax(guard.documentVersion, null, { delayMs: 0 }, false)
+      }
       return
     }
     if (!this.#pendingKeystrokeFrame || globalThis.document?.visibilityState === 'hidden') {
       run()
       return
     }
-    this.#pendingEditApply = { token, guard, parseId, run }
+    if (this.#pendingEditApplies.length > 0 && this.#pendingEditApplies[0]!.token !== token) {
+      this.#pendingEditApplies = []
+    }
+    this.#pendingEditApplies.push({ token, guard, parseId, run })
   }
 
   #drainPendingEditApply(): void {
-    const pending = this.#pendingEditApply
-    this.#pendingEditApply = null
-    if (!pending) return
-    if (pending.token !== this.#structuralPublishToken) return
-    if (!this.#isRequestCurrent(pending.guard)) return
-    if (
-      pending.parseId !== null &&
-      this.retainedSyntax &&
-      this.retainedSyntax.currentParseId() !== pending.parseId
-    ) {
-      return
+    const pendingList = this.#pendingEditApplies
+    this.#pendingEditApplies = []
+    for (const pending of pendingList) {
+      if (pending.token !== this.#structuralPublishToken) return
+      if (!this.#isRequestCurrent(pending.guard)) return
+      if (
+        pending.parseId !== null &&
+        this.retainedSyntax &&
+        this.retainedSyntax.currentParseId() !== pending.parseId
+      ) {
+        if (this.#canRecoverExternalAbort(pending.guard)) {
+          this.#refreshStructuralSyntax(pending.guard.documentVersion, null, { delayMs: 0 }, false)
+        }
+        return
+      }
+      pending.run()
     }
-    pending.run()
   }
 
   #canRecoverExternalAbort(guard: RequestGuard): boolean {
@@ -2487,6 +2508,7 @@ export class EditorSyntaxController {
     change: DocumentSessionChange | null,
     forceRetry: boolean,
     replacePending: boolean,
+    replaceFirstRows: boolean,
     publishToken: number,
     signal: AbortSignal,
   ): Promise<EditorSyntaxLoadResult> {
@@ -2616,7 +2638,16 @@ export class EditorSyntaxController {
         }
       }
 
-      await this.#paintFirstRows(guard, base.parseId, base.result, publishToken, signal)
+      // Default refresh(docVersion, null) joins an in-flight first-rows query (see
+      // firstRowsHighlight.test.ts); pass `{ replacePending: true }` to replace a stuck one.
+      await this.#paintFirstRows(
+        guard,
+        base.parseId,
+        base.result,
+        publishToken,
+        signal,
+        replaceFirstRows,
+      )
       // A newer request took this one's place while the rows were on their way, or a logical-only
       // synchronize replaced the retained base. The range around them is that request's to ask for.
       if (

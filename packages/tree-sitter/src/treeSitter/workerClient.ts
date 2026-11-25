@@ -405,17 +405,6 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
     if (!handle || this.worker !== handle) return undefined
-    if (
-      this.activeDocumentAcks.has(payload.runtimeSessionId) &&
-      !(await this.awaitDocumentSlot(
-        handle,
-        payload.runtimeSessionId,
-        payload.snapshotVersion,
-        signal,
-      ))
-    ) {
-      return undefined
-    }
     const request: TreeSitterParseDocumentRequest = {
       type: 'parse',
       documentId: payload.documentId,
@@ -428,7 +417,9 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
       readOnly: payload.readOnly,
       source: payload.source,
     }
-    const result = await this.postDocumentRequest(request, signal)
+    const result = this.activeDocumentAcks.has(payload.runtimeSessionId)
+      ? await this.awaitAndPostDocumentRequest(handle, request, signal)
+      : await this.postDocumentRequest(request, signal)
     if (isTreeSitterParseResult(result)) return result
     if (isTreeSitterParseAckResult(result)) return result
     return undefined
@@ -459,34 +450,23 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
     if (!handle || this.worker !== handle) return undefined
-    if (
-      this.activeDocumentAcks.has(payload.runtimeSessionId) &&
-      !(await this.awaitDocumentSlot(
-        handle,
-        payload.runtimeSessionId,
-        payload.snapshotVersion,
-        signal,
-      ))
-    ) {
-      return undefined
+    const request: TreeSitterEditDocumentRequest = {
+      type: 'edit',
+      documentId: payload.documentId,
+      runtimeSessionId: payload.runtimeSessionId,
+      previousSnapshotVersion: payload.previousSnapshotVersion,
+      snapshotVersion: payload.snapshotVersion,
+      languageId: payload.languageId,
+      includeHighlights: payload.includeHighlights,
+      includeCaptures: payload.includeCaptures,
+      resultMode: payload.resultMode,
+      source: payload.source,
+      edits: payload.edits,
+      inputEdits: payload.inputEdits,
     }
-    const result = await this.postDocumentRequest(
-      {
-        type: 'edit',
-        documentId: payload.documentId,
-        runtimeSessionId: payload.runtimeSessionId,
-        previousSnapshotVersion: payload.previousSnapshotVersion,
-        snapshotVersion: payload.snapshotVersion,
-        languageId: payload.languageId,
-        includeHighlights: payload.includeHighlights,
-        includeCaptures: payload.includeCaptures,
-        resultMode: payload.resultMode,
-        source: payload.source,
-        edits: payload.edits,
-        inputEdits: payload.inputEdits,
-      },
-      signal,
-    )
+    const result = this.activeDocumentAcks.has(payload.runtimeSessionId)
+      ? await this.awaitAndPostDocumentRequest(handle, request, signal)
+      : await this.postDocumentRequest(request, signal)
     if (isTreeSitterParseResult(result)) return result
     if (isTreeSitterParseAckResult(result)) return result
     return undefined
@@ -806,23 +786,25 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     })
   }
 
-  private async awaitDocumentSlot(
+  private async awaitAndPostDocumentRequest(
     handle: Worker,
-    runtimeSessionId: string,
-    snapshotVersion: number,
+    payload: TreeSitterParseDocumentRequest | TreeSitterEditDocumentRequest,
     signal?: AbortSignal,
-  ): Promise<boolean> {
-    let superseded = false
+  ): Promise<TreeSitterWorkerResult> {
+    let lastSuperseded: { readonly promise: Promise<void> } | null = null
     while (true) {
-      const prior = this.activeDocumentAcks.get(runtimeSessionId)
-      if (!prior) return this.worker === handle
-      if (!superseded) {
-        superseded = true
-        this.supersedeDocument(handle, runtimeSessionId, snapshotVersion)
+      const prior = this.activeDocumentAcks.get(payload.runtimeSessionId)
+      if (!prior) break
+      if (prior !== lastSuperseded) {
+        lastSuperseded = prior
+        this.supersedeDocument(handle, payload.runtimeSessionId, payload.snapshotVersion)
       }
       await waitForDocumentWork(prior.promise, signal)
-      if (this.worker !== handle) return false
+      if (this.worker !== handle) return undefined
     }
+    if (this.worker !== handle) return undefined
+    // Claim and post synchronously in the same turn so concurrent waiters re-enter the loop.
+    return await this.postDocumentRequest(payload, signal)
   }
 
   private supersedeDocument(

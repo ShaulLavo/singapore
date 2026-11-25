@@ -172,6 +172,93 @@ describe('syntax refresh after an edit', () => {
     }
   })
 
+  it('recovers readiness when logical-only synchronize advances parseId after reply arrival but before paint-gate drain', async () => {
+    const rafCallbacks: FrameRequestCallback[] = []
+    const originalRaf = globalThis.requestAnimationFrame
+    const originalCancelRaf = globalThis.cancelAnimationFrame
+    const originalDocument = globalThis.document
+    const listeners = new Map<string, Set<() => void>>()
+    let visibilityState: 'visible' | 'hidden' = 'visible'
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => undefined)
+    vi.stubGlobal('document', {
+      get visibilityState() {
+        return visibilityState
+      },
+      addEventListener: (event: string, listener: () => void) => {
+        const set = listeners.get(event) ?? new Set()
+        set.add(listener)
+        listeners.set(event, set)
+      },
+      removeEventListener: (event: string, listener: () => void) => {
+        listeners.get(event)?.delete(listener)
+      },
+    })
+    const buffer = createEditorTextBuffer('x\n'.repeat(200))
+    const analysis = createEditorDocumentAnalysis({
+      buffer,
+      documentId: 'logical-sync-before-drain',
+    })
+    let rangeCalls = 0
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: async (range: EditorSyntaxRange) => {
+          rangeCalls += 1
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            tokens: EditorTokenStore.fromTokens([
+              { start: range.startIndex, end: range.startIndex + 1, style: { color: 'green' } },
+            ]),
+          }
+        },
+      })),
+    } satisfies EditorSyntaxProvider
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 120 })
+    const session = createEditorBufferSession(buffer)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+      // Edit replies while the keystroke paint gate is still armed (rAF has not fired yet).
+      const editChange = session.applyEdits([{ from: 0, to: 0, text: 'a' }])
+      view.syntax.acceptChange(editChange)
+      view.syntax.refresh(1, editChange)
+      await vi.waitFor(() => expect(rangeCalls).toBe(2))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(view.syntax.status).toBe('loading')
+
+      // Advance retained parseId via logical-only synchronize BEFORE the paint gate drains.
+      const firstChar = buffer.getTextSnapshot().readRange(0, 1)
+      const committed = commitPreparedDocumentTransaction(
+        { buffer, sourceView: null },
+        prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: firstChar }], 1, null),
+        { history: { kind: 'external-barrier', groupId: 'scope' } },
+      )
+      expect(committed.status).toBe('logical-only')
+      if (committed.status !== 'logical-only') throw new Error('expected logical-only')
+      view.syntax.acceptChange(committed.change)
+      view.syntax.refresh(1, committed.change)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      // Drain the paint gate via visibilitychange: stale parseId must trigger recovery to ready.
+      visibilityState = 'hidden'
+      for (const listener of listeners.get('visibilitychange') ?? []) listener()
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(rangeCalls).toBeGreaterThanOrEqual(3)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+      vi.stubGlobal('requestAnimationFrame', originalRaf)
+      vi.stubGlobal('cancelAnimationFrame', originalCancelRaf)
+      vi.stubGlobal('document', originalDocument)
+    }
+  })
+
   it('starts a fresh range query instead of rejoining a stuck range query on explicit refresh', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(200))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'explicit-replace-stuck' })

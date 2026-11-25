@@ -572,6 +572,50 @@ describe('tree-sitter worker client language registration cache', () => {
     worker.resolveRequest(parseRequests(worker)[1]!, parseResult(3))
     await expect(parse3).resolves.toMatchObject({ snapshotVersion: 3 })
   })
+
+  it('serializes multiple concurrent waiters so only one waiter posts per worker acknowledgement', async () => {
+    FakeWorker.autoResolve = false
+    const originalSab = globalThis.SharedArrayBuffer
+    vi.stubGlobal('SharedArrayBuffer', undefined)
+    try {
+      const client = await loadWorkerClient()
+      const snapshot = createPieceTableSnapshot('const answer = 1;')
+      const parse1 = client.parse(parsePayload(snapshot, 1))
+      const worker = fakeWorkerAt(0)
+      worker.resolveRequest(requestOfType(worker, 'init'))
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(parseRequests(worker)).toHaveLength(1)
+
+      // Queue two waiters (v2 and v3) behind v1.
+      const parse2 = client.parse(parsePayload(snapshot, 2))
+      const parse3 = client.parse(parsePayload(snapshot, 3))
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(parseRequests(worker)).toHaveLength(1)
+
+      // Acknowledging v1 must allow ONLY v2 to post, never both v2 and v3 together.
+      worker.resolveRequest(parseRequests(worker)[0]!, parseResult(1))
+      await expect(parse1).resolves.toMatchObject({ snapshotVersion: 1 })
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(parseRequests(worker)).toHaveLength(2)
+      expect(parseRequests(worker)[1]!.payload.snapshotVersion).toBe(2)
+
+      // Only after v2 is acknowledged does v3 post.
+      worker.resolveRequest(parseRequests(worker)[1]!, parseResult(2))
+      await expect(parse2).resolves.toMatchObject({ snapshotVersion: 2 })
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(parseRequests(worker)).toHaveLength(3)
+      expect(parseRequests(worker)[2]!.payload.snapshotVersion).toBe(3)
+
+      worker.resolveRequest(parseRequests(worker)[2]!, parseResult(3))
+      await expect(parse3).resolves.toMatchObject({ snapshotVersion: 3 })
+    } finally {
+      vi.stubGlobal('SharedArrayBuffer', originalSab)
+    }
+  })
 })
 
 async function loadWorkerClient(): Promise<WorkerClient> {
