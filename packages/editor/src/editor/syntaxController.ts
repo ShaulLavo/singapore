@@ -1,4 +1,5 @@
 import {
+  installSyntaxRangeProjector,
   readRetainedHighlighterResult,
   retainedSyntaxCanWarm,
   setRetainedSyntaxDisplayDemand,
@@ -20,7 +21,11 @@ import type {
   EditorPluginHost,
 } from '../plugins'
 import type { EditorHighlightResult, EditorHighlighterSession } from '../syntax/highlighter'
-import { createEmptySyntaxResult, syntaxResultCoversRange } from '../syntax/session'
+import {
+  createEmptySyntaxResult,
+  isTerminalIncompleteSyntaxResult,
+  syntaxResultCoversRange,
+} from '../syntax/session'
 import type {
   BracketInfo,
   EditorSyntaxCapture,
@@ -32,12 +37,33 @@ import type {
 import type { EditorSyntaxLanguageId, FoldRange } from '../syntax/session'
 import type { EditorTheme } from '../theme'
 import { editorThemesEqual } from '../theme'
-import { EditorTokenStore, toEditorTokenStore, type EditorTokenInput } from '../syntax/tokenStore'
+import { EditorTokenStore, toEditorTokenStore } from '../syntax/tokenStore'
+import { createTextEditBatch } from '../textEditBatch'
 import type { TextEdit } from '../tokens'
 import { foldRangeKey } from './folds'
+import { projectTokensThroughEdit, projectTokensThroughEdits } from './tokenProjection'
 import type { EditorSyntaxStatus } from './types'
 import { LatestAsyncRequest } from './latestAsyncRequest'
 import { syntaxRefreshDelay, SYNTAX_REFRESH_MAX_DELAY_MS } from './editorUtils'
+import {
+  appendCachedSyntaxRange,
+  compactSyntaxRangeTokens,
+  compareFoldRanges,
+  firstUncoveredSyntaxRange,
+  foldIntersectsSyntaxRange,
+  intersectSyntaxRanges,
+  mergeSyntaxRanges,
+  mergeTokensOnStrips,
+  offsetInSyntaxRanges,
+  projectResultThroughSteps,
+  sameSyntaxRange,
+  sameSyntaxRanges,
+  subtractSyntaxRange,
+  subtractSyntaxRanges,
+  syntaxRangeCoverage,
+  syntaxRangeListsIntersect,
+  syntaxRangesIntersect,
+} from './syntaxRangeProjection'
 import type {
   EditorPreparedDocument,
   EditorPreparedDocumentPayload,
@@ -128,6 +154,11 @@ export type EditorPlainSyntaxState = {
   readonly acceptedCopyTokens: EditorTokenStore
   readonly acceptedTokensDocumentVersion: number
   readonly acceptedTokensTextVersion: number
+  readonly copyOwner: 'none' | 'external'
+  readonly externalBaseTokens: {
+    readonly store: EditorTokenStore
+    readonly snapshot: DocumentTextSnapshot
+  } | null
 }
 
 export type EditorSyntaxRefreshOptions = {
@@ -152,8 +183,69 @@ export function fallbackFoldReason(options: {
   return null
 }
 
+type DocumentParseState =
+  | { readonly kind: 'plain' }
+  | { readonly kind: 'loading'; readonly contentVersion: number; readonly parseGeneration: number }
+  | {
+      readonly kind: 'parsed'
+      readonly contentVersion: number
+      readonly parseGeneration: number
+      readonly parseId: number | null
+      readonly mode: 'full' | 'range'
+      readonly parseKind: 'full' | 'partial'
+      readonly fullResult: EditorSyntaxResult | null
+    }
+  | { readonly kind: 'error'; readonly contentVersion: number; readonly parseGeneration: number }
+
+type PublishedViewportScope =
+  | { readonly kind: 'full'; readonly degraded: boolean }
+  | {
+      readonly kind: 'range'
+      readonly range: EditorSyntaxRange
+      readonly degraded: boolean
+      readonly unavailable: boolean
+    }
+
+type CachedSyntaxRangeEntry = {
+  readonly range: EditorSyntaxRange
+  readonly result: EditorSyntaxResult
+  readonly snapshot: DocumentTextSnapshot
+  /** True for `analysis.kind === 'partial'` or `firstRows`: provides token coverage only. */
+  readonly tokensOnly: boolean
+  readonly firstRows: boolean
+  readonly source: 'visible' | 'prefetch' | 'warm'
+  /** Whether this entry's tokens are eligible to populate `copyTokens`. */
+  readonly copyEligible: boolean
+  /** Pairwise-disjoint sub-ranges of `range` for which this entry owns tokens. */
+  readonly tokenOwnedRanges: readonly EditorSyntaxRange[]
+  /** Pairwise-disjoint sub-ranges of `range` for which this entry owns complete scope facts. */
+  readonly scopeOwnedRanges: readonly EditorSyntaxRange[]
+  readonly folds: readonly FoldRange[]
+  readonly brackets: readonly BracketInfo[]
+  readonly injections: readonly EditorSyntaxInjection[]
+  readonly captures: readonly EditorSyntaxCapture[]
+  readonly tokens: EditorTokenStore
+}
+
+type CarriedRangeCache = {
+  readonly parseId: number | null
+  readonly entries: readonly CachedSyntaxRangeEntry[]
+}
+
+type RequestGuard = {
+  readonly documentVersion: number
+  readonly contentVersion: number
+  readonly configurationGeneration: number
+  readonly parseGeneration: number
+}
+
+type EditorSyntaxLoadSource = 'full' | 'visible' | 'prefetch' | 'warm'
+
 type EditorSyntaxLoadResult = {
   readonly contentVersion: number
+  readonly parseGeneration: number
+  readonly parseId?: number | null
+  readonly baseResult?: EditorSyntaxResult
   readonly range: EditorSyntaxRange | null
   readonly result: EditorSyntaxResult
   readonly source: EditorSyntaxLoadSource
@@ -162,9 +254,40 @@ type EditorSyntaxLoadResult = {
   readonly updatesDocument?: boolean
   /** The rows on screen, asked for ahead of the visible range that is already on its way. */
   readonly firstRows?: boolean
+  readonly promotedEntries?: readonly CachedSyntaxRangeEntry[]
+  readonly promotedOnly?: boolean
+  readonly visibleSequence?: number
+  readonly rangeFailure?: {
+    readonly range: EditorSyntaxRange
+    readonly error: unknown
+    readonly change: DocumentSessionChange | null
+  }
 }
 
-type EditorSyntaxLoadSource = 'full' | 'visible' | 'prefetch' | 'warm'
+type ViewportCompositionResult =
+  | {
+      readonly kind: 'composed'
+      readonly contributors: readonly CachedSyntaxRangeEntry[]
+      readonly folds: readonly FoldRange[]
+      readonly brackets: readonly BracketInfo[]
+      readonly injections: readonly EditorSyntaxInjection[]
+      readonly captures: readonly EditorSyntaxCapture[]
+      readonly records: EditorSyntaxResult['records']
+      readonly degraded: boolean
+    }
+  | { readonly kind: 'needs-authoritative-records-query' }
+
+type ReconcileViewportResult =
+  | {
+      readonly kind: 'settled'
+      readonly degraded: boolean
+      readonly contributors: readonly CachedSyntaxRangeEntry[]
+      readonly promoted: boolean
+      readonly scopeChanged: boolean
+    }
+  | { readonly kind: 'settled-degraded' }
+  | { readonly kind: 'needs-authoritative-records-query' }
+  | { readonly kind: 'incomplete' }
 
 /**
  * A document with no colors yet is asked for the rows on screen before the full visible range,
@@ -176,6 +299,7 @@ const FIRST_ROWS_MIN_SAVED_CHARS = 4_096
 type PendingSyntaxPrefetch = {
   readonly contentVersion: number
   readonly documentVersion: number
+  readonly parseGeneration: number
   readonly options: EditorSyntaxRefreshOptions
   readonly range: EditorSyntaxRange
 }
@@ -183,24 +307,11 @@ type PendingSyntaxPrefetch = {
 type PendingSyntaxWarm = {
   readonly configurationGeneration: number
   readonly contentVersion: number
+  readonly parseGeneration: number
   readonly delayMs: number
   readonly documentVersion: number
   readonly generation: number
   readonly seedRange: EditorSyntaxRange
-}
-
-type CachedSyntaxFoldRange = {
-  readonly range: EditorSyntaxRange
-  readonly folds: readonly FoldRange[]
-  readonly result: EditorSyntaxResult
-  readonly snapshot: DocumentTextSnapshot
-  /** The parts of `range` that no later answer has covered. */
-  readonly newestRanges: readonly EditorSyntaxRange[]
-  /**
-   * A partial answer: it answers its range for tokens, so the view does not ask for it again,
-   * but its empty folds are not the range's folds and give no fold coverage.
-   */
-  readonly partial: boolean
 }
 
 type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
@@ -246,7 +357,12 @@ export class EditorSyntaxController {
   private structuralConfigurationTag: readonly EditorPreparedTagValue[] = []
   private highlighterConfigurationTag: readonly EditorPreparedTagValue[] = []
   private disposed = false
-  private syntaxStatus: EditorSyntaxStatus = 'plain'
+  #parseState: DocumentParseState = { kind: 'plain' }
+  #parseGeneration = 0
+  #acceptedContentVersion: number | null = null
+  #acceptedParseGeneration: number | null = null
+  #acceptedParseId: number | null = null
+  #publishedScope: PublishedViewportScope | null = null
   #applyingRenderData = false
   #initialHighlightState: EditorInitialHighlightStatus = 'idle'
   #initialPaintDocumentVersion = 0
@@ -274,12 +390,15 @@ export class EditorSyntaxController {
   #preparedHighlighterContentVersion: number | null = null
   #providerHighlighterTheme: EditorTheme | null = null
   #highlighterTheme: EditorTheme | null = null
-  #foldCoverage:
-    | { readonly kind: 'full' }
-    | { readonly kind: 'range'; readonly range: EditorSyntaxRange }
-    | null = null
-  #cachedSyntaxRanges: readonly EditorSyntaxRange[] = []
-  #cachedSyntaxFoldRanges: readonly CachedSyntaxFoldRange[] = []
+  #rangeEntries: readonly CachedSyntaxRangeEntry[] = []
+  #carriedEntries: CarriedRangeCache | null = null
+  #unavailableRanges: readonly EditorSyntaxRange[] = []
+  #unavailableClearsScopeRanges: readonly EditorSyntaxRange[] = []
+  #unavailableEmptyRange: EditorSyntaxRange | null = null
+  #unavailableEmptyClearsScope = false
+  #unavailableRecordsRange: EditorSyntaxRange | null = null
+  #unavailableRecordsClearsScope = false
+  #observingPreparedStructural = false
   readonly #syntaxRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
     key: 'editor.syntax.document',
     taskClass: 'background-derived',
@@ -309,19 +428,33 @@ export class EditorSyntaxController {
     readonly store: EditorTokenStore
     readonly snapshot: DocumentTextSnapshot
   } | null = null
+  #externalBaseTokens: {
+    readonly store: EditorTokenStore
+    readonly snapshot: DocumentTextSnapshot
+  } | null = null
+  #pendingUnownedStrips: readonly EditorSyntaxRange[] = []
+  #projectedRangeTokens: EditorTokenStore | null = null
+  #awaitingProjectedEditTokens = false
+  #copyOwner: 'none' | 'range' | 'external' = 'none'
+  #rangeCopyTokens = EditorTokenStore.empty()
   private rangeCopyOwner: {
     readonly store: EditorTokenStore
-    readonly contributor: CachedSyntaxFoldRange
+    readonly contributor: CachedSyntaxRangeEntry
   } | null = null
-  #rangeScopeOwner: CachedSyntaxFoldRange | null = null
+  #rangeScopeOwners: readonly CachedSyntaxRangeEntry[] = []
   private stoppedWarm: {
     readonly snapshot: DocumentTextSnapshot
     readonly configurationGeneration: number
   } | null = null
+  #lastFrameDemand: {
+    readonly kind: 'frame'
+    readonly snapshot: DocumentTextSnapshot
+    readonly ranges: readonly EditorSyntaxRange[]
+  } | null = null
   #lastRangeTrim: {
     readonly snapshot: DocumentTextSnapshot
     readonly ranges: readonly EditorSyntaxRange[]
-    readonly cache: readonly CachedSyntaxFoldRange[]
+    readonly cache: readonly CachedSyntaxRangeEntry[]
     readonly store: EditorTokenStore
   } | null = null
   #acceptedCopyTokens = EditorTokenStore.empty()
@@ -330,19 +463,22 @@ export class EditorSyntaxController {
   #currentBrackets: readonly BracketInfo[] = []
   #currentInjections: readonly EditorSyntaxInjection[] = []
   #syntaxContentVersion = 0
-  #parsedSyntaxContentVersion: number | null = null
-  #pendingSyntaxContentVersion: number | null = null
+  #visibleRangeSequence = 0
   #pendingVisibleRange: {
     readonly documentVersion: number
     readonly contentVersion: number
+    readonly parseGeneration: number
     readonly range: EditorSyntaxRange
+    readonly bypassCache: boolean
   } | null = null
   #pendingPrefetch: PendingSyntaxPrefetch | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   #warmGeneration = 0
   #lastStructuralEditRefreshAt = Number.NEGATIVE_INFINITY
 
-  constructor(private readonly options: EditorSyntaxControllerOptions) {}
+  constructor(private readonly options: EditorSyntaxControllerOptions) {
+    installSyntaxRangeProjector(projectResultThroughSteps)
+  }
 
   /**
    * Takes the document over from the plain pipeline the editor ran before its first provider was
@@ -366,9 +502,20 @@ export class EditorSyntaxController {
     this.#acceptedCopyTokens = state.acceptedCopyTokens
     this.#acceptedTokensDocumentVersion = state.acceptedTokensDocumentVersion
     this.#acceptedTokensTextVersion = state.acceptedTokensTextVersion
+    this.#copyOwner = state.copyOwner
+    this.#externalBaseTokens = state.externalBaseTokens
   }
 
   setDisplayDemand(demand: EditorAnalysisDisplayDemand): void {
+    if (demand.kind === 'frame') {
+      this.#lastFrameDemand = {
+        kind: 'frame',
+        snapshot: demand.snapshot,
+        ranges: demand.ranges,
+      }
+    } else if (demand.kind === 'unknown') {
+      this.#lastFrameDemand = null
+    }
     const tokens = this.#currentTokens
     const discarded = this.#trimRangeCache(demand)
     if (this.retainedSyntax) {
@@ -384,84 +531,202 @@ export class EditorSyntaxController {
     if (tokens !== this.#currentTokens) this.options.adoptTokens(this.#currentTokens)
   }
 
-  #rangeContributors(demand: EditorAnalysisDisplayDemand): readonly CachedSyntaxFoldRange[] | null {
+  #rangeContributors(
+    demand: EditorAnalysisDisplayDemand,
+  ): readonly CachedSyntaxRangeEntry[] | null {
     if (demand.kind !== 'frame' || demand.snapshot !== this.options.getSession()?.getTextSnapshot())
       return null
-    const contributors = this.#cachedSyntaxFoldRanges.slice()
-    if (this.rangeCopyOwner?.store === this.copyTokens)
-      contributors.push(this.rangeCopyOwner.contributor)
-    if (this.#rangeScopeOwner) contributors.push(this.#rangeScopeOwner)
-    return contributors.filter((contributor) => contributor.snapshot === demand.snapshot)
+    const seen = new Set<CachedSyntaxRangeEntry>()
+    const contributors: CachedSyntaxRangeEntry[] = []
+    const add = (entry: CachedSyntaxRangeEntry): void => {
+      if (entry.snapshot !== demand.snapshot || seen.has(entry)) return
+      seen.add(entry)
+      contributors.push(entry)
+    }
+    for (const entry of this.#rangeEntries) add(entry)
+    if (this.rangeCopyOwner?.store === this.copyTokens) add(this.rangeCopyOwner.contributor)
+    for (const owner of this.#rangeScopeOwners) add(owner)
+    return contributors
   }
 
-  #trimRangeCache(demand: EditorAnalysisDisplayDemand): readonly CachedSyntaxFoldRange[] | null {
+  #trimRangeCache(demand: EditorAnalysisDisplayDemand): readonly CachedSyntaxRangeEntry[] | null {
     if (demand.kind !== 'frame') return null
     if (demand.snapshot !== this.options.getSession()?.getTextSnapshot()) return null
     if (this.#applyingRenderData) return null
     const visible = this.options.getVisibleSyntaxRange()
-    const ranges = visible ? appendCachedSyntaxRange(demand.ranges, visible) : demand.ranges
+    const shown = visible ? appendCachedSyntaxRange(demand.ranges, visible) : demand.ranges
     const previous = this.#lastRangeTrim
     if (
       previous?.snapshot === demand.snapshot &&
-      previous.cache === this.#cachedSyntaxFoldRanges &&
+      previous.cache === this.#rangeEntries &&
       previous.store === this.#currentTokens &&
-      sameSyntaxRanges(previous.ranges, ranges)
+      sameSyntaxRanges(previous.ranges, shown)
     )
       return null
-    const oldCache = this.#cachedSyntaxFoldRanges
+
+    const oldCache = this.#rangeEntries
     const rangeOwned =
       !this.#highlighterSession &&
       this.#rangeTokenOwner?.store === this.#currentTokens &&
       this.#rangeTokenOwner.snapshot === demand.snapshot
-    // Every answer that is the newest for some shown text stays, whoever painted the tokens. The
-    // view asks again for shown text without an answer, so dropping one of these would have it
-    // asked for again on every frame.
-    const newestContributors = oldCache.filter((cached) =>
-      syntaxRangeListsIntersect(cached.newestRanges, ranges),
-    )
-    const foldContributors = activeFoldContributors(oldCache, ranges)
-    const retained = new Set(newestContributors.concat(foldContributors))
-    const scope = this.#rangeScopeOwner
-    const copy =
-      this.rangeCopyOwner?.store === this.copyTokens ? this.rangeCopyOwner.contributor : null
-    const currentOwners = [scope, copy].filter(
-      (owner): owner is CachedSyntaxFoldRange =>
-        owner !== null && owner.snapshot === demand.snapshot,
-    )
-    for (const cached of oldCache) {
+    const retained = new Set<CachedSyntaxRangeEntry>()
+
+    // 1. Authoritative token owners (and fold/scope owners, since scopeOwnedRanges ⊆ tokenOwnedRanges)
+    //    for shown text.
+    for (const entry of oldCache) {
       if (
-        currentOwners.some(
-          (owner) => owner.result === cached.result && sameSyntaxRange(owner.range, cached.range),
-        )
-      )
-        retained.add(cached)
+        syntaxRangeListsIntersect(entry.tokenOwnedRanges, shown) ||
+        (entry.range.endIndex <= entry.range.startIndex &&
+          visible !== null &&
+          sameSyntaxRange(entry.range, visible))
+      ) {
+        retained.add(entry)
+      }
     }
-    const nextCache = oldCache.filter((cached) => retained.has(cached))
-    const coverage = nextCache.reduce<readonly EditorSyntaxRange[]>(
-      (covered, cached) => appendCachedSyntaxRange(covered, cached.range),
-      [],
-    )
+
+    // 2. Active viewport scope owners.
+    for (const owner of this.#rangeScopeOwners) {
+      if (owner.snapshot === demand.snapshot && oldCache.includes(owner)) retained.add(owner)
+    }
+
+    // 4. Single most recent prefetch intersecting shown.
+    for (let index = oldCache.length - 1; index >= 0; index -= 1) {
+      const entry = oldCache[index]!
+      if (entry.source === 'prefetch' && syntaxRangeListsIntersect([entry.range], shown)) {
+        retained.add(entry)
+        break
+      }
+    }
+
+    // 5. Active range copy owner (only when still matching copyTokens and current snapshot).
+    const copyContributor =
+      this.rangeCopyOwner?.store === this.copyTokens ? this.rangeCopyOwner.contributor : null
+    if (copyContributor && copyContributor.snapshot === demand.snapshot) {
+      for (const entry of oldCache) {
+        if (
+          entry === copyContributor ||
+          (entry.result === copyContributor.result &&
+            sameSyntaxRange(entry.range, copyContributor.range))
+        ) {
+          retained.add(entry)
+        }
+      }
+    }
+
+    const nextCache = oldCache.filter((entry) => retained.has(entry))
     const discardedOffDemand = oldCache.filter(
-      (cached) => !retained.has(cached) && !syntaxRangeListsIntersect([cached.range], ranges),
+      (entry) => !retained.has(entry) && !syntaxRangeListsIntersect([entry.range], shown),
     )
-    const removed =
-      nextCache.length !== oldCache.length || !sameSyntaxRanges(this.#cachedSyntaxRanges, coverage)
-    this.#cachedSyntaxFoldRanges = nextCache
-    this.#cachedSyntaxRanges = coverage
-    if (removed && rangeOwned) {
-      const tokens = compactSyntaxRangeTokens(this.#currentTokens, coverage)
-      this.#currentTokens = tokens
-      this.#rangeTokenOwner = { store: tokens, snapshot: demand.snapshot }
+
+    // Prune unavailable markers outside shown demand.
+    this.#unavailableRanges = this.#unavailableRanges.filter((range) =>
+      syntaxRangeListsIntersect([range], shown),
+    )
+    this.#unavailableClearsScopeRanges = this.#unavailableClearsScopeRanges.filter((range) =>
+      syntaxRangeListsIntersect([range], shown),
+    )
+    if (
+      this.#unavailableEmptyRange &&
+      (!visible || !sameSyntaxRange(this.#unavailableEmptyRange, visible))
+    ) {
+      this.#unavailableEmptyRange = null
+      this.#unavailableEmptyClearsScope = false
+    }
+    if (
+      this.#unavailableRecordsRange &&
+      !syntaxRangeListsIntersect([this.#unavailableRecordsRange], shown) &&
+      (!visible || !sameSyntaxRange(this.#unavailableRecordsRange, visible))
+    ) {
+      this.#unavailableRecordsRange = null
+      this.#unavailableRecordsClearsScope = false
+    }
+
+    const removed = nextCache.length !== oldCache.length
+    this.#rangeEntries = nextCache
+    if (removed) {
+      if (rangeOwned) {
+        const tokenRanges = this.#tokenCoverage(nextCache)
+        const tokens = compactSyntaxRangeTokens(this.#currentTokens, tokenRanges)
+        this.#currentTokens = tokens
+        this.#rangeTokenOwner = { store: tokens, snapshot: demand.snapshot }
+      } else if (!this.#highlighterSession) {
+        const removedEntries = oldCache.filter((entry) => !retained.has(entry))
+        const evictedRanges = this.#tokenCoverage(removedEntries)
+        if (evictedRanges.length > 0) {
+          const fallback =
+            this.#externalBaseTokens?.snapshot === demand.snapshot
+              ? this.#externalBaseTokens.store
+              : EditorTokenStore.empty()
+          this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, evictedRanges)
+        }
+      }
+      if (!this.#highlighterSession && this.#copyOwner === 'range') {
+        this.#compactRangeCopyStore(nextCache, this.#currentTokens, rangeOwned)
+      }
     }
     if (discardedOffDemand.length > 0 && !this.retainedSyntax)
       this.#stopOptionalWarm(demand.snapshot)
     this.#lastRangeTrim = {
       snapshot: demand.snapshot,
-      ranges,
+      ranges: shown,
       cache: nextCache,
       store: this.#currentTokens,
     }
     return discardedOffDemand
+  }
+
+  #compactRangeCopyStore(
+    entries: readonly CachedSyntaxRangeEntry[],
+    currentTokens: EditorTokenStore,
+    rangeOwned: boolean,
+  ): void {
+    const copyEntries = entries.filter((entry) => entry.copyEligible)
+    const allCopyEligible = copyEntries.length === entries.length
+    const nextCopyTokens =
+      allCopyEligible && rangeOwned
+        ? currentTokens
+        : compactSyntaxRangeTokens(this.#rangeCopyTokens, this.#tokenCoverage(copyEntries))
+    this.#rangeCopyTokens = nextCopyTokens
+    const currentContributor = this.rangeCopyOwner?.contributor ?? null
+    const nextContributor =
+      currentContributor && copyEntries.includes(currentContributor)
+        ? currentContributor
+        : this.#primaryCopyContributor(copyEntries)
+    this.rangeCopyOwner = nextContributor
+      ? { store: nextCopyTokens, contributor: nextContributor }
+      : null
+    if (
+      this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+      this.#acceptedTokensTextVersion === this.options.getTextVersion()
+    ) {
+      this.#acceptedCopyTokens = nextCopyTokens
+    }
+  }
+
+  #primaryCopyContributor(
+    entries: readonly CachedSyntaxRangeEntry[],
+  ): CachedSyntaxRangeEntry | null {
+    const visibleRange = this.options.getVisibleSyntaxRange()
+    if (visibleRange) {
+      const visibleCovering = entries.find(
+        (entry) =>
+          entry.copyEligible &&
+          entry.source === 'visible' &&
+          (visibleRange.endIndex <= visibleRange.startIndex
+            ? sameSyntaxRange(entry.range, visibleRange)
+            : syntaxRangeListsIntersect(entry.tokenOwnedRanges, [visibleRange])),
+      )
+      if (visibleCovering) return visibleCovering
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index]!
+      if (entry.copyEligible && entry.source !== 'prefetch') return entry
+    }
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index]!
+      if (entry.copyEligible) return entry
+    }
+    return null
   }
 
   #stopOptionalWarm(snapshot: DocumentTextSnapshot): void {
@@ -478,10 +743,42 @@ export class EditorSyntaxController {
     this.#warmRangeRequests.cancel()
   }
 
+  #structuralBaseStatus(): EditorSyntaxStatus {
+    const state = this.#parseState
+    if (state.kind === 'plain') return 'plain'
+    if (state.kind === 'error') return 'error'
+    if (state.kind === 'loading') return 'loading'
+    const scope = this.#publishedScope
+    if (!scope) return 'loading'
+    if (scope.kind === 'full') {
+      if (state.parseKind === 'partial' && !scope.degraded) return 'loading'
+      return scope.degraded ? 'degraded' : 'ready'
+    }
+    return scope.degraded ? 'degraded' : 'ready'
+  }
+
   get status(): EditorSyntaxStatus {
-    if (this.syntaxStatus !== 'ready' && this.syntaxStatus !== 'degraded') return this.syntaxStatus
-    if (this.usesFallbackFolds || this.#foldsCoverViewport()) return this.syntaxStatus
-    return 'loading'
+    const state = this.#parseState
+    if (state.kind === 'plain') return 'plain'
+    if (state.kind === 'error') return 'error'
+    if (state.kind === 'loading') return 'loading'
+    const scope = this.#publishedScope
+    if (!scope) return 'loading'
+    if (scope.kind === 'full') {
+      if (state.parseKind === 'partial' && !scope.degraded) return 'loading'
+      return scope.degraded ? 'degraded' : 'ready'
+    }
+    const visible = this.options.getVisibleSyntaxRange()
+    if (visible === null) return 'loading'
+    if (visible.endIndex <= visible.startIndex) {
+      return sameSyntaxRange(visible, scope.range)
+        ? scope.degraded
+          ? 'degraded'
+          : 'ready'
+        : 'loading'
+    }
+    if (syntaxRangeCoverage(visible, [scope.range]) !== 'full') return 'loading'
+    return scope.degraded ? 'degraded' : 'ready'
   }
 
   get usesFallbackFolds(): boolean {
@@ -492,7 +789,7 @@ export class EditorSyntaxController {
     return fallbackFoldReason({
       languageId: this.options.getLanguageId(),
       session: this.syntaxSession,
-      status: this.syntaxStatus,
+      status: this.#structuralBaseStatus(),
     })
   }
 
@@ -501,7 +798,7 @@ export class EditorSyntaxController {
       reason: this.fallbackFoldReason,
       provider: this.#structuralProviderKind(),
       foldingSupport: this.syntaxSession?.foldingSupport ?? null,
-      structuralStatus: this.syntaxStatus,
+      structuralStatus: this.#structuralBaseStatus(),
       structuralSession: this.syntaxSession !== null,
       structuralSuppression: this.fallbackFoldReason === null,
       configurationGeneration: this.#initialHighlightConfigurationGeneration,
@@ -513,12 +810,19 @@ export class EditorSyntaxController {
     return null
   }
 
-  #foldsCoverViewport(): boolean {
-    const coverage = this.#foldCoverage
-    if (!coverage) return false
-    if (coverage.kind === 'full') return true
-    const range = this.options.getVisibleSyntaxRange()
-    return range !== null && syntaxRangeCoverage(range, [coverage.range]) === 'full'
+  #publishedScopeCoversViewport(): boolean {
+    const scope = this.#publishedScope
+    if (!scope) return false
+    if (scope.kind === 'full') {
+      return (
+        this.#parseState.kind === 'parsed' &&
+        (this.#parseState.parseKind !== 'partial' || scope.degraded)
+      )
+    }
+    const visible = this.options.getVisibleSyntaxRange()
+    if (!visible) return false
+    if (visible.endIndex <= visible.startIndex) return sameSyntaxRange(visible, scope.range)
+    return syntaxRangeCoverage(visible, [scope.range]) === 'full'
   }
 
   get renderDataReady(): boolean {
@@ -590,19 +894,51 @@ export class EditorSyntaxController {
   }
 
   setTokens(tokens: EditorTokenStore, current = true, copyTokens = tokens): void {
+    this.#applyTokens(tokens, current, copyTokens, 'external')
+  }
+
+  #applyTokens(
+    tokens: EditorTokenStore,
+    current: boolean,
+    copyTokens: EditorTokenStore,
+    owner: 'none' | 'range' | 'external',
+  ): void {
     if (this.#rangeTokenOwner?.store !== tokens) this.#rangeTokenOwner = null
-    if (!current || this.rangeCopyOwner?.store !== copyTokens) this.rangeCopyOwner = null
-    if (!current && tokens !== this.#currentTokens)
+    if (current) {
+      this.#projectedRangeTokens = null
+      this.#awaitingProjectedEditTokens = false
+    } else if (this.#awaitingProjectedEditTokens) {
+      this.#awaitingProjectedEditTokens = false
+      this.#projectedRangeTokens = tokens
+    } else if (tokens !== this.#currentTokens) {
+      this.#projectedRangeTokens = null
+    }
+    if (!current || owner !== 'range' || this.rangeCopyOwner?.store !== copyTokens) {
+      this.rangeCopyOwner = null
+    }
+    if (!current && tokens !== this.#currentTokens) {
       this.#acceptedCopyTokens = EditorTokenStore.empty()
+      if (this.#copyOwner === 'range') this.#copyOwner = 'none'
+    }
+    const previousTokens = this.#currentTokens
     this.#currentTokens = tokens
     if (current) {
+      this.#copyOwner = owner
+      this.#pendingUnownedStrips = []
+      if (owner === 'external') {
+        const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+        this.#externalBaseTokens = snapshot ? { store: tokens, snapshot } : null
+      } else {
+        this.#externalBaseTokens = null
+      }
+      if (owner !== 'range') this.rangeCopyOwner = null
       this.#acceptedCopyTokens = copyTokens
       this.#acceptedTokensDocumentVersion = this.options.getDocumentVersion()
       this.#acceptedTokensTextVersion = this.options.getTextVersion()
     }
     if (this.#preparedInitialTokensInstalled) {
       this.#preparedInitialTokensInstalled = false
-      return
+      if (tokens === previousTokens) return
     }
     this.options.adoptTokens(tokens)
   }
@@ -621,15 +957,23 @@ export class EditorSyntaxController {
 
   stagePreparedReadyTokens(prepared: EditorPreparedDocumentPayload | null): EditorTokenStore {
     const highlighterResult = prepared?.highlighter?.readyResult
+    const canRange = Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
     const structuralResult = prepared?.structural?.readyResult
+      ? canRange
+        ? prepared.structural.readyResult
+        : (this.retainedSyntax?.readBaseResult() ?? prepared.structural.readyResult)
+      : undefined
     const structuralTokens = prepared?.highlighter ? undefined : structuralResult?.tokens
     const tokens = highlighterResult?.tokens ?? toEditorTokenStore(structuralTokens ?? [])
 
     this.#currentTokens = tokens
     const structural = prepared?.structural
-    const read = structural?.session.read(structural.range)
+    const read = canRange ? structural?.session.read(structural.range) : undefined
     this.#rangeTokenOwner =
-      !prepared?.highlighter && read?.kind === 'ready' && read.result === structuralResult
+      !prepared?.highlighter &&
+      canRange &&
+      read?.kind === 'ready' &&
+      read.result === structuralResult
         ? { store: tokens, snapshot: read.snapshot }
         : null
     this.#preparedInitialTokensInstalled = Boolean(highlighterResult || structuralTokens)
@@ -674,8 +1018,13 @@ export class EditorSyntaxController {
     this.#advanceInitialHighlightConfigurationGeneration()
     this.#disposeSyntaxSession()
     this.#disposeHighlighterSession()
+    this.#externalBaseTokens = null
+    this.#pendingUnownedStrips = []
     this.#clearSyntaxRangeCache()
+    this.#copyOwner = 'none'
     this.#resetSyntaxContentVersion()
+    this.#parseGeneration += 1
+    this.#lastFrameDemand = null
     this.#currentBrackets = []
     this.#currentInjections = []
     this.analysis = document.analysis ?? null
@@ -700,7 +1049,13 @@ export class EditorSyntaxController {
     if (prepared?.structural) {
       this.#syntaxSessionIncludesCaptures = prepared.structural.configuration.includeCaptures
     }
-    this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
+    this.#parseState = this.syntaxSession
+      ? {
+          kind: 'loading',
+          contentVersion: this.#syntaxContentVersion,
+          parseGeneration: this.#parseGeneration,
+        }
+      : { kind: 'plain' }
     this.#initialPaintDocumentVersion = this.options.getDocumentVersion()
     this.#initialTextPainted = false
     this.#initialTextPaintEmitted = false
@@ -723,61 +1078,111 @@ export class EditorSyntaxController {
     this.#logSyntaxStatus('editor.syntax.document_started')
   }
 
-  adoptPreparedReadyResults(prepared: EditorPreparedDocumentPayload | null): void {
+  adoptPreparedReadyResults(
+    prepared: EditorPreparedDocumentPayload | null,
+    prefetchRange?: EditorSyntaxRange | null,
+  ): void {
     if (!prepared) return
 
-    const documentVersion = this.options.getDocumentVersion()
-    const configurationGeneration = this.#initialHighlightConfigurationGeneration
-    const contentVersion = this.#syntaxContentVersion
-    if (prepared.structural?.readyResult) {
-      this.#applyPreparedStructuralResult(
-        prepared.structural,
-        prepared.structural.readyResult,
-        documentVersion,
-        configurationGeneration,
-        contentVersion,
-      )
+    const guard = this.#captureRequestGuard()
+    const readyStructural = prepared.structural?.readyResult ?? null
+    if (prepared.structural && readyStructural) {
+      this.#applyPreparedStructuralResult(prepared.structural, readyStructural, guard)
+      this.#adoptReadyPrefetch(prefetchRange, guard)
+    } else if (prepared.structural) {
+      if (!this.#observingPreparedStructural) {
+        this.#observePreparedStructural(prepared.structural, guard)
+      }
+    } else {
+      this.#adoptReadyStructuralAnalysis(prefetchRange, guard)
     }
     if (prepared.highlighter?.readyResult) {
       this.#applyHighlightResult(
         prepared.highlighter.readyResult,
-        documentVersion,
+        guard.documentVersion,
         nowMs(),
-        configurationGeneration,
+        guard.configurationGeneration,
       )
     }
   }
 
-  adoptReadyAnalysis(): void {
-    const documentVersion = this.options.getDocumentVersion()
-    const configurationGeneration = this.#initialHighlightConfigurationGeneration
-    const range = this.options.getVisibleSyntaxRange()
-    const structural = this.retainedSyntax?.read(range ?? undefined)
-    if (structural?.kind === 'ready') {
-      this.#applySyntaxResult(
-        {
-          contentVersion: this.#syntaxContentVersion,
-          range,
-          result: structural.result,
-          source: range ? 'visible' : 'full',
-          suppressWarm: true,
-          updatesDocument: true,
-        },
-        documentVersion,
-        nowMs(),
-        configurationGeneration,
-      )
-    }
+  adoptReadyAnalysis(prefetchRange?: EditorSyntaxRange | null): void {
+    const guard = this.#captureRequestGuard()
+    this.#adoptReadyStructuralAnalysis(prefetchRange, guard)
     const highlighter = this.#retainedHighlighter?.read()
     if (highlighter?.kind === 'ready') {
       this.#consumeRetainedProviderTheme()
       this.#applyHighlightResult(
         highlighter.result,
-        documentVersion,
+        guard.documentVersion,
         nowMs(),
-        configurationGeneration,
+        guard.configurationGeneration,
       )
     }
+  }
+
+  #adoptReadyStructuralAnalysis(
+    prefetchRange: EditorSyntaxRange | null | undefined,
+    guard: RequestGuard,
+  ): void {
+    const canRange = Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
+    const visible = canRange ? this.options.getVisibleSyntaxRange() : null
+    const structural = this.retainedSyntax?.read(visible ?? undefined)
+    if (structural?.kind !== 'ready') return
+    const cachedRange = structural.range ?? structural.result.projection.requestedRanges[0]
+    const adoptedRange =
+      canRange &&
+      visible &&
+      cachedRange &&
+      cachedRange.startIndex <= visible.startIndex &&
+      cachedRange.endIndex >= visible.endIndex
+        ? cachedRange
+        : visible
+    const range = canRange ? adoptedRange : null
+    const baseResult = this.retainedSyntax?.readBaseResult() ?? structural.result
+    this.#applySyntaxResult(
+      {
+        contentVersion: guard.contentVersion,
+        parseGeneration: guard.parseGeneration,
+        parseId: this.retainedSyntax?.currentParseId() ?? null,
+        baseResult,
+        range,
+        result: range ? structural.result : baseResult,
+        source: range ? 'visible' : 'full',
+        suppressWarm: true,
+        updatesDocument: true,
+      },
+      guard,
+      nowMs(),
+    )
+    if (canRange) this.#adoptReadyPrefetch(prefetchRange, guard)
+  }
+
+  #adoptReadyPrefetch(
+    prefetchRange: EditorSyntaxRange | null | undefined,
+    guard: RequestGuard,
+  ): void {
+    if (!prefetchRange || !this.retainedSyntax || !this.#canQueryCurrentSyntaxRange()) return
+    if (this.#rangeCoveredByTokens(prefetchRange)) return
+    const ready = this.retainedSyntax.read(prefetchRange)
+    if (ready.kind !== 'ready' || ready.result.projection.analysis?.kind === 'partial') return
+    const cachedRange = ready.range ?? prefetchRange
+    if (syntaxRangeCoverage(prefetchRange, [cachedRange]) !== 'full') return
+    this.#applySyntaxResult(
+      {
+        contentVersion: guard.contentVersion,
+        parseGeneration: guard.parseGeneration,
+        parseId: this.retainedSyntax.currentParseId(),
+        baseResult: ready.result,
+        range: cachedRange,
+        result: ready.result,
+        source: 'prefetch',
+        suppressWarm: true,
+        updatesDocument: false,
+      },
+      guard,
+      nowMs(),
+    )
   }
 
   notifyBaseTextPainted(): void {
@@ -793,7 +1198,9 @@ export class EditorSyntaxController {
 
   clearDocument(): void {
     this.#advanceInitialHighlightConfigurationGeneration()
-    this.syntaxStatus = 'plain'
+    this.#parseGeneration += 1
+    this.#parseState = { kind: 'plain' }
+    this.#lastFrameDemand = null
     this.#initialHighlightState = 'idle'
     this.#failedHighlightRefreshes = 0
     this.#initialPaintDocumentVersion = this.options.getDocumentVersion()
@@ -803,7 +1210,12 @@ export class EditorSyntaxController {
     this.pendingInitialHighlightReplacement = null
     this.#preparedInitialTokensInstalled = false
     this.#lastInitialHighlightTerminalStatus = 'plain'
+    this.#currentBrackets = []
+    this.#currentInjections = []
+    this.#externalBaseTokens = null
+    this.#pendingUnownedStrips = []
     this.#clearSyntaxRangeCache()
+    this.#copyOwner = 'none'
     this.#resetSyntaxContentVersion()
     this.#disposeSyntaxSession()
     this.#disposeHighlighterSession()
@@ -814,6 +1226,9 @@ export class EditorSyntaxController {
 
   dispose(): void {
     this.disposed = true
+    this.#parseGeneration += 1
+    this.#parseState = { kind: 'plain' }
+    this.#lastFrameDemand = null
     this.analysis = null
     this.#highlighterThemeRequests.dispose()
     this.#disposeSyntaxSession()
@@ -850,11 +1265,15 @@ export class EditorSyntaxController {
 
     if (resetInitialHighlight) this.#beginInitialHighlightReplacement('syntax')
 
+    this.#parseGeneration += 1
     this.#disposeSyntaxSession()
     this.#clearSyntaxRangeCache()
+    this.#currentBrackets = []
+    this.#currentInjections = []
 
     const session = this.options.getSession()
     if (!session) {
+      this.#parseState = { kind: 'plain' }
       this.#settlePlainInitialHighlightIfNeeded()
       return
     }
@@ -866,7 +1285,13 @@ export class EditorSyntaxController {
       snapshot: session.getSnapshot(),
     })
     this.#observeProducedStructuralSyntax()
-    this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
+    this.#parseState = this.syntaxSession
+      ? {
+          kind: 'loading',
+          contentVersion: this.#syntaxContentVersion,
+          parseGeneration: this.#parseGeneration,
+        }
+      : { kind: 'plain' }
     this.options.clearSyntaxFolds()
     this.#logSyntaxStatus('editor.syntax.reloaded')
     const configurationGeneration = this.#initialHighlightConfigurationGeneration
@@ -974,6 +1399,23 @@ export class EditorSyntaxController {
       return
     }
 
+    const explicitRetry = change === null
+    const retryDegradedPrepared =
+      explicitRetry &&
+      (this.#parseState.kind === 'error' ||
+        this.#publishedScope?.degraded === true ||
+        this.retainedSyntax?.hasDegradedOrFailedBase() === true)
+    if (explicitRetry) {
+      this.#unavailableRanges = []
+      this.#unavailableClearsScopeRanges = []
+      this.#unavailableEmptyRange = null
+      this.#unavailableEmptyClearsScope = false
+      this.#unavailableRecordsRange = null
+      this.#unavailableRecordsClearsScope = false
+      this.#pruneDegradedAndPartialRangeEntries()
+      this.retainedSyntax?.clearDegradedOrPartialRanges()
+    }
+
     this.options.log?.({
       action: 'editor.syntax.refresh_scheduled',
       level: 'debug',
@@ -984,8 +1426,12 @@ export class EditorSyntaxController {
         range: options.range ?? null,
       },
     })
-    if (this.#syntaxContentVersion !== this.#preparedStructuralContentVersion) {
-      this.#refreshStructuralSyntax(documentVersion, change, options)
+    const skipPreparedStructural =
+      this.#syntaxContentVersion === this.#preparedStructuralContentVersion &&
+      !retryDegradedPrepared
+    if (!skipPreparedStructural) {
+      this.#preparedStructuralContentVersion = null
+      this.#refreshStructuralSyntax(documentVersion, change, options, explicitRetry)
     }
     if (
       this.#syntaxContentVersion !== this.#preparedHighlighterContentVersion &&
@@ -1001,11 +1447,102 @@ export class EditorSyntaxController {
     }
     this.stoppedWarm = null
     this.#syntaxContentVersion += 1
+    this.#parseGeneration += 1
+    this.#lastFrameDemand = null
+    this.#lastRangeTrim = null
+    this.rangeRequests.cancel()
+    this.#prefetchRangeRequests.cancel()
+    this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
+    this.#pendingPrefetch = null
+    this.pendingWarm = null
     this.pendingInitialHighlightReplacement = null
     this.#pendingInitialHighlightThemeTerminal = null
-    this.#foldCoverage = null
-    this.#parsedSyntaxContentVersion = null
-    this.#projectSyntaxRangeCache(change)
+    this.#publishedScope = null
+    this.#unavailableRanges = []
+    this.#unavailableClearsScopeRanges = []
+    this.#unavailableEmptyRange = null
+    this.#unavailableEmptyClearsScope = false
+    this.#unavailableRecordsRange = null
+    this.#unavailableRecordsClearsScope = false
+    // Immediately clear stale pre-edit brackets and injections while reanalysis is in flight.
+    this.#currentBrackets = []
+    this.#currentInjections = []
+
+    // Preserve the earliest accepted parse's complete entries across rapid edits so incremental
+    // promotion replays every intervening parse step once parsing catches up.
+    if (
+      this.#carriedEntries === null &&
+      this.#parseState.kind === 'parsed' &&
+      this.#parseState.mode === 'range'
+    ) {
+      const complete = this.#rangeEntries.filter((entry) => !entry.tokensOnly)
+      if (complete.length > 0) {
+        this.#carriedEntries = {
+          parseId: this.#parseState.parseId,
+          entries: complete,
+        }
+      }
+    }
+
+    const hadRangeOwnedPaint =
+      !this.#highlighterSession &&
+      (this.#rangeTokenOwner?.store === this.#currentTokens ||
+        (this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens))
+    if (!this.#highlighterSession && !hadRangeOwnedPaint) {
+      const priorStrips = mergeSyntaxRanges(
+        this.#tokenCoverage(this.#rangeEntries).concat(this.#pendingUnownedStrips),
+      )
+      this.#pendingUnownedStrips =
+        priorStrips.length > 0
+          ? projectRangesThroughEdits(priorStrips, change.edits, change.textSnapshot.length)
+          : []
+      if (this.#externalBaseTokens) {
+        if (change.edits.length === 1) {
+          this.#externalBaseTokens = {
+            store: projectTokensThroughEdit(
+              this.#externalBaseTokens.store,
+              change.edits[0]!,
+              this.#externalBaseTokens.snapshot,
+            ),
+            snapshot: change.textSnapshot,
+          }
+        } else if (change.edits.length > 1) {
+          this.#externalBaseTokens = {
+            store: projectTokensThroughEdits(
+              this.#externalBaseTokens.store,
+              createTextEditBatch(
+                this.#externalBaseTokens.snapshot,
+                change.textSnapshot,
+                change.edits,
+              ),
+            ),
+            snapshot: change.textSnapshot,
+          }
+        } else {
+          this.#externalBaseTokens = null
+        }
+      }
+    } else {
+      this.#pendingUnownedStrips = []
+      this.#externalBaseTokens = null
+    }
+    this.#rangeEntries = []
+    this.#rangeScopeOwners = []
+    this.rangeCopyOwner = null
+    this.#rangeTokenOwner = null
+    this.#projectedRangeTokens = hadRangeOwnedPaint ? this.#currentTokens : null
+    this.#awaitingProjectedEditTokens = hadRangeOwnedPaint
+    this.#rangeCopyTokens = EditorTokenStore.empty()
+    if (!this.#highlighterSession) this.#copyOwner = 'none'
+
+    if (this.syntaxSession) {
+      this.#parseState = {
+        kind: 'loading',
+        contentVersion: this.#syntaxContentVersion,
+        parseGeneration: this.#parseGeneration,
+      }
+    }
     if (this.#retainedHighlighter) {
       this.#refreshHighlightTokens(this.options.getDocumentVersion(), change, { delayMs: 0 })
     }
@@ -1014,34 +1551,90 @@ export class EditorSyntaxController {
   refreshVisibleRange(documentVersion: number, options: EditorSyntaxRefreshOptions = {}): void {
     if (!this.syntaxSession?.queryRange) return
     if (!this.options.getSession()) return
+    if (!this.#canQueryCurrentSyntaxRange()) {
+      if (!this.#isParseIdCurrent()) {
+        this.#resetForProducedStructuralSyntax(documentVersion)
+        return
+      }
+      if (
+        this.#canProviderQuerySyntaxRange() &&
+        this.#parseState.kind === 'parsed' &&
+        this.#parseState.mode === 'full' &&
+        this.#parseState.parseKind === 'full' &&
+        this.#parseState.contentVersion === this.#syntaxContentVersion &&
+        this.#parseState.parseGeneration === this.#parseGeneration
+      ) {
+        this.#parseState = {
+          ...this.#parseState,
+          mode: 'range',
+          fullResult: null,
+        }
+      } else {
+        // If range capability was disabled after an earlier range-mode parse settled, scrolling to an
+        // uncached or unavailable viewport must transition cleanly to full-document publication
+        // instead of stranding the editor in `loading` or stale range degradation.
+        if (
+          !this.#publishedScopeCoversViewport() ||
+          (this.#publishedScope?.kind === 'range' && this.#publishedScope.unavailable)
+        ) {
+          this.#transitionRangeToFullOnCapabilityLoss(documentVersion, options.delayMs ?? 0)
+        }
+        return
+      }
+    }
 
     const range = options.range ?? this.options.getVisibleSyntaxRange()
     if (!range) return
-    if (this.#repaintCachedVisibleSyntaxRange(range)) return
-    if (!this.#canQueryCurrentSyntaxRange()) return
+    const configurationGeneration = this.#initialHighlightConfigurationGeneration
 
-    const uncoveredRange = firstUncoveredSyntaxRange(range, this.#cachedSyntaxRanges)
-    if (!uncoveredRange) return
+    // Cache hit check (promotes copy eligibility for warmed/prefetched ranges when scrolled onto,
+    // and honors terminal authoritative records failure when multi-strip coverage is unavailable).
+    if (this.#repaintCachedVisibleSyntaxRange(range, configurationGeneration)) {
+      this.#visibleRangeSequence += 1
+      return
+    }
+
+    // If all missing parts of `range` are already terminally unavailable, reconcile & settle.
+    if (!this.#needsAuthoritativeRecordsQuery(range) && this.#rangeCoveredBySettled(range)) {
+      this.#reconcileViewportScope(range, { configurationGeneration })
+      return
+    }
+
+    const bypassCache = this.#needsAuthoritativeRecordsQuery(range)
+    const queryRange = this.#nextRequiredVisibleRange(range)
+    if (!queryRange) return
+
     const pending = this.#pendingVisibleRange
     if (
       this.rangeRequests.isActive() &&
       pending?.documentVersion === documentVersion &&
       pending.contentVersion === this.#syntaxContentVersion &&
-      syntaxRangeCoverage(uncoveredRange, [pending.range]) === 'full'
-    )
+      pending.parseGeneration === this.#parseGeneration &&
+      (bypassCache
+        ? pending.bypassCache && sameSyntaxRange(queryRange, pending.range)
+        : queryRange.endIndex <= queryRange.startIndex
+          ? sameSyntaxRange(queryRange, pending.range)
+          : syntaxRangeCoverage(queryRange, [pending.range]) === 'full')
+    ) {
       return
+    }
+
+    this.#visibleRangeSequence += 1
     this.#pendingVisibleRange = {
       documentVersion,
       contentVersion: this.#syntaxContentVersion,
-      range: uncoveredRange,
+      parseGeneration: this.#parseGeneration,
+      range: queryRange,
+      bypassCache,
     }
 
     this.#scheduleSyntaxRangeRequest(
       this.rangeRequests,
       documentVersion,
-      uncoveredRange,
+      queryRange,
       options,
       'visible',
+      bypassCache,
     )
   }
 
@@ -1053,11 +1646,13 @@ export class EditorSyntaxController {
     if (!this.syntaxSession?.queryRange) return false
     if (!this.options.getSession()) return false
     if (!this.#canQueryCurrentSyntaxRange()) return false
-    if (!range || syntaxRangeCoverage(range, this.#cachedSyntaxRanges) === 'full') return false
+    if (!range) return false
+    if (this.#rangeCoveredByTokens(range)) return false
     if (this.rangeRequests.isActive()) {
       this.#pendingPrefetch = {
         contentVersion: this.#syntaxContentVersion,
         documentVersion,
+        parseGeneration: this.#parseGeneration,
         options,
         range,
       }
@@ -1092,9 +1687,10 @@ export class EditorSyntaxController {
     )
       return
 
-    const pendingWarm = {
+    const pendingWarm: PendingSyntaxWarm = {
       configurationGeneration: this.#initialHighlightConfigurationGeneration,
       contentVersion: this.#syntaxContentVersion,
+      parseGeneration: this.#parseGeneration,
       delayMs: options.delayMs ?? 120,
       documentVersion,
       generation: this.#nextWarmGeneration(),
@@ -1126,16 +1722,36 @@ export class EditorSyntaxController {
     const retained = this.retainedSyntax
     if (!retained) return
     this.#unsubscribeProducedSyntax = retained.onDidProduceSyntax(() => {
-      if (this.retainedSyntax !== retained) return
-      this.rangeRequests.cancel()
-      this.#prefetchRangeRequests.cancel()
-      this.#warmRangeRequests.cancel()
-      this.#pendingPrefetch = null
-      this.pendingWarm = null
-      this.#clearSyntaxRangeCache()
-      this.#parsedSyntaxContentVersion = null
-      this.#refreshStructuralSyntax(this.options.getDocumentVersion(), null, { delayMs: 0 })
+      if (this.retainedSyntax !== retained || this.disposed) return
+      this.#resetForProducedStructuralSyntax(this.options.getDocumentVersion())
     })
+  }
+
+  #resetForProducedStructuralSyntax(documentVersion: number): void {
+    const hadRangeOwnedPaint =
+      !this.#highlighterSession &&
+      (this.#rangeTokenOwner?.store === this.#currentTokens ||
+        (this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens))
+    if (!this.#highlighterSession && !hadRangeOwnedPaint) {
+      this.#pendingUnownedStrips = mergeSyntaxRanges(
+        this.#tokenCoverage(this.#rangeEntries).concat(this.#pendingUnownedStrips),
+      )
+    }
+    this.#parseGeneration += 1
+    this.rangeRequests.cancel()
+    this.#prefetchRangeRequests.cancel()
+    this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
+    this.#pendingPrefetch = null
+    this.pendingWarm = null
+    this.#clearSyntaxRangeCache()
+    if (hadRangeOwnedPaint) this.#projectedRangeTokens = this.#currentTokens
+    this.#parseState = {
+      kind: 'loading',
+      contentVersion: this.#syntaxContentVersion,
+      parseGeneration: this.#parseGeneration,
+    }
+    this.#refreshStructuralSyntax(documentVersion, null, { delayMs: 0 }, false)
   }
 
   #observeProducedHighlighterTokens(): void {
@@ -1216,25 +1832,24 @@ export class EditorSyntaxController {
     }
   }
 
+  #observePreparedStructural(
+    structural: EditorPreparedStructuralBorrow,
+    guard: RequestGuard,
+  ): void {
+    this.#observingPreparedStructural = true
+    void structural.result.then(
+      (result) => this.#applyPreparedStructuralResult(structural, result, guard),
+      () => this.#recoverPreparedStructural(structural, guard),
+    )
+  }
+
   #observePreparedResults(prepared: EditorPreparedDocumentPayload | null): void {
     if (!prepared) return
 
-    const documentVersion = this.options.getDocumentVersion()
-    const configurationGeneration = this.#initialHighlightConfigurationGeneration
-    const contentVersion = this.#syntaxContentVersion
+    const guard = this.#captureRequestGuard()
     const structural = prepared.structural
     if (structural && !structural.readyResult) {
-      void structural.result.then(
-        (result) =>
-          this.#applyPreparedStructuralResult(
-            structural,
-            result,
-            documentVersion,
-            configurationGeneration,
-            contentVersion,
-          ),
-        () => this.#recoverPreparedStructural(structural, documentVersion, configurationGeneration),
-      )
+      this.#observePreparedStructural(structural, guard)
     }
     const highlighter = prepared.highlighter
     if (!highlighter || highlighter.readyResult) return
@@ -1243,11 +1858,16 @@ export class EditorSyntaxController {
         this.#applyPreparedHighlighterResult(
           highlighter,
           result,
-          documentVersion,
-          configurationGeneration,
-          contentVersion,
+          guard.documentVersion,
+          guard.configurationGeneration,
+          guard.contentVersion,
         ),
-      () => this.#recoverPreparedHighlighter(highlighter, documentVersion, configurationGeneration),
+      () =>
+        this.#recoverPreparedHighlighter(
+          highlighter,
+          guard.documentVersion,
+          guard.configurationGeneration,
+        ),
     )
   }
 
@@ -1271,38 +1891,44 @@ export class EditorSyntaxController {
   #applyPreparedStructuralResult(
     transfer: EditorPreparedStructuralBorrow,
     result: EditorSyntaxResult,
-    documentVersion: number,
-    configurationGeneration: number,
-    contentVersion: number,
+    guard: RequestGuard,
   ): void {
     if (this.syntaxSession !== transfer.session) return
+    if (!this.#isRequestCurrent(guard)) return
 
+    const canRange = Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
+    const range = canRange ? transfer.range : null
+    const baseResult = this.retainedSyntax?.readBaseResult() ?? result
     this.#applySyntaxResult(
       {
-        contentVersion,
-        range: transfer.range,
-        result,
-        source: 'visible',
+        contentVersion: guard.contentVersion,
+        parseGeneration: guard.parseGeneration,
+        parseId: this.retainedSyntax?.currentParseId() ?? null,
+        baseResult,
+        range,
+        result: range ? result : baseResult,
+        source: range ? 'visible' : 'full',
         suppressWarm: true,
         updatesDocument: true,
       },
-      documentVersion,
+      guard,
       nowMs(),
-      configurationGeneration,
     )
   }
 
-  #recoverPreparedStructural(
-    transfer: EditorPreparedStructuralBorrow,
-    documentVersion: number,
-    configurationGeneration: number,
-  ): void {
+  #recoverPreparedStructural(transfer: EditorPreparedStructuralBorrow, guard: RequestGuard): void {
     if (
-      !this.#preparedResultStillCurrent(transfer.session, documentVersion, configurationGeneration)
+      !this.#preparedResultStillCurrent(
+        transfer.session,
+        guard.documentVersion,
+        guard.configurationGeneration,
+      )
     ) {
       return
     }
+    if (guard.parseGeneration !== this.#parseGeneration) return
 
+    this.#parseGeneration += 1
     this.#disposeSyntaxSession()
     const session = this.options.getSession()
     if (!session) return
@@ -1313,8 +1939,14 @@ export class EditorSyntaxController {
       snapshot: session.getSnapshot(),
     })
     this.#observeProducedStructuralSyntax()
-    this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
-    this.#refreshStructuralSyntax(documentVersion, null)
+    this.#parseState = this.syntaxSession
+      ? {
+          kind: 'loading',
+          contentVersion: this.#syntaxContentVersion,
+          parseGeneration: this.#parseGeneration,
+        }
+      : { kind: 'plain' }
+    this.#refreshStructuralSyntax(guard.documentVersion, null)
   }
 
   #recoverPreparedHighlighter(
@@ -1377,18 +2009,38 @@ export class EditorSyntaxController {
     this.rangeRequests.cancel()
     this.#prefetchRangeRequests.cancel()
     this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
     this.#pendingPrefetch = null
     this.pendingWarm = null
     this.#clearSyntaxRangeCache()
-    this.#parsedSyntaxContentVersion = null
-    this.#pendingSyntaxContentVersion = null
     if (this.#preparedSyntaxDisposer) this.#preparedSyntaxDisposer()
     else this.syntaxSession?.dispose()
     this.#preparedSyntaxDisposer = null
     this.#preparedStructuralContentVersion = null
+    this.#observingPreparedStructural = false
     this.syntaxSession = null
     this.retainedSyntax = null
     this.#syntaxSessionIncludesCaptures = false
+  }
+
+  #captureRequestGuard(documentVersion = this.options.getDocumentVersion()): RequestGuard {
+    return {
+      documentVersion,
+      contentVersion: this.#syntaxContentVersion,
+      configurationGeneration: this.#initialHighlightConfigurationGeneration,
+      parseGeneration: this.#parseGeneration,
+    }
+  }
+
+  #isRequestCurrent(guard: RequestGuard): boolean {
+    return (
+      !this.disposed &&
+      this.options.getSession() !== null &&
+      guard.documentVersion === this.options.getDocumentVersion() &&
+      guard.contentVersion === this.#syntaxContentVersion &&
+      guard.configurationGeneration === this.#initialHighlightConfigurationGeneration &&
+      guard.parseGeneration === this.#parseGeneration
+    )
   }
 
   #scheduleSyntaxRangeRequest(
@@ -1397,33 +2049,104 @@ export class EditorSyntaxController {
     range: EditorSyntaxRange,
     options: EditorSyntaxRefreshOptions,
     kind: 'visible' | 'prefetch',
+    bypassCache = false,
   ): void {
-    const contentVersion = this.#syntaxContentVersion
-    const configurationGeneration = this.#initialHighlightConfigurationGeneration
+    const guard = this.#captureRequestGuard(documentVersion)
     request.schedule({
       delayMs: options.delayMs ?? 50,
-      tags: syntaxWorkTags(documentVersion, contentVersion, kind, range),
+      tags: syntaxWorkTags(documentVersion, guard.contentVersion, kind, range),
       run: traceEditorPerformanceTask('editor.syntax.range.request', (signal: AbortSignal) =>
-        this.loadSyntaxRangeResult(range, kind, { contentVersion, signal }),
+        this.loadSyntaxRangeResult(range, kind, {
+          contentVersion: guard.contentVersion,
+          parseGeneration: guard.parseGeneration,
+          signal,
+          bypassCache,
+        }),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.range.apply', (result, startedAt) => {
-        const applied = this.#applySyntaxResult(
-          result,
-          documentVersion,
-          startedAt,
-          configurationGeneration,
-        )
-        if (applied && kind === 'visible' && this.#foldsCoverViewport()) {
+        if (!this.#isRequestCurrent(guard)) return
+        if (
+          kind === 'visible' &&
+          !this.#canProviderQuerySyntaxRange() &&
+          (result.skipApply ||
+            result.result.projection.analysis?.kind === 'partial' ||
+            result.result.projection.analysis?.kind === 'cancelled' ||
+            result.result.degraded?.kind === 'range-unavailable' ||
+            !syntaxResultCoversRange(result.result, result.range)) &&
+          this.#transitionRangeToFullOnCapabilityLoss(documentVersion, 0)
+        ) {
+          return
+        }
+        const applied = this.#applySyntaxResult(result, guard, startedAt)
+        if (applied && kind === 'visible' && this.#publishedScopeCoversViewport()) {
           if (!this.#flushPendingPrefetch()) this.#flushPendingWarm()
         }
         if (applied && kind === 'prefetch') this.#flushPendingWarm()
       }),
       fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) => {
-        if (kind === 'prefetch') this.#logOptionalSyntaxFailure(documentVersion, error, startedAt)
-        else
-          this.#recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration)
+        if (!this.#isRequestCurrent(guard)) return
+        if (kind === 'prefetch') {
+          this.#logOptionalSyntaxFailure(documentVersion, error, startedAt)
+          return
+        }
+        if (
+          !(error instanceof DOMException && error.name === 'AbortError') &&
+          !this.#canProviderQuerySyntaxRange() &&
+          this.#transitionRangeToFullOnCapabilityLoss(documentVersion, 0)
+        ) {
+          return
+        }
+        this.#handleVisibleRangeRejection(range, error, startedAt, guard)
       }),
     })
+  }
+
+  #transitionRangeToFullOnCapabilityLoss(documentVersion: number, delayMs: number): boolean {
+    if (
+      this.#canProviderQuerySyntaxRange() ||
+      this.#parseState.kind !== 'parsed' ||
+      this.#parseState.mode !== 'range' ||
+      this.#parseState.contentVersion !== this.#syntaxContentVersion ||
+      this.#parseState.parseGeneration !== this.#parseGeneration ||
+      this.#syntaxRequests.isActive()
+    ) {
+      return false
+    }
+    this.rangeRequests.cancel()
+    this.#prefetchRangeRequests.cancel()
+    this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
+    this.#pendingPrefetch = null
+    this.pendingWarm = null
+    this.#refreshStructuralSyntax(documentVersion, null, { delayMs }, false)
+    return true
+  }
+
+  #handleVisibleRangeRejection(
+    range: EditorSyntaxRange,
+    error: unknown,
+    startedAt: number,
+    guard: RequestGuard,
+    change: DocumentSessionChange | null = null,
+  ): void {
+    if (error instanceof DOMException && error.name === 'AbortError') return
+    if (!this.#isRequestCurrent(guard)) return
+    if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'full') return
+    const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(range, guard)
+    if (gaps.length === 0 && !emptyGap && !recordsGap) {
+      if (!this.#publishedScopeCoversViewport() && !this.#activePendingVisibleRange(guard)) {
+        this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
+      }
+      return
+    }
+    if (recordsGap) {
+      const visible = this.options.getVisibleSyntaxRange()
+      if (visible) {
+        this.#unavailableRecordsRange = visible
+        this.#unavailableRecordsClearsScope = true
+      }
+    }
+    this.#recoverSyntaxError(change, error, startedAt, guard)
   }
 
   /**
@@ -1440,18 +2163,87 @@ export class EditorSyntaxController {
     })
   }
 
-  #repaintCachedVisibleSyntaxRange(range: EditorSyntaxRange): boolean {
-    const coverage = syntaxRangeCoverage(range, this.#cachedSyntaxRanges)
-    if (coverage === 'none') return false
-
-    if (coverage === 'partial') {
-      this.options.adoptTokens(this.#currentTokens)
+  #repaintCachedVisibleSyntaxRange(
+    range: EditorSyntaxRange,
+    configurationGeneration: number,
+  ): boolean {
+    if (!this.#rangeCoveredByComplete(range)) {
+      if (this.#rangeIntersectsTokens(range)) this.options.adoptTokens(this.#currentTokens)
       return false
     }
 
+    const reconciled = this.#reconcileViewportScope(range, {
+      configurationGeneration,
+    })
+    if (reconciled.kind === 'needs-authoritative-records-query') {
+      this.options.adoptTokens(this.#currentTokens)
+      return false
+    }
+    if (reconciled.kind === 'settled-degraded') {
+      this.rangeRequests.cancel()
+      this.options.notifyChange(null)
+      return true
+    }
+    if (reconciled.kind !== 'settled') return false
+
     this.rangeRequests.cancel()
-    this.#applyCachedSyntaxFolds(range)
-    this.options.adoptTokens(this.#currentTokens)
+    let notifyUpdate = reconciled.scopeChanged || reconciled.promoted
+    if (!this.#highlighterSession) {
+      const status: SettledHighlightStatus = reconciled.degraded ? 'degraded' : 'painted'
+      const copyCurrent =
+        this.#copyOwner === 'range' &&
+        this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+        this.#acceptedTokensTextVersion === this.options.getTextVersion()
+      const needsStatusCommit =
+        this.#initialHighlightState !== status || this.pendingInitialHighlightReplacement !== null
+      const needsCopyOrStatusUpdate =
+        this.#copyOwner !== 'external' && (reconciled.promoted || !copyCurrent || needsStatusCommit)
+      if (needsCopyOrStatusUpdate) {
+        const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+        const primary =
+          reconciled.contributors[0] ?? this.#primaryCopyContributor(this.#rangeEntries)
+        const nextCopyTokens =
+          reconciled.promoted || !copyCurrent
+            ? this.#rebuildRangeCopyTokens(this.#rangeEntries, this.#currentTokens)
+            : this.#rangeCopyTokens
+        this.#rangeCopyTokens = nextCopyTokens
+        this.#copyOwner = 'range'
+        this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+        if (snapshot && this.#rangeTokenOwner?.store === this.#currentTokens) {
+          this.#rangeTokenOwner = { store: this.#currentTokens, snapshot }
+        }
+        if (needsStatusCommit) {
+          this.#commitInitialHighlightStatus(
+            status,
+            () => this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range'),
+            configurationGeneration,
+          )
+        } else {
+          this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range')
+        }
+        notifyUpdate = true
+      } else if (this.#copyOwner === 'external' && needsStatusCommit) {
+        this.#commitInitialHighlightStatus(
+          status,
+          () => this.options.adoptTokens(this.#currentTokens),
+          configurationGeneration,
+        )
+        notifyUpdate = true
+      } else {
+        this.options.adoptTokens(this.#currentTokens)
+      }
+    } else {
+      this.options.adoptTokens(this.#currentTokens)
+      if (this.#pendingReplacementMatches('syntax', configurationGeneration)) {
+        this.#commitInitialHighlightStatus(
+          this.#lastInitialHighlightTerminalStatus ?? 'painted',
+          () => this.setTokens(this.#currentTokens, false),
+          configurationGeneration,
+        )
+        notifyUpdate = true
+      }
+    }
+    if (notifyUpdate) this.options.notifyViewUpdate()
     return true
   }
 
@@ -1474,35 +2266,34 @@ export class EditorSyntaxController {
     documentVersion: number,
     change: DocumentSessionChange | null,
     options: EditorSyntaxRefreshOptions = {},
+    forceRetry = false,
   ): void {
     const session = this.options.getSession()
     if (!this.syntaxSession || !session || !this.options.getLanguageId()) return
 
-    this.syntaxStatus = 'loading'
-    const contentVersion = this.#syntaxContentVersion
-    const configurationGeneration = this.#initialHighlightConfigurationGeneration
-    this.#pendingSyntaxContentVersion = contentVersion
+    const guard = this.#captureRequestGuard(documentVersion)
+    this.#parseState = {
+      kind: 'loading',
+      contentVersion: guard.contentVersion,
+      parseGeneration: guard.parseGeneration,
+    }
 
     const delayMs = options.delayMs ?? this.#structuralRefreshDelay(change)
     this.#syntaxRequests.schedule({
       delayMs,
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
-      tags: syntaxWorkTags(documentVersion, contentVersion, 'full'),
+      tags: syntaxWorkTags(documentVersion, guard.contentVersion, 'full'),
       run: traceEditorPerformanceTask('editor.syntax.structural.request', (signal: AbortSignal) =>
-        this.#loadSyntaxResult(contentVersion, documentVersion, configurationGeneration, signal),
+        this.#loadSyntaxResult(guard, change, forceRetry, signal),
       ),
-      apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) =>
-        this.#applySyntaxResult(result, documentVersion, startedAt, configurationGeneration),
-      ),
-      fail: traceEditorPerformanceTask('editor.syntax.structural.fail', (error, startedAt) =>
-        this.#recoverSyntaxError(
-          documentVersion,
-          change,
-          error,
-          startedAt,
-          configurationGeneration,
-        ),
-      ),
+      apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) => {
+        if (!this.#isRequestCurrent(guard)) return
+        this.#applySyntaxResult(result, guard, startedAt)
+      }),
+      fail: traceEditorPerformanceTask('editor.syntax.structural.fail', (error, startedAt) => {
+        if (!this.#isRequestCurrent(guard)) return
+        this.#recoverSyntaxError(change, error, startedAt, guard)
+      }),
     })
   }
 
@@ -1553,26 +2344,255 @@ export class EditorSyntaxController {
     })
   }
 
-  #loadSyntaxResult(
-    contentVersion: number,
-    documentVersion: number,
-    configurationGeneration: number,
+  async #loadSyntaxResult(
+    guard: RequestGuard,
+    change: DocumentSessionChange | null,
+    forceRetry: boolean,
     signal: AbortSignal,
   ): Promise<EditorSyntaxLoadResult> {
-    if (!this.syntaxSession) return Promise.reject(new Error('No syntax session'))
-    return this.#loadSyntaxBaseResult().then((result) => {
-      if (this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange()) {
-        const version = { contentVersion, documentVersion, configurationGeneration }
-        return this.#paintFirstRows(version, signal).then(() => {
-          // A newer request took this one's place while the rows were on their way. The range
-          // around them is that request's to ask for, not a second one from here.
-          if (signal.aborted) throw new DOMException('Syntax request was superseded', 'AbortError')
-          return this.#loadCurrentSyntaxRangeResult({ contentVersion, updatesDocument: true })
-        })
+    if (!this.syntaxSession) throw new Error('No syntax session')
+    const base = this.retainedSyntax
+      ? await this.retainedSyntax.refreshBase({ forceRetry })
+      : {
+          parseId: null,
+          snapshot: this.options.getSession()?.getTextSnapshot() ?? null,
+          result: await this.#loadSyntaxBaseResult(),
+        }
+    if (signal.aborted || !this.#isRequestCurrent(guard)) {
+      throw new DOMException('Syntax request was superseded', 'AbortError')
+    }
+
+    // Cancelled or terminal partial base parse settles directly without issuing a range query.
+    if (isTerminalIncompleteSyntaxResult(base.result)) {
+      return {
+        contentVersion: guard.contentVersion,
+        parseGeneration: guard.parseGeneration,
+        parseId: base.parseId,
+        baseResult: base.result,
+        range: null,
+        result: base.result,
+        source: 'full',
+        updatesDocument: true,
+      }
+    }
+
+    if (this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange()) {
+      const promotedEntries = this.#computePromotedEntries(base.snapshot)
+      const visibleRange = this.options.getVisibleSyntaxRange()
+      if (!visibleRange) {
+        return {
+          contentVersion: guard.contentVersion,
+          parseGeneration: guard.parseGeneration,
+          parseId: base.parseId,
+          baseResult: base.result,
+          range: null,
+          result: base.result,
+          source: 'full',
+          updatesDocument: true,
+          promotedEntries,
+        }
       }
 
-      return { contentVersion, range: null, result, source: 'full', updatesDocument: true }
-    })
+      const promotedCompleteCoverage = this.#completeScopeCoverage(promotedEntries)
+      const promotedCoversVisible =
+        visibleRange.endIndex <= visibleRange.startIndex
+          ? promotedEntries.some(
+              (entry) => !entry.tokensOnly && sameSyntaxRange(entry.range, visibleRange),
+            )
+          : syntaxRangeCoverage(visibleRange, promotedCompleteCoverage) === 'full'
+      const needsAuthoritativeRecords = this.#entriesNeedAuthoritativeRecordsQuery(
+        visibleRange,
+        promotedEntries,
+      )
+
+      // Skip `queryRange` IPC completely when promoted surviving ranges already cover the viewport.
+      if (promotedCoversVisible && !needsAuthoritativeRecords) {
+        return {
+          contentVersion: guard.contentVersion,
+          parseGeneration: guard.parseGeneration,
+          parseId: base.parseId,
+          baseResult: base.result,
+          range: visibleRange,
+          result: base.result,
+          source: 'visible',
+          updatesDocument: true,
+          promotedEntries,
+          promotedOnly: true,
+        }
+      }
+
+      // Partially covered by promoted entries (non-records): query only the first uncovered strip.
+      if (
+        promotedEntries.length > 0 &&
+        visibleRange.endIndex > visibleRange.startIndex &&
+        !needsAuthoritativeRecords
+      ) {
+        const uncovered =
+          firstUncoveredSyntaxRange(visibleRange, promotedCompleteCoverage) ?? visibleRange
+        const visibleSequence = this.#visibleRangeSequence
+        try {
+          const loaded = await this.loadSyntaxRangeResult(uncovered, 'visible', {
+            contentVersion: guard.contentVersion,
+            parseGeneration: guard.parseGeneration,
+            updatesDocument: true,
+            signal,
+          })
+          if (!this.#canProviderQuerySyntaxRange()) {
+            return {
+              contentVersion: guard.contentVersion,
+              parseGeneration: guard.parseGeneration,
+              parseId: base.parseId,
+              baseResult: base.result,
+              range: null,
+              result: base.result,
+              source: 'full',
+              updatesDocument: true,
+              promotedEntries,
+            }
+          }
+          return {
+            ...loaded,
+            parseId: base.parseId,
+            baseResult: base.result,
+            promotedEntries,
+            visibleSequence,
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') throw error
+          return {
+            contentVersion: guard.contentVersion,
+            parseGeneration: guard.parseGeneration,
+            parseId: base.parseId,
+            baseResult: base.result,
+            range: uncovered,
+            result: base.result,
+            source: 'visible',
+            updatesDocument: true,
+            promotedEntries,
+            visibleSequence,
+            rangeFailure: { range: uncovered, error, change },
+          }
+        }
+      }
+
+      await this.#paintFirstRows(guard, base.parseId, base.result, signal)
+      // A newer request took this one's place while the rows were on their way. The range
+      // around them is that request's to ask for, not a second one from here.
+      if (signal.aborted || !this.#isRequestCurrent(guard)) {
+        throw new DOMException('Syntax request was superseded', 'AbortError')
+      }
+      const queryTarget = this.options.getVisibleSyntaxRange()
+      if (!queryTarget || !this.syntaxSession?.queryRange || !this.#canProviderQuerySyntaxRange()) {
+        return {
+          contentVersion: guard.contentVersion,
+          parseGeneration: guard.parseGeneration,
+          parseId: base.parseId,
+          baseResult: base.result,
+          range: null,
+          result: base.result,
+          source: 'full',
+          updatesDocument: true,
+          promotedEntries,
+        }
+      }
+      const visibleSequence = this.#visibleRangeSequence
+      try {
+        const bypassCache =
+          this.#entriesNeedAuthoritativeRecordsQuery(queryTarget, promotedEntries) ||
+          this.#entriesNeedAuthoritativeRecordsQuery(queryTarget, this.#rangeEntries)
+        const loaded = await this.loadSyntaxRangeResult(queryTarget, 'visible', {
+          contentVersion: guard.contentVersion,
+          parseGeneration: guard.parseGeneration,
+          updatesDocument: true,
+          signal,
+          bypassCache,
+        })
+        if (!this.#canProviderQuerySyntaxRange()) {
+          return {
+            contentVersion: guard.contentVersion,
+            parseGeneration: guard.parseGeneration,
+            parseId: base.parseId,
+            baseResult: base.result,
+            range: null,
+            result: base.result,
+            source: 'full',
+            updatesDocument: true,
+            promotedEntries,
+          }
+        }
+        return {
+          ...loaded,
+          parseId: base.parseId,
+          baseResult: base.result,
+          promotedEntries,
+          visibleSequence,
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error
+        return {
+          contentVersion: guard.contentVersion,
+          parseGeneration: guard.parseGeneration,
+          parseId: base.parseId,
+          baseResult: base.result,
+          range: queryTarget,
+          result: base.result,
+          source: 'visible',
+          updatesDocument: true,
+          promotedEntries,
+          visibleSequence,
+          rangeFailure: { range: queryTarget, error, change },
+        }
+      }
+    }
+
+    return {
+      contentVersion: guard.contentVersion,
+      parseGeneration: guard.parseGeneration,
+      parseId: base.parseId,
+      baseResult: base.result,
+      range: null,
+      result: base.result,
+      source: 'full',
+      updatesDocument: true,
+    }
+  }
+
+  #computePromotedEntries(
+    currentSnapshot: DocumentTextSnapshot | null,
+  ): readonly CachedSyntaxRangeEntry[] {
+    const carried = this.#carriedEntries
+    if (!carried || carried.parseId === null || !this.retainedSyntax) return []
+    const steps = this.retainedSyntax.invalidationStepsSince(carried.parseId)
+    if (steps === null) return []
+    const promotedEntries: CachedSyntaxRangeEntry[] = []
+    for (const entry of carried.entries) {
+      if (entry.tokensOnly) continue
+      const promoted = projectResultThroughSteps(entry.range, entry.result, steps, entry.tokens)
+      if (!promoted) continue
+      const delta = promoted.offsetDelta
+      const shiftOwned = (owned: readonly EditorSyntaxRange[]): readonly EditorSyntaxRange[] =>
+        delta === 0
+          ? owned
+          : owned.map((r) => ({ startIndex: r.startIndex + delta, endIndex: r.endIndex + delta }))
+      const shiftedOwned = shiftOwned(entry.tokenOwnedRanges)
+      const nextSnapshot = steps.at(-1)?.afterSnapshot ?? currentSnapshot ?? entry.snapshot
+      promotedEntries.push({
+        ...entry,
+        range: promoted.range,
+        result: promoted.result,
+        snapshot: nextSnapshot,
+        tokensOnly: false,
+        firstRows: false,
+        tokenOwnedRanges: shiftedOwned,
+        scopeOwnedRanges: shiftedOwned,
+        folds: promoted.result.folds,
+        brackets: promoted.result.brackets,
+        injections: promoted.result.injections,
+        captures: promoted.result.captures,
+        tokens: promoted.tokens,
+      })
+    }
+    return promotedEntries
   }
 
   /**
@@ -1582,27 +2602,25 @@ export class EditorSyntaxController {
    * document's highlight. A failure here is left to that request to report.
    */
   async #paintFirstRows(
-    version: {
-      readonly contentVersion: number
-      readonly documentVersion: number
-      readonly configurationGeneration: number
-    },
+    guard: RequestGuard,
+    parseId: number | null,
+    baseResult: EditorSyntaxResult,
     signal: AbortSignal,
   ): Promise<void> {
     const range = this.#firstRowsRange()
-    if (!range || signal.aborted) return
+    if (!range || signal.aborted || !this.#isRequestCurrent(guard)) return
 
     const firstRows = await this.loadSyntaxRangeResult(range, 'visible', {
-      contentVersion: version.contentVersion,
+      contentVersion: guard.contentVersion,
+      parseGeneration: guard.parseGeneration,
       updatesDocument: true,
     }).catch(() => null)
-    if (!firstRows || signal.aborted) return
+    if (!firstRows || signal.aborted || !this.#isRequestCurrent(guard)) return
 
     this.#applySyntaxResult(
-      { ...firstRows, firstRows: true, suppressWarm: true },
-      version.documentVersion,
+      { ...firstRows, parseId, baseResult, firstRows: true, suppressWarm: true },
+      guard,
       nowMs(),
-      version.configurationGeneration,
     )
   }
 
@@ -1625,36 +2643,23 @@ export class EditorSyntaxController {
     return this.syntaxSession.refresh(session.getTextSnapshot())
   }
 
-  #loadCurrentSyntaxRangeResult(options: {
-    readonly contentVersion: number
-    readonly updatesDocument?: boolean
-  }): Promise<EditorSyntaxLoadResult> {
-    const range = this.options.getVisibleSyntaxRange()
-    if (!range) {
-      return Promise.resolve({
-        contentVersion: options.contentVersion,
-        range: null,
-        result: this.syntaxSession?.getResult() ?? createEmptySyntaxResult(),
-        source: 'full',
-        updatesDocument: options.updatesDocument,
-      })
-    }
-    return this.loadSyntaxRangeResult(range, 'visible', options)
-  }
-
   private loadSyntaxRangeResult(
     range: EditorSyntaxRange,
     source: EditorSyntaxLoadSource,
     options: {
       readonly contentVersion?: number
+      readonly parseGeneration?: number
       readonly updatesDocument?: boolean
       readonly signal?: AbortSignal
+      readonly bypassCache?: boolean
     } = {},
   ): Promise<EditorSyntaxLoadResult> {
     const contentVersion = options.contentVersion ?? this.#syntaxContentVersion
+    const parseGeneration = options.parseGeneration ?? this.#parseGeneration
     if (!this.syntaxSession?.queryRange) {
       return Promise.resolve({
         contentVersion,
+        parseGeneration,
         range: null,
         result: this.syntaxSession?.getResult() ?? createEmptySyntaxResult(),
         source: 'full',
@@ -1667,6 +2672,7 @@ export class EditorSyntaxController {
     ) {
       return Promise.resolve({
         contentVersion,
+        parseGeneration,
         range: null,
         result: createEmptySyntaxResult(),
         source,
@@ -1680,12 +2686,13 @@ export class EditorSyntaxController {
     // it. Requests for shown rows and background tiles are cancelled once nobody waits for them.
     const signal = source === 'prefetch' ? undefined : options.signal
     const result = this.retainedSyntax
-      ? this.retainedSyntax.queryRange(range, { signal })
+      ? this.retainedSyntax.queryRange(range, { signal, bypassCache: options.bypassCache })
       : this.syntaxSession.queryRange(range)
-    return result.then((result) => ({
+    return result.then((answer) => ({
       contentVersion,
+      parseGeneration,
       range,
-      result,
+      result: answer,
       source,
       updatesDocument: options.updatesDocument,
     }))
@@ -1703,20 +2710,20 @@ export class EditorSyntaxController {
 
   #applySyntaxResult(
     loadResult: EditorSyntaxLoadResult,
-    documentVersion: number,
-    _startedAt: number,
-    configurationGeneration: number,
+    guard: RequestGuard,
+    startedAt: number,
   ): boolean {
-    const session = this.options.getSession()
-    if (loadResult.skipApply || !syntaxResultCoversRange(loadResult.result, loadResult.range))
-      return false
-    if (!session || documentVersion !== this.options.getDocumentVersion()) return false
-    if (configurationGeneration !== this.#initialHighlightConfigurationGeneration) return false
+    if (loadResult.skipApply) return false
+    if (!this.#isRequestCurrent(guard)) return false
     if (loadResult.contentVersion !== this.#syntaxContentVersion) return false
+    if (loadResult.parseGeneration !== this.#parseGeneration) return false
+    if (!loadResult.updatesDocument && loadResult.range !== null && !this.#isParseIdCurrent()) {
+      return false
+    }
 
     this.#applyingRenderData = true
     try {
-      return this.#publishSyntaxResult(loadResult, documentVersion, configurationGeneration)
+      return this.#publishSyntaxResult(loadResult, guard, startedAt)
     } finally {
       this.#applyingRenderData = false
       this.options.notifyViewUpdate()
@@ -1725,125 +2732,1616 @@ export class EditorSyntaxController {
 
   #publishSyntaxResult(
     loadResult: EditorSyntaxLoadResult,
-    documentVersion: number,
-    configurationGeneration: number,
+    guard: RequestGuard,
+    startedAt: number,
   ): boolean {
+    const result = loadResult.result
+    const analysis = result.projection.analysis
+    const isOptional = loadResult.source === 'prefetch' || loadResult.source === 'warm'
+    const isFirstRows = loadResult.firstRows === true
+
+    // Optional requests (prefetch / warm) that returned cancelled, terminal partial, or
+    // range-unavailable are silent no-ops.
+    if (
+      isOptional &&
+      (isTerminalIncompleteSyntaxResult(result) ||
+        !syntaxResultCoversRange(result, loadResult.range))
+    ) {
+      return false
+    }
+
+    // firstRows that failed, cancelled, or returned terminal partial is ignored; the visible
+    // request right after reports failure.
+    if (
+      isFirstRows &&
+      (isTerminalIncompleteSyntaxResult(result) ||
+        !syntaxResultCoversRange(result, loadResult.range))
+    ) {
+      return false
+    }
+
+    // Ignore superseded document-refresh range replies BEFORE accepting parse state so an older
+    // reply cannot overwrite a newer error/full state and strand the editor in `loading`.
+    if (
+      loadResult.updatesDocument &&
+      loadResult.range !== null &&
+      !isFirstRows &&
+      loadResult.visibleSequence !== undefined &&
+      loadResult.visibleSequence !== this.#visibleRangeSequence
+    ) {
+      return false
+    }
+
+    // Handle base parse / document acceptance FIRST when updatesDocument is true.
+    if (loadResult.updatesDocument) {
+      const baseResult = loadResult.baseResult ?? result
+      const baseAnalysis = baseResult.projection.analysis
+      if (baseAnalysis?.kind === 'cancelled') {
+        if (baseAnalysis.reason === 'superseded') return false
+        this.#settleCancelledOrTerminalPartialBase(guard, loadResult.parseId ?? null)
+        return true
+      }
+      const canRange = Boolean(
+        this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange(),
+      )
+      if (
+        isTerminalIncompleteSyntaxResult(baseResult) &&
+        (loadResult.range === null || !canRange)
+      ) {
+        this.#settleCancelledOrTerminalPartialBase(guard, loadResult.parseId ?? null)
+        return true
+      }
+
+      const mode: 'full' | 'range' = canRange ? 'range' : 'full'
+      const parseKind: 'full' | 'partial' =
+        baseAnalysis?.kind === 'partial' || (canRange && analysis?.kind === 'partial')
+          ? 'partial'
+          : 'full'
+      this.#acceptSyntaxDocument(
+        guard,
+        loadResult.parseId ?? null,
+        mode,
+        parseKind,
+        mode === 'full' ? baseResult : null,
+        loadResult.promotedEntries ?? [],
+      )
+      if (!canRange) {
+        return this.#publishFullDocumentResult(baseResult, guard)
+      }
+    }
+
+    // Never apply late range-scoped replies or failures once the accepted parse is in full-document mode.
+    if (
+      loadResult.range !== null &&
+      this.#parseState.kind === 'parsed' &&
+      this.#parseState.mode === 'full'
+    ) {
+      return false
+    }
+
+    // Route range-phase rejections from document refreshes through the gap gate so a late
+    // rejection cannot downgrade a viewport already settled by prefetch or another range answer.
+    if (loadResult.rangeFailure) {
+      this.#handleVisibleRangeRejection(
+        loadResult.rangeFailure.range,
+        loadResult.rangeFailure.error,
+        startedAt,
+        guard,
+        loadResult.rangeFailure.change,
+      )
+      return true
+    }
+
+    // Handle required `cancelled` outcome on a visible range query.
+    if (analysis?.kind === 'cancelled') {
+      if (analysis.reason === 'superseded') return false
+      if (loadResult.range) {
+        this.#handleRequiredRangeFailure(loadResult.range, guard, {
+          preserveProvisionalPaint: true,
+        })
+      }
+      return true
+    }
+
+    // Handle required `range-unavailable` outcome on a visible range query.
+    if (result.degraded?.kind === 'range-unavailable') {
+      if (loadResult.range) {
+        this.#handleRequiredRangeFailure(loadResult.range, guard, {
+          preserveProvisionalPaint: false,
+        })
+      }
+      return true
+    }
+
+    // Never allow a late degraded range reply to overwrite already-settled complete coverage.
+    if (loadResult.range !== null && !isOptional && !isFirstRows && result.degraded !== null) {
+      const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(loadResult.range, guard)
+      if (gaps.length === 0 && !emptyGap && !recordsGap) {
+        return false
+      }
+    }
+
+    const partial = analysis?.kind === 'partial'
+    const terminalPartial = isTerminalIncompleteSyntaxResult(result)
+    const coveredPartialRange =
+      partial && loadResult.range !== null
+        ? loadResult.range.endIndex <= loadResult.range.startIndex
+          ? sameSyntaxRange(analysis.coveredRange, loadResult.range)
+            ? loadResult.range
+            : null
+          : (intersectSyntaxRanges([loadResult.range], [analysis.coveredRange])[0] ?? null)
+        : null
+
+    if (!loadResult.promotedOnly && !syntaxResultCoversRange(result, loadResult.range)) {
+      if (terminalPartial && partial && loadResult.range !== null && !isOptional && !isFirstRows) {
+        if (!coveredPartialRange) {
+          this.#handleRequiredRangeFailure(loadResult.range, guard, {
+            preserveProvisionalPaint: true,
+          })
+          return true
+        }
+      } else {
+        if (loadResult.range && !isOptional && !isFirstRows) {
+          this.#handleRequiredRangeFailure(loadResult.range, guard, {
+            preserveProvisionalPaint: false,
+          })
+        }
+        return false
+      }
+    }
+
     if (editorPerformanceDiagnosticsEnabled()) {
       recordEditorPerformanceDiagnostic('editor.syntax.structural.accepted', () => ({
-        documentVersion,
+        documentVersion: guard.documentVersion,
         contentVersion: loadResult.contentVersion,
         source: loadResult.source,
       }))
     }
-    const result = loadResult.result
-    if (loadResult.updatesDocument) this.#acceptSyntaxDocument(loadResult.contentVersion)
+
+    // Full-document mode (strictly determined by the result's own scope, never by mid-flight
+    // capability changes on a range-scoped reply). In range mode with no visible viewport yet,
+    // accept the base parse without publishing full-document coverage so the editor stays loading
+    // until an actual viewport range settles.
+    if (loadResult.range === null) {
+      if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'range') {
+        const visibleRange = this.options.getVisibleSyntaxRange()
+        if (visibleRange) return this.#publishPromotedViewport(visibleRange, guard)
+        this.options.notifyChange(null)
+        return true
+      }
+      return this.#publishFullDocumentResult(result, guard)
+    }
+
+    // Promoted-only fast path (incremental edit where surviving cached entries cover the viewport).
+    if (loadResult.promotedOnly) {
+      return this.#publishPromotedViewport(loadResult.range, guard)
+    }
+
+    // Range mode: check off-screen warm direct retirement before mutating tokens or copyTokens.
     const snapshot = this.options.getSession()?.getTextSnapshot()
-    const canOwnRanges =
-      this.#rangeTokenOwner?.store === this.#currentTokens ||
-      this.#currentTokens.length === 0 ||
-      (snapshot &&
-        loadResult.range?.startIndex === 0 &&
-        loadResult.range.endIndex >= snapshot.length)
-    const nextTokens = this.#highlighterSession
-      ? this.#currentTokens
-      : this.#syntaxTokensForResult(result.tokens, loadResult.range)
-    // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
-    // window that does not cover the viewport would pair brackets across the part it never parsed
-    // and report the rest of the document as being in the host language.
-    // The first rows are a head start on the tokens and nothing else: the visible-range answer
-    // that follows them is the one that carries scope facts and settles the highlight.
-    // A partial answer (a prefix parse standing in for the complete analysis) carries tokens only.
-    // Its folds, brackets and injected spans are empty because it never computed them, so the ones
-    // on screen stay, and it gives no fold coverage, live or cached, until a complete answer lands.
-    const partial = result.projection.analysis?.kind === 'partial'
-    const applyScopeFacts =
-      !partial && !loadResult.firstRows && this.#shouldApplySyntaxFolds(loadResult)
-    // Ahead of the tokens, because adopting them is the only notification this pass sends the view
-    // contributions: a bracket list assigned after it is a parse late to everyone reading the
-    // snapshot, and on a document nobody touches after opening it that means never.
-    const contributor = loadResult.range
-      ? this.#rememberSyntaxRange(loadResult.range, result, partial)
-      : null
-    if (applyScopeFacts) {
-      this.#rangeScopeOwner = contributor
-      this.#currentBrackets = result.brackets
-      this.#currentInjections = result.injections
-      this.syntaxStatus = result.degraded ? 'degraded' : 'ready'
-      this.#foldCoverage = loadResult.range
-        ? { kind: 'range', range: loadResult.range }
-        : { kind: 'full' }
-      this.options.setSyntaxFolds(result.folds)
-      this.options.setSyntaxCaptures?.(result.captures, result.records)
+    if (!snapshot) return false
+    if (
+      loadResult.source === 'warm' &&
+      this.#tryRetireOffScreenWarm(loadResult.range, result, snapshot)
+    ) {
+      return false
     }
-    if (!applyScopeFacts && !partial) {
-      const visibleRange = this.options.getVisibleSyntaxRange()
-      if (visibleRange) this.#applyCachedSyntaxFolds(visibleRange)
+
+    const admitRange =
+      terminalPartial && partial && coveredPartialRange ? coveredPartialRange : loadResult.range
+
+    // Admit range entry according to strict disjoint ownership & copy-eligibility rules.
+    const admitted = this.#admitRangeEntry(
+      admitRange,
+      result,
+      loadResult.source === 'full' ? 'visible' : loadResult.source,
+      isFirstRows,
+      snapshot,
+    )
+    if (!admitted.admitted || !admitted.entry) {
+      // Even when a terminal partial claims no uncovered token strips (e.g. an authoritative
+      // Markdown records query over already-covered strips), still record its failure outcome so
+      // the viewport settles instead of staying in `loading`.
+      if (terminalPartial && !isOptional && !isFirstRows) {
+        this.#handleRequiredRangeFailure(loadResult.range, guard, {
+          preserveProvisionalPaint: true,
+        })
+        return true
+      }
+      return false
     }
+
+    const visibleRange = this.options.getVisibleSyntaxRange()
+
+    // Paint tokens & copy store (updating `rangeCopyOwner` BEFORE painting for `firstRows` provenance).
     if (!this.#highlighterSession) {
-      const status: SettledHighlightStatus = result.degraded ? 'degraded' : 'painted'
-      const copyTokens = loadResult.range ? toEditorTokenStore(result.tokens) : nextTokens
-      this.#rangeTokenOwner =
-        contributor && canOwnRanges ? { store: nextTokens, snapshot: contributor.snapshot } : null
-      this.rangeCopyOwner = contributor ? { store: copyTokens, contributor } : null
-      const paint = (): void => this.setTokens(nextTokens, true, copyTokens)
-      if (loadResult.firstRows) this.#paintAheadOfSettlement(paint, configurationGeneration)
-      else this.#commitInitialHighlightStatus(status, paint, configurationGeneration)
+      this.#paintAfterRangeAdmission(
+        admitted,
+        isFirstRows,
+        partial,
+        terminalPartial,
+        guard.configurationGeneration,
+      )
     }
+
+    // Handle terminal partial on a required visible query (e.g. background complete parse cancelled/failed).
+    if (terminalPartial && !isOptional && !isFirstRows) {
+      this.#handleRequiredRangeFailure(loadResult.range, guard, {
+        preserveProvisionalPaint: true,
+      })
+      return true
+    }
+
+    // Reconcile viewport scope (F1 hole-free composition, prefetch promotion, Markdown records).
+    let settledStatus: SettledHighlightStatus | null = null
+    if (!partial && !isFirstRows && visibleRange) {
+      const reconciled = this.#reconcileViewportScope(visibleRange, {
+        configurationGeneration: guard.configurationGeneration,
+      })
+      if (reconciled.kind === 'settled') {
+        settledStatus = reconciled.degraded ? 'degraded' : 'painted'
+        // Settle highlighting independently of copy ownership: external/host copy owners settle
+        // initialHighlightStatus without clobbering host-installed copyTokens.
+        if (!this.#highlighterSession) {
+          const needsStatusCommit =
+            this.#initialHighlightState !== settledStatus ||
+            this.pendingInitialHighlightReplacement !== null
+          if (this.#copyOwner !== 'external') {
+            const needsRebuild = reconciled.promoted || this.#copyOwner !== 'range'
+            if (needsRebuild) {
+              const nextCopyTokens = this.#rebuildRangeCopyTokens(
+                this.#rangeEntries,
+                this.#currentTokens,
+              )
+              const primary =
+                reconciled.contributors[0] ?? this.#primaryCopyContributor(this.#rangeEntries)
+              this.#rangeCopyTokens = nextCopyTokens
+              this.#copyOwner = 'range'
+              this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+              this.#commitInitialHighlightStatus(
+                settledStatus,
+                () => this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range'),
+                guard.configurationGeneration,
+              )
+            } else if (needsStatusCommit) {
+              this.#commitInitialHighlightStatus(
+                settledStatus,
+                () => this.#applyTokens(this.#currentTokens, true, this.#rangeCopyTokens, 'range'),
+                guard.configurationGeneration,
+              )
+            }
+          } else if (needsStatusCommit) {
+            this.#commitInitialHighlightStatus(
+              settledStatus,
+              () => this.options.adoptTokens(this.#currentTokens),
+              guard.configurationGeneration,
+            )
+          }
+        }
+      } else if (
+        reconciled.kind === 'needs-authoritative-records-query' ||
+        (!isOptional && reconciled.kind === 'incomplete')
+      ) {
+        this.refreshVisibleRange(guard.documentVersion, { delayMs: 0, range: visibleRange })
+      }
+    } else if (
+      !this.#highlighterSession &&
+      !isFirstRows &&
+      !isOptional &&
+      partial &&
+      !terminalPartial
+    ) {
+      // Non-terminal partial on a required visible query: provisional tokens painted; settle
+      // initialHighlightStatus to 'painted' without clobbering external/host copy ownership.
+      const status: SettledHighlightStatus = result.degraded ? 'degraded' : 'painted'
+      const publish =
+        this.#copyOwner === 'external'
+          ? () => this.options.adoptTokens(this.#currentTokens)
+          : () => this.#applyTokens(this.#currentTokens, true, this.#rangeCopyTokens, 'range')
+      this.#commitInitialHighlightStatus(status, publish, guard.configurationGeneration)
+    }
+
+    // Settle pending structural replacement when an external highlighter owns colors.
+    if (
+      this.#highlighterSession &&
+      !isFirstRows &&
+      !partial &&
+      this.#publishedScopeCoversViewport() &&
+      this.#pendingReplacementMatches('syntax', guard.configurationGeneration)
+    ) {
+      this.#commitInitialHighlightStatus(
+        this.#lastInitialHighlightTerminalStatus ?? 'painted',
+        () => this.setTokens(this.#currentTokens, false),
+        guard.configurationGeneration,
+      )
+    }
+
+    // Start background warming after visible/full range settles.
     if (
       !this.#highlighterSession &&
-      loadResult.range &&
+      loadResult.source === 'visible' &&
+      !isFirstRows &&
       !loadResult.suppressWarm &&
       !this.pendingWarm
     ) {
-      this.warmSyntaxAroundRange(documentVersion, loadResult.range)
+      this.warmSyntaxAroundRange(guard.documentVersion, loadResult.range)
     }
-    if (
-      this.#highlighterSession &&
-      this.#pendingReplacementMatches('syntax', configurationGeneration)
-    ) {
-      this.#commitInitialHighlightStatus(
-        'painted',
-        () => this.setTokens(this.#currentTokens, false),
-        configurationGeneration,
-      )
-    }
+
     this.options.log?.({
       action: 'editor.syntax.structural_applied',
       level: 'debug',
       syntax: {
         ...this.fallbackFoldSelection,
-        documentVersion,
+        documentVersion: guard.documentVersion,
         contentVersion: loadResult.contentVersion,
         source: loadResult.source,
         foldingSupport: this.syntaxSession?.foldingSupport ?? 'unsupported',
         foldCount: result.folds.length,
-        viewportCovered: this.#foldsCoverViewport(),
-        scopeFactsApplied: applyScopeFacts,
+        viewportCovered: this.#publishedScopeCoversViewport(),
+        scopeFactsApplied: settledStatus !== null,
         status: this.status,
       },
     })
-    // After the first rows, the request for the visible range around them is already under way.
-    if (!loadResult.firstRows && !this.usesFallbackFolds && !this.#foldsCoverViewport()) {
-      this.refreshVisibleRange(documentVersion, { delayMs: 0 })
+
+    // After firstRows, the full visible range request is already under way.
+    // For partial answers, avoid re-querying a viewport already covered by provisional tokens.
+    if (
+      !isFirstRows &&
+      !isOptional &&
+      !this.#publishedScopeCoversViewport() &&
+      !(partial && visibleRange && this.#rangeCoveredByTokens(visibleRange))
+    ) {
+      this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
     }
     this.options.notifyChange(null)
     return true
   }
 
-  #shouldApplySyntaxFolds(loadResult: EditorSyntaxLoadResult): boolean {
-    if (!loadResult.range) return true
+  #publishFullDocumentResult(result: EditorSyntaxResult, guard: RequestGuard): boolean {
+    const partial = result.projection.analysis?.kind === 'partial'
+    const degraded = result.degraded !== null
+    this.rangeRequests.cancel()
+    this.#prefetchRangeRequests.cancel()
+    this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
+    this.#pendingPrefetch = null
+    this.pendingWarm = null
+    if (!partial) {
+      this.#rangeEntries = []
+      this.#rangeScopeOwners = []
+      this.#currentBrackets = result.brackets
+      this.#currentInjections = result.injections
+      this.#publishedScope = { kind: 'full', degraded }
+      this.options.setSyntaxFolds(result.folds)
+      this.options.setSyntaxCaptures?.(result.captures, result.records)
+    } else if (degraded) {
+      this.#publishedScope = { kind: 'full', degraded: true }
+    }
 
+    if (!this.#highlighterSession) {
+      const tokens = toEditorTokenStore(result.tokens)
+      this.#rangeTokenOwner = null
+      this.#projectedRangeTokens = null
+      this.#awaitingProjectedEditTokens = false
+      this.rangeCopyOwner = null
+      const status: SettledHighlightStatus = degraded ? 'degraded' : 'painted'
+      if (this.#copyOwner === 'external') {
+        this.#commitInitialHighlightStatus(
+          status,
+          () => {
+            this.#currentTokens = tokens
+            this.options.adoptTokens(tokens)
+          },
+          guard.configurationGeneration,
+        )
+      } else {
+        this.#commitInitialHighlightStatus(
+          status,
+          () => this.#applyTokens(tokens, true, tokens, 'none'),
+          guard.configurationGeneration,
+        )
+      }
+    } else if (this.#pendingReplacementMatches('syntax', guard.configurationGeneration)) {
+      this.#commitInitialHighlightStatus(
+        this.#lastInitialHighlightTerminalStatus ?? 'painted',
+        () => this.setTokens(this.#currentTokens, false),
+        guard.configurationGeneration,
+      )
+    }
+    this.options.notifyChange(null)
+    return true
+  }
+
+  #publishPromotedViewport(sampledRange: EditorSyntaxRange, guard: RequestGuard): boolean {
+    const visibleRange = this.options.getVisibleSyntaxRange() ?? sampledRange
+    const reconciled = this.#reconcileViewportScope(visibleRange, {
+      configurationGeneration: guard.configurationGeneration,
+    })
+    if (reconciled.kind === 'settled') {
+      if (!this.#highlighterSession) {
+        const status: SettledHighlightStatus = reconciled.degraded ? 'degraded' : 'painted'
+        if (this.#copyOwner !== 'external') {
+          const nextCopyTokens = this.#rebuildRangeCopyTokens(
+            this.#rangeEntries,
+            this.#currentTokens,
+          )
+          const primary =
+            reconciled.contributors[0] ?? this.#primaryCopyContributor(this.#rangeEntries)
+          this.#rangeCopyTokens = nextCopyTokens
+          this.#copyOwner = 'range'
+          this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+          this.#commitInitialHighlightStatus(
+            status,
+            () => this.#applyTokens(this.#currentTokens, true, nextCopyTokens, 'range'),
+            guard.configurationGeneration,
+          )
+        } else {
+          this.#commitInitialHighlightStatus(
+            status,
+            () => this.options.adoptTokens(this.#currentTokens),
+            guard.configurationGeneration,
+          )
+        }
+      } else if (this.#pendingReplacementMatches('syntax', guard.configurationGeneration)) {
+        this.#commitInitialHighlightStatus(
+          this.#lastInitialHighlightTerminalStatus ?? 'painted',
+          () => this.setTokens(this.#currentTokens, false),
+          guard.configurationGeneration,
+        )
+      }
+      if (!this.#highlighterSession && !this.pendingWarm) {
+        this.warmSyntaxAroundRange(guard.documentVersion, visibleRange)
+      }
+    } else if (
+      reconciled.kind === 'incomplete' ||
+      reconciled.kind === 'needs-authoritative-records-query'
+    ) {
+      this.refreshVisibleRange(guard.documentVersion, { delayMs: 0, range: visibleRange })
+    }
+    this.options.notifyChange(null)
+    return true
+  }
+
+  #settleCancelledOrTerminalPartialBase(guard: RequestGuard, parseId: number | null): void {
+    this.#carriedEntries = null
+    this.#parseState = {
+      kind: 'parsed',
+      contentVersion: guard.contentVersion,
+      parseGeneration: guard.parseGeneration,
+      parseId,
+      mode: 'full',
+      parseKind: 'partial',
+      fullResult: null,
+    }
+    this.#publishedScope = { kind: 'full', degraded: true }
+    this.#currentBrackets = []
+    this.#currentInjections = []
+    if (!this.#highlighterSession) {
+      this.#commitInitialHighlightStatus(
+        'degraded',
+        () => this.options.notifyViewUpdate(),
+        guard.configurationGeneration,
+      )
+    } else if (this.#pendingReplacementMatches('syntax', guard.configurationGeneration)) {
+      this.#commitInitialHighlightStatus(
+        this.#lastInitialHighlightTerminalStatus ?? 'painted',
+        () => this.setTokens(this.#currentTokens, false),
+        guard.configurationGeneration,
+      )
+    }
+    this.options.notifyChange(null)
+  }
+
+  #handleRequiredRangeFailure(
+    requestRange: EditorSyntaxRange,
+    guard: RequestGuard,
+    options: { readonly preserveProvisionalPaint: boolean },
+  ): void {
+    if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'full') return
+    const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(requestRange, guard)
+    if (gaps.length === 0 && !emptyGap && !recordsGap) {
+      if (!this.#publishedScopeCoversViewport() && !this.#activePendingVisibleRange(guard)) {
+        this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
+      }
+      return
+    }
+
+    for (const gap of gaps) {
+      this.#unavailableRanges = appendCachedSyntaxRange(this.#unavailableRanges, gap)
+      if (!options.preserveProvisionalPaint) {
+        this.#unavailableClearsScopeRanges = appendCachedSyntaxRange(
+          this.#unavailableClearsScopeRanges,
+          gap,
+        )
+      }
+    }
+    if (emptyGap) {
+      this.#unavailableEmptyRange = requestRange
+      if (!options.preserveProvisionalPaint) this.#unavailableEmptyClearsScope = true
+    }
+    if (!options.preserveProvisionalPaint && (gaps.length > 0 || emptyGap)) {
+      const nextEntries: CachedSyntaxRangeEntry[] = []
+      let entriesChanged = false
+      for (const existing of this.#rangeEntries) {
+        if (!existing.tokensOnly) {
+          nextEntries.push(existing)
+          continue
+        }
+        if (
+          emptyGap &&
+          existing.range.endIndex <= existing.range.startIndex &&
+          sameSyntaxRange(existing.range, requestRange)
+        ) {
+          entriesChanged = true
+          continue
+        }
+        if (gaps.length === 0) {
+          nextEntries.push(existing)
+          continue
+        }
+        const nextTokenOwned = subtractSyntaxRanges(existing.tokenOwnedRanges, gaps)
+        if (
+          nextTokenOwned.length === existing.tokenOwnedRanges.length &&
+          nextTokenOwned.every((item, index) =>
+            sameSyntaxRange(item, existing.tokenOwnedRanges[index]!),
+          )
+        ) {
+          nextEntries.push(existing)
+          continue
+        }
+        entriesChanged = true
+        if (nextTokenOwned.length === 0 && existing.range.endIndex > existing.range.startIndex) {
+          continue
+        }
+        nextEntries.push({ ...existing, tokenOwnedRanges: nextTokenOwned })
+      }
+      if (entriesChanged) {
+        this.#rangeEntries = nextEntries
+        this.#lastRangeTrim = null
+      }
+
+      if (!this.#highlighterSession) {
+        const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+        if (gaps.length > 0) {
+          const ownsProjectedPaint =
+            this.#projectedRangeTokens !== null &&
+            this.#projectedRangeTokens === this.#currentTokens
+          const rangeOwned =
+            snapshot !== null &&
+            this.#rangeTokenOwner?.store === this.#currentTokens &&
+            this.#rangeTokenOwner.snapshot === snapshot
+          const fallback =
+            snapshot !== null && this.#externalBaseTokens?.snapshot === snapshot
+              ? this.#externalBaseTokens.store
+              : EditorTokenStore.empty()
+          const nextTokens =
+            (ownsProjectedPaint || rangeOwned) && this.#rangeEntries.length === 0
+              ? EditorTokenStore.empty()
+              : rangeOwned
+                ? compactSyntaxRangeTokens(
+                    this.#currentTokens,
+                    this.#tokenCoverage(this.#rangeEntries),
+                  )
+                : mergeTokensOnStrips(this.#currentTokens, fallback, gaps)
+          if (nextTokens !== this.#currentTokens) {
+            this.#currentTokens = nextTokens
+            if (ownsProjectedPaint || this.#rangeTokenOwner !== null) {
+              this.#rangeTokenOwner = snapshot ? { store: nextTokens, snapshot } : null
+              this.#projectedRangeTokens = null
+              this.#awaitingProjectedEditTokens = false
+            }
+            this.options.adoptTokens(nextTokens)
+          }
+        }
+        if (this.#copyOwner !== 'external' && (gaps.length > 0 || entriesChanged)) {
+          const currentRangeOwned =
+            snapshot !== null &&
+            this.#rangeTokenOwner?.store === this.#currentTokens &&
+            this.#rangeTokenOwner.snapshot === snapshot
+          this.#compactRangeCopyStore(this.#rangeEntries, this.#currentTokens, currentRangeOwned)
+        }
+      }
+    }
     const visibleRange = this.options.getVisibleSyntaxRange()
-    if (!visibleRange) return false
-    return syntaxRangeCoverage(visibleRange, [loadResult.range]) === 'full'
+    if (recordsGap && visibleRange) {
+      this.#unavailableRecordsRange = visibleRange
+      this.#unavailableRecordsClearsScope = !options.preserveProvisionalPaint
+    }
+
+    if (!visibleRange) {
+      this.options.notifyChange(null)
+      return
+    }
+
+    const reconciled = this.#reconcileViewportScope(visibleRange, {
+      configurationGeneration: guard.configurationGeneration,
+    })
+    if (reconciled.kind === 'incomplete') {
+      this.refreshVisibleRange(guard.documentVersion, { delayMs: 0, range: visibleRange })
+    }
+    this.options.notifyChange(null)
+  }
+
+  #activePendingVisibleRange(guard: RequestGuard): EditorSyntaxRange | null {
+    if (!this.rangeRequests.isActive()) return null
+    const pending = this.#pendingVisibleRange
+    if (!pending) return null
+    if (
+      pending.documentVersion !== guard.documentVersion ||
+      pending.contentVersion !== guard.contentVersion ||
+      pending.parseGeneration !== guard.parseGeneration
+    ) {
+      return null
+    }
+    return pending.range
+  }
+
+  #stillRequiredGaps(
+    range: EditorSyntaxRange,
+    guard?: RequestGuard,
+  ): {
+    readonly gaps: readonly EditorSyntaxRange[]
+    readonly emptyGap: boolean
+    readonly recordsGap: boolean
+  } {
+    const visible = this.options.getVisibleSyntaxRange()
+    if (!visible) return { gaps: [], emptyGap: false, recordsGap: false }
+    const pendingVisible = guard ? this.#activePendingVisibleRange(guard) : null
+    const recordsCoveredByPending =
+      pendingVisible !== null &&
+      (visible.endIndex <= visible.startIndex
+        ? sameSyntaxRange(pendingVisible, visible)
+        : syntaxRangeCoverage(visible, [pendingVisible]) === 'full')
+    const recordsGap =
+      !recordsCoveredByPending &&
+      this.#needsAuthoritativeRecordsQuery(visible) &&
+      (visible.endIndex <= visible.startIndex
+        ? sameSyntaxRange(range, visible)
+        : syntaxRangeCoverage(visible, [range]) === 'full')
+    if (visible.endIndex <= visible.startIndex) {
+      return {
+        gaps: [],
+        emptyGap:
+          sameSyntaxRange(range, visible) &&
+          !this.#hasCompleteEmptyEntry(visible) &&
+          !(pendingVisible !== null && sameSyntaxRange(pendingVisible, visible)),
+        recordsGap,
+      }
+    }
+    const required = intersectSyntaxRanges([range], [visible])
+    if (required.length === 0) {
+      return { gaps: [], emptyGap: false, recordsGap }
+    }
+    const excluded = pendingVisible
+      ? appendCachedSyntaxRange(this.#completeScopeCoverage(), pendingVisible)
+      : this.#completeScopeCoverage()
+    return {
+      gaps: subtractSyntaxRanges(required, excluded),
+      emptyGap: false,
+      recordsGap,
+    }
+  }
+
+  #tryRetireOffScreenWarm(
+    range: EditorSyntaxRange,
+    result: EditorSyntaxResult,
+    snapshot: DocumentTextSnapshot,
+  ): boolean {
+    const demand = this.#lastFrameDemand
+    if (!demand || demand.snapshot !== snapshot) return false
+    const visible = this.options.getVisibleSyntaxRange()
+    const shown = visible ? appendCachedSyntaxRange(demand.ranges, visible) : demand.ranges
+    if (syntaxRangeListsIntersect([range], shown)) return false
+
+    const discarded: CachedSyntaxRangeEntry = {
+      range,
+      result,
+      snapshot,
+      tokensOnly: result.projection.analysis?.kind === 'partial',
+      firstRows: false,
+      source: 'warm',
+      copyEligible: false,
+      tokenOwnedRanges: [],
+      scopeOwnedRanges: [],
+      folds: result.folds,
+      brackets: result.brackets,
+      injections: result.injections,
+      captures: result.captures,
+      tokens: EditorTokenStore.empty(),
+    }
+    if (this.retainedSyntax) {
+      setRetainedSyntaxDisplayDemand(this.retainedSyntax, demand, this.#rangeContributors(demand), [
+        discarded,
+      ])
+      if (!retainedSyntaxCanWarm(this.retainedSyntax)) this.#cancelOptionalWarm()
+    } else {
+      this.#stopOptionalWarm(snapshot)
+    }
+    return true
+  }
+
+  #admitRangeEntry(
+    range: EditorSyntaxRange,
+    result: EditorSyntaxResult,
+    source: 'visible' | 'prefetch' | 'warm',
+    firstRows: boolean,
+    snapshot: DocumentTextSnapshot,
+  ): {
+    readonly admitted: boolean
+    readonly entry: CachedSyntaxRangeEntry | null
+    readonly copyStoreChanged: boolean
+    readonly primaryCopyContributor: CachedSyntaxRangeEntry | null
+  } {
+    const partial = result.projection.analysis?.kind === 'partial'
+    const tokensOnly = partial || firstRows
+    const incomingTokens = toEditorTokenStore(result.tokens)
+    const isEmptyRange = range.endIndex <= range.startIndex
+    const visibleRange = this.options.getVisibleSyntaxRange()
+    const intersectsVisible =
+      visibleRange !== null &&
+      (isEmptyRange
+        ? sameSyntaxRange(range, visibleRange)
+        : syntaxRangesIntersect(range, visibleRange))
+    const copyEligible = source === 'visible' || (source === 'prefetch' && intersectsVisible)
+    const ownsProjectedPaint =
+      this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens
+    const canOwnRanges =
+      !this.#highlighterSession &&
+      (this.#rangeTokenOwner?.store === this.#currentTokens ||
+        ownsProjectedPaint ||
+        this.#currentTokens.length === 0 ||
+        (range.startIndex === 0 && range.endIndex >= snapshot.length))
+    const setRangeTokenOwner = (store: EditorTokenStore): void => {
+      this.#rangeTokenOwner = canOwnRanges ? { store, snapshot } : null
+      if (canOwnRanges) {
+        this.#projectedRangeTokens = null
+        this.#awaitingProjectedEditTokens = false
+      }
+    }
+
+    const makeEntry = (
+      tokenOwnedRanges: readonly EditorSyntaxRange[],
+      scopeOwnedRanges: readonly EditorSyntaxRange[],
+    ): CachedSyntaxRangeEntry => ({
+      range,
+      result,
+      snapshot,
+      tokensOnly,
+      firstRows,
+      source,
+      copyEligible,
+      tokenOwnedRanges,
+      scopeOwnedRanges,
+      folds: result.folds,
+      brackets: result.brackets,
+      injections: result.injections,
+      captures: result.captures,
+      tokens: incomingTokens,
+    })
+
+    // Authoritative complete visible answer.
+    if (source === 'visible' && !tokensOnly) {
+      const nextEntries: CachedSyntaxRangeEntry[] = []
+      for (const existing of this.#rangeEntries) {
+        if (isEmptyRange) {
+          if (sameSyntaxRange(existing.range, range)) continue
+          nextEntries.push(existing)
+          continue
+        }
+        const nextTokenOwned = subtractSyntaxRange(existing.tokenOwnedRanges, range)
+        if (nextTokenOwned.length === 0 && existing.range.endIndex > existing.range.startIndex) {
+          continue
+        }
+        const nextScopeOwned = existing.tokensOnly
+          ? []
+          : subtractSyntaxRange(existing.scopeOwnedRanges, range)
+        nextEntries.push({
+          ...existing,
+          tokenOwnedRanges: nextTokenOwned,
+          scopeOwnedRanges: nextScopeOwned,
+        })
+      }
+      const owned = isEmptyRange ? [] : [range]
+      const entry = makeEntry(owned, owned)
+      nextEntries.push(entry)
+      this.#rangeEntries = nextEntries
+
+      // Clear any unavailable markers covered by this complete answer.
+      if (isEmptyRange) {
+        if (this.#unavailableEmptyRange && sameSyntaxRange(this.#unavailableEmptyRange, range)) {
+          this.#unavailableEmptyRange = null
+          this.#unavailableEmptyClearsScope = false
+        }
+      } else {
+        this.#unavailableRanges = subtractSyntaxRange(this.#unavailableRanges, range)
+        this.#unavailableClearsScopeRanges = subtractSyntaxRange(
+          this.#unavailableClearsScopeRanges,
+          range,
+        )
+      }
+      if (
+        this.#unavailableRecordsRange &&
+        result.records !== undefined &&
+        (isEmptyRange
+          ? sameSyntaxRange(range, this.#unavailableRecordsRange)
+          : syntaxRangeCoverage(this.#unavailableRecordsRange, [range]) === 'full')
+      ) {
+        this.#unavailableRecordsRange = null
+        this.#unavailableRecordsClearsScope = false
+      }
+
+      if (!this.#highlighterSession) {
+        const previousTokens = this.#currentTokens
+        const singleRangeOwned = nextEntries.length === 1 && canOwnRanges && !isEmptyRange
+        const nextTokens = singleRangeOwned
+          ? mergeTokensOnStrips(EditorTokenStore.empty(), incomingTokens, owned)
+          : mergeTokensOnStrips(previousTokens, incomingTokens, owned)
+        this.#currentTokens = nextTokens
+        setRangeTokenOwner(nextTokens)
+
+        if (this.#copyOwner !== 'external') {
+          const baseCopyTokens =
+            this.#copyOwner === 'range' ? this.#rangeCopyTokens : EditorTokenStore.empty()
+          const allCopyEligible = nextEntries.every((item) => item.copyEligible)
+          const nextCopyTokens =
+            allCopyEligible &&
+            canOwnRanges &&
+            (singleRangeOwned || (this.#copyOwner === 'range' && baseCopyTokens === previousTokens))
+              ? nextTokens
+              : mergeTokensOnStrips(baseCopyTokens, incomingTokens, owned)
+          this.#rangeCopyTokens = nextCopyTokens
+          this.#copyOwner = 'range'
+          return {
+            admitted: true,
+            entry,
+            copyStoreChanged: true,
+            primaryCopyContributor: entry,
+          }
+        }
+      }
+      return { admitted: true, entry, copyStoreChanged: false, primaryCopyContributor: null }
+    }
+
+    // Authoritative partial visible answer or firstRows.
+    if (source === 'visible' && tokensOnly) {
+      const completeCoverage = this.#completeScopeCoverage()
+      const claimable = isEmptyRange ? [] : subtractSyntaxRanges([range], completeCoverage)
+      if (!isEmptyRange && claimable.length === 0) {
+        return {
+          admitted: false,
+          entry: null,
+          copyStoreChanged: false,
+          primaryCopyContributor: null,
+        }
+      }
+      const nextEntries: CachedSyntaxRangeEntry[] = []
+      for (const existing of this.#rangeEntries) {
+        if (!existing.tokensOnly) {
+          nextEntries.push(existing)
+          continue
+        }
+        if (isEmptyRange) {
+          if (sameSyntaxRange(existing.range, range)) continue
+          nextEntries.push(existing)
+          continue
+        }
+        const nextTokenOwned = subtractSyntaxRanges(existing.tokenOwnedRanges, claimable)
+        if (nextTokenOwned.length === 0 && existing.range.endIndex > existing.range.startIndex) {
+          continue
+        }
+        nextEntries.push({ ...existing, tokenOwnedRanges: nextTokenOwned })
+      }
+      const entry = makeEntry(claimable, [])
+      nextEntries.push(entry)
+      this.#rangeEntries = nextEntries
+
+      if (!this.#highlighterSession) {
+        const previousTokens = this.#currentTokens
+        const baseWasEmpty = previousTokens.length === 0
+        const nextTokens = mergeTokensOnStrips(previousTokens, incomingTokens, claimable)
+        this.#currentTokens = nextTokens
+        setRangeTokenOwner(nextTokens)
+
+        if (this.#copyOwner !== 'external') {
+          const baseCopyTokens =
+            this.#copyOwner === 'range' ? this.#rangeCopyTokens : EditorTokenStore.empty()
+          const allCopyEligible = nextEntries.every((item) => item.copyEligible)
+          const nextCopyTokens =
+            allCopyEligible &&
+            canOwnRanges &&
+            ((nextEntries.length === 1 && baseWasEmpty && baseCopyTokens.length === 0) ||
+              (this.#copyOwner === 'range' && baseCopyTokens === previousTokens))
+              ? nextTokens
+              : mergeTokensOnStrips(baseCopyTokens, incomingTokens, claimable)
+          this.#rangeCopyTokens = nextCopyTokens
+          this.#copyOwner = 'range'
+          return {
+            admitted: true,
+            entry,
+            copyStoreChanged: true,
+            primaryCopyContributor: entry,
+          }
+        }
+      }
+      return { admitted: true, entry, copyStoreChanged: false, primaryCopyContributor: null }
+    }
+
+    // Unified optional `prefetch` rule (both complete and `partial` — DESIGN §2.2 Revision 7).
+    if (source === 'prefetch') {
+      const protectedRanges = this.#tokenCoverage(
+        this.#rangeEntries.filter((existing) => existing.source !== 'prefetch'),
+      )
+      const claimable = isEmptyRange ? [] : subtractSyntaxRanges([range], protectedRanges)
+      const emptyAlreadyOwned =
+        isEmptyRange &&
+        this.#rangeEntries.some(
+          (existing) => existing.source !== 'prefetch' && sameSyntaxRange(existing.range, range),
+        )
+      if (isEmptyRange ? emptyAlreadyOwned : claimable.length === 0) {
+        // Pure no-op: do not evict anything, do not touch tokens or copy store.
+        return {
+          admitted: false,
+          entry: null,
+          copyStoreChanged: false,
+          primaryCopyContributor: null,
+        }
+      }
+
+      const evictedPrefetches = this.#rangeEntries.filter(
+        (existing) => existing.source === 'prefetch',
+      )
+      const evictedCopyEligible = evictedPrefetches.some((existing) => existing.copyEligible)
+      const keptEntries = this.#rangeEntries.filter((existing) => existing.source !== 'prefetch')
+      const entry = makeEntry(claimable, tokensOnly ? [] : claimable)
+      const nextEntries = keptEntries.concat(entry)
+      this.#rangeEntries = nextEntries
+      if (!tokensOnly) {
+        if (isEmptyRange) {
+          if (this.#unavailableEmptyRange && sameSyntaxRange(this.#unavailableEmptyRange, range)) {
+            this.#unavailableEmptyRange = null
+            this.#unavailableEmptyClearsScope = false
+          }
+        } else {
+          this.#unavailableRanges = subtractSyntaxRanges(this.#unavailableRanges, claimable)
+          this.#unavailableClearsScopeRanges = subtractSyntaxRanges(
+            this.#unavailableClearsScopeRanges,
+            claimable,
+          )
+        }
+      }
+
+      if (!this.#highlighterSession) {
+        const baseTokens =
+          evictedPrefetches.length > 0
+            ? canOwnRanges
+              ? compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(keptEntries))
+              : mergeTokensOnStrips(
+                  this.#currentTokens,
+                  this.#externalBaseTokens?.snapshot === snapshot
+                    ? this.#externalBaseTokens.store
+                    : EditorTokenStore.empty(),
+                  this.#tokenCoverage(evictedPrefetches),
+                )
+            : this.#currentTokens
+        const nextTokens = mergeTokensOnStrips(baseTokens, incomingTokens, claimable)
+        this.#currentTokens = nextTokens
+        setRangeTokenOwner(nextTokens)
+
+        if (this.#copyOwner !== 'external') {
+          let copyStoreChanged = false
+          let nextCopyTokens = this.#rangeCopyTokens
+          let nextCopyContributor = this.rangeCopyOwner?.contributor ?? null
+
+          if (evictedCopyEligible && this.#copyOwner === 'range') {
+            const keptCopyEntries = keptEntries.filter((item) => item.copyEligible)
+            nextCopyTokens = compactSyntaxRangeTokens(
+              nextCopyTokens,
+              this.#tokenCoverage(keptCopyEntries),
+            )
+            if (nextCopyContributor && !keptCopyEntries.includes(nextCopyContributor)) {
+              nextCopyContributor = this.#primaryCopyContributor(keptCopyEntries)
+            }
+            copyStoreChanged = true
+          }
+
+          if (copyEligible) {
+            nextCopyTokens = mergeTokensOnStrips(nextCopyTokens, incomingTokens, claimable)
+            this.#copyOwner = 'range'
+            nextCopyContributor ??= entry
+            copyStoreChanged = true
+          } else if (copyStoreChanged) {
+            this.#rangeCopyTokens = nextCopyTokens
+          }
+
+          if (copyStoreChanged) {
+            this.#rangeCopyTokens = nextCopyTokens
+            return {
+              admitted: true,
+              entry,
+              copyStoreChanged: true,
+              primaryCopyContributor: nextCopyContributor,
+            }
+          }
+        }
+      }
+
+      return {
+        admitted: true,
+        entry,
+        copyStoreChanged: false,
+        primaryCopyContributor: this.rangeCopyOwner?.contributor ?? null,
+      }
+    }
+
+    // Optional `warm` rule (never overwrites complete coverage, never contributes to copyTokens).
+    if (!tokensOnly) {
+      const completeCoverage = this.#completeScopeCoverage()
+      const claimable = isEmptyRange ? [] : subtractSyntaxRanges([range], completeCoverage)
+      if (claimable.length === 0) {
+        return {
+          admitted: false,
+          entry: null,
+          copyStoreChanged: false,
+          primaryCopyContributor: null,
+        }
+      }
+      const nextEntries: CachedSyntaxRangeEntry[] = []
+      let trimmedCopyEligible = false
+      for (const existing of this.#rangeEntries) {
+        if (!existing.tokensOnly) {
+          nextEntries.push(existing)
+          continue
+        }
+        const nextTokenOwned = subtractSyntaxRanges(existing.tokenOwnedRanges, claimable)
+        const changed =
+          nextTokenOwned.length !== existing.tokenOwnedRanges.length ||
+          nextTokenOwned.some(
+            (item, index) => !sameSyntaxRange(item, existing.tokenOwnedRanges[index]!),
+          )
+        if (changed && existing.copyEligible) trimmedCopyEligible = true
+        if (nextTokenOwned.length === 0 && existing.range.endIndex > existing.range.startIndex) {
+          continue
+        }
+        nextEntries.push(changed ? { ...existing, tokenOwnedRanges: nextTokenOwned } : existing)
+      }
+      const entry = makeEntry(claimable, claimable)
+      nextEntries.push(entry)
+      this.#rangeEntries = nextEntries
+      this.#unavailableRanges = subtractSyntaxRanges(this.#unavailableRanges, claimable)
+      this.#unavailableClearsScopeRanges = subtractSyntaxRanges(
+        this.#unavailableClearsScopeRanges,
+        claimable,
+      )
+
+      if (!this.#highlighterSession) {
+        const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
+        this.#currentTokens = nextTokens
+        setRangeTokenOwner(nextTokens)
+
+        if (trimmedCopyEligible && this.#copyOwner === 'range') {
+          const copyEntries = nextEntries.filter((item) => item.copyEligible)
+          const nextCopyTokens = compactSyntaxRangeTokens(
+            this.#rangeCopyTokens,
+            this.#tokenCoverage(copyEntries),
+          )
+          const currentContributor = this.rangeCopyOwner?.contributor ?? null
+          const nextContributor =
+            currentContributor && copyEntries.includes(currentContributor)
+              ? currentContributor
+              : this.#primaryCopyContributor(copyEntries)
+          this.#rangeCopyTokens = nextCopyTokens
+          return {
+            admitted: true,
+            entry,
+            copyStoreChanged: true,
+            primaryCopyContributor: nextContributor,
+          }
+        }
+      }
+      return {
+        admitted: true,
+        entry,
+        copyStoreChanged: false,
+        primaryCopyContributor: this.rangeCopyOwner?.contributor ?? null,
+      }
+    }
+
+    // Optional partial `warm`.
+    const tokenCoverage = this.#tokenCoverage()
+    const claimable = isEmptyRange ? [] : subtractSyntaxRanges([range], tokenCoverage)
+    if (claimable.length === 0) {
+      return { admitted: false, entry: null, copyStoreChanged: false, primaryCopyContributor: null }
+    }
+    const entry = makeEntry(claimable, [])
+    this.#rangeEntries = this.#rangeEntries.concat(entry)
+    if (!this.#highlighterSession) {
+      const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
+      this.#currentTokens = nextTokens
+      setRangeTokenOwner(nextTokens)
+    }
+    return {
+      admitted: true,
+      entry,
+      copyStoreChanged: false,
+      primaryCopyContributor: this.rangeCopyOwner?.contributor ?? null,
+    }
+  }
+
+  #paintAfterRangeAdmission(
+    admitted: {
+      readonly entry: CachedSyntaxRangeEntry | null
+      readonly copyStoreChanged: boolean
+      readonly primaryCopyContributor: CachedSyntaxRangeEntry | null
+    },
+    firstRows: boolean,
+    partial: boolean,
+    terminalPartial: boolean,
+    configurationGeneration: number,
+  ): void {
+    const entry = admitted.entry
+    if (!entry) return
+
+    if (admitted.copyStoreChanged && this.#copyOwner === 'range') {
+      const copyStore = this.#rangeCopyTokens
+      this.rangeCopyOwner = admitted.primaryCopyContributor
+        ? { store: copyStore, contributor: admitted.primaryCopyContributor }
+        : null
+      if (firstRows) {
+        // Set rangeCopyOwner BEFORE painting so adoptTokens sees exact paint provenance.
+        this.#paintAheadOfSettlement(
+          () => this.#applyTokens(this.#currentTokens, true, copyStore, 'range'),
+          configurationGeneration,
+        )
+        return
+      }
+      if (!partial && !terminalPartial) {
+        // Complete visible/intersecting-prefetch paint: update tokens and copy store without
+        // prematurely settling initialHighlightStatus if the viewport isn't settled yet.
+        const currentCopyAccepted =
+          this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+          this.#acceptedTokensTextVersion === this.options.getTextVersion()
+        if (currentCopyAccepted || entry.copyEligible) {
+          this.#applyTokens(this.#currentTokens, true, copyStore, 'range')
+        } else {
+          this.options.adoptTokens(this.#currentTokens)
+        }
+        return
+      }
+      // Partial (non-terminal or terminal): paint provisional tokens without losing copy store.
+      this.#applyTokens(this.#currentTokens, true, copyStore, 'range')
+      return
+    }
+
+    // Off-screen warm/prefetch or external copy owner: adopt display tokens without modifying copyTokens.
+    this.options.adoptTokens(this.#currentTokens)
+  }
+
+  #rebuildRangeCopyTokens(
+    entries: readonly CachedSyntaxRangeEntry[],
+    currentTokens: EditorTokenStore,
+  ): EditorTokenStore {
+    const copyEntries = entries.filter((entry) => entry.copyEligible)
+    if (copyEntries.length === 0) return EditorTokenStore.empty()
+    if (copyEntries.length === entries.length && this.#rangeTokenOwner?.store === currentTokens) {
+      return currentTokens
+    }
+    let store = EditorTokenStore.empty()
+    for (const entry of copyEntries) {
+      store = mergeTokensOnStrips(store, entry.tokens, entry.tokenOwnedRanges)
+    }
+    return store
+  }
+
+  #reconcileViewportScope(
+    visibleRange: EditorSyntaxRange,
+    options: {
+      readonly configurationGeneration: number
+    },
+  ): ReconcileViewportResult {
+    if (this.#parseState.kind !== 'parsed' || this.#parseState.mode !== 'range') {
+      return { kind: 'incomplete' }
+    }
+
+    // 1. Check full complete coverage of the viewport.
+    if (this.#rangeCoveredByComplete(visibleRange)) {
+      const composed = this.#composeViewportScope(visibleRange)
+      if (composed.kind === 'needs-authoritative-records-query') {
+        if (this.#isRecordsUnavailableFor(visibleRange)) {
+          this.#currentBrackets = []
+          this.#currentInjections = []
+          this.#publishedScope = {
+            kind: 'range',
+            range: visibleRange,
+            degraded: true,
+            unavailable: true,
+          }
+          if (this.#unavailableRecordsClearsScope) {
+            this.#rangeScopeOwners = []
+            this.options.clearSyntaxFolds()
+            this.options.setSyntaxCaptures?.([], undefined)
+          }
+          this.#settleDegradedHighlight(options.configurationGeneration)
+          return { kind: 'settled-degraded' }
+        }
+        return { kind: 'needs-authoritative-records-query' }
+      }
+
+      // Viewport-settled promotion: any prefetch/warm contributor that settled the viewport is
+      // promoted to `visible` (for prefetches) and `copyEligible = true`.
+      const promotedMap = new Map<CachedSyntaxRangeEntry, CachedSyntaxRangeEntry>()
+      let entriesChanged = false
+      const nextEntries = this.#rangeEntries.map((entry) => {
+        if (!composed.contributors.includes(entry)) return entry
+        const nextSource = entry.source === 'prefetch' ? 'visible' : entry.source
+        if (nextSource === entry.source && entry.copyEligible) return entry
+        entriesChanged = true
+        const promoted: CachedSyntaxRangeEntry = {
+          ...entry,
+          source: nextSource,
+          copyEligible: true,
+        }
+        promotedMap.set(entry, promoted)
+        return promoted
+      })
+      if (entriesChanged) this.#rangeEntries = nextEntries
+      const finalContributors = composed.contributors.map(
+        (entry) => promotedMap.get(entry) ?? entry,
+      )
+
+      const sole = finalContributors[0]
+      const unsupersededSole =
+        finalContributors.length === 1 &&
+        sole !== undefined &&
+        (visibleRange.endIndex <= visibleRange.startIndex ||
+          sameSyntaxRanges(sole.scopeOwnedRanges, [sole.range]))
+      const sameSingleOwner =
+        !entriesChanged &&
+        unsupersededSole &&
+        this.#rangeScopeOwners.length === 1 &&
+        this.#rangeScopeOwners[0] === sole &&
+        this.#publishedScope?.kind === 'range' &&
+        !this.#publishedScope.unavailable &&
+        this.#publishedScope.degraded === composed.degraded
+
+      this.#publishedScope = {
+        kind: 'range',
+        range: visibleRange,
+        degraded: composed.degraded,
+        unavailable: false,
+      }
+      if (!sameSingleOwner) {
+        this.#rangeScopeOwners = finalContributors
+        this.#currentBrackets = composed.brackets
+        this.#currentInjections = composed.injections
+        this.options.setSyntaxFolds(composed.folds)
+        this.options.setSyntaxCaptures?.(composed.captures, composed.records)
+      }
+      return {
+        kind: 'settled',
+        degraded: composed.degraded,
+        contributors: finalContributors,
+        promoted: entriesChanged,
+        scopeChanged: !sameSingleOwner,
+      }
+    }
+
+    // 3. Check whether complete ∪ unavailable covers ALL of the viewport (terminal degraded settlement).
+    if (this.#rangeCoveredBySettled(visibleRange)) {
+      const clearsScope =
+        visibleRange.endIndex <= visibleRange.startIndex
+          ? this.#unavailableEmptyClearsScope &&
+            this.#unavailableEmptyRange !== null &&
+            sameSyntaxRange(this.#unavailableEmptyRange, visibleRange)
+          : syntaxRangeListsIntersect(this.#unavailableClearsScopeRanges, [visibleRange])
+      this.#currentBrackets = []
+      this.#currentInjections = []
+      this.#publishedScope = {
+        kind: 'range',
+        range: visibleRange,
+        degraded: true,
+        unavailable: true,
+      }
+      if (clearsScope) {
+        this.#rangeScopeOwners = []
+        this.options.clearSyntaxFolds()
+        this.options.setSyntaxCaptures?.([], undefined)
+      }
+      this.#settleDegradedHighlight(options.configurationGeneration)
+      return { kind: 'settled-degraded' }
+    }
+
+    return { kind: 'incomplete' }
+  }
+
+  #settleDegradedHighlight(configurationGeneration: number): void {
+    if (!this.#highlighterSession) {
+      this.#commitInitialHighlightStatus(
+        'degraded',
+        () => this.options.notifyViewUpdate(),
+        configurationGeneration,
+      )
+      return
+    }
+    if (this.#pendingReplacementMatches('syntax', configurationGeneration)) {
+      this.#commitInitialHighlightStatus(
+        this.#lastInitialHighlightTerminalStatus ?? 'painted',
+        () => this.setTokens(this.#currentTokens, false),
+        configurationGeneration,
+      )
+    }
+  }
+
+  #composeViewportScope(visibleRange: EditorSyntaxRange): ViewportCompositionResult {
+    const isEmpty = visibleRange.endIndex <= visibleRange.startIndex
+    const contributors = this.#rangeEntries.filter(
+      (entry) =>
+        !entry.tokensOnly &&
+        (isEmpty
+          ? sameSyntaxRange(entry.range, visibleRange)
+          : syntaxRangeListsIntersect(entry.scopeOwnedRanges, [visibleRange])),
+    )
+
+    // Exact unsuperseded single-entry fast path.
+    if (
+      contributors.length === 1 &&
+      (isEmpty || sameSyntaxRanges(contributors[0]!.scopeOwnedRanges, [contributors[0]!.range]))
+    ) {
+      const sole = contributors[0]!
+      return {
+        kind: 'composed',
+        contributors,
+        folds: sole.folds,
+        brackets: sole.brackets,
+        injections: sole.injections,
+        captures: sole.captures,
+        records: sole.result.records,
+        degraded: sole.result.degraded !== null,
+      }
+    }
+
+    // Multi-entry or partially superseded entry: records-bearing providers require one authoritative
+    // answer when a downstream consumer reads syntax records/captures.
+    if (
+      this.#consumesSyntaxRecords() &&
+      contributors.some((entry) => entry.result.records !== undefined)
+    ) {
+      return { kind: 'needs-authoritative-records-query' }
+    }
+
+    const mergedOwned = mergeSyntaxRanges(contributors.flatMap((entry) => entry.scopeOwnedRanges))
+    const contiguousSpan =
+      mergedOwned.find(
+        (span) =>
+          span.startIndex <= visibleRange.startIndex && span.endIndex >= visibleRange.endIndex,
+      ) ?? visibleRange
+
+    const bracketsByIndex = new Map<number, BracketInfo>()
+    const foldsByKey = new Map<string, FoldRange>()
+    const injectionsByKey = new Map<string, EditorSyntaxInjection>()
+    const includeCaptures = this.options.needsSyntaxCaptures?.() ?? false
+    const capturesByKey = includeCaptures ? new Map<string, EditorSyntaxCapture>() : null
+    let degraded = false
+
+    for (const contributor of contributors) {
+      if (contributor.result.degraded !== null) degraded = true
+      const ownedInScope = intersectSyntaxRanges(contributor.scopeOwnedRanges, [contiguousSpan])
+      const ownedInViewport = intersectSyntaxRanges(contributor.scopeOwnedRanges, [visibleRange])
+
+      for (const bracket of contributor.brackets) {
+        if (!offsetInSyntaxRanges(bracket.index, ownedInScope)) continue
+        bracketsByIndex.set(bracket.index, bracket)
+      }
+      for (const fold of contributor.folds) {
+        if (!foldIntersectsSyntaxRange(fold, visibleRange)) continue
+        if (!syntaxRangeListsIntersect([fold], ownedInViewport)) continue
+        foldsByKey.set(foldRangeKey(fold), fold)
+      }
+      for (const injection of contributor.injections) {
+        if (!syntaxRangeListsIntersect([injection], ownedInScope)) continue
+        const key = `${injection.parentLanguageId}\0${injection.languageId}\0${injection.startIndex}\0${injection.endIndex}`
+        injectionsByKey.set(key, injection)
+      }
+      if (capturesByKey) {
+        for (const capture of contributor.captures) {
+          if (!syntaxRangeListsIntersect([capture], ownedInScope)) continue
+          const key = `${capture.startIndex}:${capture.endIndex}:${capture.captureName}:${capture.languageId ?? ''}:${capture.injectionDepth ?? 0}`
+          capturesByKey.set(key, capture)
+        }
+      }
+    }
+
+    return {
+      kind: 'composed',
+      contributors,
+      folds: Array.from(foldsByKey.values()).sort(compareFoldRanges),
+      brackets: Array.from(bracketsByIndex.values()).sort(
+        (left, right) => left.index - right.index,
+      ),
+      injections: Array.from(injectionsByKey.values()).sort(
+        (left, right) =>
+          left.startIndex - right.startIndex ||
+          left.endIndex - right.endIndex ||
+          left.parentLanguageId.localeCompare(right.parentLanguageId) ||
+          left.languageId.localeCompare(right.languageId),
+      ),
+      captures: capturesByKey
+        ? Array.from(capturesByKey.values()).sort(
+            (left, right) =>
+              left.startIndex - right.startIndex ||
+              left.endIndex - right.endIndex ||
+              (left.injectionDepth ?? 0) - (right.injectionDepth ?? 0) ||
+              left.captureName.localeCompare(right.captureName),
+          )
+        : [],
+      records: undefined,
+      degraded,
+    }
+  }
+
+  #isRecordsUnavailableFor(range: EditorSyntaxRange): boolean {
+    const marker = this.#unavailableRecordsRange
+    if (!marker) return false
+    if (range.endIndex <= range.startIndex) return sameSyntaxRange(marker, range)
+    return syntaxRangeCoverage(range, [marker]) === 'full'
+  }
+
+  #consumesSyntaxRecords(): boolean {
+    return this.options.setSyntaxCaptures !== undefined
+  }
+
+  #needsAuthoritativeRecordsQuery(visibleRange: EditorSyntaxRange): boolean {
+    if (!this.#consumesSyntaxRecords()) return false
+    if (this.#isRecordsUnavailableFor(visibleRange)) return false
+    if (this.#parseState.kind === 'error') return false
+    return this.#entriesNeedAuthoritativeRecordsQuery(visibleRange, this.#rangeEntries)
+  }
+
+  #entriesNeedAuthoritativeRecordsQuery(
+    visibleRange: EditorSyntaxRange,
+    entries: readonly CachedSyntaxRangeEntry[],
+  ): boolean {
+    if (!this.#consumesSyntaxRecords()) return false
+    const isEmpty = visibleRange.endIndex <= visibleRange.startIndex
+    const completeIntersecting = entries.filter(
+      (entry) =>
+        !entry.tokensOnly &&
+        (isEmpty
+          ? sameSyntaxRange(entry.range, visibleRange)
+          : syntaxRangeListsIntersect(entry.scopeOwnedRanges, [visibleRange])),
+    )
+    if (!completeIntersecting.some((entry) => entry.result.records !== undefined)) return false
+    if (completeIntersecting.length !== 1) return true
+    const sole = completeIntersecting[0]!
+    if (isEmpty) return !sameSyntaxRange(sole.range, visibleRange)
+    if (!sameSyntaxRanges(sole.scopeOwnedRanges, [sole.range])) return true
+    return syntaxRangeCoverage(visibleRange, [sole.range]) !== 'full'
+  }
+
+  #nextRequiredVisibleRange(range: EditorSyntaxRange): EditorSyntaxRange | null {
+    if (this.#needsAuthoritativeRecordsQuery(range)) return range
+
+    const isEmpty = range.endIndex <= range.startIndex
+    if (isEmpty) {
+      if (this.#hasCompleteEmptyEntry(range)) return null
+      if (this.#unavailableEmptyRange && sameSyntaxRange(this.#unavailableEmptyRange, range)) {
+        return null
+      }
+      if (
+        this.#rangeEntries.some(
+          (entry) =>
+            entry.tokensOnly &&
+            !entry.firstRows &&
+            entry.result.projection.analysis?.kind === 'partial' &&
+            !isTerminalIncompleteSyntaxResult(entry.result) &&
+            sameSyntaxRange(entry.range, range),
+        )
+      ) {
+        return null
+      }
+      return range
+    }
+
+    const covered = mergeSyntaxRanges(
+      this.#settledCoverage().concat(this.#provisionalPartialCoverage()),
+    )
+    return firstUncoveredSyntaxRange(range, covered)
+  }
+
+  #provisionalPartialCoverage(): readonly EditorSyntaxRange[] {
+    const ranges: EditorSyntaxRange[] = []
+    for (const entry of this.#rangeEntries) {
+      if (
+        entry.tokensOnly &&
+        !entry.firstRows &&
+        entry.result.projection.analysis?.kind === 'partial' &&
+        !isTerminalIncompleteSyntaxResult(entry.result)
+      ) {
+        for (const owned of entry.tokenOwnedRanges) ranges.push(owned)
+      }
+    }
+    return mergeSyntaxRanges(ranges)
+  }
+
+  #completeScopeCoverage(
+    entries: readonly CachedSyntaxRangeEntry[] = this.#rangeEntries,
+  ): readonly EditorSyntaxRange[] {
+    const ranges: EditorSyntaxRange[] = []
+    for (const entry of entries) {
+      if (entry.tokensOnly) continue
+      for (const owned of entry.scopeOwnedRanges) ranges.push(owned)
+    }
+    return mergeSyntaxRanges(ranges)
+  }
+
+  #tokenCoverage(
+    entries: readonly CachedSyntaxRangeEntry[] = this.#rangeEntries,
+  ): readonly EditorSyntaxRange[] {
+    const ranges: EditorSyntaxRange[] = []
+    for (const entry of entries) {
+      for (const owned of entry.tokenOwnedRanges) ranges.push(owned)
+    }
+    return mergeSyntaxRanges(ranges)
+  }
+
+  #settledCoverage(): readonly EditorSyntaxRange[] {
+    return mergeSyntaxRanges(this.#completeScopeCoverage().concat(this.#unavailableRanges))
+  }
+
+  #hasCompleteEmptyEntry(range: EditorSyntaxRange): boolean {
+    return this.#rangeEntries.some(
+      (entry) => !entry.tokensOnly && sameSyntaxRange(entry.range, range),
+    )
+  }
+
+  #hasAnyEmptyEntry(range: EditorSyntaxRange): boolean {
+    return this.#rangeEntries.some((entry) => sameSyntaxRange(entry.range, range))
+  }
+
+  #rangeCoveredByComplete(range: EditorSyntaxRange): boolean {
+    if (range.endIndex <= range.startIndex) return this.#hasCompleteEmptyEntry(range)
+    return syntaxRangeCoverage(range, this.#completeScopeCoverage()) === 'full'
+  }
+
+  #rangeCoveredBySettled(range: EditorSyntaxRange): boolean {
+    if (range.endIndex <= range.startIndex) {
+      return (
+        this.#hasCompleteEmptyEntry(range) ||
+        (this.#unavailableEmptyRange !== null &&
+          sameSyntaxRange(this.#unavailableEmptyRange, range))
+      )
+    }
+    return syntaxRangeCoverage(range, this.#settledCoverage()) === 'full'
+  }
+
+  #rangeCoveredByTokens(range: EditorSyntaxRange): boolean {
+    if (range.endIndex <= range.startIndex) return this.#hasAnyEmptyEntry(range)
+    return syntaxRangeCoverage(range, this.#tokenCoverage()) === 'full'
+  }
+
+  #rangeIntersectsTokens(range: EditorSyntaxRange): boolean {
+    if (range.endIndex <= range.startIndex) return this.#hasAnyEmptyEntry(range)
+    return syntaxRangeCoverage(range, this.#tokenCoverage()) !== 'none'
   }
 
   #canProviderQuerySyntaxRange(): boolean {
     return this.syntaxSession?.canQueryRange?.() ?? true
   }
 
+  #isParseIdCurrent(): boolean {
+    if (!this.retainedSyntax || this.#parseState.kind !== 'parsed') return true
+    if (this.#parseState.parseId === null) return true
+    return this.retainedSyntax.currentParseId() === this.#parseState.parseId
+  }
+
   #canQueryCurrentSyntaxRange(): boolean {
-    return this.#canProviderQuerySyntaxRange() && this.#syntaxDocumentVersionIsCurrent()
+    return (
+      this.#canProviderQuerySyntaxRange() &&
+      this.#parseState.kind === 'parsed' &&
+      this.#parseState.mode === 'range' &&
+      this.#parseState.contentVersion === this.#syntaxContentVersion &&
+      this.#parseState.parseGeneration === this.#parseGeneration &&
+      this.#isParseIdCurrent()
+    )
   }
 
   #canQuerySyntaxRangeForRequest(updatesDocument: boolean): boolean {
@@ -1851,36 +4349,152 @@ export class EditorSyntaxController {
     return this.#canQueryCurrentSyntaxRange()
   }
 
-  #syntaxDocumentVersionIsCurrent(): boolean {
-    return this.#parsedSyntaxContentVersion === this.#syntaxContentVersion
-  }
+  #acceptSyntaxDocument(
+    guard: RequestGuard,
+    parseId: number | null,
+    mode: 'full' | 'range',
+    parseKind: 'full' | 'partial',
+    fullResult: EditorSyntaxResult | null,
+    promotedEntries: readonly CachedSyntaxRangeEntry[],
+  ): void {
+    const alreadyAcceptedThisParse =
+      this.#acceptedContentVersion === guard.contentVersion &&
+      this.#acceptedParseGeneration === guard.parseGeneration &&
+      this.#acceptedParseId === parseId
 
-  /**
-   * The first answer from the parse of this text. Answers carried through the edits before it
-   * stood in for it; they describe the old parse, so they stop counting as answers here, and
-   * what they covered is asked for again when it is shown. Folds repainted from them no longer
-   * cover the viewport either; they stay painted until the new parse's folds replace them.
-   */
-  #acceptSyntaxDocument(contentVersion: number): void {
-    if (this.#parsedSyntaxContentVersion !== contentVersion) {
-      this.#cachedSyntaxRanges = []
-      this.#cachedSyntaxFoldRanges = []
-      this.#foldCoverage = null
+    this.#carriedEntries = null
+    this.#acceptedContentVersion = guard.contentVersion
+    this.#acceptedParseGeneration = guard.parseGeneration
+    this.#acceptedParseId = parseId
+    this.#parseState = {
+      kind: 'parsed',
+      contentVersion: guard.contentVersion,
+      parseGeneration: guard.parseGeneration,
+      parseId,
+      mode,
+      parseKind,
+      fullResult,
     }
-    this.#markSyntaxDocumentCurrent(contentVersion)
-  }
 
-  #markSyntaxDocumentCurrent(contentVersion: number): void {
-    this.#parsedSyntaxContentVersion = contentVersion
-    if (this.#pendingSyntaxContentVersion === contentVersion) {
-      this.#pendingSyntaxContentVersion = null
+    if (alreadyAcceptedThisParse) return
+
+    const previousEntries = this.#rangeEntries
+    this.#publishedScope = null
+    this.#unavailableRanges = []
+    this.#unavailableClearsScopeRanges = []
+    this.#unavailableEmptyRange = null
+    this.#unavailableEmptyClearsScope = false
+    this.#unavailableRecordsRange = null
+    this.#unavailableRecordsClearsScope = false
+    this.#rangeScopeOwners = []
+    this.#rangeEntries = promotedEntries
+
+    if (!this.#highlighterSession && mode === 'range') {
+      const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+      const ownsProjectedPaint =
+        this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens
+      const canOwnRanges =
+        this.#copyOwner !== 'external' &&
+        (this.#rangeTokenOwner?.store === this.#currentTokens ||
+          ownsProjectedPaint ||
+          this.#currentTokens.length === 0)
+      const priorUnownedStrips =
+        !canOwnRanges && (this.#pendingUnownedStrips.length > 0 || previousEntries.length > 0)
+          ? mergeSyntaxRanges(
+              this.#pendingUnownedStrips.concat(this.#tokenCoverage(previousEntries)),
+            )
+          : []
+      if (promotedEntries.length > 0) {
+        let nextTokens = canOwnRanges ? EditorTokenStore.empty() : this.#currentTokens
+        let restoredHostPaint = false
+        if (!canOwnRanges && priorUnownedStrips.length > 0) {
+          const staleStrips = subtractSyntaxRanges(
+            priorUnownedStrips,
+            this.#tokenCoverage(promotedEntries),
+          )
+          if (staleStrips.length > 0) {
+            const fallback =
+              this.#externalBaseTokens?.snapshot === snapshot
+                ? this.#externalBaseTokens.store
+                : EditorTokenStore.empty()
+            nextTokens = mergeTokensOnStrips(nextTokens, fallback, staleStrips)
+            restoredHostPaint = true
+          }
+        }
+        this.#pendingUnownedStrips = []
+        for (const entry of promotedEntries) {
+          nextTokens = mergeTokensOnStrips(nextTokens, entry.tokens, entry.tokenOwnedRanges)
+        }
+        const previousTokens = this.#currentTokens
+        this.#currentTokens = nextTokens
+        this.#rangeTokenOwner = canOwnRanges && snapshot ? { store: nextTokens, snapshot } : null
+        if (canOwnRanges) {
+          this.#projectedRangeTokens = null
+          this.#awaitingProjectedEditTokens = false
+        }
+        if (this.#copyOwner !== 'external') {
+          const nextCopyTokens = this.#rebuildRangeCopyTokens(promotedEntries, nextTokens)
+          this.#rangeCopyTokens = nextCopyTokens
+          this.#copyOwner = 'range'
+          const primary = this.#primaryCopyContributor(promotedEntries)
+          this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+          if (
+            this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+            this.#acceptedTokensTextVersion === this.options.getTextVersion()
+          ) {
+            this.#acceptedCopyTokens = nextCopyTokens
+          }
+        }
+        if (restoredHostPaint || nextTokens !== previousTokens) {
+          this.options.adoptTokens(this.#currentTokens)
+        }
+      } else if (!canOwnRanges && priorUnownedStrips.length > 0) {
+        const fallback =
+          this.#externalBaseTokens?.snapshot === snapshot
+            ? this.#externalBaseTokens.store
+            : EditorTokenStore.empty()
+        this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, priorUnownedStrips)
+        this.#pendingUnownedStrips = []
+        if (this.#copyOwner !== 'external') {
+          this.#rangeCopyTokens = EditorTokenStore.empty()
+          this.rangeCopyOwner = null
+          this.#copyOwner = 'none'
+          if (
+            this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+            this.#acceptedTokensTextVersion === this.options.getTextVersion()
+          ) {
+            this.#acceptedCopyTokens = EditorTokenStore.empty()
+          }
+        }
+        this.options.adoptTokens(this.#currentTokens)
+      } else {
+        this.#pendingUnownedStrips = []
+        if (previousEntries.length > 0) {
+          if (this.#copyOwner !== 'external') {
+            this.#rangeCopyTokens = EditorTokenStore.empty()
+            this.rangeCopyOwner = null
+            this.#copyOwner = 'none'
+            if (
+              this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+              this.#acceptedTokensTextVersion === this.options.getTextVersion()
+            ) {
+              this.#acceptedCopyTokens = EditorTokenStore.empty()
+            }
+          }
+          if (canOwnRanges) {
+            this.#currentTokens = EditorTokenStore.empty()
+            this.#rangeTokenOwner = snapshot ? { store: this.#currentTokens, snapshot } : null
+            this.#projectedRangeTokens = null
+            this.#awaitingProjectedEditTokens = false
+            this.options.adoptTokens(this.#currentTokens)
+          }
+        }
+      }
     }
   }
 
   #resetSyntaxContentVersion(): void {
     this.#syntaxContentVersion += 1
-    this.#parsedSyntaxContentVersion = null
-    this.#pendingSyntaxContentVersion = null
   }
 
   #flushPendingPrefetch(): boolean {
@@ -1889,6 +4503,7 @@ export class EditorSyntaxController {
     if (!pending) return false
     if (pending.documentVersion !== this.options.getDocumentVersion()) return false
     if (pending.contentVersion !== this.#syntaxContentVersion) return false
+    if (pending.parseGeneration !== this.#parseGeneration) return false
 
     const scheduled = this.prefetchVisibleRange(
       pending.documentVersion,
@@ -1904,6 +4519,7 @@ export class EditorSyntaxController {
     if (!pending) return
     if (pending.documentVersion !== this.options.getDocumentVersion()) return
     if (pending.contentVersion !== this.#syntaxContentVersion) return
+    if (pending.parseGeneration !== this.#parseGeneration) return
     if (pending.configurationGeneration !== this.#initialHighlightConfigurationGeneration) return
 
     this.#scheduleNextWarmRange(pending)
@@ -1919,28 +4535,32 @@ export class EditorSyntaxController {
       return
     }
 
+    const guard: RequestGuard = {
+      documentVersion: pending.documentVersion,
+      contentVersion: pending.contentVersion,
+      configurationGeneration: pending.configurationGeneration,
+      parseGeneration: pending.parseGeneration,
+    }
     this.#warmRangeRequests.schedule({
       delayMs: pending.delayMs,
       tags: syntaxWorkTags(pending.documentVersion, pending.contentVersion, 'warm', range),
       run: traceEditorPerformanceTask('editor.syntax.warm.request', (signal: AbortSignal) =>
         this.loadSyntaxRangeResult(range, 'warm', {
           contentVersion: pending.contentVersion,
+          parseGeneration: pending.parseGeneration,
           signal,
         }),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.warm.apply', (result, startedAt) => {
         if (pending.generation !== this.#warmGeneration) return
-        const applied = this.#applySyntaxResult(
-          result,
-          pending.documentVersion,
-          startedAt,
-          pending.configurationGeneration,
-        )
+        if (!this.#isRequestCurrent(guard)) return
+        const applied = this.#applySyntaxResult(result, guard, startedAt)
         if (applied) this.#scheduleNextWarmRange(pending)
       }),
-      fail: traceEditorPerformanceTask('editor.syntax.warm.fail', (error, startedAt) =>
-        this.#logOptionalSyntaxFailure(pending.documentVersion, error, startedAt),
-      ),
+      fail: traceEditorPerformanceTask('editor.syntax.warm.fail', (error, startedAt) => {
+        if (!this.#isRequestCurrent(guard)) return
+        this.#logOptionalSyntaxFailure(pending.documentVersion, error, startedAt)
+      }),
     })
   }
 
@@ -1960,7 +4580,7 @@ export class EditorSyntaxController {
   #nextWarmRange(seedRange: EditorSyntaxRange): EditorSyntaxRange | null {
     const session = this.options.getSession()
     const documentLength = session?.getSnapshot().length ?? 0
-    return nextUncachedSyntaxWarmRange(documentLength, seedRange, this.#cachedSyntaxRanges)
+    return nextUncachedSyntaxWarmRange(documentLength, seedRange, this.#tokenCoverage())
   }
 
   #nextWarmGeneration(): number {
@@ -1968,81 +4588,74 @@ export class EditorSyntaxController {
     return this.#warmGeneration
   }
 
-  #syntaxTokensForResult(
-    tokens: EditorTokenInput,
-    range: EditorSyntaxRange | null,
-  ): EditorTokenStore {
-    const store = toEditorTokenStore(tokens)
-    if (!range) return store
-    return mergeSyntaxRangeTokens(this.#currentTokens, store, range)
-  }
-
-  #applyCachedSyntaxFolds(range: EditorSyntaxRange): void {
-    const folds = cachedSyntaxFoldsForRange(
-      range,
-      this.#cachedSyntaxFoldRanges,
-      this.#cachedSyntaxRanges,
+  #pruneDegradedAndPartialRangeEntries(): void {
+    const previousEntries = this.#rangeEntries
+    const kept = previousEntries.filter(
+      (entry) => entry.result.degraded === null && !entry.tokensOnly,
     )
-    if (!folds) return
-
-    this.#foldCoverage = { kind: 'range', range }
-    this.syntaxStatus = 'ready'
-    this.options.setSyntaxFolds(folds)
-    this.options.notifyViewUpdate()
-  }
-
-  #rememberSyntaxRange(
-    range: EditorSyntaxRange,
-    result: EditorSyntaxResult,
-    partial: boolean,
-  ): CachedSyntaxFoldRange | null {
-    const snapshot = this.options.getSession()?.getTextSnapshot()
-    if (!snapshot) return null
-    const contributor: CachedSyntaxFoldRange = {
-      range,
-      result,
-      snapshot,
-      folds: result.folds,
-      newestRanges: [range],
-      partial,
+    if (kept.length === previousEntries.length) return
+    const keptSet = new Set(kept)
+    this.#rangeEntries = kept
+    this.#lastRangeTrim = null
+    if (this.#rangeScopeOwners.some((owner) => !keptSet.has(owner))) {
+      this.#rangeScopeOwners = this.#rangeScopeOwners.filter((owner) => keptSet.has(owner))
+      this.#publishedScope = null
+    } else if (this.#publishedScope?.degraded) {
+      this.#publishedScope = null
     }
-    this.#cachedSyntaxRanges = appendCachedSyntaxRange(this.#cachedSyntaxRanges, range)
-    const previous = this.#cachedSyntaxFoldRanges.map((cached) => ({
-      ...cached,
-      newestRanges: subtractSyntaxRange(cached.newestRanges, range),
-    }))
-    this.#cachedSyntaxFoldRanges = appendCachedSyntaxFoldRange(previous, contributor)
-    return contributor
+    const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+    const rangeOwned =
+      !this.#highlighterSession &&
+      snapshot !== null &&
+      this.#rangeTokenOwner?.store === this.#currentTokens &&
+      this.#rangeTokenOwner.snapshot === snapshot
+    let adoptedUpdatedTokens = false
+    if (rangeOwned) {
+      const tokens = compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(kept))
+      this.#currentTokens = tokens
+      this.#rangeTokenOwner = { store: tokens, snapshot }
+      adoptedUpdatedTokens = true
+    } else if (!this.#highlighterSession) {
+      const removed = previousEntries.filter((entry) => !keptSet.has(entry))
+      const evictedRanges = this.#tokenCoverage(removed)
+      if (evictedRanges.length > 0) {
+        const fallback =
+          snapshot !== null && this.#externalBaseTokens?.snapshot === snapshot
+            ? this.#externalBaseTokens.store
+            : EditorTokenStore.empty()
+        this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, evictedRanges)
+        adoptedUpdatedTokens = true
+      }
+    }
+    if (!this.#highlighterSession && this.#copyOwner === 'range') {
+      this.#compactRangeCopyStore(kept, this.#currentTokens, rangeOwned)
+    }
+    if (adoptedUpdatedTokens) {
+      this.options.adoptTokens(this.#currentTokens)
+    }
   }
 
   #clearSyntaxRangeCache(): void {
     this.#lastRangeTrim = null
+    this.#acceptedContentVersion = null
+    this.#acceptedParseGeneration = null
+    this.#acceptedParseId = null
     this.#rangeTokenOwner = null
+    this.#projectedRangeTokens = null
+    this.#awaitingProjectedEditTokens = false
     this.rangeCopyOwner = null
-    this.#rangeScopeOwner = null
-    this.#foldCoverage = null
-    this.#cachedSyntaxRanges = []
-    this.#cachedSyntaxFoldRanges = []
-  }
-
-  #projectSyntaxRangeCache(change: DocumentSessionChange): void {
-    const edit = change.edits[0]
-    if (change.edits.length !== 1 || !edit || !canProjectSyntaxRangeCacheThroughEdit(edit)) {
-      this.#clearSyntaxRangeCache()
-      return
-    }
-
-    this.#cachedSyntaxRanges = projectCachedSyntaxRanges(
-      this.#cachedSyntaxRanges,
-      edit,
-      change.snapshot.length,
-    )
-    this.#cachedSyntaxFoldRanges = projectCachedSyntaxFoldRanges(
-      this.#cachedSyntaxFoldRanges,
-      edit,
-      change.snapshot.length,
-      change.textSnapshot,
-    )
+    this.#rangeCopyTokens = EditorTokenStore.empty()
+    if (this.#copyOwner === 'range') this.#copyOwner = 'none'
+    this.#rangeScopeOwners = []
+    this.#publishedScope = null
+    this.#rangeEntries = []
+    this.#carriedEntries = null
+    this.#unavailableRanges = []
+    this.#unavailableClearsScopeRanges = []
+    this.#unavailableEmptyRange = null
+    this.#unavailableEmptyClearsScope = false
+    this.#unavailableRecordsRange = null
+    this.#unavailableRecordsClearsScope = false
   }
 
   #applyHighlightResult(
@@ -2096,45 +4709,53 @@ export class EditorSyntaxController {
     this.options.notifyChange(null)
   }
 
-  #applySyntaxError(documentVersion: number, configurationGeneration: number): void {
-    if (documentVersion !== this.options.getDocumentVersion()) return
-    if (configurationGeneration !== this.#initialHighlightConfigurationGeneration) return
+  #applySyntaxError(guard: RequestGuard): void {
+    if (!this.#isRequestCurrent(guard)) return
 
-    this.syntaxStatus = 'error'
+    this.#carriedEntries = null
+    this.#parseState = {
+      kind: 'error',
+      contentVersion: guard.contentVersion,
+      parseGeneration: guard.parseGeneration,
+    }
+    this.#publishedScope = null
+    this.#rangeScopeOwners = []
+    this.#currentBrackets = []
+    this.#currentInjections = []
     this.options.clearSyntaxFolds()
+    this.options.setSyntaxCaptures?.([], undefined)
     this.options.notifyViewUpdate()
-    if (!this.#highlighterSession) this.#commitInitialHighlightError(configurationGeneration)
+    if (!this.#highlighterSession) this.#commitInitialHighlightError(guard.configurationGeneration)
     if (
       this.#highlighterSession &&
-      this.#pendingReplacementMatches('syntax', configurationGeneration)
+      this.#pendingReplacementMatches('syntax', guard.configurationGeneration)
     ) {
       const terminalStatus = this.#lastInitialHighlightTerminalStatus ?? 'painted'
       this.#commitInitialHighlightStatus(
         terminalStatus,
         () => this.setTokens(this.#currentTokens, false),
-        configurationGeneration,
+        guard.configurationGeneration,
       )
     }
-    warnEditorSyntax('mark structural syntax error', this.#debugContext(documentVersion))
+    warnEditorSyntax('mark structural syntax error', this.#debugContext(guard.documentVersion))
     this.options.notifyChange(null)
   }
 
   #recoverSyntaxError(
-    documentVersion: number,
     change: DocumentSessionChange | null,
     error: unknown,
     startedAt: number,
-    configurationGeneration: number,
+    guard: RequestGuard,
   ): void {
     if (error instanceof DOMException && error.name === 'AbortError') return
-    if (documentVersion !== this.options.getDocumentVersion()) return
-    if (configurationGeneration !== this.#initialHighlightConfigurationGeneration) return
+    if (!this.#isRequestCurrent(guard)) return
     const changeKind = change?.kind ?? 'refresh'
 
-    if (!change) this.#applySyntaxError(documentVersion, configurationGeneration)
+    if (!change) this.#applySyntaxError(guard)
     if (change) {
+      this.#carriedEntries = null
       warnEditorSyntax('reload structural syntax after edit failure', {
-        ...this.#debugContext(documentVersion),
+        ...this.#debugContext(guard.documentVersion),
         changeKind,
       })
       this.reloadSyntaxSession(false)
@@ -2145,13 +4766,13 @@ export class EditorSyntaxController {
       level: 'error',
       error: syntaxLogError(error),
       syntax: {
-        ...this.#debugContext(documentVersion),
+        ...this.#debugContext(guard.documentVersion),
         changeKind,
         startedAt,
       },
     })
     warnEditorSyntax(`structural syntax request failed: ${syntaxErrorMessage(error)}`, {
-      ...this.#debugContext(documentVersion),
+      ...this.#debugContext(guard.documentVersion),
       changeKind,
       error: syntaxDebugError(error),
       startedAt,
@@ -2264,7 +4885,7 @@ export class EditorSyntaxController {
       hasHighlighterSession: Boolean(this.#highlighterSession),
       hasSyntaxSession: Boolean(this.syntaxSession),
       languageId: this.options.getLanguageId(),
-      syntaxStatus: this.syntaxStatus,
+      syntaxStatus: this.#structuralBaseStatus(),
       ...this.fallbackFoldSelection,
     }
   }
@@ -2369,9 +4990,10 @@ export class EditorSyntaxController {
       return 'painted'
     }
     if (this.syntaxSession) {
-      if (this.syntaxStatus === 'loading') return null
-      if (this.syntaxStatus === 'degraded') return 'degraded'
-      if (this.syntaxStatus === 'error') return 'error'
+      const status = this.status
+      if (status === 'loading') return null
+      if (status === 'degraded') return 'degraded'
+      if (status === 'error') return 'error'
       return 'painted'
     }
     return 'plain'
@@ -2475,6 +5097,7 @@ type EditorSyntaxDebugPayload = Record<string, unknown>
  * providers are built with, so the code travels with the providers rather than with every editor.
  */
 export function installEditorSyntaxController(): void {
+  installSyntaxRangeProjector(projectResultThroughSteps)
   const create: EditorSyntaxControllerFactory = (options) => new EditorSyntaxController(options)
   installEditorSyntaxRuntime(create)
 }
@@ -2519,279 +5142,6 @@ const syntaxErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message
   return String(error)
 }
-
-const mergeSyntaxRangeTokens = (
-  currentTokens: EditorTokenStore,
-  rangeTokens: EditorTokenStore,
-  range: EditorSyntaxRange,
-): EditorTokenStore =>
-  currentTokens.replaceOffsetRange(range.startIndex, range.endIndex, rangeTokens)
-
-const appendCachedSyntaxRange = (
-  ranges: readonly EditorSyntaxRange[],
-  range: EditorSyntaxRange,
-): readonly EditorSyntaxRange[] => {
-  if (range.endIndex <= range.startIndex) return ranges
-
-  const merged: EditorSyntaxRange[] = []
-  const sorted = ranges.concat(range).sort(compareSyntaxRanges)
-  for (const current of sorted) mergeCachedSyntaxRange(merged, current)
-  return merged
-}
-
-const mergeCachedSyntaxRange = (ranges: EditorSyntaxRange[], range: EditorSyntaxRange): void => {
-  const previous = ranges.at(-1)
-  if (!previous || range.startIndex > previous.endIndex) {
-    ranges.push(range)
-    return
-  }
-
-  ranges[ranges.length - 1] = {
-    startIndex: previous.startIndex,
-    endIndex: Math.max(previous.endIndex, range.endIndex),
-  }
-}
-
-const appendCachedSyntaxFoldRange = (
-  ranges: readonly CachedSyntaxFoldRange[],
-  range: CachedSyntaxFoldRange,
-): readonly CachedSyntaxFoldRange[] => {
-  if (range.range.endIndex <= range.range.startIndex) return ranges
-
-  const next = ranges.filter((current) => !sameSyntaxRange(current.range, range.range))
-  next.push(range)
-  return next
-}
-
-const projectCachedSyntaxRanges = (
-  ranges: readonly EditorSyntaxRange[],
-  edit: TextEdit,
-  documentLength: number,
-): readonly EditorSyntaxRange[] => {
-  const projected: EditorSyntaxRange[] = []
-  for (const range of ranges) {
-    const next = projectSyntaxRangeThroughInsertion(range, edit, documentLength)
-    if (next.endIndex > next.startIndex) projected.push(next)
-  }
-  return projected
-}
-
-const projectCachedSyntaxFoldRanges = (
-  ranges: readonly CachedSyntaxFoldRange[],
-  edit: TextEdit,
-  documentLength: number,
-  snapshot: DocumentTextSnapshot,
-): readonly CachedSyntaxFoldRange[] => {
-  const projected: CachedSyntaxFoldRange[] = []
-  for (const range of ranges) {
-    const nextRange = projectSyntaxRangeThroughInsertion(range.range, edit, documentLength)
-    if (nextRange.endIndex <= nextRange.startIndex) continue
-    projected.push({
-      ...range,
-      snapshot,
-      range: nextRange,
-      newestRanges: projectCachedSyntaxRanges(range.newestRanges, edit, documentLength),
-      folds: projectFoldRangesThroughInsertion(range.folds, edit, documentLength),
-    })
-  }
-  return projected
-}
-
-const canProjectSyntaxRangeCacheThroughEdit = (edit: TextEdit): boolean => {
-  if (edit.to !== edit.from) return false
-  return lineBreakCount(edit.text) === 0
-}
-
-const projectSyntaxRangeThroughInsertion = (
-  range: EditorSyntaxRange,
-  edit: TextEdit,
-  documentLength: number,
-): EditorSyntaxRange => {
-  const delta = edit.text.length
-  if (range.endIndex <= edit.from) return clampSyntaxRange(range, documentLength)
-  if (range.startIndex >= edit.from) {
-    return clampSyntaxRange(
-      {
-        startIndex: range.startIndex + delta,
-        endIndex: range.endIndex + delta,
-      },
-      documentLength,
-    )
-  }
-
-  return clampSyntaxRange(
-    {
-      startIndex: range.startIndex,
-      endIndex: range.endIndex + delta,
-    },
-    documentLength,
-  )
-}
-
-const projectFoldRangesThroughInsertion = (
-  folds: readonly FoldRange[],
-  edit: TextEdit,
-  documentLength: number,
-): readonly FoldRange[] => {
-  const lineDelta = lineBreakCount(edit.text)
-  const delta = edit.text.length
-  return folds
-    .map((fold) => projectFoldRangeThroughInsertion(fold, edit, delta, lineDelta, documentLength))
-    .filter((fold): fold is FoldRange => fold !== null)
-}
-
-const projectFoldRangeThroughInsertion = (
-  fold: FoldRange,
-  edit: TextEdit,
-  delta: number,
-  lineDelta: number,
-  documentLength: number,
-): FoldRange | null => {
-  if (edit.from <= fold.startIndex) {
-    return normalizeProjectedFoldRange(
-      {
-        ...fold,
-        startIndex: fold.startIndex + delta,
-        endIndex: fold.endIndex + delta,
-        startLine: fold.startLine + lineDelta,
-        endLine: fold.endLine + lineDelta,
-      },
-      documentLength,
-    )
-  }
-
-  if (edit.from < fold.endIndex) {
-    return normalizeProjectedFoldRange(
-      {
-        ...fold,
-        endIndex: fold.endIndex + delta,
-        endLine: fold.endLine + lineDelta,
-      },
-      documentLength,
-    )
-  }
-
-  return normalizeProjectedFoldRange(fold, documentLength)
-}
-
-const normalizeProjectedFoldRange = (fold: FoldRange, documentLength: number): FoldRange | null => {
-  const startIndex = boundedSyntaxIndex(fold.startIndex, documentLength)
-  const endIndex = boundedSyntaxIndex(fold.endIndex, documentLength)
-  if (endIndex <= startIndex) return null
-  const startLine = Math.max(0, fold.startLine)
-  return {
-    ...fold,
-    startIndex,
-    endIndex,
-    startLine,
-    endLine: Math.max(startLine, fold.endLine),
-  }
-}
-
-const clampSyntaxRange = (range: EditorSyntaxRange, documentLength: number): EditorSyntaxRange => ({
-  startIndex: boundedSyntaxIndex(range.startIndex, documentLength),
-  endIndex: boundedSyntaxIndex(range.endIndex, documentLength),
-})
-
-const boundedSyntaxIndex = (index: number, documentLength: number): number =>
-  Math.max(0, Math.min(index, documentLength))
-
-const lineBreakCount = (text: string): number => {
-  let count = 0
-  for (let index = 0; index < text.length; index += 1) {
-    if (text[index] === '\n') count += 1
-  }
-  return count
-}
-
-const cachedSyntaxFoldsForRange = (
-  range: EditorSyntaxRange,
-  cachedRanges: readonly CachedSyntaxFoldRange[],
-  coverageRanges: readonly EditorSyntaxRange[],
-): readonly FoldRange[] | null => {
-  if (syntaxRangeCoverage(range, coverageRanges) !== 'full') return null
-  if (syntaxRangeCoverage(range, completeFoldRanges(cachedRanges)) !== 'full') return null
-
-  const foldsByKey = new Map<string, FoldRange>()
-  for (const cachedRange of cachedRanges) {
-    if (!syntaxRangesIntersect(cachedRange.range, range)) continue
-    for (const fold of cachedRange.folds) {
-      if (!foldIntersectsSyntaxRange(fold, range)) continue
-      foldsByKey.set(foldRangeKey(fold), fold)
-    }
-  }
-  return Array.from(foldsByKey.values()).sort(compareFoldRanges)
-}
-
-/** The ranges whose cached folds are complete answers, in order and merged. */
-const completeFoldRanges = (
-  cachedRanges: readonly CachedSyntaxFoldRange[],
-): readonly EditorSyntaxRange[] =>
-  cachedRanges.reduce<readonly EditorSyntaxRange[]>(
-    (covered, cached) =>
-      cached.partial ? covered : appendCachedSyntaxRange(covered, cached.range),
-    [],
-  )
-
-const sameSyntaxRange = (left: EditorSyntaxRange, right: EditorSyntaxRange): boolean =>
-  left.startIndex === right.startIndex && left.endIndex === right.endIndex
-
-const syntaxRangesIntersect = (left: EditorSyntaxRange, right: EditorSyntaxRange): boolean =>
-  left.startIndex < right.endIndex && left.endIndex > right.startIndex
-
-const foldIntersectsSyntaxRange = (fold: FoldRange, range: EditorSyntaxRange): boolean =>
-  fold.startIndex < range.endIndex && fold.endIndex > range.startIndex
-
-const compareFoldRanges = (left: FoldRange, right: FoldRange): number =>
-  left.startLine - right.startLine ||
-  left.endLine - right.endLine ||
-  left.startIndex - right.startIndex ||
-  left.endIndex - right.endIndex
-
-type SyntaxRangeCoverage = 'none' | 'partial' | 'full'
-
-const syntaxRangeCoverage = (
-  range: EditorSyntaxRange,
-  cachedRanges: readonly EditorSyntaxRange[],
-): SyntaxRangeCoverage => {
-  let cursor = range.startIndex
-  let overlaps = false
-  for (const cachedRange of cachedRanges) {
-    if (cachedRange.endIndex <= range.startIndex) continue
-    if (cachedRange.startIndex >= range.endIndex) break
-
-    overlaps = true
-    if (cachedRange.endIndex <= cursor) continue
-    if (cachedRange.startIndex > cursor) return 'partial'
-
-    cursor = Math.max(cursor, cachedRange.endIndex)
-    if (cursor >= range.endIndex) return 'full'
-  }
-
-  return overlaps ? 'partial' : 'none'
-}
-
-const firstUncoveredSyntaxRange = (
-  range: EditorSyntaxRange,
-  cachedRanges: readonly EditorSyntaxRange[],
-): EditorSyntaxRange | null => {
-  let cursor = range.startIndex
-  for (const cachedRange of cachedRanges) {
-    if (cachedRange.endIndex <= cursor) continue
-    if (cachedRange.startIndex >= range.endIndex) break
-    if (cachedRange.startIndex > cursor) {
-      return { startIndex: cursor, endIndex: Math.min(cachedRange.startIndex, range.endIndex) }
-    }
-
-    cursor = Math.max(cursor, cachedRange.endIndex)
-    if (cursor >= range.endIndex) return null
-  }
-
-  return { startIndex: cursor, endIndex: range.endIndex }
-}
-
-const compareSyntaxRanges = (left: EditorSyntaxRange, right: EditorSyntaxRange): number =>
-  left.startIndex - right.startIndex || left.endIndex - right.endIndex
 
 const nextUncachedSyntaxWarmRange = (
   documentLength: number,
@@ -2845,76 +5195,46 @@ const isUncachedSyntaxWarmRange = (
 
 const boundedIndex = (index: number, documentLength: number): number =>
   Math.max(0, Math.min(index, Math.max(0, documentLength - 1)))
-function sameSyntaxRanges(
-  left: readonly EditorSyntaxRange[],
-  right: readonly EditorSyntaxRange[],
-): boolean {
-  return (
-    left.length === right.length &&
-    left.every((range, index) => sameSyntaxRange(range, right[index]!))
-  )
-}
-function subtractSyntaxRange(
-  ranges: readonly EditorSyntaxRange[],
-  removed: EditorSyntaxRange,
-): readonly EditorSyntaxRange[] {
-  const remaining: EditorSyntaxRange[] = []
-  for (const range of ranges) {
-    if (!syntaxRangesIntersect(range, removed)) {
-      remaining.push(range)
-      continue
-    }
-    if (range.startIndex < removed.startIndex)
-      remaining.push({ startIndex: range.startIndex, endIndex: removed.startIndex })
-    if (range.endIndex > removed.endIndex)
-      remaining.push({ startIndex: removed.endIndex, endIndex: range.endIndex })
-  }
-  return remaining
-}
-/**
- * The answers whose folds the shown ranges repaint from. Only an answer that meets a shown range
- * is read for its folds (`cachedSyntaxFoldsForRange`), so one asked for elsewhere does not count
- * even when its folds span the screen; the answer whose folds are painted is kept as the scope
- * owner instead.
- */
-function activeFoldContributors(
-  contributors: readonly CachedSyntaxFoldRange[],
-  ranges: readonly EditorSyntaxRange[],
-): readonly CachedSyntaxFoldRange[] {
-  const winners = new Map<string, CachedSyntaxFoldRange>()
-  for (const contributor of contributors) {
-    if (!syntaxRangeListsIntersect([contributor.range], ranges)) continue
-    for (const fold of contributor.folds) {
-      if (ranges.some((range) => foldIntersectsSyntaxRange(fold, range)))
-        winners.set(foldRangeKey(fold), contributor)
-    }
-  }
-  return [...new Set(winners.values())]
-}
-function compactSyntaxRangeTokens(
-  store: EditorTokenStore,
-  ranges: readonly EditorSyntaxRange[],
-): EditorTokenStore {
-  const tokens: ReturnType<EditorTokenStore['tokenAt']>[] = []
-  const selected = new Set<number>()
-  for (const range of ranges) {
-    const last = store.firstStartingAtOrAfter(range.endIndex)
-    store.forEachInRange(
-      store.firstEndingAfter(range.startIndex, last),
-      last,
-      (start, end, _style, index) => {
-        if (end <= range.startIndex || selected.has(index)) return
-        selected.add(index)
-        tokens.push({ start, end, style: store.styleAt(index) })
-      },
-    )
-  }
-  return EditorTokenStore.fromTokens(tokens)
-}
 
-function syntaxRangeListsIntersect(
-  left: readonly EditorSyntaxRange[],
-  right: readonly EditorSyntaxRange[],
-): boolean {
-  return left.some((range) => right.some((other) => syntaxRangesIntersect(range, other)))
+const projectRangesThroughEdits = (
+  ranges: readonly EditorSyntaxRange[],
+  edits: readonly TextEdit[],
+  afterLength: number,
+): readonly EditorSyntaxRange[] => {
+  if (ranges.length === 0 || afterLength <= 0) return []
+  let current = ranges
+  if (edits.length > 0) {
+    const ordered =
+      edits.length === 1
+        ? edits
+        : edits.toSorted((left, right) => right.from - left.from || right.to - left.to)
+    for (const edit of ordered) {
+      const delta = edit.text.length - (edit.to - edit.from)
+      const next: EditorSyntaxRange[] = []
+      for (const range of current) {
+        if (range.endIndex < edit.from) {
+          next.push(range)
+        } else if (range.startIndex > edit.to) {
+          next.push({
+            startIndex: range.startIndex + delta,
+            endIndex: range.endIndex + delta,
+          })
+        } else {
+          const startIndex = range.startIndex <= edit.from ? range.startIndex : edit.from
+          const endIndex =
+            range.endIndex >= edit.to ? range.endIndex + delta : edit.from + edit.text.length
+          if (endIndex > startIndex) next.push({ startIndex, endIndex })
+        }
+      }
+      current = next
+      if (current.length === 0) return []
+    }
+  }
+  const clamped: EditorSyntaxRange[] = []
+  for (const range of current) {
+    const startIndex = Math.max(0, Math.min(range.startIndex, afterLength))
+    const endIndex = Math.max(startIndex, Math.min(range.endIndex, afterLength))
+    if (endIndex > startIndex) clamped.push({ startIndex, endIndex })
+  }
+  return mergeSyntaxRanges(clamped)
 }

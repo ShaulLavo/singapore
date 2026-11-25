@@ -100,12 +100,21 @@ export type TreeSitterSyntaxRange = {
   readonly endIndex: number
 }
 
+export type TreeSitterParseInvalidation =
+  | { readonly kind: 'all' }
+  | {
+      readonly kind: 'ranges'
+      readonly baseSnapshotVersion: number
+      readonly ranges: readonly TreeSitterSyntaxRange[]
+    }
+
 export type TreeSitterParseAckResult = {
   readonly source?: Pick<DocumentWorkerReadReference, 'identity' | 'point'>
   readonly documentId: string
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
   readonly changedRanges: readonly TreeSitterSyntaxRange[]
+  readonly invalidation?: TreeSitterParseInvalidation
   readonly degraded?: readonly TreeSitterDegradedState[]
   readonly statistics?: Readonly<Record<string, number>>
   readonly missingLanguages?: readonly string[]

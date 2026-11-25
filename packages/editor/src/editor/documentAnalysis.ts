@@ -26,6 +26,7 @@ import {
 } from '../syntax/providerTheme'
 import {
   createEmptySyntaxResult,
+  isTerminalIncompleteSyntaxResult,
   syntaxResultCoversRange,
   type EditorSyntaxProvider,
   type EditorSyntaxSession,
@@ -34,6 +35,7 @@ import {
   type EditorSyntaxResult,
   type EditorSyntaxRange,
 } from '../syntax/session'
+import type { IncrementalInvalidationStep } from './syntaxRangeProjection'
 import {
   DocumentDelivery,
   type DocumentRead,
@@ -52,6 +54,18 @@ import {
 } from './contributionOperation'
 import type { EditorStructuralOperation, EditorHighlighterOperation } from '../document/operations'
 
+type SyntaxRangeProjector = (
+  range: EditorSyntaxRange,
+  result: EditorSyntaxResult,
+  steps: readonly IncrementalInvalidationStep<EditorSyntaxResult>[],
+) => { readonly range: EditorSyntaxRange; readonly result: EditorSyntaxResult } | null
+
+let syntaxRangeProjector: SyntaxRangeProjector | null = null
+
+export function installSyntaxRangeProjector(projector: SyntaxRangeProjector): void {
+  syntaxRangeProjector = projector
+}
+
 type EditorAnalysisConfigurationTag = readonly (string | number | boolean | null)[]
 export type EditorAnalysisDisplayDemand =
   | { readonly kind: 'unmanaged' }
@@ -61,7 +75,10 @@ export type EditorAnalysisDisplayDemand =
       readonly snapshot: DocumentTextSnapshot
       readonly ranges: readonly EditorSyntaxRange[]
     }
-export type EditorAnalysisRangeInterest = { readonly signal?: AbortSignal }
+export type EditorAnalysisRangeInterest = {
+  readonly signal?: AbortSignal
+  readonly bypassCache?: boolean
+}
 type AnalysisDisplayInspection = {
   readonly unmanagedLeases: number
   readonly unknownLeases: number
@@ -121,13 +138,28 @@ export type EditorAnalysisRead<T> =
       readonly revision: number
       readonly snapshot: DocumentTextSnapshot
       readonly result: T
+      readonly range?: EditorSyntaxRange
     }
   | { readonly kind: 'failed'; readonly revision: number; readonly error: unknown }
+
+export type EditorRetainedSyntaxBase = {
+  readonly parseId: number
+  readonly snapshot: DocumentTextSnapshot
+  readonly result: EditorSyntaxResult
+}
 
 export type EditorRetainedSyntaxSession = Omit<EditorSyntaxSession, 'queryRange'> & {
   readonly runtimeSessionId: string
   onDidProduceSyntax(listener: () => void): () => void
   setDisplayDemand(demand: EditorAnalysisDisplayDemand): void
+  refreshBase(options?: { readonly forceRetry?: boolean }): Promise<EditorRetainedSyntaxBase>
+  currentParseId(): number | null
+  readBaseResult(): EditorSyntaxResult | null
+  clearDegradedOrPartialRanges(): void
+  hasDegradedOrFailedBase(): boolean
+  invalidationStepsSince(
+    fromParseId: number,
+  ): readonly IncrementalInvalidationStep<EditorSyntaxResult>[] | null
   queryRange(
     range: EditorSyntaxRange,
     interest?: EditorAnalysisRangeInterest,
@@ -329,7 +361,7 @@ export class AnalysisEntry<T> {
       const snapshot = delivery.snapshot(read)
       if (!snapshot || this.signal.aborted) return
       this.runtimeResultChanged()
-      this.publish(read.revision.point, this.generation, {
+      this.publish(read, this.generation, {
         kind: 'ready',
         revision: this.buffer.getRevision(),
         snapshot,
@@ -342,6 +374,12 @@ export class AnalysisEntry<T> {
   protected runtimeResultChanged(): void {}
 
   protected runtimeResultPublished(): void {}
+
+  protected onPublished(
+    _read: DocumentRead,
+    _generation: number,
+    _state: EditorAnalysisRead<T>,
+  ): void {}
 
   get analysisGeneration(): number {
     return this.generation
@@ -432,6 +470,14 @@ export class AnalysisEntry<T> {
   }
 
   async current(): Promise<T> {
+    return (await this.currentReady()).result
+  }
+
+  protected async currentReady(): Promise<{
+    readonly parseId: number
+    readonly snapshot: DocumentTextSnapshot
+    readonly result: T
+  }> {
     const point = this.buffer.getDocumentSyncPoint()
     const expectedGeneration = this.queuedPoint === point ? this.generation : null
     // Publication finishes before demand captures the corresponding analysis generation.
@@ -447,7 +493,9 @@ export class AnalysisEntry<T> {
       this.assertCurrent(point, generation)
       if (!this.isConfigurationCurrent()) throw cancelled()
       const state = this.read()
-      if (state.kind === 'ready') return state.result
+      if (state.kind === 'ready') {
+        return { parseId: generation, snapshot: state.snapshot, result: state.result }
+      }
       if (state.kind === 'failed') throw state.error
       throw cancelled()
     } finally {
@@ -576,11 +624,11 @@ export class AnalysisEntry<T> {
     try {
       const result = await this.session.analyze(read, demand.signal)
       if (demand.configurationKey !== this.session.configurationKey?.()) throw cancelled()
-      this.publish(read.revision.point, generation, { kind: 'ready', revision, snapshot, result })
+      this.publish(read, generation, { kind: 'ready', revision, snapshot, result })
       if (this.signal.aborted) demand.reject(cancelled())
       else demand.settle(result)
     } catch (error) {
-      this.publish(read.revision.point, generation, { kind: 'failed', revision, error })
+      this.publish(read, generation, { kind: 'failed', revision, error })
       demand.reject(error)
     } finally {
       this.running = false
@@ -589,18 +637,15 @@ export class AnalysisEntry<T> {
     }
   }
 
-  private publish(
-    point: DocumentSyncPoint,
-    generation: number,
-    state: EditorAnalysisRead<T>,
-  ): void {
+  private publish(read: DocumentRead, generation: number, state: EditorAnalysisRead<T>): void {
     if (
       this.cancellation.signal.aborted ||
-      point !== this.queuedPoint ||
+      read.revision.point !== this.queuedPoint ||
       generation !== this.generation
     )
       return
     this.state = state
+    this.onPublished(read, generation, state)
     this.retention.changed()
   }
 
@@ -743,7 +788,10 @@ type RetainedRangeContributor = {
   readonly range: EditorSyntaxRange
   readonly result: EditorSyntaxResult
 }
-type ReadyRange = RetainedRangeContributor & { readonly point: DocumentSyncPoint }
+type ReadyRange = RetainedRangeContributor & {
+  readonly point: DocumentSyncPoint
+  readonly generation: number
+}
 type PendingRangeQuery = {
   readonly snapshot: DocumentTextSnapshot
   readonly point: DocumentSyncPoint
@@ -758,6 +806,7 @@ type PendingRangeQuery = {
   release: EditorScheduledWorkHandle | null
   /** Unique per query: two queries for the same offsets, such as across analysis generations, differ. */
   readonly id: number
+  bypassCache: boolean
   admission: 'cache' | 'return-only'
   work:
     | { readonly kind: 'queued'; readonly generation: number | null }
@@ -787,15 +836,17 @@ export function retainedSyntaxCanWarm(session: EditorRetainedSyntaxSession): boo
 }
 
 export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
-  private readonly produced = new EditorEventSource<void>({ action: 'document.syntax.produced' })
+  private readonly produced = new EditorEventSource<'runtime' | 'base-published'>({
+    action: 'document.syntax.produced',
+  })
 
-  onDidProduceSyntax(listener: () => void): () => void {
+  onDidProduceSyntax(listener: (source: 'runtime' | 'base-published') => void): () => void {
     const subscription = this.produced.subscribe(listener)
     return () => subscription.dispose()
   }
 
   protected override runtimeResultPublished(): void {
-    this.produced.fire()
+    this.produced.fire('runtime')
   }
   private readonly displayed = new Map<AbortSignal, EditorAnalysisDisplayDemand>()
   private readonly queryWaiters = new Map<
@@ -809,14 +860,36 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       readonly snapshot: DocumentTextSnapshot
       readonly point: DocumentSyncPoint
       readonly generation: number
+      readonly epoch: number
     }
   >()
   private ranges = new Map<string, ReadyRange>()
   private queries = new Map<string, PendingRangeQuery>()
   /** Identifies each range query, so its release timer belongs to it alone. */
   private nextQueryId = 0
+  /** Monotonic counter bumped on bypassCache replacements to prevent older evicted results from re-entering `ranges`. */
+  private bypassEpoch = 0
   private rangePoint: DocumentSyncPoint | null = null
   private stoppedWarmGeneration: number | null = null
+  private static readonly MAX_INCREMENTAL_STEPS = 16
+  private lastBase: {
+    readonly parseId: number
+    readonly snapshotVersion: number
+    readonly read: DocumentRead
+    readonly snapshot: DocumentTextSnapshot
+    readonly result: EditorSyntaxResult
+  } | null = null
+  private lastPublished: {
+    readonly point: DocumentSyncPoint
+    readonly generation: number
+  } | null = null
+  private previousRanges: {
+    readonly parseId: number
+    readonly read: DocumentRead
+    readonly snapshot: DocumentTextSnapshot
+    readonly entries: Map<string, ReadyRange>
+  } | null = null
+  private incrementalSteps: IncrementalInvalidationStep<EditorSyntaxResult>[] = []
 
   constructor(
     buffer: EditorTextBuffer,
@@ -973,8 +1046,9 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   ): void {
     const snapshot = this.buffer.getTextSnapshot()
     const origin = this.resultOrigins.get(contributor.result)
-    let cached = this.ranges.get(rangeKey(contributor.range))
-    if (cached?.result !== contributor.result) cached = undefined
+    const key = rangeKey(contributor.range)
+    const existing = this.ranges.get(key)
+    let cached = existing?.result === contributor.result ? existing : undefined
     cached ??= [...this.ranges.values()].find(
       (candidate) =>
         candidate.result === contributor.result &&
@@ -982,12 +1056,22 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     )
     if (
       !cached &&
+      !isTerminalIncompleteSyntaxResult(contributor.result) &&
       origin?.snapshot === snapshot &&
       origin.point === this.buffer.getDocumentSyncPoint() &&
-      origin.generation === this.generation
+      origin.generation === this.generation &&
+      origin.epoch === this.bypassEpoch
     ) {
-      cached = { ...contributor, point: origin.point }
-      this.ranges.set(rangeKey(contributor.range), cached)
+      if (
+        existing &&
+        existing.point === origin.point &&
+        existing.generation === origin.generation
+      ) {
+        protectedSlots.add(existing)
+        return
+      }
+      cached = { ...contributor, point: origin.point, generation: origin.generation }
+      this.ranges.set(key, cached)
     }
     if (cached) protectedSlots.add(cached)
   }
@@ -1013,11 +1097,48 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   ): void {
     for (const range of ranges) {
       if ([...protectedSlots].some((cached) => rangeContains(cached.range, range))) continue
-      const cached =
-        this.ranges.get(rangeKey(range)) ??
-        [...this.ranges.values()].find((candidate) => rangeContains(candidate.range, range))
+      const cached = this.findCachedRange(range)
       if (cached) protectedSlots.add(cached)
     }
+  }
+
+  private findCachedRange(range: EditorSyntaxRange): ReadyRange | undefined {
+    const exact = this.ranges.get(rangeKey(range))
+    if (
+      exact &&
+      exact.point === this.queuedPoint &&
+      exact.generation === this.generation &&
+      !isTerminalIncompleteSyntaxResult(exact.result) &&
+      exact.result.projection.analysis?.kind !== 'partial'
+    ) {
+      return exact
+    }
+    let best: ReadyRange | undefined
+    for (const candidate of this.ranges.values()) {
+      if (candidate.point !== this.queuedPoint || candidate.generation !== this.generation) continue
+      if (isTerminalIncompleteSyntaxResult(candidate.result)) continue
+      if (!rangeContains(candidate.range, range)) continue
+      if (!best) {
+        best = candidate
+        continue
+      }
+      const bestPartial = best.result.projection.analysis?.kind === 'partial'
+      const candidatePartial = candidate.result.projection.analysis?.kind === 'partial'
+      if (bestPartial && !candidatePartial) {
+        best = candidate
+        continue
+      }
+      if (bestPartial !== candidatePartial) continue
+      if (exact && candidate === exact) {
+        best = candidate
+        continue
+      }
+      if (exact && best === exact) continue
+      const bestSpan = best.range.endIndex - best.range.startIndex
+      const candidateSpan = candidate.range.endIndex - candidate.range.startIndex
+      if (candidateSpan < bestSpan) best = candidate
+    }
+    return best
   }
 
   override inspectDisplayDemand(): AnalysisDisplayInspection {
@@ -1060,7 +1181,11 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
   }
 
-  waitForRange(range: EditorSyntaxRange, signal: AbortSignal): Promise<EditorSyntaxResult> {
+  waitForRange(
+    range: EditorSyntaxRange,
+    signal: AbortSignal,
+    bypassCache = false,
+  ): Promise<EditorSyntaxResult> {
     if (signal.aborted) return Promise.reject(cancelled())
     this.queryWaiters.set(signal, {
       snapshot: this.buffer.getTextSnapshot(),
@@ -1072,7 +1197,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.retention.changed()
     }
     signal.addEventListener('abort', release, { once: true })
-    const pending = interruptible(this.range(range, signal), signal)
+    const pending = interruptible(this.range(range, signal, bypassCache), signal)
     this.retention.changed()
     return pending.finally(() => {
       release()
@@ -1089,15 +1214,25 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   }
 
   override retainedResults(): readonly EditorSyntaxResult[] {
+    const previous = this.previousRanges
+      ? Array.from(this.previousRanges.entries.values(), (cached) => cached.result)
+      : []
     return Array.from(
       new Set(
-        super.retainedResults().concat(Array.from(this.ranges.values(), (cached) => cached.result)),
+        super.retainedResults().concat(
+          Array.from(this.ranges.values(), (cached) => cached.result),
+          previous,
+        ),
       ),
     )
   }
 
   override dispose(): void {
     this.stoppedWarmGeneration = null
+    this.lastBase = null
+    this.lastPublished = null
+    this.previousRanges = null
+    this.incrementalSteps = []
     this.displayed.clear()
     this.contributors.clear()
     this.queryWaiters.clear()
@@ -1107,18 +1242,74 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     super.dispose()
   }
 
+  currentBase(): Promise<EditorRetainedSyntaxBase> {
+    return this.currentReady()
+  }
+
+  currentParseId(): number | null {
+    const state = this.read()
+    if (state.kind !== 'ready' || !this.lastBase) return null
+    return this.lastBase.snapshot === this.buffer.getTextSnapshot() ? this.lastBase.parseId : null
+  }
+
+  readBaseResult(): EditorSyntaxResult | null {
+    const state = this.read()
+    return state.kind === 'ready' ? state.result : null
+  }
+
+  hasDegradedOrFailedBase(): boolean {
+    const state = this.read()
+    return (
+      state.kind === 'failed' ||
+      (state.kind === 'ready' &&
+        (isTerminalIncompleteSyntaxResult(state.result) || state.result.degraded !== null))
+    )
+  }
+
+  clearDegradedOrPartialRanges(): void {
+    for (const [key, cached] of this.ranges) {
+      if (
+        cached.result.projection.analysis?.kind === 'partial' ||
+        cached.result.degraded !== null
+      ) {
+        this.ranges.delete(key)
+        this.resultOrigins.delete(cached.result)
+      }
+    }
+    for (const list of this.contributors.values()) {
+      for (const contributor of list) {
+        if (
+          contributor.result.projection.analysis?.kind === 'partial' ||
+          contributor.result.degraded !== null
+        ) {
+          this.resultOrigins.delete(contributor.result)
+        }
+      }
+    }
+  }
+
+  invalidationStepsSince(
+    fromParseId: number,
+  ): readonly IncrementalInvalidationStep<EditorSyntaxResult>[] | null {
+    if (this.lastBase === null) return null
+    if (fromParseId === this.lastBase.parseId) return []
+    const startIndex = this.incrementalSteps.findIndex((step) => step.fromParseId === fromParseId)
+    if (startIndex === -1) return null
+    const slice = this.incrementalSteps.slice(startIndex)
+    let expected = fromParseId
+    for (const step of slice) {
+      if (step.fromParseId !== expected) return null
+      expected = step.toParseId
+    }
+    return expected === this.lastBase.parseId ? slice : null
+  }
+
   readRange(range?: EditorSyntaxRange): EditorAnalysisRead<EditorSyntaxResult> {
     const state = this.read()
     if (!range || state.kind !== 'ready') return state
     range = boundedRange(range, state.snapshot.length)
-    const cached =
-      this.ranges.get(rangeKey(range)) ??
-      [...this.ranges.values()].find(
-        (candidate) =>
-          candidate.range.startIndex <= range.startIndex &&
-          candidate.range.endIndex >= range.endIndex,
-      )
-    if (cached?.point === this.queuedPoint) return { ...state, result: cached.result }
+    const best = this.findCachedRange(range)
+    if (best) return { ...state, result: best.result, range: best.range }
     if (!this.canQueryRange()) return state
     return { kind: 'pending', revision: state.revision }
   }
@@ -1131,11 +1322,17 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
    * starts. That stops the runtime's work where it can stop, and keeps a superseded query from
    * being sent again once a complete analysis lands.
    */
-  range(range: EditorSyntaxRange, signal?: AbortSignal): Promise<EditorSyntaxResult> {
+  range(
+    range: EditorSyntaxRange,
+    signal?: AbortSignal,
+    bypassCache = false,
+  ): Promise<EditorSyntaxResult> {
     range = boundedRange(range, this.buffer.getTextSnapshot().length)
     if (!this.structuralSession.queryRange) return this.current()
-    const state = this.readRange(range)
-    if (state.kind === 'ready') return Promise.resolve(state.result)
+    if (!bypassCache) {
+      const state = this.readRange(range)
+      if (state.kind === 'ready') return Promise.resolve(state.result)
+    }
     const point = this.buffer.getDocumentSyncPoint()
     const revision = point.revision
     const generation =
@@ -1145,12 +1342,14 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.compatibleQuery(query, point, range),
     )
     if (existing) {
+      if (bypassCache) existing.bypassCache = true
       holdRangeQuery(existing, signal, this.releaseOrphanLater)
       this.trimOptionalRanges()
       return existing.promise
     }
     this.cancelOrphanedQueries()
     let queried = false
+    const startEpoch = this.bypassEpoch
     const cancellation = new AbortController()
     const pending: PendingRangeQuery = {
       snapshot: this.buffer.getTextSnapshot(),
@@ -1161,6 +1360,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       pinned: false,
       release: null,
       id: this.nextQueryId++,
+      bypassCache,
       admission: 'cache',
       work: { kind: 'queued', generation },
       promise: interruptible(
@@ -1168,21 +1368,48 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
           if (cancellation.signal.aborted || rangeQueryIsOrphaned(pending))
             return Promise.reject(cancelled())
           pending.work = { kind: 'running', generation: this.generation }
-          const current = this.readRange(range)
-          if (current.kind === 'ready') return Promise.resolve(current.result)
+          if (!pending.bypassCache) {
+            const current = this.readRange(range)
+            if (current.kind === 'ready') return Promise.resolve(current.result)
+          }
           queried = true
           const querySignal = AbortSignal.any([interest, cancellation.signal])
           return this.structuralSession.queryRange?.(range, querySignal) ?? this.current()
         }),
         cancellation.signal,
       ).then((result) => {
-        if (queried && syntaxResultCoversRange(result, range) && this.canAdmitRange(key, pending)) {
+        if (
+          queried &&
+          syntaxResultCoversRange(result, range) &&
+          this.isCurrentPendingRange(key, pending)
+        ) {
+          if (pending.bypassCache) this.bypassEpoch += 1
+          const epoch = pending.bypassCache ? this.bypassEpoch : startEpoch
           this.resultOrigins.set(result, {
             snapshot: pending.snapshot,
             point,
             generation: this.generation,
+            epoch,
           })
-          this.ranges.set(rangeKey(range), { point, range, result })
+          if (
+            pending.admission === 'cache' &&
+            !isTerminalIncompleteSyntaxResult(result) &&
+            epoch === this.bypassEpoch
+          ) {
+            const cacheKey = rangeKey(range)
+            const previous = this.ranges.get(cacheKey)
+            if (previous && previous.result !== result) {
+              this.resultOrigins.delete(previous.result)
+            }
+            for (const list of this.contributors.values()) {
+              for (const contributor of list) {
+                if (contributor.result !== result && rangeKey(contributor.range) === cacheKey) {
+                  this.resultOrigins.delete(contributor.result)
+                }
+              }
+            }
+            this.ranges.set(cacheKey, { point, generation: this.generation, range, result })
+          }
         }
         this.retention.changed()
         return result
@@ -1237,11 +1464,10 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     )
   }
 
-  private canAdmitRange(key: string, query: PendingRangeQuery): boolean {
+  private isCurrentPendingRange(key: string, query: PendingRangeQuery): boolean {
     return (
       !this.signal.aborted &&
       this.queries.get(key) === query &&
-      query.admission === 'cache' &&
       query.work.kind === 'running' &&
       query.work.generation === this.generation &&
       query.point === this.buffer.getDocumentSyncPoint() &&
@@ -1249,16 +1475,128 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     )
   }
 
+  override refresh(): void {
+    this.ranges.clear()
+    this.previousRanges = null
+    this.incrementalSteps = []
+    for (const query of this.queries.values()) query.admission = 'return-only'
+    super.refresh()
+  }
+
   protected override runtimeResultChanged(): void {
     this.generation += 1
     this.ranges.clear()
+    this.previousRanges = null
+    this.incrementalSteps = []
     for (const query of this.queries.values()) query.admission = 'return-only'
+  }
+
+  protected override onPublished(
+    read: DocumentRead,
+    generation: number,
+    state: EditorAnalysisRead<EditorSyntaxResult>,
+  ): void {
+    const previous = this.lastBase
+    const previousPublished = this.lastPublished
+    const samePointReplacement =
+      previousPublished !== null &&
+      previousPublished.point === read.revision.point &&
+      previousPublished.generation !== generation
+    if (state.kind === 'failed') {
+      this.previousRanges = null
+      this.incrementalSteps = []
+      this.lastBase = null
+      this.lastPublished = { point: read.revision.point, generation }
+      if (samePointReplacement) {
+        this.produced.fire('base-published')
+      }
+      return
+    }
+    if (state.kind !== 'ready') return
+    this.lastPublished = { point: read.revision.point, generation }
+
+    const invalidation = state.result.projection.invalidation
+    const isComplete = (result: EditorSyntaxResult): boolean =>
+      result.projection.analysis?.kind !== 'partial' && !isTerminalIncompleteSyntaxResult(result)
+    const canChain =
+      previous !== null &&
+      isComplete(previous.result) &&
+      isComplete(state.result) &&
+      invalidation !== undefined &&
+      invalidation.baseSnapshotVersion === previous.snapshotVersion &&
+      invalidation.snapshotVersion === state.result.projection.snapshot.version
+    const changes = canChain
+      ? this.delivery.changesBetween(previous.read.revision, read.revision)
+      : null
+
+    if (canChain && changes?.edits) {
+      this.incrementalSteps.push({
+        fromParseId: previous.parseId,
+        toParseId: generation,
+        beforeSnapshot: previous.snapshot,
+        afterSnapshot: state.snapshot,
+        edits: changes.edits,
+        invalidatedRanges: invalidation.ranges,
+        baseResult: state.result,
+      })
+      if (this.incrementalSteps.length > StructuralEntry.MAX_INCREMENTAL_STEPS) {
+        this.incrementalSteps.shift()
+      }
+      this.lastBase = {
+        parseId: generation,
+        snapshotVersion: state.result.projection.snapshot.version,
+        read,
+        snapshot: state.snapshot,
+        result: state.result,
+      }
+      if (this.previousRanges !== null && syntaxRangeProjector !== null) {
+        const steps = this.invalidationStepsSince(this.previousRanges.parseId)
+        if (steps !== null) {
+          for (const cached of this.previousRanges.entries.values()) {
+            const promoted = syntaxRangeProjector(cached.range, cached.result, steps)
+            if (!promoted) continue
+            this.resultOrigins.set(promoted.result, {
+              snapshot: state.snapshot,
+              point: read.revision.point,
+              generation,
+              epoch: this.bypassEpoch,
+            })
+            this.ranges.set(rangeKey(promoted.range), {
+              point: read.revision.point,
+              generation,
+              range: promoted.range,
+              result: promoted.result,
+            })
+          }
+          this.trimOptionalRanges()
+        }
+      }
+    } else {
+      this.incrementalSteps = []
+      this.lastBase = {
+        parseId: generation,
+        snapshotVersion: state.result.projection.snapshot.version,
+        read,
+        snapshot: state.snapshot,
+        result: state.result,
+      }
+    }
+    this.previousRanges = null
+    if (samePointReplacement) this.produced.fire('base-published')
   }
 
   override changed(read: DocumentRead): void {
     if (read.revision.point === this.rangePoint) return
     this.rangePoint = read.revision.point
-    this.ranges.clear()
+    if (this.previousRanges === null && this.lastBase !== null && this.ranges.size > 0) {
+      this.previousRanges = {
+        parseId: this.lastBase.parseId,
+        read: this.lastBase.read,
+        snapshot: this.lastBase.snapshot,
+        entries: this.ranges,
+      }
+    }
+    this.ranges = new Map()
     super.changed(read)
   }
 }
@@ -1639,15 +1977,62 @@ function structuralLease(
   const refresh = refreshRetainedAnalysis(entry, () =>
     demand && withinFrame(demand, frame) ? entry.range(demand) : entry.current(),
   )
+  let failedBaseGeneration: number | null =
+    entry.read().kind === 'failed' ? entry.analysisGeneration : null
+  let awaitingBase = false
+  const refreshBase = async (options?: { readonly forceRetry?: boolean }) => {
+    entry.synchronize()
+    const currentRead = entry.read()
+    const shouldRetryFailed =
+      currentRead.kind === 'failed' &&
+      (options?.forceRetry === true || failedBaseGeneration === entry.analysisGeneration)
+    const shouldForceRetryDegraded =
+      options?.forceRetry === true &&
+      currentRead.kind === 'ready' &&
+      (isTerminalIncompleteSyntaxResult(currentRead.result) || currentRead.result.degraded !== null)
+    if (options?.forceRetry === true) entry.clearDegradedOrPartialRanges()
+    if (shouldRetryFailed || shouldForceRetryDegraded) entry.refresh()
+    const generation = entry.analysisGeneration
+    awaitingBase = true
+    try {
+      const base = await entry.currentBase()
+      if (entry.analysisGeneration === generation && entry.read().kind === 'failed') {
+        failedBaseGeneration = generation
+      }
+      return base
+    } catch (error) {
+      if (entry.analysisGeneration === generation) failedBaseGeneration = generation
+      throw error
+    } finally {
+      awaitingBase = false
+    }
+  }
   const retained: EditorRetainedSyntaxSession = {
     runtimeSessionId: entry.runtimeSessionId,
     onDidProduceSyntax: (listener) =>
-      observeRetainedEvent(lease.signal, (next) => entry.onDidProduceSyntax(next), listener),
+      observeRetainedEvent(
+        lease.signal,
+        (next) =>
+          entry.onDidProduceSyntax((source) => {
+            if (source === 'base-published' && awaitingBase) return
+            next()
+          }),
+        listener,
+      ),
     setDisplayDemand: (next) => {
       // An edit briefly makes the demand unknown; the frame shown before it still applies.
       if (next.kind === 'frame') frame = next.ranges
       entry.setDisplayDemand(lease.signal, next)
     },
+    refreshBase: (options) => lease.wait(() => refreshBase(options)),
+    currentParseId: () => (lease.signal.aborted ? null : entry.currentParseId()),
+    readBaseResult: () => (lease.signal.aborted ? null : entry.readBaseResult()),
+    clearDegradedOrPartialRanges: () => {
+      if (!lease.signal.aborted) entry.clearDegradedOrPartialRanges()
+    },
+    hasDegradedOrFailedBase: () => (lease.signal.aborted ? false : entry.hasDegradedOrFailedBase()),
+    invalidationStepsSince: (fromParseId) =>
+      lease.signal.aborted ? null : entry.invalidationStepsSince(fromParseId),
     get foldingSupport() {
       return entry.structuralSession.foldingSupport
     },
@@ -1657,7 +2042,9 @@ function structuralLease(
     queryRange(range, interest = {}) {
       demand = range
       const waiter = leaseCancellation(lease.signal, entry.retention, interest.signal)
-      return entry.waitForRange(range, waiter.signal).finally(waiter.dispose)
+      return entry
+        .waitForRange(range, waiter.signal, interest.bypassCache === true)
+        .finally(waiter.dispose)
     },
     getResult: () => {
       const state = entry.readRange(demand)

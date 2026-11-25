@@ -99,9 +99,16 @@ export type EditorSyntaxAnalysis =
     }
   | EditorSyntaxCancellation
 
+export type EditorSyntaxInvalidation = {
+  readonly baseSnapshotVersion: number
+  readonly snapshotVersion: number
+  readonly ranges: readonly EditorSyntaxRange[]
+}
+
 export type EditorSyntaxProjectionTag = {
   readonly source?: Pick<DocumentWorkerReadReference, 'identity' | 'point'>
   readonly analysis?: EditorSyntaxAnalysis
+  readonly invalidation?: EditorSyntaxInvalidation
   readonly language: EditorSyntaxLanguageConfiguration
   readonly requestedRanges: readonly EditorSyntaxRange[]
   readonly snapshot: EditorSyntaxSnapshotTag
@@ -267,6 +274,15 @@ export function syntaxResultCoversRange(
     analysis.coveredRange.startIndex <= range.startIndex &&
     analysis.coveredRange.endIndex >= range.endIndex
   )
+}
+
+export function isTerminalIncompleteSyntaxResult(result: EditorSyntaxResult): boolean {
+  const analysis = result.projection.analysis
+  if (analysis?.kind === 'cancelled') return true
+  if (analysis?.kind === 'partial') {
+    return analysis.background?.kind === 'cancelled' || result.degraded?.kind === 'request-failed'
+  }
+  return false
 }
 
 export const isEditorSyntaxLanguage = (

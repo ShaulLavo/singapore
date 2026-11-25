@@ -78,6 +78,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
   private analysedSourceGeneration: number | null = null
   private readonly source: DocumentContributionSource
   private initialLength: number
+  private baseResult: EditorSyntaxResult
   private result: EditorSyntaxResult
   private currentFoldingSupport: EditorSyntaxFoldingSupport
   private languageRegistration: LanguageRegistration | null = null
@@ -110,11 +111,12 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     this.initialLength = options.initialRead.text.length
     this.backend = options.backend ?? new TreeSitterWorkerClient()
     this.onFirstParse = options.onFirstParse
-    this.result = this.createEmptyResult({ length: this.initialLength, snapshotVersion: 0 })
+    this.baseResult = this.createEmptyResult({ length: this.initialLength, snapshotVersion: 0 })
+    this.result = this.baseResult
   }
 
   public get foldingSupport(): EditorSyntaxFoldingSupport {
-    if (this.result.projection.analysis && this.result.projection.analysis.kind !== 'full')
+    if (this.baseResult.projection.analysis && this.baseResult.projection.analysis.kind !== 'full')
       return 'pending'
     return this.currentFoldingSupport
   }
@@ -153,12 +155,35 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     const changed = this.analysedRead
       ? this.source.changesBetween(this.analysedRead.revision, read.revision)
       : null
-    // The same text: a pending complete analysis still answers it, for this newest read.
-    if (this.parsedSnapshotVersion > 0 && changed?.edits?.length === 0) {
+    // The same text: a non-terminal, non-degraded complete or in-flight partial analysis still
+    // answers it, while terminal incomplete or degraded bases re-run fresh on explicit retry.
+    if (
+      this.parsedSnapshotVersion > 0 &&
+      changed?.edits?.length === 0 &&
+      !isTerminalIncompleteSyntaxResult(this.baseResult) &&
+      this.baseResult.degraded === null
+    ) {
       this.analysedRead = read
-      return this.result
+      if (this.baseResult.projection.analysis?.kind !== 'partial') {
+        return {
+          ...this.baseResult,
+          projection: {
+            ...this.baseResult.projection,
+            invalidation: {
+              baseSnapshotVersion: this.parsedSnapshotVersion,
+              snapshotVersion: this.parsedSnapshotVersion,
+              ranges: [],
+            },
+          },
+        }
+      }
+      return this.baseResult
     }
-    if (this.analysedRead !== read) {
+    if (
+      this.analysedRead !== read ||
+      isTerminalIncompleteSyntaxResult(this.baseResult) ||
+      this.baseResult.degraded !== null
+    ) {
       // An edit's answer can be partial too; its complete analysis is a new one.
       this.background?.controller.abort()
       this.background = null
@@ -166,8 +191,10 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     if (
       this.parsedSnapshotVersion > 0 &&
       changed?.edits &&
+      changed.edits.length > 0 &&
       this.analysedRead &&
-      this.result.projection.analysis?.kind !== 'partial'
+      this.baseResult.projection.analysis?.kind !== 'partial' &&
+      !isTerminalIncompleteSyntaxResult(this.baseResult)
     ) {
       const payload = {
         documentId: this.documentId,
@@ -255,20 +282,32 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
   private startCompleteAnalysis(): Promise<void> {
     if (this.background) return this.background.promise
     const read = this.analysedRead
-    if (!read || this.disposed || this.result.projection.analysis?.kind !== 'partial')
+    if (
+      !read ||
+      this.disposed ||
+      this.baseResult.projection.analysis?.kind !== 'partial' ||
+      isTerminalIncompleteSyntaxResult(this.baseResult)
+    )
       return Promise.resolve()
     const controller = new AbortController()
     const version = this.snapshotVersion
-    const promise = this.completeAnalysis(read, version, controller.signal).catch(
-      (error: unknown) => {
+    const promise = this.completeAnalysis(read, version, controller.signal)
+      .catch((error: unknown) => {
         if (controller.signal.aborted || this.disposed || this.snapshotVersion !== version) return
-        this.result = {
-          ...this.result,
-          degraded: { kind: 'request-failed', message: String(error) },
+        const degraded: EditorSyntaxDegradedState = {
+          kind: 'request-failed',
+          message: String(error),
         }
-        this.notifyResults(this.analysedRead ?? read, this.result)
-      },
-    )
+        this.baseResult = { ...this.baseResult, degraded }
+        this.result =
+          this.result.projection.analysis?.kind === 'partial'
+            ? { ...this.result, degraded }
+            : this.baseResult
+        this.notifyResults(this.analysedRead ?? read, this.baseResult)
+      })
+      .finally(() => {
+        if (this.background?.controller === controller) this.background = null
+      })
     this.background = { controller, promise }
     return promise
   }
@@ -302,16 +341,27 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       const latest = this.analysedRead ?? read
       if (
         result.analysis?.kind === 'cancelled' &&
-        this.result.projection.analysis?.kind === 'partial'
+        this.baseResult.projection.analysis?.kind === 'partial'
       ) {
-        this.result = {
-          ...this.result,
+        const nextBase: EditorSyntaxResult = {
+          ...this.baseResult,
           projection: {
-            ...this.result.projection,
-            analysis: { ...this.result.projection.analysis, background: result.analysis },
+            ...this.baseResult.projection,
+            analysis: { ...this.baseResult.projection.analysis, background: result.analysis },
           },
         }
-        this.notifyResults(latest, this.result)
+        this.baseResult = nextBase
+        this.result =
+          this.result.projection.analysis?.kind === 'partial'
+            ? {
+                ...this.result,
+                projection: {
+                  ...this.result.projection,
+                  analysis: { ...this.result.projection.analysis, background: result.analysis },
+                },
+              }
+            : nextBase
+        this.notifyResults(latest, nextBase)
         return
       }
       const next = this.updateFromTreeSitterResult(result, version, latest)
@@ -398,7 +448,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       )
     }
 
-    if (!result && this.result.projection.analysis?.kind === 'partial') {
+    if (
+      !result &&
+      this.baseResult.projection.analysis?.kind === 'partial' &&
+      !isTerminalIncompleteSyntaxResult(this.baseResult)
+    ) {
       await this.startCompleteAnalysis()
       signal?.throwIfAborted()
       result = await this.backend.queryRange(
@@ -416,34 +470,41 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     }
     if (!result)
       return this.createRangeUnavailableResult(range, 'Complete syntax analysis is pending')
-    const background = this.result.projection.analysis
+    const baseAnalysis = this.baseResult.projection.analysis
+    const baseDegraded = this.baseResult.degraded
     let answer = this.updateFromTreeSitterRangeResult(result, range, request)
     if (answer.projection.analysis?.kind === 'cancelled') return answer
-    if (
-      background?.kind === 'partial' &&
-      background.background &&
-      answer.projection.analysis?.kind === 'partial'
-    ) {
+    const answerAnalysis = answer.projection.analysis
+    if (answerAnalysis?.kind === 'partial') {
       const published = this.result === answer
-      answer = {
-        ...answer,
-        projection: {
-          ...answer.projection,
-          analysis: { ...answer.projection.analysis, background: background.background },
-        },
+      let updated = answer
+      if (baseAnalysis?.kind === 'partial' && baseAnalysis.background) {
+        updated = {
+          ...updated,
+          projection: {
+            ...updated.projection,
+            analysis: { ...answerAnalysis, background: baseAnalysis.background },
+          },
+        }
       }
-      if (published) this.result = answer
+      if (baseDegraded?.kind === 'request-failed' && updated.degraded === null) {
+        updated = { ...updated, degraded: baseDegraded }
+      }
+      if (updated !== answer) {
+        answer = updated
+        if (published) this.result = answer
+      }
     }
     if (result?.analysis?.kind === 'partial') {
       this.notifyFirstParse()
-      void this.startCompleteAnalysis()
+      if (!isTerminalIncompleteSyntaxResult(answer)) void this.startCompleteAnalysis()
     }
     return answer
   }
 
   public canQueryRange(): boolean {
     return (
-      this.result.projection.analysis?.kind !== 'cancelled' &&
+      this.baseResult.projection.analysis?.kind !== 'cancelled' &&
       this.parsedSnapshotVersion !== 0 &&
       this.parsedSnapshotVersion === this.snapshotVersion
     )
@@ -606,7 +667,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     if (this.disposed) return this.result
 
     this.analysedRead = read
-    this.result = this.createEmptyResult({
+    this.baseResult = this.createEmptyResult({
       degraded: {
         kind: 'language-unavailable',
         message: `Tree-sitter language "${this.languageId}" is unavailable`,
@@ -614,6 +675,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
       length: read.text.length,
       snapshotVersion: this.snapshotVersion,
     })
+    this.result = this.baseResult
     return this.result
   }
 
@@ -630,30 +692,43 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     this.analysedRead = read
     this.parsedSnapshotVersion = result.snapshotVersion
     if (isTreeSitterParseAckResult(result)) {
-      this.result = this.createEmptyResult({
+      const empty = this.createEmptyResult({
         degraded: treeSitterDegradedStateToEditorSyntaxState(result.degraded),
         length: read.text.length,
         snapshotVersion: result.snapshotVersion,
       })
-      this.result = {
-        ...this.result,
+      const invalidation =
+        result.invalidation?.kind === 'ranges'
+          ? {
+              baseSnapshotVersion: result.invalidation.baseSnapshotVersion,
+              snapshotVersion: result.snapshotVersion,
+              ranges: result.invalidation.ranges,
+            }
+          : undefined
+      const next: EditorSyntaxResult = {
+        ...empty,
         projection: {
-          ...this.result.projection,
+          ...empty.projection,
           source: result.source,
           analysis: result.analysis ?? {
             kind: 'full',
             coveredRange: { startIndex: 0, endIndex: read.text.length },
           },
+          invalidation,
         },
       }
-      return this.result
+      this.baseResult = next
+      this.result = next
+      return next
     }
 
-    this.result = treeSitterParseResultToEditorSyntaxResult(
+    const next = treeSitterParseResultToEditorSyntaxResult(
       result,
       this.resultContext(read.text.length, []),
     )
-    return this.result
+    this.baseResult = next
+    this.result = next
+    return next
   }
 
   private updateFromTreeSitterRangeResult(
@@ -895,3 +970,12 @@ const isTreeSitterParseAckResult = (
 
 const sameSyntaxRange = (left: EditorSyntaxRange, right: EditorSyntaxRange): boolean =>
   left.startIndex === right.startIndex && left.endIndex === right.endIndex
+
+const isTerminalIncompleteSyntaxResult = (result: EditorSyntaxResult): boolean => {
+  const analysis = result.projection.analysis
+  if (analysis?.kind === 'cancelled') return true
+  if (analysis?.kind === 'partial') {
+    return analysis.background?.kind === 'cancelled' || result.degraded?.kind === 'request-failed'
+  }
+  return false
+}

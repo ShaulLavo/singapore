@@ -246,11 +246,13 @@ describe('syntax range contributor lifetime', () => {
     }
     const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
     try {
-      view.syntax.setTokens(
-        EditorTokenStore.fromTokens([{ start: 100, end: 110, style: { color: 'manual' } }]),
-      )
+      const manual = EditorTokenStore.fromTokens([
+        { start: 100, end: 110, style: { color: 'manual' } },
+      ])
+      view.syntax.setTokens(manual)
       view.syntax.refresh(1, null, { delayMs: 0 })
-      await vi.waitFor(() => expect(view.syntax.copyTokens.length).toBe(0))
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(view.syntax.copyTokens).toBe(manual)
       view.setRange({ startIndex: 20, endIndex: 40 })
       expect(view.syntax.tokens.toTokens()).toEqual([
         { start: 100, end: 110, style: { color: 'manual' } },
@@ -447,7 +449,7 @@ describe('syntax range contributor lifetime', () => {
       expect(answers.calls()).toEqual([
         [0, 20],
         [0, 20],
-        [0, 40],
+        [20, 40],
         [40, 60],
         [60, 80],
       ])
@@ -569,17 +571,17 @@ describe('syntax range contributor lifetime', () => {
       view.setRange({ startIndex: 25, endIndex: 50 })
       releaseAnswer()
       await vi.waitFor(() => expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(30)))
-      view.setRange(left)
+      view.setRange({ startIndex: 20, endIndex: 30 })
       view.syntax.refreshVisibleRange(1, { delayMs: 0 })
       await new Promise((resolve) => setTimeout(resolve, 50))
       // Still answered, so not asked for again, and still colored.
       expect(answers.calls()).toEqual([
         [0, 20],
         [0, 20],
-        [0, 30],
+        [20, 30],
         [30, 50],
       ])
-      expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(0))
+      expect(view.syntax.tokens.toTokens()).toContainEqual(rangeToken(20))
     } finally {
       view.dispose()
       analysis.dispose()
@@ -780,19 +782,14 @@ describe('syntax range contributor lifetime', () => {
   it('ends optional warming after pruning and blocks repeated warming of the same source', async () => {
     const buffer = createEditorTextBuffer('x\n'.repeat(250_000))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'warm-stop' })
-    let resolveSecondWarm!: (result: EditorSyntaxResult) => void
-    const secondWarm = new Promise<EditorSyntaxResult>((resolve) => {
-      resolveSecondWarm = resolve
-    })
-    const ranges = vi.fn((range: EditorSyntaxRange) => {
-      if (range.startIndex === 240_000) return secondWarm
-      return Promise.resolve({
+    const ranges = vi.fn((range: EditorSyntaxRange) =>
+      Promise.resolve({
         ...createEmptySyntaxResult({ requestedRanges: [range] }),
         tokens: EditorTokenStore.fromTokens([
           { start: range.startIndex, end: range.startIndex + 1, style: { color: 'warm' } },
         ]),
-      })
-    })
+      }),
+    )
     const provider = {
       operation: createEditorStructuralOperation(() => ({
         ...createEmptySyntaxRuntime(),
@@ -803,28 +800,19 @@ describe('syntax range contributor lifetime', () => {
     const view = createView(buffer, analysis, provider, frame)
     try {
       view.syntax.refresh(1, null, { delayMs: 0 })
-      await vi.waitFor(() => expect(view.syntax.copyTokens.startAt(0)).toBe(120_000))
-      await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(3))
-      expect(retainedSyntaxCanWarm(Reflect.get(view.syntax, 'retainedSyntax'))).toBe(true)
-      expect(view.syntax.tokens.toTokens().map((token) => token.start)).toEqual([0, 120_000])
-      expect(analysis.inspectRetention().entries[0]!.cachedRangeCount).toBe(2)
-      expect(view.syntax.renderDataReady).toBe(true)
-
-      resolveSecondWarm({
-        ...createEmptySyntaxResult({
-          requestedRanges: [{ startIndex: 240_000, endIndex: 360_000 }],
-        }),
-        tokens: EditorTokenStore.fromTokens([
-          { start: 240_000, end: 240_001, style: { color: 'warm' } },
-        ]),
-      })
-      await vi.waitFor(() => expect(view.syntax.copyTokens.startAt(0)).toBe(240_000))
-      expect(retainedSyntaxCanWarm(Reflect.get(view.syntax, 'retainedSyntax'))).toBe(false)
+      // The first off-screen warm tile is pruned immediately without overwriting accepted copyTokens,
+      // and retires warming on the same source.
+      await vi.waitFor(() => expect(ranges).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() =>
+        expect(retainedSyntaxCanWarm(Reflect.get(view.syntax, 'retainedSyntax'))).toBe(false),
+      )
       expect(Reflect.get(view.syntax, 'pendingWarm')).toBeNull()
       expect(Reflect.get(view.syntax, 'stoppedWarm')).toBeNull()
-      expect(view.syntax.tokens.toTokens().map((token) => token.start)).toEqual([0, 240_000])
-      expect(analysis.inspectRetention().entries[0]!.cachedRangeCount).toBe(2)
-      expect(view.syntax.tokens.startAt(0)).toBe(0)
+      expect(view.syntax.copyTokens.startAt(0)).toBe(0)
+      expect(view.syntax.tokens.toTokens().map((token) => token.start)).toEqual([0])
+      expect(analysis.inspectRetention().entries[0]!.cachedRangeCount).toBe(1)
+      expect(view.syntax.renderDataReady).toBe(true)
+
       const copy = view.syntax.copyTokens
       const adoptions = view.adoptions()
       for (let step = 0; step < 40; step++)
@@ -833,7 +821,6 @@ describe('syntax range contributor lifetime', () => {
       expect(ranges.mock.calls.map(([range]) => range)).toEqual([
         frame,
         { startIndex: 120_000, endIndex: 240_000 },
-        { startIndex: 240_000, endIndex: 360_000 },
       ])
       expect(view.syntax.copyTokens).toBe(copy)
       expect(view.adoptions()).toBe(adoptions)
@@ -868,9 +855,9 @@ describe('syntax range contributor lifetime', () => {
       )
       try {
         view.syntax.refresh(1, null, { delayMs: 0 })
-        await vi.waitFor(() => expect(view.syntax.copyTokens.startAt(0)).toBe(240_000))
         const outgoing = Reflect.get(view.syntax, 'retainedSyntax')
-        expect(retainedSyntaxCanWarm(outgoing)).toBe(false)
+        await vi.waitFor(() => expect(retainedSyntaxCanWarm(outgoing)).toBe(false))
+        expect(view.syntax.copyTokens.startAt(0)).toBe(0)
         if (boundary === 'clear') view.syntax.clearDocument()
         if (boundary === 'dispose') view.syntax.dispose()
         if (boundary === 'configuration') view.syntax.reloadSyntaxSession()
@@ -1180,8 +1167,8 @@ describe('syntax state around optional range answers', () => {
       }
       await settle()
       view.publish()
-      // The frame's own answer, and the newest look-ahead, whose colors a copy takes.
-      expect(analysis.inspectRetention().entries[0]!.cachedRangeCount).toBe(2)
+      // Only the frame's own answer is retained; off-screen look-aheads do not hijack copy ownership.
+      expect(analysis.inspectRetention().entries[0]!.cachedRangeCount).toBe(1)
     } finally {
       view.dispose()
       analysis.dispose()

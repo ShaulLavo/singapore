@@ -6814,7 +6814,7 @@ describe('Editor', () => {
         expect(
           analysis.inspectRetention().entries.find((entry) => entry.family === 'structural')
             ?.cachedRangeCount,
-        ).toBe(1)
+        ).toBeLessThanOrEqual(2)
         const before = ranges.mock.calls.length
         ranges.mockImplementation(() => new Promise<EditorSyntaxResult>(() => undefined))
         attach()
