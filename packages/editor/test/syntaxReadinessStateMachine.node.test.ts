@@ -5645,5 +5645,256 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears host-shared prefetch paint expanded at both left and right strip boundaries by typing', async () => {
+      const buffer = createEditorTextBuffer('word '.repeat(50))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'host-tokens-boundary-typing-cleanup',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          tokens:
+            range.startIndex === 30 && range.endIndex === 50
+              ? [
+                  { start: 30, end: 32, style: { color: 'red' } },
+                  { start: 48, end: 50, style: { color: 'red' } },
+                ]
+              : [{ start: range.startIndex, end: range.startIndex + 2, style: { color: 'blue' } }],
+        }),
+      )
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const viewport: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      let demandRanges: readonly EditorSyntaxRange[] = [viewport]
+      let syntax!: EditorSyntaxController
+      const publishDemand = () => {
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      }
+      syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'host-tokens-boundary-typing-cleanup',
+        getCurrentSessionDocumentId: () => 'host-tokens-boundary-typing-cleanup',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => viewport,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'host-tokens-boundary-typing-cleanup',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.setTokens(
+          EditorTokenStore.fromTokens([{ start: 200, end: 204, style: { color: 'host-gold' } }]),
+        )
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        for (const insertAt of [50, 30]) {
+          const tile: EditorSyntaxRange = { startIndex: 30, endIndex: 50 }
+          demandRanges = [viewport, tile]
+          publishDemand()
+          syntax.prefetchVisibleRange(1, tile, { delayMs: 0 })
+          await vi.waitFor(() =>
+            expect(syntax.tokens.toTokens().some((t) => t.style.color === 'red')).toBe(true),
+          )
+
+          const previousSnapshot = buffer.getTextSnapshot()
+          const edit: TextEdit = { from: insertAt, to: insertAt, text: 'x' }
+          const change = session.applyEdits([edit])
+          syntax.acceptChange(change)
+          syntax.setTokens(projectTokensThroughEdit(syntax.tokens, edit, previousSnapshot), false)
+          demandRanges = [viewport]
+          publishDemand()
+          syntax.refresh(1, change, { delayMs: 0 })
+          await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+          expect(syntax.tokens.toTokens().some((t) => t.style.color === 'red')).toBe(false)
+        }
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('restores host paint when explicit retry prunes a degraded off-screen prefetch before an edit', async () => {
+      const buffer = createEditorTextBuffer('word '.repeat(50))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'host-tokens-degraded-prefetch-prune',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        range.startIndex === 30 && range.endIndex === 50
+          ? answerFor(range, {
+              degraded: {
+                kind: 'optional-phase-failed',
+                phase: 'folds',
+                message: 'degraded prefetch',
+              },
+              tokens: [{ start: 48, end: 50, style: { color: 'red' } }],
+            })
+          : answerFor(range, {
+              tokens: [
+                { start: range.startIndex, end: range.startIndex + 2, style: { color: 'blue' } },
+              ],
+            }),
+      )
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const viewport: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      let demandRanges: readonly EditorSyntaxRange[] = [viewport]
+      let syntax!: EditorSyntaxController
+      const publishDemand = () => {
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      }
+      syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'host-tokens-degraded-prefetch-prune',
+        getCurrentSessionDocumentId: () => 'host-tokens-degraded-prefetch-prune',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => viewport,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'host-tokens-degraded-prefetch-prune',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.setTokens(
+          EditorTokenStore.fromTokens([{ start: 200, end: 204, style: { color: 'host-gold' } }]),
+        )
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        const tile: EditorSyntaxRange = { startIndex: 30, endIndex: 50 }
+        demandRanges = [viewport, tile]
+        publishDemand()
+        syntax.prefetchVisibleRange(1, tile, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(syntax.tokens.toTokens().some((t) => t.style.color === 'red')).toBe(true),
+        )
+
+        syntax.refresh(1, null, { delayMs: 0 })
+        const previousSnapshot = buffer.getTextSnapshot()
+        const edit: TextEdit = { from: 150, to: 150, text: 'x' }
+        const change = session.applyEdits([edit])
+        syntax.acceptChange(change)
+        syntax.setTokens(projectTokensThroughEdit(syntax.tokens, edit, previousSnapshot), false)
+        demandRanges = [viewport]
+        publishDemand()
+        syntax.refresh(1, change, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        expect(syntax.tokens.toTokens().some((t) => t.style.color === 'red')).toBe(false)
+        expect(syntax.tokens.toTokens()).toEqual([
+          { start: 0, end: 2, style: { color: 'blue' } },
+          { start: 201, end: 205, style: { color: 'host-gold' } },
+        ])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('transitions stationary sibling view to error and clears stale brackets when same-text retry throws', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'sibling-view-failed-same-text-retry',
+      })
+      let baseAttempt = 0
+      const oldBracket = {
+        index: 10,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, { brackets: [oldBracket] }),
+      )
+      const provider = structuralProvider(query, {
+        analyze: async () => {
+          baseAttempt += 1
+          if (baseAttempt === 1) {
+            return {
+              ...createEmptySyntaxResult(),
+              degraded: {
+                kind: 'optional-phase-failed',
+                phase: 'parse',
+                message: 'initial degraded base',
+              },
+            }
+          }
+          throw new Error('same-text-retry-boom')
+        },
+      })
+      const viewA = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      const viewB = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      try {
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        viewB.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewA.syntax.status).toBe('ready')
+          expect(viewB.syntax.status).toBe('ready')
+        })
+        expect(viewA.syntax.brackets).toEqual([oldBracket])
+        expect(viewB.syntax.brackets).toEqual([oldBracket])
+
+        // View A retries on the same text and the base parse throws.
+        // Stationary View B must also transition to error and drop its stale bracket without scrolling.
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewA.syntax.status).toBe('error')
+          expect(viewB.syntax.status).toBe('error')
+        })
+        expect(baseAttempt).toBe(2)
+        expect(viewA.syntax.brackets).toEqual([])
+        expect(viewB.syntax.brackets).toEqual([])
+      } finally {
+        viewB.dispose()
+        viewA.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

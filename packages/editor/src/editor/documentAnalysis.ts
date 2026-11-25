@@ -836,15 +836,17 @@ export function retainedSyntaxCanWarm(session: EditorRetainedSyntaxSession): boo
 }
 
 export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
-  private readonly produced = new EditorEventSource<void>({ action: 'document.syntax.produced' })
+  private readonly produced = new EditorEventSource<'runtime' | 'base-published'>({
+    action: 'document.syntax.produced',
+  })
 
-  onDidProduceSyntax(listener: () => void): () => void {
+  onDidProduceSyntax(listener: (source: 'runtime' | 'base-published') => void): () => void {
     const subscription = this.produced.subscribe(listener)
     return () => subscription.dispose()
   }
 
   protected override runtimeResultPublished(): void {
-    this.produced.fire()
+    this.produced.fire('runtime')
   }
   private readonly displayed = new Map<AbortSignal, EditorAnalysisDisplayDemand>()
   private readonly queryWaiters = new Map<
@@ -1489,18 +1491,22 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     generation: number,
     state: EditorAnalysisRead<EditorSyntaxResult>,
   ): void {
-    if (state.kind === 'failed') {
-      this.previousRanges = null
-      this.incrementalSteps = []
-      return
-    }
-    if (state.kind !== 'ready') return
-
     const previous = this.lastBase
     const samePointReplacement =
       previous !== null &&
       previous.read.revision.point === read.revision.point &&
       previous.parseId !== generation
+    if (state.kind === 'failed') {
+      this.previousRanges = null
+      this.incrementalSteps = []
+      if (samePointReplacement) {
+        this.lastBase = null
+        this.produced.fire('base-published')
+      }
+      return
+    }
+    if (state.kind !== 'ready') return
+
     const invalidation = state.result.projection.invalidation
     const isComplete = (result: EditorSyntaxResult): boolean =>
       result.projection.analysis?.kind !== 'partial' && !isTerminalIncompleteSyntaxResult(result)
@@ -1568,7 +1574,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }
     }
     this.previousRanges = null
-    if (samePointReplacement) this.produced.fire()
+    if (samePointReplacement) this.produced.fire('base-published')
   }
 
   override changed(read: DocumentRead): void {
@@ -1965,6 +1971,7 @@ function structuralLease(
   )
   let failedBaseGeneration: number | null =
     entry.read().kind === 'failed' ? entry.analysisGeneration : null
+  let awaitingBase = false
   const refreshBase = async (options?: { readonly forceRetry?: boolean }) => {
     entry.synchronize()
     const currentRead = entry.read()
@@ -1978,6 +1985,7 @@ function structuralLease(
     if (options?.forceRetry === true) entry.clearDegradedOrPartialRanges()
     if (shouldRetryFailed || shouldForceRetryDegraded) entry.refresh()
     const generation = entry.analysisGeneration
+    awaitingBase = true
     try {
       const base = await entry.currentBase()
       if (entry.analysisGeneration === generation && entry.read().kind === 'failed') {
@@ -1987,12 +1995,22 @@ function structuralLease(
     } catch (error) {
       if (entry.analysisGeneration === generation) failedBaseGeneration = generation
       throw error
+    } finally {
+      awaitingBase = false
     }
   }
   const retained: EditorRetainedSyntaxSession = {
     runtimeSessionId: entry.runtimeSessionId,
     onDidProduceSyntax: (listener) =>
-      observeRetainedEvent(lease.signal, (next) => entry.onDidProduceSyntax(next), listener),
+      observeRetainedEvent(
+        lease.signal,
+        (next) =>
+          entry.onDidProduceSyntax((source) => {
+            if (source === 'base-published' && awaitingBase) return
+            next()
+          }),
+        listener,
+      ),
     setDisplayDemand: (next) => {
       // An edit briefly makes the demand unknown; the frame shown before it still applies.
       if (next.kind === 'frame') frame = next.ranges

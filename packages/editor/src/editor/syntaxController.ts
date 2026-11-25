@@ -4339,10 +4339,11 @@ export class EditorSyntaxController {
   }
 
   #pruneDegradedAndPartialRangeEntries(): void {
-    const kept = this.#rangeEntries.filter(
+    const previousEntries = this.#rangeEntries
+    const kept = previousEntries.filter(
       (entry) => entry.result.degraded === null && !entry.tokensOnly,
     )
-    if (kept.length === this.#rangeEntries.length) return
+    if (kept.length === previousEntries.length) return
     const keptSet = new Set(kept)
     this.#rangeEntries = kept
     this.#lastRangeTrim = null
@@ -4362,6 +4363,17 @@ export class EditorSyntaxController {
       const tokens = compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(kept))
       this.#currentTokens = tokens
       this.#rangeTokenOwner = { store: tokens, snapshot }
+    } else if (!this.#highlighterSession) {
+      const removed = previousEntries.filter((entry) => !keptSet.has(entry))
+      const evictedRanges = this.#tokenCoverage(removed)
+      if (evictedRanges.length > 0) {
+        const fallback =
+          snapshot !== null && this.#externalBaseTokens?.snapshot === snapshot
+            ? this.#externalBaseTokens.store
+            : EditorTokenStore.empty()
+        this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, evictedRanges)
+        this.options.adoptTokens(this.#currentTokens)
+      }
     }
     if (!this.#highlighterSession && this.#copyOwner === 'range') {
       this.#compactRangeCopyStore(kept, this.#currentTokens, rangeOwned)
@@ -4944,9 +4956,9 @@ const projectRangesThroughEdits = (
       const delta = edit.text.length - (edit.to - edit.from)
       const next: EditorSyntaxRange[] = []
       for (const range of current) {
-        if (range.endIndex <= edit.from) {
+        if (range.endIndex < edit.from) {
           next.push(range)
-        } else if (range.startIndex >= edit.to) {
+        } else if (range.startIndex > edit.to) {
           next.push({
             startIndex: range.startIndex + delta,
             endIndex: range.endIndex + delta,
