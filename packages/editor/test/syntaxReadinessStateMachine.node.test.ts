@@ -1274,12 +1274,13 @@ describe('viewport syntax readiness state machine (#169)', () => {
         view.setRange({ startIndex: 20, endIndex: 60 })
         view.syntax.refreshVisibleRange(1, { delayMs: 0 })
         await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
-        expect(view.records()?.data).toEqual(new Uint32Array([0, 100]))
+        expect(queried).toContainEqual({ startIndex: 20, endIndex: 60 })
+        expect(view.records()?.data).toEqual(new Uint32Array([20, 60]))
 
         // Case B: disjoint prefetch [100, 160) -> scroll to [80, 120) spanning [0, 100) & [100, 160)
         // must issue a fresh authoritative provider query for [80, 120)!
         view.syntax.prefetchVisibleRange(1, { startIndex: 100, endIndex: 160 }, { delayMs: 0 })
-        await vi.waitFor(() => expect(queried.length).toBe(3))
+        await vi.waitFor(() => expect(queried.length).toBe(4))
         view.setRange({ startIndex: 80, endIndex: 120 })
         view.syntax.refreshVisibleRange(1, { delayMs: 0 })
         await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
@@ -4644,6 +4645,245 @@ describe('viewport syntax readiness state machine (#169)', () => {
         expect(query).toHaveBeenCalledTimes(3)
         expect(changeCount).toBeLessThanOrEqual(4)
         expect(syntax.status).toBe('loading')
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('queries the uncovered subrange of a narrowed terminal partial instead of stranding in loading', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'terminal-partial-narrowed-subrange',
+      })
+      let resolveLeft: ((result: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn((range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return new Promise((resolve) => {
+            resolveLeft = resolve
+          })
+        }
+        return Promise.resolve(answerFor(range))
+      })
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 20, endIndex: 40 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'terminal-partial-narrowed-subrange',
+        getCurrentSessionDocumentId: () => 'terminal-partial-narrowed-subrange',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'terminal-partial-narrowed-subrange',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        currentRange = { startIndex: 0, endIndex: 20 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveLeft).not.toBeNull())
+
+        currentRange = { startIndex: 10, endIndex: 20 }
+        resolveLeft!({
+          ...answerFor({ startIndex: 0, endIndex: 20 }),
+          projection: {
+            ...answerFor({ startIndex: 0, endIndex: 20 }).projection,
+            analysis: {
+              kind: 'partial',
+              coveredRange: { startIndex: 0, endIndex: 20 },
+              background: {
+                kind: 'cancelled',
+                reason: 'budget',
+                coveredRange: { startIndex: 0, endIndex: 20 },
+                elapsedMs: 50,
+                budgetMs: 50,
+              },
+            },
+          },
+        })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+
+        currentRange = { startIndex: 0, endIndex: 10 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(query.mock.calls.some(([r]) => r.startIndex === 0 && r.endIndex === 10)).toBe(true)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('does not let a partial firstRows paint suppress the visible range query', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(3000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'partial-first-rows-does-not-suppress-visible',
+      })
+      const query = vi.fn((range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return Promise.resolve({
+            ...answerFor(range),
+            projection: {
+              ...answerFor(range).projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+          })
+        }
+        return Promise.resolve(answerFor(range))
+      })
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const visibleRange: EditorSyntaxRange = { startIndex: 0, endIndex: 5000 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'partial-first-rows-does-not-suppress-visible',
+        getCurrentSessionDocumentId: () => 'partial-first-rows-does-not-suppress-visible',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getMountedSyntaxRange: () => ({ startIndex: 0, endIndex: 20 }),
+        getVisibleSyntaxRange: () => visibleRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'partial-first-rows-does-not-suppress-visible',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(query.mock.calls.some(([r]) => r.startIndex === 0 && r.endIndex === 20)).toBe(true)
+        expect(query.mock.calls.some(([r]) => r.startIndex === 0 && r.endIndex === 5000)).toBe(true)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('bypasses containing shared-cache hits for authoritative Markdown records queries', async () => {
+      const buffer = createEditorTextBuffer('# Heading\n'.repeat(30))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'authoritative-records-exact-cache-bypass',
+      })
+      const supersededBracket = {
+        index: 96,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        const base = answerFor(range)
+        return {
+          ...base,
+          brackets: range.startIndex === 0 && range.endIndex === 100 ? [supersededBracket] : [],
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex]),
+          },
+        }
+      })
+      let latestRecords: EditorSyntaxResult['records'] = undefined
+      const getLatestRecords = () => latestRecords
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 100 }
+      let demandRanges: readonly EditorSyntaxRange[] = [{ startIndex: 0, endIndex: 100 }]
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'authoritative-records-exact-cache-bypass',
+        getCurrentSessionDocumentId: () => 'authoritative-records-exact-cache-bypass',
+        getLanguageId: () => 'markdown',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        setSyntaxCaptures: (_captures, records) => {
+          latestRecords = records
+        },
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const publishDemand = () => {
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: session.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      }
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'authoritative-records-exact-cache-bypass',
+          languageId: 'markdown',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.brackets).toEqual([supersededBracket])
+        expect(getLatestRecords()?.data).toEqual(new Uint32Array([0, 100]))
+
+        currentRange = { startIndex: 80, endIndex: 140 }
+        demandRanges = [
+          { startIndex: 0, endIndex: 100 },
+          { startIndex: 80, endIndex: 140 },
+        ]
+        publishDemand()
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(getLatestRecords()?.data).toEqual(new Uint32Array([80, 140])))
+        expect(syntax.brackets).toEqual([])
+
+        currentRange = { startIndex: 0, endIndex: 60 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(getLatestRecords()?.data).toEqual(new Uint32Array([0, 60])))
+        expect(syntax.status).toBe('ready')
+        expect(query.mock.calls.some(([r]) => r.startIndex === 0 && r.endIndex === 60)).toBe(true)
+        expect(syntax.brackets).toEqual([])
       } finally {
         syntax.dispose()
         pluginHost.dispose()

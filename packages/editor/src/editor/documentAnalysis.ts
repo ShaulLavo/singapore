@@ -75,7 +75,10 @@ export type EditorAnalysisDisplayDemand =
       readonly snapshot: DocumentTextSnapshot
       readonly ranges: readonly EditorSyntaxRange[]
     }
-export type EditorAnalysisRangeInterest = { readonly signal?: AbortSignal }
+export type EditorAnalysisRangeInterest = {
+  readonly signal?: AbortSignal
+  readonly exact?: boolean
+}
 type AnalysisDisplayInspection = {
   readonly unmanagedLeases: number
   readonly unknownLeases: number
@@ -800,6 +803,7 @@ type PendingRangeQuery = {
   release: EditorScheduledWorkHandle | null
   /** Unique per query: two queries for the same offsets, such as across analysis generations, differ. */
   readonly id: number
+  exact: boolean
   admission: 'cache' | 'return-only'
   work:
     | { readonly kind: 'queued'; readonly generation: number | null }
@@ -1076,15 +1080,22 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
   }
 
-  private findCachedRange(range: EditorSyntaxRange): ReadyRange | undefined {
-    const exact = this.ranges.get(rangeKey(range))
+  private findCachedRange(range: EditorSyntaxRange, exact = false): ReadyRange | undefined {
+    const exactMatch = this.ranges.get(rangeKey(range))
     if (
-      exact &&
-      exact.point === this.queuedPoint &&
-      !isTerminalIncompleteSyntaxResult(exact.result) &&
-      exact.result.projection.analysis?.kind !== 'partial'
+      exactMatch &&
+      exactMatch.point === this.queuedPoint &&
+      !isTerminalIncompleteSyntaxResult(exactMatch.result) &&
+      exactMatch.result.projection.analysis?.kind !== 'partial'
     ) {
-      return exact
+      return exactMatch
+    }
+    if (exact) {
+      return exactMatch &&
+        exactMatch.point === this.queuedPoint &&
+        !isTerminalIncompleteSyntaxResult(exactMatch.result)
+        ? exactMatch
+        : undefined
     }
     let best: ReadyRange | undefined
     for (const candidate of this.ranges.values()) {
@@ -1102,11 +1113,11 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
         continue
       }
       if (bestPartial !== candidatePartial) continue
-      if (exact && candidate === exact) {
+      if (exactMatch && candidate === exactMatch) {
         best = candidate
         continue
       }
-      if (exact && best === exact) continue
+      if (exactMatch && best === exactMatch) continue
       const bestSpan = best.range.endIndex - best.range.startIndex
       const candidateSpan = candidate.range.endIndex - candidate.range.startIndex
       if (candidateSpan < bestSpan) best = candidate
@@ -1154,7 +1165,11 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
   }
 
-  waitForRange(range: EditorSyntaxRange, signal: AbortSignal): Promise<EditorSyntaxResult> {
+  waitForRange(
+    range: EditorSyntaxRange,
+    signal: AbortSignal,
+    exact = false,
+  ): Promise<EditorSyntaxResult> {
     if (signal.aborted) return Promise.reject(cancelled())
     this.queryWaiters.set(signal, {
       snapshot: this.buffer.getTextSnapshot(),
@@ -1166,7 +1181,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.retention.changed()
     }
     signal.addEventListener('abort', release, { once: true })
-    const pending = interruptible(this.range(range, signal), signal)
+    const pending = interruptible(this.range(range, signal, exact), signal)
     this.retention.changed()
     return pending.finally(() => {
       release()
@@ -1272,11 +1287,11 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     return expected === this.lastBase.parseId ? slice : null
   }
 
-  readRange(range?: EditorSyntaxRange): EditorAnalysisRead<EditorSyntaxResult> {
+  readRange(range?: EditorSyntaxRange, exact = false): EditorAnalysisRead<EditorSyntaxResult> {
     const state = this.read()
     if (!range || state.kind !== 'ready') return state
     range = boundedRange(range, state.snapshot.length)
-    const best = this.findCachedRange(range)
+    const best = this.findCachedRange(range, exact)
     if (best) return { ...state, result: best.result, range: best.range }
     if (!this.canQueryRange()) return state
     return { kind: 'pending', revision: state.revision }
@@ -1290,10 +1305,14 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
    * starts. That stops the runtime's work where it can stop, and keeps a superseded query from
    * being sent again once a complete analysis lands.
    */
-  range(range: EditorSyntaxRange, signal?: AbortSignal): Promise<EditorSyntaxResult> {
+  range(
+    range: EditorSyntaxRange,
+    signal?: AbortSignal,
+    exact = false,
+  ): Promise<EditorSyntaxResult> {
     range = boundedRange(range, this.buffer.getTextSnapshot().length)
     if (!this.structuralSession.queryRange) return this.current()
-    const state = this.readRange(range)
+    const state = this.readRange(range, exact)
     if (state.kind === 'ready') return Promise.resolve(state.result)
     const point = this.buffer.getDocumentSyncPoint()
     const revision = point.revision
@@ -1304,6 +1323,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.compatibleQuery(query, point, range),
     )
     if (existing) {
+      if (exact) existing.exact = true
       holdRangeQuery(existing, signal, this.releaseOrphanLater)
       this.trimOptionalRanges()
       return existing.promise
@@ -1320,6 +1340,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       pinned: false,
       release: null,
       id: this.nextQueryId++,
+      exact,
       admission: 'cache',
       work: { kind: 'queued', generation },
       promise: interruptible(
@@ -1327,7 +1348,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
           if (cancellation.signal.aborted || rangeQueryIsOrphaned(pending))
             return Promise.reject(cancelled())
           pending.work = { kind: 'running', generation: this.generation }
-          const current = this.readRange(range)
+          const current = this.readRange(range, pending.exact)
           if (current.kind === 'ready') return Promise.resolve(current.result)
           queried = true
           const querySignal = AbortSignal.any([interest, cancellation.signal])
@@ -1946,7 +1967,9 @@ function structuralLease(
     queryRange(range, interest = {}) {
       demand = range
       const waiter = leaseCancellation(lease.signal, entry.retention, interest.signal)
-      return entry.waitForRange(range, waiter.signal).finally(waiter.dispose)
+      return entry
+        .waitForRange(range, waiter.signal, interest.exact === true)
+        .finally(waiter.dispose)
     },
     getResult: () => {
       const state = entry.readRange(demand)
