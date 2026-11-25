@@ -1933,6 +1933,15 @@ export class EditorSyntaxController {
       ),
       apply: traceEditorPerformanceTask('editor.syntax.range.apply', (result, startedAt) => {
         if (!this.#isRequestCurrent(guard)) return
+        if (
+          kind === 'visible' &&
+          result.skipApply &&
+          !this.#canProviderQuerySyntaxRange() &&
+          !this.#publishedScopeCoversViewport()
+        ) {
+          this.refreshVisibleRange(documentVersion, { delayMs: 0 })
+          return
+        }
         const applied = this.#applySyntaxResult(result, guard, startedAt)
         if (applied && kind === 'visible' && this.#publishedScopeCoversViewport()) {
           if (!this.#flushPendingPrefetch()) this.#flushPendingWarm()
@@ -1959,6 +1968,7 @@ export class EditorSyntaxController {
   ): void {
     if (error instanceof DOMException && error.name === 'AbortError') return
     if (!this.#isRequestCurrent(guard)) return
+    if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'full') return
     const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(range)
     if (gaps.length === 0 && !emptyGap && !recordsGap) {
       if (!this.#publishedScopeCoversViewport()) {
@@ -2608,6 +2618,15 @@ export class EditorSyntaxController {
       }
     }
 
+    // Never apply late range-scoped replies or failures once the accepted parse is in full-document mode.
+    if (
+      loadResult.range !== null &&
+      this.#parseState.kind === 'parsed' &&
+      this.#parseState.mode === 'full'
+    ) {
+      return false
+    }
+
     // Route range-phase rejections from document refreshes through the gap gate so a late
     // rejection cannot downgrade a viewport already settled by prefetch or another range answer.
     if (loadResult.rangeFailure) {
@@ -2671,12 +2690,6 @@ export class EditorSyntaxController {
         return true
       }
       return this.#publishFullDocumentResult(result, guard)
-    }
-
-    // Never admit late range-scoped replies (e.g. an in-flight prefetch) once the accepted parse
-    // has transitioned to full-document mode.
-    if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'full') {
-      return false
     }
 
     // Promoted-only fast path (incremental edit where surviving cached entries cover the viewport).
@@ -2868,6 +2881,12 @@ export class EditorSyntaxController {
   #publishFullDocumentResult(result: EditorSyntaxResult, guard: RequestGuard): boolean {
     const partial = result.projection.analysis?.kind === 'partial'
     const degraded = result.degraded !== null
+    this.rangeRequests.cancel()
+    this.#prefetchRangeRequests.cancel()
+    this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
+    this.#pendingPrefetch = null
+    this.pendingWarm = null
     if (!partial) {
       this.#rangeEntries = []
       this.#rangeScopeOwners = []
@@ -3000,6 +3019,7 @@ export class EditorSyntaxController {
     guard: RequestGuard,
     options: { readonly preserveProvisionalPaint: boolean },
   ): void {
+    if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'full') return
     const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(requestRange)
     if (gaps.length === 0 && !emptyGap && !recordsGap) {
       if (!this.#publishedScopeCoversViewport()) {

@@ -3613,5 +3613,99 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('ignores a late viewport rejection after refresh transitions the controller to full-document mode', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'late-viewport-rejection-after-full',
+      })
+      let allowRange = true
+      let rejectScroll: ((error: unknown) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 60 && range.endIndex === 80) {
+          return new Promise<EditorSyntaxResult>((_resolve, reject) => {
+            rejectScroll = reject
+          })
+        }
+        return answerFor(range)
+      })
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async () => ({
+            ...createEmptySyntaxResult(),
+            brackets: [{ index: 70, char: '{', depth: 1 }],
+          }),
+          canQueryRange: () => allowRange,
+          queryRange: query,
+        })),
+      }
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Scroll to [60, 80) and hold its range query in flight.
+        view.setRange({ startIndex: 60, endIndex: 80 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(rejectScroll).not.toBeNull())
+
+        // Disable range queries and refresh -> full-document mode settles ready with bracket 70.
+        allowRange = false
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.brackets.map((b) => b.index)).toEqual([70])
+
+        // Reject the held [60, 80) query -> must NOT turn full-mode syntax to 'error' or clear brackets!
+        rejectScroll!(new Error('late-range-boom'))
+        await settle()
+        expect(view.syntax.status).toBe('ready')
+        expect(view.syntax.brackets.map((b) => b.index)).toEqual([70])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('falls back to full-document mode when canQueryRange flips false during a delayed refreshVisibleRange', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'disable-range-before-delayed-dispatch',
+      })
+      let allowRange = true
+      const query = vi.fn(async (range: EditorSyntaxRange) => answerFor(range))
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async () => ({
+            ...createEmptySyntaxResult(),
+            brackets: [{ index: 70, char: '{', depth: 1 }],
+          }),
+          canQueryRange: () => allowRange,
+          queryRange: query,
+        })),
+      }
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Scroll to [60, 80) with default delay, then disable range queries before dispatch fires.
+        view.setRange({ startIndex: 60, endIndex: 80 })
+        view.syntax.refreshVisibleRange(1)
+        allowRange = false
+
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.renderDataReady).toBe(true)
+        expect(view.syntax.brackets.map((b) => b.index)).toEqual([70])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
