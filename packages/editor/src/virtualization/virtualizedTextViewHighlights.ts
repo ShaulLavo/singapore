@@ -24,6 +24,7 @@ import {
   normalizeTokenPainting,
   resolveChunkLocalIntervals,
   resolveTokenPainterKind,
+  resolveTokenPainterKindByRowCount,
   supportsCssHighlights,
 } from './rowTokenPainter'
 import { rowLocalIndexForOffset } from './virtualizedTextViewInlineMapping'
@@ -216,10 +217,14 @@ function adoptChangedTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
 
 function needsPainterReconcileForTokens(view: VirtualizedTextViewInternal): boolean {
   if (view.provisional) return false
-  if (view.tokenPainting === 'css-highlight') return view.tokenPainter.kind !== 'css-highlight'
-  if (view.tokenPainting === 'spans') return view.tokenPainter.kind !== 'spans'
-  if (!supportsCssHighlights(view.highlightRegistry)) return view.tokenPainter.kind !== 'spans'
-  if (view.scrollMode === 'virtualized') return view.tokenPainter.kind !== 'css-highlight'
+  const decidedByRowCount = resolveTokenPainterKindByRowCount(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    view.rowElements.size,
+  )
+  if (decidedByRowCount !== null) return decidedByRowCount !== view.tokenPainter.kind
 
   const mountedRows = getMountedRows(view)
   const desired = resolveTokenPainterKind(

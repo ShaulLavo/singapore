@@ -648,5 +648,38 @@ describe('RowTokenPainter seam & spans painter', () => {
     const rows = editView.getState().mountedRows
     expect(rows[0]!.element.querySelectorAll('span.editor-token')).toHaveLength(1)
     expect(rows[1]!.element.querySelectorAll('span.editor-token')).toHaveLength(1)
+
+    // 3. Row-count-determined static view (> 200 rows) keeps same-line edits local in auto mode.
+    const tallStatic = createView({
+      highlightRegistry: registry,
+      scrollMode: 'static',
+      tokenPainting: 'auto',
+    })
+    const tallText = Array.from({ length: 250 }, () => 'const a = 1').join('\n')
+    tallStatic.setText(tallText)
+    tallStatic.setScrollMetrics(0, 5000, 800)
+    const makeTallTokens = (text: string) => {
+      const out: { start: number; end: number; style: { color: string } }[] = []
+      let offset = 0
+      for (const rowText of text.split('\n')) {
+        out.push({ start: offset, end: offset + 5, style: { color: '#ff0000' } })
+        offset += rowText.length + 1
+      }
+      return out
+    }
+    tallStatic.setTokens(makeTallTokens(tallText))
+    expect(tallStatic.getActiveTokenPainting()).toBe('spans')
+    const untouchedRowSpan = tallStatic
+      .getState()
+      .mountedRows[200]!.element.querySelector('span.editor-token')
+    expect(untouchedRowSpan).not.toBeNull()
+
+    const tallEdited = `X${tallText.slice(1)}`
+    tallStatic.applyEdit({ from: 0, to: 1, text: 'X' }, tallEdited)
+    tallStatic.setTokens(makeTallTokens(tallEdited))
+    expect(tallStatic.getActiveTokenPainting()).toBe('spans')
+    expect(tallStatic.getState().mountedRows[200]!.element.querySelector('span.editor-token')).toBe(
+      untouchedRowSpan,
+    )
   })
 })

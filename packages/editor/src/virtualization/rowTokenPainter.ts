@@ -81,6 +81,23 @@ export function supportsCssHighlights(registry: HighlightRegistry | null): boole
   return registry !== null && typeof Highlight === 'function'
 }
 
+export function resolveTokenPainterKindByRowCount(
+  mode: EditorTokenPainting,
+  registry: HighlightRegistry | null,
+  scrollMode: VirtualizedTextViewInternal['scrollMode'],
+  currentKind: RowTokenPainterKind | null,
+  mountedRowCount: number,
+): RowTokenPainterKind | null {
+  if (mode === 'css-highlight') return 'css-highlight'
+  if (mode === 'spans') return 'spans'
+  if (!supportsCssHighlights(registry)) return 'spans'
+  if (scrollMode === 'virtualized') return 'css-highlight'
+  if (currentKind === 'spans') {
+    return mountedRowCount > AUTO_SPAN_EXIT_ROWS ? 'spans' : null
+  }
+  return mountedRowCount >= AUTO_SPAN_ENTER_ROWS ? 'spans' : null
+}
+
 export function resolveTokenPainterKind(
   mode: EditorTokenPainting,
   registry: HighlightRegistry | null,
@@ -89,18 +106,18 @@ export function resolveTokenPainterKind(
   mountedRowCount: number,
   segmentCount: number,
 ): RowTokenPainterKind {
-  if (mode === 'css-highlight') return 'css-highlight'
-  if (mode === 'spans') return 'spans'
-  if (!supportsCssHighlights(registry)) return 'spans'
-  if (scrollMode === 'virtualized') return 'css-highlight'
+  const byRowCount = resolveTokenPainterKindByRowCount(
+    mode,
+    registry,
+    scrollMode,
+    currentKind,
+    mountedRowCount,
+  )
+  if (byRowCount !== null) return byRowCount
   if (currentKind === 'spans') {
-    return mountedRowCount <= AUTO_SPAN_EXIT_ROWS && segmentCount <= AUTO_SPAN_EXIT_SEGMENTS
-      ? 'css-highlight'
-      : 'spans'
+    return segmentCount <= AUTO_SPAN_EXIT_SEGMENTS ? 'css-highlight' : 'spans'
   }
-  return mountedRowCount >= AUTO_SPAN_ENTER_ROWS || segmentCount >= AUTO_SPAN_ENTER_SEGMENTS
-    ? 'spans'
-    : 'css-highlight'
+  return segmentCount >= AUTO_SPAN_ENTER_SEGMENTS ? 'spans' : 'css-highlight'
 }
 
 export function isTokenSpanElement(node: Node | null): node is HTMLSpanElement {
