@@ -413,6 +413,8 @@ export class EditorSyntaxController {
     readonly store: EditorTokenStore
     readonly snapshot: DocumentTextSnapshot
   } | null = null
+  #projectedRangeTokens: EditorTokenStore | null = null
+  #awaitingProjectedEditTokens = false
   #copyOwner: 'none' | 'range' | 'external' = 'none'
   #rangeCopyTokens = EditorTokenStore.empty()
   private rangeCopyOwner: {
@@ -859,6 +861,15 @@ export class EditorSyntaxController {
     owner: 'none' | 'range' | 'external',
   ): void {
     if (this.#rangeTokenOwner?.store !== tokens) this.#rangeTokenOwner = null
+    if (current) {
+      this.#projectedRangeTokens = null
+      this.#awaitingProjectedEditTokens = false
+    } else if (this.#awaitingProjectedEditTokens) {
+      this.#awaitingProjectedEditTokens = false
+      this.#projectedRangeTokens = tokens
+    } else if (tokens !== this.#currentTokens) {
+      this.#projectedRangeTokens = null
+    }
     if (!current || owner !== 'range' || this.rangeCopyOwner?.store !== copyTokens) {
       this.rangeCopyOwner = null
     }
@@ -1403,10 +1414,16 @@ export class EditorSyntaxController {
       }
     }
 
+    const hadRangeOwnedPaint =
+      !this.#highlighterSession &&
+      (this.#rangeTokenOwner?.store === this.#currentTokens ||
+        (this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens))
     this.#rangeEntries = []
     this.#rangeScopeOwners = []
     this.rangeCopyOwner = null
     this.#rangeTokenOwner = null
+    this.#projectedRangeTokens = hadRangeOwnedPaint ? this.#currentTokens : null
+    this.#awaitingProjectedEditTokens = hadRangeOwnedPaint
     this.#rangeCopyTokens = EditorTokenStore.empty()
     if (!this.#highlighterSession) this.#copyOwner = 'none'
 
@@ -2205,6 +2222,19 @@ export class EditorSyntaxController {
             updatesDocument: true,
             signal,
           })
+          if (!this.#canProviderQuerySyntaxRange()) {
+            return {
+              contentVersion: guard.contentVersion,
+              parseGeneration: guard.parseGeneration,
+              parseId: base.parseId,
+              baseResult: base.result,
+              range: null,
+              result: base.result,
+              source: 'full',
+              updatesDocument: true,
+              promotedEntries,
+            }
+          }
           return {
             ...loaded,
             parseId: base.parseId,
@@ -2255,7 +2285,7 @@ export class EditorSyntaxController {
           updatesDocument: true,
           signal,
         })
-        if (loaded.skipApply && !this.#canProviderQuerySyntaxRange()) {
+        if (!this.#canProviderQuerySyntaxRange()) {
           return {
             contentVersion: guard.contentVersion,
             parseGeneration: guard.parseGeneration,
@@ -2510,25 +2540,33 @@ export class EditorSyntaxController {
         this.#settleCancelledOrTerminalPartialBase(guard, loadResult.parseId ?? null)
         return true
       }
-      if (isTerminalIncompleteSyntaxResult(baseResult) && loadResult.range === null) {
+      const canRange = Boolean(
+        this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange(),
+      )
+      if (
+        isTerminalIncompleteSyntaxResult(baseResult) &&
+        (loadResult.range === null || !canRange)
+      ) {
         this.#settleCancelledOrTerminalPartialBase(guard, loadResult.parseId ?? null)
         return true
       }
 
-      const canRange = Boolean(
-        this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange(),
-      )
       const mode: 'full' | 'range' = canRange ? 'range' : 'full'
       const parseKind: 'full' | 'partial' =
-        baseAnalysis?.kind === 'partial' || analysis?.kind === 'partial' ? 'partial' : 'full'
+        baseAnalysis?.kind === 'partial' || (canRange && analysis?.kind === 'partial')
+          ? 'partial'
+          : 'full'
       this.#acceptSyntaxDocument(
         guard,
         loadResult.parseId ?? null,
         mode,
         parseKind,
-        mode === 'full' ? result : null,
+        mode === 'full' ? baseResult : null,
         loadResult.promotedEntries ?? [],
       )
+      if (!canRange) {
+        return this.#publishFullDocumentResult(baseResult, guard)
+      }
     }
 
     // Route range-phase rejections from document refreshes through the gap gate so a late
@@ -2799,6 +2837,8 @@ export class EditorSyntaxController {
     if (!this.#highlighterSession) {
       const tokens = toEditorTokenStore(result.tokens)
       this.#rangeTokenOwner = null
+      this.#projectedRangeTokens = null
+      this.#awaitingProjectedEditTokens = false
       this.rangeCopyOwner = null
       const status: SettledHighlightStatus = degraded ? 'degraded' : 'painted'
       if (this.#copyOwner === 'external') {
@@ -3034,11 +3074,21 @@ export class EditorSyntaxController {
         ? sameSyntaxRange(range, visibleRange)
         : syntaxRangesIntersect(range, visibleRange))
     const copyEligible = source === 'visible' || (source === 'prefetch' && intersectsVisible)
+    const ownsProjectedPaint =
+      this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens
     const canOwnRanges =
       !this.#highlighterSession &&
       (this.#rangeTokenOwner?.store === this.#currentTokens ||
+        ownsProjectedPaint ||
         this.#currentTokens.length === 0 ||
         (range.startIndex === 0 && range.endIndex >= snapshot.length))
+    const setRangeTokenOwner = (store: EditorTokenStore): void => {
+      this.#rangeTokenOwner = canOwnRanges ? { store, snapshot } : null
+      if (canOwnRanges) {
+        this.#projectedRangeTokens = null
+        this.#awaitingProjectedEditTokens = false
+      }
+    }
 
     const makeEntry = (
       tokenOwnedRanges: readonly EditorSyntaxRange[],
@@ -3106,11 +3156,11 @@ export class EditorSyntaxController {
 
       if (!this.#highlighterSession) {
         const nextTokens =
-          nextEntries.length === 1 && canOwnRanges && this.#currentTokens.length === 0
+          nextEntries.length === 1 && canOwnRanges && !isEmptyRange
             ? incomingTokens
             : mergeTokensOnStrips(this.#currentTokens, incomingTokens, owned)
         this.#currentTokens = nextTokens
-        this.#rangeTokenOwner = canOwnRanges ? { store: nextTokens, snapshot } : null
+        setRangeTokenOwner(nextTokens)
 
         if (this.#copyOwner !== 'external') {
           const baseCopyTokens =
@@ -3175,7 +3225,7 @@ export class EditorSyntaxController {
             ? incomingTokens
             : mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
-        this.#rangeTokenOwner = canOwnRanges ? { store: nextTokens, snapshot } : null
+        setRangeTokenOwner(nextTokens)
 
         if (this.#copyOwner !== 'external') {
           const baseCopyTokens =
@@ -3241,7 +3291,7 @@ export class EditorSyntaxController {
             ? incomingTokens
             : mergeTokensOnStrips(baseTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
-        this.#rangeTokenOwner = canOwnRanges ? { store: nextTokens, snapshot } : null
+        setRangeTokenOwner(nextTokens)
 
         if (this.#copyOwner !== 'external') {
           let copyStoreChanged = false
@@ -3320,7 +3370,7 @@ export class EditorSyntaxController {
       if (!this.#highlighterSession) {
         const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
-        this.#rangeTokenOwner = canOwnRanges ? { store: nextTokens, snapshot } : null
+        setRangeTokenOwner(nextTokens)
       }
       return {
         admitted: true,
@@ -3341,7 +3391,7 @@ export class EditorSyntaxController {
     if (!this.#highlighterSession) {
       const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
       this.#currentTokens = nextTokens
-      this.#rangeTokenOwner = canOwnRanges ? { store: nextTokens, snapshot } : null
+      setRangeTokenOwner(nextTokens)
     }
     return {
       admitted: true,
@@ -3831,6 +3881,8 @@ export class EditorSyntaxController {
       }
       this.#currentTokens = nextTokens
       this.#rangeTokenOwner = snapshot ? { store: nextTokens, snapshot } : null
+      this.#projectedRangeTokens = null
+      this.#awaitingProjectedEditTokens = false
       if (this.#copyOwner !== 'external') {
         const nextCopyTokens = this.#rebuildRangeCopyTokens(promotedEntries, nextTokens)
         this.#rangeCopyTokens = nextCopyTokens
@@ -3971,6 +4023,8 @@ export class EditorSyntaxController {
     this.#acceptedContentVersion = null
     this.#acceptedParseGeneration = null
     this.#rangeTokenOwner = null
+    this.#projectedRangeTokens = null
+    this.#awaitingProjectedEditTokens = false
     this.rangeCopyOwner = null
     this.#rangeCopyTokens = EditorTokenStore.empty()
     if (this.#copyOwner === 'range') this.#copyOwner = 'none'

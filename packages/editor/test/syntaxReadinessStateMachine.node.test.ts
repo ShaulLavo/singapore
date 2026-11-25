@@ -3113,5 +3113,93 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('settles ready in full mode when canQueryRange flips false while the first viewport query is held', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(120))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'lose-range-during-first-viewport',
+      })
+      let allowRange = true
+      let resolveViewport: ((result: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(
+        async (_range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+          new Promise<EditorSyntaxResult>((resolve) => {
+            resolveViewport = resolve
+          }),
+      )
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query, { canQueryRange: () => allowRange }),
+        { startIndex: 0, endIndex: 20 },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveViewport).not.toBeNull())
+
+        allowRange = false
+        resolveViewport!(answerFor({ startIndex: 0, endIndex: 20 }))
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.renderDataReady).toBe(true)
+        expect(view.syntax.initialHighlightStatus).toBe('painted')
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('reclaims range token ownership and bounds painted and copy tokens across 40 prefetches and scrolls after an invalidating edit', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(1000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'post-edit-token-compaction',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange) => answerFor(range))
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 20,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.tokens.length).toBe(1)
+
+        // Edit inside [0, 20), projecting tokens through the edit just like Editor does.
+        const change = typeText(view, buffer, { from: 5, to: 5, text: '!' })
+        view.syntax.refresh(1, change, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.tokens.length).toBe(1)
+
+        // 40 disjoint off-screen prefetches must not grow painted tokens past the retained frame.
+        for (let index = 1; index <= 40; index += 1) {
+          const startIndex = index * 40
+          view.syntax.prefetchVisibleRange(
+            1,
+            { startIndex, endIndex: startIndex + 20 },
+            { delayMs: 0 },
+          )
+          await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2 + index))
+        }
+        await settle()
+        expect(view.syntax.tokens.length).toBe(1)
+        expect(view.syntax.copyTokens.length).toBe(1)
+
+        // Scrolling through 40 disjoint ranges must compact both painted and copy stores.
+        const baseCalls = query.mock.calls.length
+        for (let index = 1; index <= 40; index += 1) {
+          const startIndex = index * 40
+          view.setRange({ startIndex, endIndex: startIndex + 20 })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+          await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(baseCalls + index))
+          await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        }
+        expect(view.syntax.tokens.length).toBe(1)
+        expect(view.syntax.copyTokens.length).toBe(1)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
