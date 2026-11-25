@@ -35,8 +35,8 @@ export type LspStdio = {
 
 /**
  * LSP over a server process's standard streams, for a host that holds the process: hand its stdout
- * to `stdout`, pipe `stdin` into it, and call `exited` when it is gone. The loss is reported only
- * then, so a reconnect never starts a second server beside one that is still stopping.
+ * to `stdout`, pipe `stdin` into it, and call `exited` when it is gone. A server that failed or
+ * exited is reported lost only then, so its replacement does not start while it is still stopping.
  */
 export const createStdioLspTransport = (options: LspStdioOptions): LspStdio => {
   const transport = new StdioLspTransport(options)

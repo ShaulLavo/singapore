@@ -83,13 +83,15 @@ const plugin = createLanguageServerAdapterPlugin({
   rootUri: pathToFileUri('/project'),
   createTransport: connectServer,
   reconnect: { delaysMs: [250, 1000, 4000] },
-  documentSync: { uriForDocument: (snapshot) => pathToFileUri(snapshot.documentId ?? '') },
+  documentSync: {
+    uriForDocument: (snapshot) => (snapshot.documentId ? pathToFileUri(snapshot.documentId) : null),
+  },
 })
 ```
 
 `startServer` is yours. It pipes `stdin` into the process and calls `onStdout` with each chunk the process writes.
 
-- Call `exited` once the process and everything it started are gone, with the reason it ended. That is when the connection learns of the loss, so `reconnect` never starts a second server beside one that is still stopping. The new server receives `initialize` and every open document.
+- Call `exited` once the process and everything it started are gone, with the reason it ended. That is when the connection learns that a server failed or exited, so its replacement does not start while it is still stopping. The new server receives `initialize` and every open document.
 - `stop` is called at most once: when the connection is disposed, when the server writes bytes that are not a frame, sends a message over `maxMessageBytes`, stops reading its stdin until `maxPendingStdinBytes` are waiting, or closes its stdin.
 - Keep the server's stderr away from `stdout`. A stray log line there is a protocol failure, reported as an `LspFramingError` that quotes it.
 
