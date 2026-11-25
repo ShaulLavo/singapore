@@ -224,7 +224,7 @@
     },
     "packages/lsp": {
       "name": "@singapore-editor/lsp",
-      "version": "0.2.12",
+      "version": "0.2.13",
       "dependencies": {
         "vscode-languageserver-protocol": "^3.18.4",
       },
@@ -239,7 +239,7 @@
     },
     "packages/lsp-plugin": {
       "name": "@singapore-editor/lsp-plugin",
-      "version": "0.2.15",
+      "version": "0.2.16",
       "dependencies": {
         "@singapore-editor/lsp": "workspace:*",
         "@singapore-editor/plugin-ui": "workspace:*",
@@ -508,7 +508,7 @@
     },
     "packages/typescript-lsp": {
       "name": "@singapore-editor/typescript-lsp",
-      "version": "0.2.15",
+      "version": "0.2.16",
       "dependencies": {
         "@singapore-editor/lsp": "workspace:*",
         "@singapore-editor/lsp-plugin": "workspace:*",
