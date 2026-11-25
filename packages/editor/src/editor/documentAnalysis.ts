@@ -41,7 +41,13 @@ import {
   type DocumentRead,
   type DocumentContributionScope,
 } from './documentDelivery'
-import { EditorWorkScheduler, type EditorScheduledWorkHandle } from './workScheduler'
+import {
+  EditorWorkScheduler,
+  type EditorScheduledWorkHandle,
+  type EditorScheduleWorkOptions,
+  type EditorWorkSchedulerLike,
+  type EditorWorkTaskClass,
+} from './workScheduler'
 import type { DocumentSyncPoint } from './editChain'
 import {
   bindDocumentOperation,
@@ -351,7 +357,7 @@ export class AnalysisEntry<T> {
     readonly session: AnalysisSession<T>,
     readonly delivery: DocumentDelivery,
     readonly sourceScope: DocumentContributionScope,
-    readonly scheduler: EditorWorkScheduler,
+    readonly scheduler: EditorWorkSchedulerLike,
     runtimeSessionId: string,
     readonly retention: RetentionChanges,
     private readonly scheduling: 'requested' | 'ordered' | 'pinned' = 'requested',
@@ -608,12 +614,16 @@ export class AnalysisEntry<T> {
     return completion
   }
 
+  protected workTaskClass(): EditorWorkTaskClass {
+    return 'background-derived'
+  }
+
   private schedulePending(): void {
     if (this.running || !this.pending || this.cancellation.signal.aborted) return
     if (this.scheduling !== 'ordered' && this.requests === 0) return
     this.scheduler.schedule({
       key: this.runtimeSessionId,
-      taskClass: 'background-derived',
+      taskClass: this.workTaskClass(),
       defer: true,
       run: () => this.runPending(),
     })
@@ -900,7 +910,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     readonly structuralSession: EditorSyntaxRuntime,
     delivery: DocumentDelivery,
     sourceScope: DocumentContributionScope,
-    scheduler: EditorWorkScheduler,
+    scheduler: EditorWorkSchedulerLike,
     runtimeSessionId: string,
     retention: RetentionChanges,
     scheduling: 'requested' | 'ordered' | 'pinned' = 'ordered',
@@ -915,6 +925,10 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       retention,
       scheduling,
     )
+  }
+
+  protected override workTaskClass(): EditorWorkTaskClass {
+    return 'viewport-derived'
   }
 
   canQueryRange(): boolean {
@@ -1628,7 +1642,7 @@ export class HighlighterEntry extends AnalysisEntry<EditorHighlightResult> {
     readonly highlighterSession: EditorHighlighterRuntime,
     delivery: DocumentDelivery,
     sourceScope: DocumentContributionScope,
-    scheduler: EditorWorkScheduler,
+    scheduler: EditorWorkSchedulerLike,
     runtimeSessionId: string,
     retention: RetentionChanges,
     scheduling: 'requested' | 'ordered' | 'pinned' = 'ordered',
@@ -1652,6 +1666,10 @@ export class HighlighterEntry extends AnalysisEntry<EditorHighlightResult> {
       this.themes.fire()
     })
   }
+  protected override workTaskClass(): EditorWorkTaskClass {
+    return 'viewport-derived'
+  }
+
   override read(): HighlighterAnalysisRead {
     if (!themeCohortIsCurrent(this.cohort)) {
       this.highlighter.invalidateTheme()
@@ -1704,8 +1722,219 @@ export class HighlighterEntry extends AnalysisEntry<EditorHighlightResult> {
   }
 }
 
+type DelegatedDocumentTask = {
+  readonly key: string
+  readonly options: EditorScheduleWorkOptions<unknown>
+  readonly scheduledAt: number
+  scheduler: EditorWorkScheduler
+  handle: EditorScheduledWorkHandle | null
+  started: boolean
+  cancelled: boolean
+}
+
+/**
+ * Shares live attached editors' work schedulers for a document's analysis without tying the shared
+ * analysis lifetime to any single view's scheduler. When a view detaches while sibling views (or
+ * explicit analysis ownership) remain live, pending tasks on the departing scheduler migrate onto
+ * a surviving view's scheduler (or a lazy fallback scheduler) before the departing editor disposes.
+ */
+class DelegatingDocumentWorkScheduler implements EditorWorkSchedulerLike {
+  readonly #borrowed: EditorWorkScheduler[] = []
+  #fallback: EditorWorkScheduler | null = null
+  readonly #active = new Map<string, DelegatedDocumentTask>()
+  #disposed = false
+
+  addScheduler(scheduler: EditorWorkScheduler): void {
+    if (this.#disposed) return
+    this.#borrowed.push(scheduler)
+  }
+
+  removeScheduler(scheduler: EditorWorkScheduler): void {
+    const index = this.#borrowed.indexOf(scheduler)
+    if (index === -1) return
+    this.#borrowed.splice(index, 1)
+    if (this.#disposed || this.#borrowed.includes(scheduler)) return
+
+    for (const task of [...this.#active.values()]) {
+      if (task.scheduler !== scheduler) continue
+      if (task.cancelled) {
+        this.#active.delete(task.key)
+        continue
+      }
+      if (task.handle !== null && !task.handle.isActive()) {
+        this.#active.delete(task.key)
+        continue
+      }
+      if (task.started) {
+        // Keep tracking in-flight tasks so final disposal still cancels them on the scheduler
+        // that started them (important when the departing view borrowed a host scheduler).
+        continue
+      }
+      // Cancel on the departing scheduler without firing the caller's cancel callback, then
+      // re-schedule onto a surviving scheduler so sibling views never lose pending analysis work.
+      if (task.handle !== null) {
+        task.handle.cancel()
+      } else {
+        // `removeScheduler` may be re-entered synchronously from `scheduler`'s `scheduled` event
+        // before `schedule()` has returned `handle`; cancel directly by key on `scheduler`.
+        scheduler.cancel(task.key, 'migrated')
+      }
+      if (this.#disposed || task.cancelled || this.#active.get(task.key) !== task) continue
+      const next = this.#targetScheduler()
+      const elapsed = Math.max(0, (globalThis.performance?.now() ?? Date.now()) - task.scheduledAt)
+      const originalDelay =
+        task.options.delayMs && task.options.delayMs > 0 ? task.options.delayMs : 0
+      const remainingDelay = originalDelay > 0 ? Math.max(0, originalDelay - elapsed) : 0
+      task.scheduler = next
+      task.handle = null
+      const migratedHandle = this.#scheduleOnTarget(next, task, {
+        ...task.options,
+        delayMs: remainingDelay,
+        defer: remainingDelay === 0 ? (task.options.defer ?? true) : task.options.defer,
+      })
+      if (task.scheduler === next) {
+        task.handle = migratedHandle
+        if (!migratedHandle.isActive() && this.#active.get(task.key) === task) {
+          this.#active.delete(task.key)
+        }
+      }
+    }
+  }
+
+  schedule<T>(options: EditorScheduleWorkOptions<T>): EditorScheduledWorkHandle {
+    if (this.#disposed) {
+      const controller = new AbortController()
+      controller.abort('scheduler-disposed')
+      return {
+        key: options.key,
+        token: -1,
+        signal: controller.signal,
+        cancel: () => undefined,
+        isActive: () => false,
+      }
+    }
+
+    const existing = this.#active.get(options.key)
+    if (
+      existing &&
+      options.replace === false &&
+      (existing.handle?.isActive() ?? !existing.cancelled)
+    ) {
+      return this.#proxyHandle(existing)
+    }
+    if (options.replace !== false && existing) {
+      this.cancel(options.key, 'replaced')
+    }
+
+    const target = this.#targetScheduler()
+    const task: DelegatedDocumentTask = {
+      key: options.key,
+      options: options as EditorScheduleWorkOptions<unknown>,
+      scheduledAt: globalThis.performance?.now() ?? Date.now(),
+      scheduler: target,
+      handle: null,
+      started: false,
+      cancelled: false,
+    }
+    this.#active.set(options.key, task)
+    const handle = this.#scheduleOnTarget(target, task, task.options)
+    if (task.scheduler === target) {
+      task.handle = handle
+      if (!handle.isActive() && this.#active.get(options.key) === task) {
+        this.#active.delete(options.key)
+      }
+    }
+    return this.#proxyHandle(task)
+  }
+
+  cancel(key: string, reason = 'cancelled'): void {
+    const task = this.#active.get(key)
+    if (!task) return
+    task.cancelled = true
+    this.#active.delete(key)
+    task.scheduler.cancel(key, reason)
+  }
+
+  dispose(): void {
+    if (this.#disposed) return
+    this.#disposed = true
+    for (const task of [...this.#active.values()]) {
+      task.cancelled = true
+      this.#active.delete(task.key)
+      task.scheduler.cancel(task.key, 'disposed')
+    }
+    this.#borrowed.length = 0
+    this.#fallback?.dispose()
+    this.#fallback = null
+  }
+
+  #targetScheduler(): EditorWorkScheduler {
+    return this.#borrowed[0] ?? (this.#fallback ??= new EditorWorkScheduler())
+  }
+
+  #scheduleOnTarget(
+    target: EditorWorkScheduler,
+    task: DelegatedDocumentTask,
+    options: EditorScheduleWorkOptions<unknown>,
+  ): EditorScheduledWorkHandle {
+    return target.schedule({
+      ...options,
+      run: (context) => {
+        if (task.scheduler !== target || this.#active.get(task.key) !== task || task.cancelled) {
+          return undefined
+        }
+        task.started = true
+        return options.run(context)
+      },
+      apply: (result, context) => {
+        if (task.scheduler !== target) return
+        if (this.#active.get(task.key) === task) this.#active.delete(task.key)
+        options.apply?.(result, context)
+      },
+      fail: (error, context) => {
+        if (task.scheduler !== target) return
+        if (this.#active.get(task.key) === task) this.#active.delete(task.key)
+        options.fail?.(error, context)
+      },
+      cancel: () => {
+        if (!task.cancelled) return
+        options.cancel?.()
+      },
+    })
+  }
+
+  #proxyHandle(task: DelegatedDocumentTask): EditorScheduledWorkHandle {
+    let fallbackSignal: AbortSignal | null = null
+    return {
+      key: task.key,
+      get token() {
+        return task.handle?.token ?? -1
+      },
+      get signal() {
+        if (task.handle) return task.handle.signal
+        if (!fallbackSignal) {
+          const controller = new AbortController()
+          if (task.cancelled) controller.abort('cancelled')
+          fallbackSignal = controller.signal
+        }
+        return fallbackSignal
+      },
+      cancel: () => {
+        if (task.cancelled) return
+        task.cancelled = true
+        if (this.#active.get(task.key) === task) this.#active.delete(task.key)
+        if (task.handle) task.handle.cancel()
+        else task.scheduler.cancel(task.key, 'handle-cancelled')
+      },
+      isActive: () =>
+        !task.cancelled && this.#active.get(task.key) === task && (task.handle?.isActive() ?? true),
+    }
+  }
+}
+
 type AnalysisOwner = {
   readonly analysis: EditorDocumentAnalysis
+  readonly scheduler: DelegatingDocumentWorkScheduler
   explicit: boolean
   views: number
 }
@@ -1714,26 +1943,34 @@ const analysisOwners = new WeakMap<EditorTextBuffer, AnalysisOwner>()
 export function createEditorDocumentAnalysis(options: {
   readonly buffer: EditorTextBuffer
   readonly documentId: string
+  readonly workScheduler?: EditorWorkScheduler
 }): EditorDocumentAnalysis {
   const existing = analysisOwners.get(options.buffer)
   if (existing) {
     existing.explicit = true
+    if (options.workScheduler) existing.scheduler.addScheduler(options.workScheduler)
     return existing.analysis
   }
-  const analysis = createAnalysis(options)
-  analysisOwners.set(options.buffer, { analysis, explicit: true, views: 0 })
+  const scheduler = new DelegatingDocumentWorkScheduler()
+  if (options.workScheduler) scheduler.addScheduler(options.workScheduler)
+  const analysis = createAnalysis(options, scheduler)
+  analysisOwners.set(options.buffer, { analysis, scheduler, explicit: true, views: 0 })
   return analysis
 }
 
 export function acquireEditorDocumentAnalysis(options: {
   readonly buffer: EditorTextBuffer
   readonly documentId: string
+  readonly workScheduler?: EditorWorkScheduler
 }): { readonly analysis: EditorDocumentAnalysis; dispose(): void } {
   let owner = analysisOwners.get(options.buffer)
   if (!owner) {
-    owner = { analysis: createAnalysis(options), explicit: false, views: 0 }
+    const scheduler = new DelegatingDocumentWorkScheduler()
+    owner = { analysis: createAnalysis(options, scheduler), scheduler, explicit: false, views: 0 }
     analysisOwners.set(options.buffer, owner)
   }
+  const attachedScheduler = options.workScheduler
+  if (attachedScheduler) owner.scheduler.addScheduler(attachedScheduler)
   owner.views++
   const retained = owner
   let disposed = false
@@ -1743,18 +1980,24 @@ export function acquireEditorDocumentAnalysis(options: {
       if (disposed) return
       disposed = true
       retained.views--
-      if (!retained.explicit && retained.views === 0) retained.analysis.dispose()
+      if (!retained.explicit && retained.views === 0) {
+        retained.analysis.dispose()
+      } else if (attachedScheduler) {
+        retained.scheduler.removeScheduler(attachedScheduler)
+      }
     },
   }
 }
 
-function createAnalysis(options: {
-  readonly buffer: EditorTextBuffer
-  readonly documentId: string
-}): EditorDocumentAnalysis {
+function createAnalysis(
+  options: {
+    readonly buffer: EditorTextBuffer
+    readonly documentId: string
+  },
+  scheduler: DelegatingDocumentWorkScheduler,
+): EditorDocumentAnalysis {
   const { buffer, documentId } = options
   const delivery = new DocumentDelivery(buffer, documentId)
-  const scheduler = new EditorWorkScheduler()
   const retention = new RetentionChanges()
   const lifecycle = new AbortController()
   const entries = new Set<ContributionEntry<unknown>>()

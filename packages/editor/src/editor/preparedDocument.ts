@@ -19,7 +19,7 @@ import { IndentationFoldIndex } from './indentationFoldIndex'
 import { guessedTabSize } from './indentationGuess'
 import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
 import { fallbackFoldReason, installEditorSyntaxController } from './syntaxController'
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from './workScheduler'
 
 export type EditorPreparedTagValue = string | number | boolean | null
 
@@ -123,6 +123,7 @@ export type CreateEditorPreparedDocumentOptions = {
   readonly configuredTabSize: number
   readonly tabSizePolicy: EditorPreparedTabSizePolicy
   readonly documentConfigurationTag: readonly EditorPreparedTagValue[]
+  readonly workScheduler?: EditorWorkScheduler
 }
 
 export type EditorPreparedTabSizePolicy = 'detect-indentation' | 'fixed'
@@ -168,6 +169,7 @@ export function createEditorPreparedDocument(
         }),
     options.documentId,
     () => preparedFallbackSelection(options.languageId, structural),
+    options.workScheduler,
   )
 
   const dispose = (): void => {
@@ -276,7 +278,9 @@ function preparedFallbackSelection(
 }
 
 class PreparedFallbackIndex {
-  readonly #work = new EditorWorkScheduler()
+  readonly #work: EditorWorkScheduler
+  readonly #ownsWork: boolean
+  readonly #workKey: string
   private disposed = false
   #resolveReady: (ready: boolean) => void = () => undefined
   readonly ready = new Promise<boolean>((resolve) => {
@@ -287,7 +291,13 @@ class PreparedFallbackIndex {
     private index: IndentationFoldIndex | null,
     private readonly documentId: string,
     private readonly selection: () => ReturnType<typeof preparedFallbackSelection>,
+    scheduler?: EditorWorkScheduler,
   ) {
+    this.#work = scheduler ?? new EditorWorkScheduler()
+    this.#ownsWork = !scheduler
+    this.#workKey = scheduler
+      ? `editor.prepared.fallbackFolds:${nextWorkSchedulerScopeId(scheduler)}`
+      : 'editor.prepared.fallbackFolds'
     if (!index) this.#resolveReady(false)
     this.advance()
   }
@@ -298,14 +308,14 @@ class PreparedFallbackIndex {
 
   pause(): void {
     this.#resolveReady(false)
-    this.#work.cancel('editor.prepared.fallbackFolds')
+    this.#work.cancel(this.#workKey)
     if (!this.index?.ready) this.report('pending')
   }
 
   resume(): void {
     if (this.disposed || !this.index || this.index.ready) return
     this.#work.schedule({
-      key: 'editor.prepared.fallbackFolds',
+      key: this.#workKey,
       taskClass: 'background-derived',
       defer: true,
       run: () => this.step(),
@@ -327,7 +337,8 @@ class PreparedFallbackIndex {
     this.#resolveReady(false)
     if (this.index && !this.index.ready) this.report('cancelled')
     this.disposed = true
-    this.#work.dispose()
+    this.#work.cancel(this.#workKey)
+    if (this.#ownsWork) this.#work.dispose()
     this.index = null
   }
 

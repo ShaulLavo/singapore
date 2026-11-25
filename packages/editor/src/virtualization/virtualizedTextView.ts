@@ -400,6 +400,7 @@ export class VirtualizedTextView {
     const tabSize = normalizeTabSize(options.tabSize)
     const virtualizer = new FixedRowVirtualizer({
       ...createVirtualizerOptions(rowHeight, overscan, rowGap, scrollMode, options.scrollPastEnd),
+      scheduler: options.workScheduler,
     })
     const initialTextSnapshot = createStringTextSnapshot('')
     const initialInjectedTextRows = options.injectedTextRows ?? []

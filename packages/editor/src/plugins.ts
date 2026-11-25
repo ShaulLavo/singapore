@@ -1,6 +1,7 @@
 import { completeDocumentCleanup } from './editor/documentCleanup'
 import type { EditorKeymapNodeOptions } from './editor/hotkeys'
 import type { EditorDocumentContributions } from './editor/documentAnalysis'
+import type { EditorWorkScheduler } from './editor/workScheduler'
 import type { EditorRowPresentation } from './rowPresentation'
 import type { EditorPointHit, EditorMarkerHit } from './pointQueries'
 import type { TextContent } from './textContent'
@@ -559,6 +560,8 @@ export type EditorViewContributionContext = {
   readonly viewportOverlayElement: HTMLDivElement
   /** Unique per editor, so two editors' CSS highlights never share a registry name. */
   readonly highlightPrefix: string
+  /** Shared scheduler for this editor's deferred and background work. */
+  readonly workScheduler?: EditorWorkScheduler
   hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
   getDocumentContributions(): EditorDocumentContributions | null

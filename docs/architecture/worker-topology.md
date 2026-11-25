@@ -79,6 +79,11 @@ Disposal and restart:
   language/source accounting, stores `lastError`, and leaves lifecycle `crashed`.
 - The next request on the same owner creates a new worker generation and runs `init` again.
 - Callers must reissue failed parse/query work. The owner does not replay failed requests.
+- `createTreeSitterLanguagePlugin` shares one default `TreeSitterWorkerOwner` across active editors
+  while at least one editor context retains it. When the final editor context and language
+  registrations release, a cancellable 5 s idle grace timer terminates the worker and clears the
+  `globalThis` slot (or immediately via `flushDefaultTreeSitterProvider()` when idle), so rapid SPA
+  transitions stay warm without leaking an immortal worker.
 
 The read-only slice API uses this same worker and parser engine without a document source connection. Slice views share a registration while they use the same grammar and query. Slice registrations have their own lifetime and never replace a resident editor's language registration. Grammar preparation carries no text. Each analysis request owns a bounded text string and an ephemeral parser and tree. A reply carries packed tokens, and the viewport highlighter can retain those tokens in its own bounded cache. Disposing a highlighter cancels its work, releases its query registration and clears its cache. A caller-supplied worker owner stays alive for its other views and can reuse its loaded grammars.
 

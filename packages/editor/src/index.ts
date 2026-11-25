@@ -13,6 +13,7 @@ export {
   createMergeConflictPlugin,
   createOccurrenceHighlightPlugin,
   Editor,
+  EditorWorkScheduler,
   EDITOR_BRACKET_MATCH_PLUGIN_ID,
   EDITOR_DOCUMENT_LINK_PLUGIN_ID,
   EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID,
@@ -29,6 +30,7 @@ export type {
   EditorDocumentLinkPluginOptions,
   EditorOccurrenceHighlightPluginOptions,
   EditorSuspiciousCharactersOptions,
+  EditorWorkSchedulerOptions,
   SuspiciousCharacterKind,
   SuspiciousCharacterRange,
 } from './editor'

@@ -271,7 +271,7 @@
       "file": "packages/editor/src/editor/workScheduler.ts",
       "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:97308acba5",
       "justification": "The scheduler owns this task budget deadline. Expiry checks task identity before aborting; completion, failure, cancellation, and disposal clear the budget timer.",
-      "line": 381,
+      "line": 387,
       "snippet": "work.budgetTimer = globalThis.setTimeout(() => this.timeoutWork(work), budgetMs)"
     },
     {
@@ -279,7 +279,7 @@
       "file": "packages/editor/src/editor/workScheduler.ts",
       "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:9ac9ef7b67",
       "justification": "The scheduler owns one deferred queue flush at a time, selects current tasks by priority, and drops cancelled or replaced work before starting it. Disposal clears the queue timer and queued work.",
-      "line": 246,
+      "line": 248,
       "snippet": "this.queueTimer = globalThis.setTimeout(() => this.flushQueuedWork(), 0)"
     },
     {
@@ -287,7 +287,7 @@
       "file": "packages/editor/src/editor/workScheduler.ts",
       "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:b45245407c",
       "justification": "The scheduler owns delayed task starts and clamps repeated scheduling to the requested maximum delay. Cancellation and disposal clear the handle; task identity and stale-result checks guard execution and application.",
-      "line": 195,
+      "line": 197,
       "snippet": "work.timer = globalThis.setTimeout(() => this.start(work), delayMs)"
     },
     {
@@ -335,7 +335,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 2046,
+      "line": 2047,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -343,7 +343,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 2055,
+      "line": 2056,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -447,7 +447,7 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:requestAnimationFrame:cac4e5564e",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 534,
+      "line": 535,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -455,7 +455,7 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:setTimeout:32fb906cca",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 535,
+      "line": 536,
       "snippet": "return setTimeout(callback, 16) as unknown as number"
     },
     {
@@ -537,6 +537,14 @@
       "justification": "Defers delivery until the mount survives React's synchronous StrictMode replay; the incarnation guard cancels disposed mounts, and no editor work is scheduled.",
       "line": 579,
       "snippet": "queueMicrotask(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/tree-sitter/src/index.ts",
+      "id": "packages/tree-sitter/src/index.ts:setTimeout:ec2643b7b0",
+      "justification": "Keeps the shared default Tree-sitter worker warm across brief SPA route transitions after the final editor context and language registrations release. Re-acquiring cancels the timer, and disposal rechecks active context and language counts plus global registration identity before terminating the worker.",
+      "line": 380,
+      "snippet": "const timer = setTimeout(() => {"
     },
     {
       "api": "setTimeout",

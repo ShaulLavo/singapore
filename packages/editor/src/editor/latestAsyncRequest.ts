@@ -1,5 +1,6 @@
 import {
   EditorWorkScheduler,
+  nextWorkSchedulerScopeId,
   type EditorScheduledWorkHandle,
   type EditorWorkPriority,
   type EditorWorkTags,
@@ -11,6 +12,7 @@ export type LatestAsyncRequestOptions<T> = {
   readonly delayMs?: number
   readonly maxDelayMs?: number
   readonly budgetMs?: number
+  readonly defer?: boolean
   readonly taskClass?: EditorWorkTaskClass
   readonly priority?: EditorWorkPriority
   readonly tags?: EditorWorkTags
@@ -43,10 +45,15 @@ export class LatestAsyncRequest<T> {
   private readonly scheduler: EditorWorkScheduler
   readonly #ownsScheduler: boolean
   private handle: EditorScheduledWorkHandle | null = null
+  #scheduleGeneration = 0
   private disposed = false
 
   constructor(options: LatestAsyncRequestControllerOptions = {}) {
-    this.key = options.key ?? 'editor.latestAsyncRequest'
+    this.key =
+      options.key ??
+      (options.scheduler
+        ? `editor.latestAsyncRequest:${nextWorkSchedulerScopeId(options.scheduler)}`
+        : 'editor.latestAsyncRequest')
     this.#taskClass = options.taskClass ?? 'background-derived'
     this.scheduler = options.scheduler ?? new EditorWorkScheduler()
     this.#ownsScheduler = !options.scheduler
@@ -62,24 +69,46 @@ export class LatestAsyncRequest<T> {
     // No explicit cancel first: scheduling the same key already replaces the
     // pending work, and cancelling would drop the burst deadline that
     // maxDelayMs relies on.
-    this.handle = this.scheduler.schedule({
+    const generation = ++this.#scheduleGeneration
+    const delayMs = normalizeDelay(options.delayMs)
+    const handle = this.scheduler.schedule({
       key: this.key,
       taskClass: options.taskClass ?? this.#taskClass,
       priority: options.priority,
-      delayMs: normalizeDelay(options.delayMs),
+      delayMs,
       maxDelayMs: normalizeDelay(options.maxDelayMs),
       budgetMs: options.budgetMs,
+      defer: delayMs === 0 && options.defer === true,
       tags: options.tags,
-      run: (context) => options.run(context.signal),
-      apply: (result, context) =>
-        this.apply(result as T, options, context.token, context.startedAt),
-      fail: (error, context) => this.fail(error, options, context.token, context.startedAt),
+      isCurrent: () => !this.disposed && this.#scheduleGeneration === generation,
+      run: (context) => {
+        if (this.disposed || this.#scheduleGeneration !== generation) {
+          return Promise.resolve(undefined as T)
+        }
+        return options.run(context.signal)
+      },
+      apply: (result, context) => {
+        if (this.disposed || this.#scheduleGeneration !== generation) return
+        this.apply(result as T, options, context.token, context.startedAt)
+      },
+      fail: (error, context) => {
+        if (this.disposed || this.#scheduleGeneration !== generation) return
+        this.fail(error, options, context.token, context.startedAt)
+      },
     })
+    if (this.disposed || this.#scheduleGeneration !== generation) {
+      handle.cancel()
+      return
+    }
+    this.handle = handle
   }
 
   public cancel(): void {
-    this.handle?.cancel()
+    this.#scheduleGeneration += 1
+    const handle = this.handle
     this.handle = null
+    handle?.cancel()
+    this.scheduler.cancel(this.key)
   }
 
   public dispose(): void {
@@ -132,13 +161,18 @@ export class SingleFlightAsyncRequest<T> {
   readonly #scheduler: EditorWorkScheduler
   readonly #ownsScheduler: boolean
   #pendingHandle: EditorScheduledWorkHandle | null = null
+  #scheduleGeneration = 0
   #inFlight: ActiveSingleFlight | null = null
   #queued: SingleFlightAsyncRequestOptions<T> | null = null
   #nextToken = 0
   #disposed = false
 
   constructor(options: LatestAsyncRequestControllerOptions = {}) {
-    this.#key = options.key ?? 'editor.singleFlightAsyncRequest'
+    this.#key =
+      options.key ??
+      (options.scheduler
+        ? `editor.singleFlightAsyncRequest:${nextWorkSchedulerScopeId(options.scheduler)}`
+        : 'editor.singleFlightAsyncRequest')
     this.#taskClass = options.taskClass ?? 'background-derived'
     this.#scheduler = options.scheduler ?? new EditorWorkScheduler()
     this.#ownsScheduler = !options.scheduler
@@ -170,6 +204,7 @@ export class SingleFlightAsyncRequest<T> {
       }
     }
 
+    const generation = ++this.#scheduleGeneration
     const delayMs = normalizeDelay(options.delayMs)
     const handle = this.#scheduler.schedule({
       key: this.#key,
@@ -178,16 +213,25 @@ export class SingleFlightAsyncRequest<T> {
       delayMs,
       defer: delayMs === 0 && options.defer === true,
       tags: options.tags,
+      isCurrent: () => !this.#disposed && this.#scheduleGeneration === generation,
       run: () => {
+        if (this.#disposed || this.#scheduleGeneration !== generation) return
         this.#launch(options)
       },
     })
+    if (this.#disposed || this.#scheduleGeneration !== generation) {
+      handle.cancel()
+      return
+    }
     this.#pendingHandle = handle.isActive() ? handle : null
   }
 
   public cancel(): void {
-    this.#pendingHandle?.cancel()
+    this.#scheduleGeneration += 1
+    const pending = this.#pendingHandle
     this.#pendingHandle = null
+    pending?.cancel()
+    this.#scheduler.cancel(this.#key)
     this.#queued = null
     const active = this.#inFlight
     if (!active) return

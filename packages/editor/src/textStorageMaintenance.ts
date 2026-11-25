@@ -1,6 +1,6 @@
 import type { PieceTableSnapshot } from '@singapore-editor/textbuffer'
 import type { StorageMaintenanceResult, maintainStorage } from './textStorageMaintainer'
-import { EditorWorkScheduler } from './editor/workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from './editor/workScheduler'
 import { recordEditorPerformanceDiagnostic } from './editor/performanceDiagnostics'
 
 const DELETED_UNITS_BEFORE_MAINTENANCE = 128 * 1024
@@ -56,13 +56,18 @@ function maintainerLoaded(loaded: Maintainer | null, error: unknown): void {
 }
 
 export class TextStorageMaintenance {
-  private readonly scheduler = new EditorWorkScheduler()
+  readonly #borrowedSchedulers: EditorWorkScheduler[] = []
+  #fallbackScheduler: EditorWorkScheduler | null = null
+  #activeScheduler: EditorWorkScheduler | null = null
+  #activeKey: string | null = null
   #job: Generator<void, StorageMaintenanceResult> | null = null
   #waitRef: WeakRef<TextStorageMaintenance> | null = null
   #runMaxSliceMs = 0
   #deletedUnits = 0
   #piecesAfterPass = 0
   #due = false
+  #scheduled = false
+  #suspended = false
   private stats: TextStorageMaintenanceStats = {
     completed: 0,
     cancelled: 0,
@@ -76,7 +81,33 @@ export class TextStorageMaintenance {
   constructor(
     private readonly snapshots: () => Iterable<PieceTableSnapshot>,
     private readonly current: () => PieceTableSnapshot,
-  ) {}
+    scheduler?: EditorWorkScheduler,
+  ) {
+    if (scheduler) this.#borrowedSchedulers.push(scheduler)
+  }
+
+  attachScheduler(scheduler: EditorWorkScheduler): () => void {
+    this.#borrowedSchedulers.push(scheduler)
+    let active = true
+    return () => {
+      if (!active) return
+      active = false
+      const index = this.#borrowedSchedulers.indexOf(scheduler)
+      if (index !== -1) this.#borrowedSchedulers.splice(index, 1)
+      if (this.#activeScheduler !== scheduler || this.#borrowedSchedulers.includes(scheduler)) {
+        return
+      }
+      const key = this.#activeKey
+      const wasScheduled = this.#scheduled
+      this.#activeScheduler = null
+      this.#activeKey = null
+      this.#scheduled = false
+      if (key) scheduler.cancel(key, 'detached')
+      if (wasScheduled && this.#due && !this.#suspended) {
+        this.schedule(QUIET_DELAY_MS)
+      }
+    }
+  }
 
   // `force` is for events that release retained snapshots without deleting text.
   request(deletedUnits: number, force = false): void {
@@ -88,6 +119,7 @@ export class TextStorageMaintenance {
     this.#due ||=
       force || this.#deletedUnits >= DELETED_UNITS_BEFORE_MAINTENANCE || this.#piecesGrew()
     if (!this.#due) return
+    this.#suspended = false
     this.schedule(QUIET_DELAY_MS)
   }
 
@@ -100,11 +132,18 @@ export class TextStorageMaintenance {
   }
 
   resume(): void {
+    this.#suspended = false
     if (this.#due && !this.#job) this.schedule(QUIET_DELAY_MS)
   }
 
   suspend(): void {
-    this.scheduler.cancel('text-storage', 'detached')
+    this.#suspended = true
+    this.#scheduled = false
+    if (this.#activeScheduler && this.#activeKey) {
+      this.#activeScheduler.cancel(this.#activeKey, 'detached')
+    }
+    this.#activeScheduler = null
+    this.#activeKey = null
     if (this.#waitRef) waiting.delete(this.#waitRef)
     this.#waitRef = null
     if (this.#job) this.stats.cancelled++
@@ -120,15 +159,40 @@ export class TextStorageMaintenance {
       this.#awaitMaintainer()
       return
     }
-    this.scheduler.schedule({
-      key: 'text-storage',
+    const target =
+      this.#borrowedSchedulers[0] ?? (this.#fallbackScheduler ??= new EditorWorkScheduler())
+    if (this.#activeScheduler && this.#activeScheduler !== target && this.#activeKey) {
+      this.#activeScheduler.cancel(this.#activeKey, 'migrated')
+      this.#activeKey = null
+    }
+    const key =
+      this.#activeScheduler === target && this.#activeKey
+        ? this.#activeKey
+        : target === this.#fallbackScheduler
+          ? 'text-storage'
+          : `text-storage:${nextWorkSchedulerScopeId(target)}`
+    this.#activeScheduler = target
+    this.#activeKey = key
+    this.#scheduled = true
+    target.schedule({
+      key,
       taskClass: 'idle-cache',
       defer: true,
       delayMs,
       maxDelayMs: MAX_DELAY_MS,
-      run: () => this.step(),
-      apply: (result) => this.settle(result),
-      fail: (error) => this.#fail(error),
+      run: () => {
+        if (this.#activeScheduler !== target || this.#activeKey !== key) return null
+        this.#scheduled = false
+        return this.step()
+      },
+      apply: (result) => {
+        if (this.#activeScheduler !== target || this.#activeKey !== key) return
+        this.settle(result)
+      },
+      fail: (error) => {
+        if (this.#activeScheduler !== target || this.#activeKey !== key) return
+        this.#fail(error)
+      },
     })
   }
 

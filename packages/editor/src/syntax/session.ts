@@ -174,15 +174,17 @@ export type EditorSyntaxSessionOptions = {
   readonly syntaxMode?: 'full' | 'range'
 }
 
-let nextRuntimeSessionId = 1
+const RUNTIME_SESSION_ID_COUNTER_KEY = Symbol.for('@singapore-editor/core/runtime-session-id')
 
 export function createEditorRuntimeSessionId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
   }
 
-  const id = nextRuntimeSessionId
-  nextRuntimeSessionId += 1
+  const state = globalThis as Record<PropertyKey, unknown>
+  const current = state[RUNTIME_SESSION_ID_COUNTER_KEY]
+  const id = typeof current === 'number' && Number.isFinite(current) ? current + 1 : 1
+  state[RUNTIME_SESSION_ID_COUNTER_KEY] = id
   return `editor-runtime-${id}`
 }
 

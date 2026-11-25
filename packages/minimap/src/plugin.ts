@@ -104,6 +104,7 @@ class MinimapContribution implements EditorViewContribution {
       onLayoutWidth: this.reserveWidth,
       reservedLane: () => this.appliedReservedWidth,
       contributions: context.getDocumentContributions(),
+      workScheduler: context.workScheduler,
     })
     this.decorationSubscription = decorations.subscribe(this.handleDecorationsChanged)
     this.wheelScrollRegistration = registerWheelScrollTarget(context, this.host.root)

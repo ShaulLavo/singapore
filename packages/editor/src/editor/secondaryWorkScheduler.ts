@@ -1,4 +1,4 @@
-import { EditorWorkScheduler } from './workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from './workScheduler'
 
 export type EditorSecondaryWorkOptions = {
   readonly key: string
@@ -16,10 +16,19 @@ type ScheduledSecondaryWork = {
 }
 
 export class EditorSecondaryWorkScheduler {
-  private readonly scheduler = new EditorWorkScheduler()
+  private readonly scheduler: EditorWorkScheduler
+  readonly #ownsScheduler: boolean
+  readonly #keyPrefix: string
   private readonly scheduled = new Map<string, ScheduledSecondaryWork>()
+  readonly #keyGenerations = new Map<string, number>()
   private nextVersion = 0
   private disposed = false
+
+  constructor(scheduler?: EditorWorkScheduler) {
+    this.scheduler = scheduler ?? new EditorWorkScheduler()
+    this.#ownsScheduler = !scheduler
+    this.#keyPrefix = scheduler ? `secondary.${nextWorkSchedulerScopeId(scheduler)}:` : ''
+  }
 
   schedule(options: EditorSecondaryWorkOptions): void {
     if (this.disposed) return
@@ -28,28 +37,42 @@ export class EditorSecondaryWorkScheduler {
     // key and carries the burst's original deadline across the replacement,
     // which is what maxDelayMs is measured from. Cancelling here would reset it
     // on every keystroke.
+    const generation = (this.#keyGenerations.get(options.key) ?? 0) + 1
+    this.#keyGenerations.set(options.key, generation)
     const version = options.version ?? this.#nextWorkVersion()
     const handle = this.scheduler.schedule({
-      key: options.key,
+      key: `${this.#keyPrefix}${options.key}`,
       taskClass: 'background-derived',
       delayMs: normalizeDelayMs(options.delayMs),
       maxDelayMs: normalizeDelayMs(options.maxDelayMs),
       defer: true,
       tags: { version },
-      isCurrent: (tags) => options.isCurrent?.(tags.version ?? version) ?? true,
-      run: options.run,
+      isCurrent: (tags) =>
+        !this.disposed &&
+        this.#keyGenerations.get(options.key) === generation &&
+        (options.isCurrent?.(tags.version ?? version) ?? true),
+      run: () => {
+        if (this.disposed || this.#keyGenerations.get(options.key) !== generation) return
+        options.run()
+      },
       apply: (_result, context) => this.#clearScheduledHandle(options.key, context.token),
       fail: (_error, context) => this.#clearScheduledHandle(options.key, context.token),
     })
+    if (this.disposed || this.#keyGenerations.get(options.key) !== generation) {
+      handle.cancel()
+      return
+    }
     this.scheduled.set(options.key, handle)
   }
 
   cancel(key: string): void {
+    this.#keyGenerations.set(key, (this.#keyGenerations.get(key) ?? 0) + 1)
     const scheduled = this.scheduled.get(key)
-    if (!scheduled) return
-
-    this.scheduled.delete(key)
-    scheduled.cancel()
+    if (scheduled) {
+      this.scheduled.delete(key)
+      scheduled.cancel()
+    }
+    this.scheduler.cancel(`${this.#keyPrefix}${key}`)
   }
 
   has(key: string): boolean {
@@ -66,8 +89,11 @@ export class EditorSecondaryWorkScheduler {
     if (this.disposed) return
 
     this.disposed = true
-    for (const key of this.scheduled.keys()) this.cancel(key)
-    this.scheduler.dispose()
+    for (const key of new Set([...this.scheduled.keys(), ...this.#keyGenerations.keys()])) {
+      this.cancel(key)
+    }
+    this.#keyGenerations.clear()
+    if (this.#ownsScheduler) this.scheduler.dispose()
   }
 
   #clearScheduledHandle(key: string, token: number): void {

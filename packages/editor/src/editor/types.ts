@@ -31,6 +31,7 @@ import type { EditorTokenInput } from '../syntax/tokenStore'
 import type { SelectionAffinity } from '../selections'
 import type { EditorPreparedDocument, EditorPreparedTagValue } from './preparedDocument'
 import type { EditorHeight } from './editorHeight'
+import type { EditorWorkScheduler } from './workScheduler'
 
 export type { EditorHeight } from './editorHeight'
 
@@ -226,6 +227,11 @@ export type EditorOptions = {
   readonly autoClosingPairs?: readonly EditorAutoClosingPair[]
   /** What typing an opener over a selection wraps it with. Unset, the auto-closing pairs. */
   readonly surroundingPairs?: readonly EditorAutoClosingPair[]
+  /**
+   * Optional shared work scheduler injected by the host. When omitted, the editor owns one
+   * `EditorWorkScheduler` shared across all of its internal subsystems and view contributions.
+   */
+  readonly workScheduler?: EditorWorkScheduler
 }
 
 export type EditorSetTextOptions = {

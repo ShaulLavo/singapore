@@ -334,6 +334,7 @@ function createFindHost(
       context.clearRangeHighlight(name)
       minimapFeature(context)?.clearDecorations(name)
     },
+    workScheduler: context.workScheduler,
   }
 }
 

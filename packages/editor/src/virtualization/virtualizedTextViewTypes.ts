@@ -15,6 +15,7 @@ import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
 import type { MeasuredText } from '../textMeasurements'
 import type { WrapBreak } from './displayProjectionTypes'
 import type { EditorSizing } from '../editor/editorHeight'
+import type { EditorWorkScheduler } from '../editor/workScheduler'
 import type { EditorTheme } from '../theme'
 
 type CaretPositionResult = {
@@ -110,6 +111,7 @@ export type VirtualizedTextViewOptions = {
   readonly inputKind?: EditorInputKind
   readonly scrollPastEnd?: boolean
   readonly onContentHeightChange?: (height: number) => void
+  readonly workScheduler?: EditorWorkScheduler
 }
 
 /**

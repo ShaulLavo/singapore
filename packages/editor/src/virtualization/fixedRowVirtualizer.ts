@@ -1,5 +1,5 @@
 import { scheduleFrame, type ScheduledFrame } from '../editor/scheduleFrame'
-import { EditorWorkScheduler } from '../editor/workScheduler'
+import { EditorWorkScheduler, nextWorkSchedulerScopeId } from '../editor/workScheduler'
 import { installNativeWheelScrollOwner } from './wheelScrollTarget'
 import { observePageViewport, readPageViewport, type PageViewportMetrics } from './pageViewport'
 import {
@@ -49,6 +49,7 @@ export type FixedRowVirtualizerOptions = {
   readonly scrollMode?: FixedRowScrollMode
   /** Room below the last row to scroll it to the top. On by default. */
   readonly scrollPastEnd?: boolean
+  readonly scheduler?: EditorWorkScheduler
 }
 
 type FixedRowScrollMode = 'virtualized' | 'static' | 'content'
@@ -169,7 +170,9 @@ export class FixedRowVirtualizer {
   #scrollHandler: (() => void) | null = null
   #scrollAnimationFrame: ScheduledFrame | null = null
   #resizeAnimationFrame: ScheduledFrame | null = null
-  readonly #trailingScrollScheduler = new EditorWorkScheduler()
+  readonly #trailingScrollScheduler: EditorWorkScheduler
+  readonly #ownsTrailingScrollScheduler: boolean
+  readonly #trailingScrollKey: string
   #pendingResizeMetrics: PendingResizeMetrics | null = null
   #itemCache = new Map<number, FixedRowVirtualItem>()
   #cachedRowHeight = DEFAULT_ROW_HEIGHT
@@ -186,6 +189,11 @@ export class FixedRowVirtualizer {
     this.options = normalizeOptions(options)
     this.#cachedRowHeight = this.options.rowHeight
     this.#cachedRowGap = this.options.rowGap
+    this.#trailingScrollScheduler = options.scheduler ?? new EditorWorkScheduler()
+    this.#ownsTrailingScrollScheduler = !options.scheduler
+    this.#trailingScrollKey = options.scheduler
+      ? `${TRAILING_SCROLL_EMIT_KEY}:${nextWorkSchedulerScopeId(options.scheduler)}`
+      : TRAILING_SCROLL_EMIT_KEY
   }
 
   /**
@@ -284,7 +292,8 @@ export class FixedRowVirtualizer {
 
   public dispose(): void {
     this.detachScrollElement()
-    this.#trailingScrollScheduler.dispose()
+    this.#cancelTrailingScrollEmit()
+    if (this.#ownsTrailingScrollScheduler) this.#trailingScrollScheduler.dispose()
     this.#changeHandler = null
     this.#itemCache.clear()
   }
@@ -421,7 +430,7 @@ export class FixedRowVirtualizer {
 
   #scheduleTrailingScrollEmit(): void {
     this.#trailingScrollScheduler.schedule({
-      key: TRAILING_SCROLL_EMIT_KEY,
+      key: this.#trailingScrollKey,
       taskClass: 'visible-render',
       delayMs: TRAILING_SCROLL_EMIT_DELAY_MS,
       run: () => undefined,
@@ -430,7 +439,7 @@ export class FixedRowVirtualizer {
   }
 
   #cancelTrailingScrollEmit(): void {
-    this.#trailingScrollScheduler.cancel(TRAILING_SCROLL_EMIT_KEY)
+    this.#trailingScrollScheduler.cancel(this.#trailingScrollKey)
   }
 
   #stableWindowWouldChange(): boolean {
@@ -1091,7 +1100,7 @@ function createVirtualItem(index: number, rowHeight: number, rowGap: number): Fi
 }
 
 type NormalizedFixedRowVirtualizerOptions = Required<
-  Omit<FixedRowVirtualizerOptions, 'rowSizes'>
+  Omit<FixedRowVirtualizerOptions, 'rowSizes' | 'scheduler'>
 > & {
   readonly rowSizes: readonly number[] | null
   readonly rowHeightIndex: RowHeightIndex | null

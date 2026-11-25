@@ -30,6 +30,11 @@ type TreeSitterInlineLanguageContribution = TreeSitterLanguageContributionMetada
 
 type TreeSitterLazyLanguageContribution = TreeSitterLanguageContributionMetadata & {
   readonly load: () => Promise<TreeSitterLanguageAssets>
+  /**
+   * Optional explicit cache key for deduplicating lazy language loaders across plugin instances.
+   * When omitted, loader identity is tracked by function reference rather than source text.
+   */
+  readonly cacheKey?: string
 }
 
 export type TreeSitterLanguageContribution =
