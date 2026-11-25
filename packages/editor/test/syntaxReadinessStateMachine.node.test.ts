@@ -6838,5 +6838,208 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('compacts superseded provisional copyTokens when a delayed complete warm reply claims part of the viewport', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(300_000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'delayed-warm-compacts-provisional-copy-tokens',
+      })
+      let resolveWarm: ((result: EditorSyntaxResult) => void) | null = null
+      let warmRange: EditorSyntaxRange | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return answerFor(range, {
+            tokens: [{ start: 0, end: 2, style: { color: 'green' } }],
+          })
+        }
+        if (
+          warmRange !== null &&
+          range.startIndex === warmRange.startIndex - 10 &&
+          range.endIndex === warmRange.startIndex + 10
+        ) {
+          const base = createEmptySyntaxResult({ requestedRanges: [range] })
+          return {
+            ...base,
+            projection: {
+              ...base.projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+            tokens: EditorTokenStore.fromTokens([
+              {
+                start: warmRange.startIndex + 5,
+                end: warmRange.startIndex + 7,
+                style: { color: 'blue' },
+              },
+            ]),
+          }
+        }
+        if (range.startIndex >= 20 && range.endIndex - range.startIndex >= 10_000) {
+          warmRange = range
+          return await new Promise<EditorSyntaxResult>((resolve) => {
+            resolveWarm = resolve
+          })
+        }
+        return answerFor(range)
+      })
+      const provider = structuralProvider(query)
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'delayed-warm-compacts-provisional-copy-tokens',
+        getCurrentSessionDocumentId: () => 'delayed-warm-compacts-provisional-copy-tokens',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'delayed-warm-compacts-provisional-copy-tokens',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveWarm).not.toBeNull())
+        expect(warmRange).not.toBeNull()
+
+        // Move viewport across the start boundary of the in-flight warm tile and receive a partial blue token.
+        currentRange = {
+          startIndex: warmRange!.startIndex - 10,
+          endIndex: warmRange!.startIndex + 10,
+        }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(
+            syntax.copyTokens
+              .toTokens()
+              .some((t) => t.start === warmRange!.startIndex + 5 && t.style.color === 'blue'),
+          ).toBe(true),
+        )
+
+        // Release the delayed complete warm reply coloring that same span red.
+        resolveWarm!(
+          answerFor(warmRange!, {
+            tokens: [
+              {
+                start: warmRange!.startIndex + 5,
+                end: warmRange!.startIndex + 7,
+                style: { color: 'red' },
+              },
+            ],
+          }),
+        )
+        await vi.waitFor(() =>
+          expect(
+            syntax.tokens
+              .toTokens()
+              .some((t) => t.start === warmRange!.startIndex + 5 && t.style.color === 'red'),
+          ).toBe(true),
+        )
+        expect(
+          syntax.copyTokens
+            .toTokens()
+            .some((t) => t.start === warmRange!.startIndex + 5 && t.style.color === 'blue'),
+        ).toBe(false)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('does not issue range queries on scroll after settling a terminal partial base degradation', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(500))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'terminal-partial-base-no-scroll-range-queries',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        return answerFor(range)
+      })
+      const provider = structuralProvider(query, {
+        canQueryRange: () => true,
+        analyze: async () => {
+          const base = createEmptySyntaxResult()
+          return {
+            ...base,
+            projection: {
+              ...base.projection,
+              analysis: {
+                kind: 'partial',
+                coveredRange: { startIndex: 0, endIndex: 20 },
+                background: {
+                  kind: 'cancelled',
+                  reason: 'budget',
+                  coveredRange: { startIndex: 0, endIndex: 20 },
+                  elapsedMs: 100,
+                  budgetMs: 50,
+                },
+              },
+            },
+          }
+        },
+      })
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'terminal-partial-base-no-scroll-range-queries',
+        getCurrentSessionDocumentId: () => 'terminal-partial-base-no-scroll-range-queries',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'terminal-partial-base-no-scroll-range-queries',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+        const callsAfterSettle = query.mock.calls.length
+
+        currentRange = { startIndex: 40, endIndex: 60 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await settle()
+        currentRange = { startIndex: 100, endIndex: 120 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await settle()
+
+        expect(syntax.status).toBe('degraded')
+        expect(query.mock.calls.length).toBe(callsAfterSettle)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

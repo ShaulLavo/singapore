@@ -1547,16 +1547,31 @@ export class EditorSyntaxController {
         this.#resetForProducedStructuralSyntax(documentVersion)
         return
       }
-      // If range capability was disabled after an earlier range-mode parse settled, scrolling to an
-      // uncached or unavailable viewport must transition cleanly to full-document publication
-      // instead of stranding the editor in `loading` or stale range degradation.
       if (
-        !this.#publishedScopeCoversViewport() ||
-        (this.#publishedScope?.kind === 'range' && this.#publishedScope.unavailable)
+        this.#canProviderQuerySyntaxRange() &&
+        this.#parseState.kind === 'parsed' &&
+        this.#parseState.mode === 'full' &&
+        this.#parseState.parseKind === 'full' &&
+        this.#parseState.contentVersion === this.#syntaxContentVersion &&
+        this.#parseState.parseGeneration === this.#parseGeneration
       ) {
-        this.#transitionRangeToFullOnCapabilityLoss(documentVersion, options.delayMs ?? 0)
+        this.#parseState = {
+          ...this.#parseState,
+          mode: 'range',
+          fullResult: null,
+        }
+      } else {
+        // If range capability was disabled after an earlier range-mode parse settled, scrolling to an
+        // uncached or unavailable viewport must transition cleanly to full-document publication
+        // instead of stranding the editor in `loading` or stale range degradation.
+        if (
+          !this.#publishedScopeCoversViewport() ||
+          (this.#publishedScope?.kind === 'range' && this.#publishedScope.unavailable)
+        ) {
+          this.#transitionRangeToFullOnCapabilityLoss(documentVersion, options.delayMs ?? 0)
+        }
+        return
       }
-      return
     }
 
     const range = options.range ?? this.options.getVisibleSyntaxRange()
@@ -3759,16 +3774,23 @@ export class EditorSyntaxController {
         }
       }
       const nextEntries: CachedSyntaxRangeEntry[] = []
+      let trimmedCopyEligible = false
       for (const existing of this.#rangeEntries) {
         if (!existing.tokensOnly) {
           nextEntries.push(existing)
           continue
         }
         const nextTokenOwned = subtractSyntaxRanges(existing.tokenOwnedRanges, claimable)
+        const changed =
+          nextTokenOwned.length !== existing.tokenOwnedRanges.length ||
+          nextTokenOwned.some(
+            (item, index) => !sameSyntaxRange(item, existing.tokenOwnedRanges[index]!),
+          )
+        if (changed && existing.copyEligible) trimmedCopyEligible = true
         if (nextTokenOwned.length === 0 && existing.range.endIndex > existing.range.startIndex) {
           continue
         }
-        nextEntries.push({ ...existing, tokenOwnedRanges: nextTokenOwned })
+        nextEntries.push(changed ? { ...existing, tokenOwnedRanges: nextTokenOwned } : existing)
       }
       const entry = makeEntry(claimable, claimable)
       nextEntries.push(entry)
@@ -3783,6 +3805,26 @@ export class EditorSyntaxController {
         const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
         setRangeTokenOwner(nextTokens)
+
+        if (trimmedCopyEligible && this.#copyOwner === 'range') {
+          const copyEntries = nextEntries.filter((item) => item.copyEligible)
+          const nextCopyTokens = compactSyntaxRangeTokens(
+            this.#rangeCopyTokens,
+            this.#tokenCoverage(copyEntries),
+          )
+          const currentContributor = this.rangeCopyOwner?.contributor ?? null
+          const nextContributor =
+            currentContributor && copyEntries.includes(currentContributor)
+              ? currentContributor
+              : this.#primaryCopyContributor(copyEntries)
+          this.#rangeCopyTokens = nextCopyTokens
+          return {
+            admitted: true,
+            entry,
+            copyStoreChanged: true,
+            primaryCopyContributor: nextContributor,
+          }
+        }
       }
       return {
         admitted: true,
@@ -4283,6 +4325,7 @@ export class EditorSyntaxController {
     return (
       this.#canProviderQuerySyntaxRange() &&
       this.#parseState.kind === 'parsed' &&
+      this.#parseState.mode === 'range' &&
       this.#parseState.contentVersion === this.#syntaxContentVersion &&
       this.#parseState.parseGeneration === this.#parseGeneration &&
       this.#isParseIdCurrent()
