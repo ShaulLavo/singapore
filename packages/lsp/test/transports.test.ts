@@ -184,6 +184,44 @@ describe('WebSocket LSP transport', () => {
     }
   })
 
+  it('cancels a handshake whose signal aborts while the socket is being built', async () => {
+    FakeWebSocket.instances.length = 0
+    const controller = new AbortController()
+    const reason = new Error('connection closed')
+    class AbortingWebSocket extends FakeWebSocket {
+      public constructor(url: string | URL, protocols?: string | readonly string[]) {
+        super(url, protocols)
+        controller.abort(reason)
+      }
+    }
+
+    await expect(
+      createWebSocketLspTransport('ws://localhost:3000', {
+        WebSocketCtor: AbortingWebSocket,
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(reason)
+    expect(FakeWebSocket.instances[0]!.readyState).toBe(3)
+  })
+
+  it('settles a cancelled handshake whose socket fails to close', async () => {
+    const closeFailure = new Error('socket would not close')
+    class UnclosableWebSocket extends FakeWebSocket {
+      public override close(): void {
+        throw closeFailure
+      }
+    }
+    const controller = new AbortController()
+    const promise = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: UnclosableWebSocket,
+      signal: controller.signal,
+    })
+
+    controller.abort(new Error('connection closed'))
+
+    await expect(promise).rejects.toBe(closeFailure)
+  })
+
   it('opens no socket for a signal that is already aborted', async () => {
     FakeWebSocket.instances.length = 0
     const reason = new Error('connection closed')

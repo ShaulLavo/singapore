@@ -491,6 +491,71 @@ describe('LspConnectionPool', () => {
     expect(failing.onError).toHaveBeenCalledWith(stopFailure)
   })
 
+  it('finishes disposing the pool when an error reporter throws', async () => {
+    const terminated: string[] = []
+    const reporterFailure = new Error('reporter failed')
+    const failingWorker = worker(() => {
+      throw new Error('worker would not stop')
+    })
+    pool.provider('first').acquire(
+      connectionOptions({ createTransport: createWorkerLspTransportFactory(() => failingWorker) }),
+      {
+        ...callbacks(),
+        onError: () => {
+          throw reporterFailure
+        },
+      },
+    )
+    const secondOptions = connectionOptions({
+      createTransport: createWorkerLspTransportFactory(() =>
+        worker(() => terminated.push('second')),
+      ),
+    })
+    pool.provider('second').acquire(secondOptions, callbacks())
+
+    expect(() => pool.dispose()).toThrow(reporterFailure)
+    expect(terminated).toEqual(['second'])
+
+    let restarted = 0
+    pool.provider('second').acquire(
+      connectionOptions({
+        createTransport: () => {
+          restarted += 1
+          return new FakeTransport()
+        },
+      }),
+      callbacks(),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(restarted).toBe(1)
+  })
+
+  it('gives a borrower that retries on a failed connection a new one', async () => {
+    let starts = 0
+    let retry: LspConnectionLease | null = null
+    const provider = pool.provider(KEY)
+    const options = connectionOptions({
+      createTransport: () => {
+        starts += 1
+        return new FakeTransport()
+      },
+    })
+    const failed = provider.acquire(options, {
+      ...callbacks(),
+      onStatusChange: (status) => {
+        if (status === 'error') retry ??= provider.acquire(options, callbacks())
+      },
+    })
+
+    FakeTransport.created[0]!.fail()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(retry).not.toBeNull()
+    expect(retry!.connection).not.toBe(failed.connection)
+    expect(starts).toBe(2)
+  })
+
   it('keeps waiting for an old server after a connection that was waiting for it closes', async () => {
     vi.useFakeTimers()
     const provider = pool.provider(KEY)
