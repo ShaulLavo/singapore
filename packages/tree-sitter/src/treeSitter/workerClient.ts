@@ -200,7 +200,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   >()
   private readonly activeDocumentAcks = new Map<
     string,
-    { readonly promise: Promise<void>; readonly resolve: () => void }
+    { readonly requestId: number; readonly promise: Promise<void>; readonly resolve: () => void }
   >()
   private readonly clientTasks = new Set<Promise<unknown>>()
   private readonly runtimeTasks = new Map<string, Set<Promise<unknown>>>()
@@ -791,13 +791,14 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     payload: TreeSitterParseDocumentRequest | TreeSitterEditDocumentRequest,
     signal?: AbortSignal,
   ): Promise<TreeSitterWorkerResult> {
-    let lastSuperseded: { readonly promise: Promise<void> } | null = null
+    let lastSuperseded: { readonly requestId: number; readonly promise: Promise<void> } | null =
+      null
     while (true) {
       const prior = this.activeDocumentAcks.get(payload.runtimeSessionId)
       if (!prior) break
       if (prior !== lastSuperseded) {
         lastSuperseded = prior
-        this.supersedeDocument(handle, payload.runtimeSessionId, payload.snapshotVersion)
+        this.supersedeDocument(handle, payload.runtimeSessionId, prior.requestId)
       }
       await waitForDocumentWork(prior.promise, signal)
       if (this.worker !== handle) return undefined
@@ -807,16 +808,12 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return await this.postDocumentRequest(payload, signal)
   }
 
-  private supersedeDocument(
-    handle: Worker,
-    runtimeSessionId: string,
-    snapshotVersion: number,
-  ): void {
+  private supersedeDocument(handle: Worker, runtimeSessionId: string, requestId: number): void {
     if (this.worker !== handle) return
     try {
       handle.postMessage({
         id: this.nextRequestId++,
-        payload: { type: 'supersedeDocument', runtimeSessionId, snapshotVersion },
+        payload: { type: 'supersedeDocument', runtimeSessionId, requestId },
       })
     } catch {
       // Transport errors surface when the gated document request itself is posted.
@@ -853,7 +850,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
       }
       resolveAck()
     }
-    const entry = { promise: ackPromise, resolve: finishAck }
+    const entry = { requestId: this.nextRequestId, promise: ackPromise, resolve: finishAck }
     this.activeDocumentAcks.set(payload.runtimeSessionId, entry)
     return this.postRequest(
       this.withCancellation(this.cancelPreviousDocumentRequests(payload.runtimeSessionId), payload),

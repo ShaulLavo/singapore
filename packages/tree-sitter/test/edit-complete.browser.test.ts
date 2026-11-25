@@ -371,6 +371,35 @@ browserTest(
   30_000,
 )
 
+browserTest(
+  'aborting a queued replacement parse does not invalidate the prior parsed snapshot in the worker',
+  async () => {
+    const { document, backend } = rangeDocument('queued-abort.ts', 'const answer = 1;\n')
+    const snapshot = await document.run()
+    expect(snapshot.projection.analysis?.kind).not.toBe('cancelled')
+
+    // Send a request-scoped supersedeDocument for a non-active request id (simulating a queued
+    // replacement that aborted before posting): snapshot version 1 must remain queryable.
+    const worker = (backend as unknown as { worker: Worker | null }).worker
+    expect(worker).not.toBeNull()
+    const runtimeSessionId = (document.runtime as unknown as { runtimeSessionId: string })
+      .runtimeSessionId
+    worker!.postMessage({
+      id: 999_999,
+      payload: {
+        type: 'supersedeDocument',
+        runtimeSessionId,
+        requestId: 999_998,
+      },
+    })
+    await backend.awaitIdleFence()
+
+    const ranged = await document.runtime.queryRange({ startIndex: 0, endIndex: 17 })
+    expect(ranged.projection.analysis?.kind).not.toBe('cancelled')
+    expect(tokenValues(ranged).length).toBeGreaterThan(0)
+  },
+)
+
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()))
 }

@@ -172,6 +172,105 @@ describe('syntax refresh after an edit', () => {
     }
   })
 
+  it('recovers across more than four consecutive logical-only synchronizations without exhausting retry budget', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(200))
+    const analysis = createEditorDocumentAnalysis({
+      buffer,
+      documentId: 'many-logical-syncs',
+    })
+    let holdNextQuery = false
+    let rangeCalls = 0
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: async (range: EditorSyntaxRange, signal?: AbortSignal) => {
+          rangeCalls += 1
+          if (holdNextQuery) {
+            holdNextQuery = false
+            await new Promise<void>((_resolve, reject) => {
+              signal?.addEventListener(
+                'abort',
+                () => reject(new DOMException('aborted by synchronize', 'AbortError')),
+                { once: true },
+              )
+            })
+          }
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            tokens: EditorTokenStore.fromTokens([
+              { start: range.startIndex, end: range.startIndex + 1, style: { color: 'green' } },
+            ]),
+          }
+        },
+      })),
+    } satisfies EditorSyntaxProvider
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 120 })
+    const session = createEditorBufferSession(buffer)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+      // Start an edit query, then interrupt recovery 6 consecutive times with logical-only
+      // synchronizations (exceeding MAX_EXTERNAL_ABORT_RECOVERIES = 4); each advances the
+      // retained parseId so the final recovery still settles to `ready`.
+      holdNextQuery = true
+      const editChange = session.applyEdits([{ from: 0, to: 0, text: 'a' }])
+      view.syntax.acceptChange(editChange)
+      view.syntax.refresh(1, editChange)
+      await vi.waitFor(() => expect(rangeCalls).toBe(2))
+
+      const firstChar = buffer.getTextSnapshot().readRange(0, 1)
+      for (let i = 0; i < 6; i += 1) {
+        holdNextQuery = i < 5
+        const callsBefore = rangeCalls
+        const committed = commitPreparedDocumentTransaction(
+          { buffer, sourceView: null },
+          prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: firstChar }], 1, null),
+          { history: { kind: 'external-barrier', groupId: 'scope' } },
+        )
+        expect(committed.status).toBe('logical-only')
+        if (committed.status !== 'logical-only') throw new Error('expected logical-only')
+        view.syntax.acceptChange(committed.change)
+        view.syntax.refresh(1, committed.change)
+        await vi.waitFor(() => expect(rangeCalls).toBeGreaterThan(callsBefore))
+      }
+
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('settles out of loading when repeated external AbortErrors exhaust the retry budget on the same retained state', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(200))
+    const analysis = createEditorDocumentAnalysis({
+      buffer,
+      documentId: 'exhausted-abort-budget',
+    })
+    let rangeCalls = 0
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: async () => {
+          rangeCalls += 1
+          throw new DOMException('repeated external abort', 'AbortError')
+        },
+      })),
+    } satisfies EditorSyntaxProvider
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 120 })
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).not.toBe('loading'))
+      expect(rangeCalls).toBeLessThanOrEqual(6)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
   it('recovers readiness when logical-only synchronize advances parseId after reply arrival but before paint-gate drain', async () => {
     const rafCallbacks: FrameRequestCallback[] = []
     const originalRaf = globalThis.requestAnimationFrame

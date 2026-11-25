@@ -357,14 +357,14 @@ type TreeSitterCloseRuntimeSessionRequest = {
 }
 
 /**
- * Advances `latestSnapshotVersions` for a session ahead of a gated `parse` or `edit` so a sliced
- * parse or query running without shared memory stops on its next yield instead of running to its
- * full budget.
+ * Marks a specific in-flight `parse` or `edit` request superseded ahead of a gated replacement so
+ * a sliced parse running without shared memory stops on its next yield without advancing
+ * `latestSnapshotVersions` before the replacement actually posts.
  */
 type TreeSitterSupersedeDocumentRequest = {
   readonly type: 'supersedeDocument'
   readonly runtimeSessionId: string
-  readonly snapshotVersion: number
+  readonly requestId: number
 }
 
 type TreeSitterRuntimeBarrierRequest = {

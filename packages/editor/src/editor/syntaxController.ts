@@ -376,6 +376,7 @@ export class EditorSyntaxController {
   #highlighterThemePending = false
   #lastInitialHighlightTerminalStatus: SettledHighlightStatus | null = 'plain'
   #externalAbortRecoveryCount = 0
+  #externalAbortRecoveryStateKey: string | null = null
   #structuralPublishToken = 0
   #pendingEditApplies: Array<{
     readonly token: number
@@ -1066,6 +1067,7 @@ export class EditorSyntaxController {
     this.#lastInitialHighlightTerminalStatus =
       this.#initialHighlightState === 'plain' ? 'plain' : null
     this.#externalAbortRecoveryCount = 0
+    this.#externalAbortRecoveryStateKey = null
     if (this.#retainedHighlighter) {
       this.refreshHighlighterTheme(false)
     }
@@ -1197,6 +1199,7 @@ export class EditorSyntaxController {
     this.#advanceInitialHighlightConfigurationGeneration()
     this.#parseGeneration += 1
     this.#externalAbortRecoveryCount = 0
+    this.#externalAbortRecoveryStateKey = null
     this.#parseState = { kind: 'plain' }
     this.#lastFrameDemand = null
     this.#initialHighlightState = 'idle'
@@ -1226,6 +1229,7 @@ export class EditorSyntaxController {
     this.disposed = true
     this.#parseGeneration += 1
     this.#externalAbortRecoveryCount = 0
+    this.#externalAbortRecoveryStateKey = null
     this.#parseState = { kind: 'plain' }
     this.#lastFrameDemand = null
     this.analysis = null
@@ -1266,6 +1270,7 @@ export class EditorSyntaxController {
 
     this.#parseGeneration += 1
     this.#externalAbortRecoveryCount = 0
+    this.#externalAbortRecoveryStateKey = null
     this.#disposeSyntaxSession()
     this.#clearSyntaxRangeCache()
     this.#currentBrackets = []
@@ -1449,6 +1454,7 @@ export class EditorSyntaxController {
     this.#syntaxContentVersion += 1
     this.#parseGeneration += 1
     this.#externalAbortRecoveryCount = 0
+    this.#externalAbortRecoveryStateKey = null
     this.#invalidatePendingEditApply()
     this.#armKeystrokePaintGate()
     this.#lastFrameDemand = null
@@ -1934,6 +1940,7 @@ export class EditorSyntaxController {
 
     this.#parseGeneration += 1
     this.#externalAbortRecoveryCount = 0
+    this.#externalAbortRecoveryStateKey = null
     this.#disposeSyntaxSession()
     const session = this.options.getSession()
     if (!session) return
@@ -2103,11 +2110,15 @@ export class EditorSyntaxController {
           error.name === 'AbortError' &&
           !requestSignal?.aborted
         ) {
-          if (!this.#publishedScopeCoversViewport() && this.#canRecoverExternalAbort(guard)) {
-            if (!this.#isParseIdCurrent()) {
-              this.#resetForProducedStructuralSyntax(guard.documentVersion)
+          if (!this.#publishedScopeCoversViewport()) {
+            if (this.#canRecoverExternalAbort(guard)) {
+              if (!this.#isParseIdCurrent()) {
+                this.#resetForProducedStructuralSyntax(guard.documentVersion)
+              } else {
+                this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
+              }
             } else {
-              this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
+              this.#handleVisibleRangeRejection(range, error, startedAt, guard)
             }
           }
           return
@@ -2335,6 +2346,11 @@ export class EditorSyntaxController {
         if (error instanceof DOMException && error.name === 'AbortError') {
           if (this.#canRecoverExternalAbort(guard)) {
             this.#refreshStructuralSyntax(guard.documentVersion, null, { delayMs: 0 }, false)
+          } else {
+            this.#settleCancelledOrTerminalPartialBase(
+              guard,
+              this.retainedSyntax?.currentParseId() ?? null,
+            )
           }
           return
         }
@@ -2427,6 +2443,8 @@ export class EditorSyntaxController {
     ) {
       if (this.#canRecoverExternalAbort(guard)) {
         this.#refreshStructuralSyntax(guard.documentVersion, null, { delayMs: 0 }, false)
+      } else {
+        this.#settleCancelledOrTerminalPartialBase(guard, this.retainedSyntax.currentParseId())
       }
       return
     }
@@ -2453,6 +2471,11 @@ export class EditorSyntaxController {
       ) {
         if (this.#canRecoverExternalAbort(pending.guard)) {
           this.#refreshStructuralSyntax(pending.guard.documentVersion, null, { delayMs: 0 }, false)
+        } else {
+          this.#settleCancelledOrTerminalPartialBase(
+            pending.guard,
+            this.retainedSyntax.currentParseId(),
+          )
         }
         return
       }
@@ -2462,7 +2485,14 @@ export class EditorSyntaxController {
 
   #canRecoverExternalAbort(guard: RequestGuard): boolean {
     if (!this.#isRequestCurrent(guard)) return false
-    if (!this.retainedSyntax || this.retainedSyntax.read().kind === 'failed') return false
+    if (!this.retainedSyntax) return false
+    const retainedState = this.retainedSyntax.read()
+    if (retainedState.kind === 'failed') return false
+    const stateKey = `${retainedState.revision}:${this.retainedSyntax.currentParseId() ?? 'pending'}`
+    if (stateKey !== this.#externalAbortRecoveryStateKey) {
+      this.#externalAbortRecoveryStateKey = stateKey
+      this.#externalAbortRecoveryCount = 0
+    }
     if (this.#externalAbortRecoveryCount >= MAX_EXTERNAL_ABORT_RECOVERIES) return false
     this.#externalAbortRecoveryCount += 1
     return true
@@ -2924,6 +2954,7 @@ export class EditorSyntaxController {
     }
 
     this.#externalAbortRecoveryCount = 0
+    this.#externalAbortRecoveryStateKey = null
     this.#applyingRenderData = true
     try {
       return this.#publishSyntaxResult(loadResult, guard, startedAt)

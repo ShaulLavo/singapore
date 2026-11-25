@@ -528,7 +528,12 @@ describe('tree-sitter worker client language registration cache', () => {
       const parse2 = client.parse(parsePayload(snapshot, 2))
       await flushMicrotasks()
       expect(parseRequests(worker)).toHaveLength(1)
-      expect(worker.messages.map((m) => m.payload.type)).toContain('supersedeDocument')
+      const supersede = worker.messages.find((m) => m.payload.type === 'supersedeDocument')
+      expect(supersede?.payload).toEqual({
+        type: 'supersedeDocument',
+        runtimeSessionId: 'runtime-doc.ts',
+        requestId: parseRequests(worker)[0]!.id,
+      })
 
       // Once parse1's stale reply arrives from the worker, parse2 posts cleanly.
       worker.resolveRequest(parseRequests(worker)[0]!, parseResult(1))
