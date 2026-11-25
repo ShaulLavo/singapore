@@ -324,15 +324,26 @@ it('reads a token that is longer than many slices once, not once per slice', asy
   }
 }, 120_000)
 
-it('yields nested worker slices without hitting the 4 ms setTimeout clamp', async () => {
+it('yields nested worker slices as macrotasks without calling setTimeout', async () => {
   const { yieldWorker } = __treeSitterWorkerInternalsForTests
-  const started = performance.now()
-  for (let slice = 0; slice < 20; slice += 1) {
-    await yieldWorker()
+  const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+  try {
+    let settled = false
+    const first = yieldWorker().then(() => {
+      settled = true
+    })
+    for (let turn = 0; turn < 100; turn += 1) await Promise.resolve()
+    expect(settled).toBe(false)
+    await first
+    expect(settled).toBe(true)
+
+    for (let slice = 0; slice < 20; slice += 1) {
+      await yieldWorker()
+    }
+    expect(timeoutSpy).not.toHaveBeenCalled()
+  } finally {
+    timeoutSpy.mockRestore()
   }
-  const elapsedMs = performance.now() - started
-  // 20 nested setTimeout(0) calls clamp slices 6..20 to >=4 ms each (>=60 ms hard browser floor).
-  expect(elapsedMs).toBeLessThan(40)
 })
 
 it('preempts a long background range query when an urgent edit arrives on the same document', async () => {
@@ -352,11 +363,9 @@ it('preempts a long background range query when an urgent edit arrives on the sa
   expect(doc.runtime.getResult().projection.analysis?.kind).toBe('full')
   queryAnswers.length = 0
 
-  // Start a full-document background range query without an AbortSignal; only worker-side slice
-  // yielding lets the incoming edit supersede and cancel it before the whole query finishes.
+  // Start a full-document background range query without an AbortSignal, then queue the edit
+  // immediately in the same turn so it arrives at the worker behind the query's first slice.
   const longQuery = doc.runtime.queryRange({ startIndex: 0, endIndex: text.length })
-  await new Promise((resolve) => setTimeout(resolve, 0))
-
   const edited = await doc.edit([{ from: 0, to: 0, text: '/* urgent */ ' }])
   await longQuery
 

@@ -280,3 +280,54 @@ test('mounting an editor with a theme measures probes once and not again on the 
     clearBrowserTextMetricsCache()
   }
 })
+
+test('styled row rewraps when a pre-loaded FontFace is added before its first ResizeObserver tick', async () => {
+  clearBrowserTextMetricsCache()
+  const family = 'Styled Preloaded Mono'
+  const fallbackFamily = 'Styled Preloaded Serif'
+  const fallback = new FontFace(fallbackFamily, `url(${serifFontUrl})`)
+  document.fonts.add(await fallback.load())
+  // Pre-load the replacement face before adding it to document.fonts, so document.fonts.status
+  // stays 'loaded' when the face is registered in the same task as the row decoration.
+  const preloaded = new FontFace(family, `url(${monoFontUrl})`)
+  await preloaded.load()
+
+  const sheet = document.createElement('style')
+  sheet.textContent = `.editor-virtualized-row.styled-preloaded-row { font-family: "${family}", "${fallbackFamily}"; font-size: 20px; }`
+  document.head.append(sheet)
+
+  const host = document.createElement('div')
+  host.style.cssText = 'display:flex;width:230px;height:260px'
+  document.body.append(host)
+  const editor = new Editor(host, {
+    fontFamily: 'monospace',
+    fontSize: 13,
+    lineHeight: 24,
+    wordWrap: true,
+  })
+  const baseScroll = host.querySelector<HTMLElement>('.editor-virtualized')!
+  try {
+    editor.setText('W'.repeat(80))
+    await frames()
+    const baseGlyphsBefore = glyphAdvancesFor(baseScroll)
+    // Decorate row 0 (creating styledRowFace + caching fallback glyph advances) and register the
+    // already-loaded FontFace in the exact same task before the first ResizeObserver tick fires.
+    editor.setRowDecorations(new Map([[0, { className: 'styled-preloaded-row' }]]))
+    const segmentsBefore = host.querySelectorAll('[data-editor-virtual-row]').length
+    expect(segmentsBefore).toBeGreaterThan(5)
+    document.fonts.add(preloaded)
+
+    await expect
+      .poll(() => host.querySelectorAll('[data-editor-virtual-row]').length)
+      .toBeLessThan(segmentsBefore)
+    // Base editor's font cache must remain intact despite the styled row invalidation.
+    expect(glyphAdvancesFor(baseScroll)).toBe(baseGlyphsBefore)
+  } finally {
+    editor.dispose()
+    host.remove()
+    sheet.remove()
+    document.fonts.delete(preloaded)
+    document.fonts.delete(fallback)
+    clearBrowserTextMetricsCache()
+  }
+})

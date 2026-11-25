@@ -1032,22 +1032,16 @@ describe('parse document reuse', () => {
   it('yields worker macrotasks via MessageChannel without using setTimeout(0)', async () => {
     const { yieldWorker } = __treeSitterWorkerInternalsForTests
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
-    const order: string[] = []
     try {
-      const channel = new MessageChannel()
-      const interleaved = new Promise<void>((resolve) => {
-        channel.port1.onmessage = () => {
-          order.push('interleaved')
-          channel.port1.close()
-          channel.port2.close()
-          resolve()
-        }
+      let settled = false
+      const first = yieldWorker().then(() => {
+        settled = true
       })
-
-      const yielded = yieldWorker().then(() => order.push('yield-1'))
-      channel.port2.postMessage(null)
-      await Promise.all([yielded, interleaved])
-      expect(order).toEqual(['yield-1', 'interleaved'])
+      // Microtasks alone must not settle a worker yield; it must return to the event loop.
+      await settleMicrotasks()
+      expect(settled).toBe(false)
+      await first
+      expect(settled).toBe(true)
 
       for (let i = 0; i < 20; i += 1) {
         await yieldWorker()

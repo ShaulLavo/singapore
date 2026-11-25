@@ -289,7 +289,6 @@ type WatchedFace = {
   glyphKey: string | null
   baseline: WatchedSize | null
   wasUnmeasured: boolean
-  fontsLoading: boolean
   readonly onChange: () => void
 }
 
@@ -362,7 +361,6 @@ function createFaceObserver(): FaceObserver | null {
         wasUnmeasured || !cacheKey
           ? null
           : (cachedBrowserTextMetrics(document, cacheKey)?.watchedSize ?? null)
-      const fontsLoading = document.fonts?.status === 'loading'
       watched.set(probe, {
         element,
         size: null,
@@ -370,7 +368,6 @@ function createFaceObserver(): FaceObserver | null {
         glyphKey,
         baseline,
         wasUnmeasured,
-        fontsLoading,
         onChange,
       })
       observer.observe(probe)
@@ -443,10 +440,8 @@ function staleFace(
   if (firstObservation) {
     const wasUnmeasured = face.wasUnmeasured
     const baseline = face.baseline
-    const fontsLoading = face.fontsLoading
     face.wasUnmeasured = false
     face.baseline = null
-    face.fontsLoading = false
     unmeasuredElements.delete(face.element)
 
     if (wasUnmeasured || styleChanged) {
@@ -466,7 +461,9 @@ function staleFace(
         invalidateGlyphKey: currentGlyphKey,
       }
     }
-    if (!fontsLoading) return null
+    // No trusted metrics baseline (e.g. a styled row face that only cached glyph advances):
+    // a pre-loaded FontFace may have been added before this first observation, so invalidate
+    // only this face's keys and notify the listener without touching any other font key.
     return {
       probe: entry.target,
       face,
