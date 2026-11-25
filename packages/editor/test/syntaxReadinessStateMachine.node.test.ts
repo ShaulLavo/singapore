@@ -3708,7 +3708,7 @@ describe('viewport syntax readiness state machine (#169)', () => {
       }
     })
 
-    it.each(['superseded', 'range-unavailable'] as const)(
+    it.each(['superseded', 'range-unavailable', 'partial'] as const)(
       'falls back to full-document mode when an in-flight scroll query settles with %s after canQueryRange flips false',
       async (outcome) => {
         const buffer = createEditorTextBuffer('a'.repeat(200))
@@ -3764,10 +3764,18 @@ describe('viewport syntax readiness state machine (#169)', () => {
                     },
                   },
                 }
-              : {
-                  ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
-                  degraded: { kind: 'range-unavailable', message: 'range-disabled' },
-                },
+              : outcome === 'partial'
+                ? {
+                    ...answerFor(scrollRange),
+                    projection: {
+                      ...answerFor(scrollRange).projection,
+                      analysis: { kind: 'partial', coveredRange: scrollRange },
+                    },
+                  }
+                : {
+                    ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
+                    degraded: { kind: 'range-unavailable', message: 'range-disabled' },
+                  },
           )
 
           await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
@@ -3779,5 +3787,150 @@ describe('viewport syntax readiness state machine (#169)', () => {
         }
       },
     )
+
+    it('keeps display tokens and copyTokens aligned with the full base when staging and adopting a prepared view after range queries are disabled', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(120))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prepared-stage-adopt-full-fallback',
+      })
+      let allowRange = true
+      const redTokens = EditorTokenStore.fromTokens([{ start: 0, end: 4, style: { color: 'red' } }])
+      const blueTokens = EditorTokenStore.fromTokens([
+        { start: 0, end: 4, style: { color: 'blue' } },
+      ])
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async () => ({
+            ...createEmptySyntaxResult(),
+            tokens: blueTokens,
+          }),
+          canQueryRange: () => allowRange,
+          queryRange: async (range: EditorSyntaxRange) => answerFor(range, { tokens: redTokens }),
+        })),
+      }
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeCaptures: false,
+        includeHighlights: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      await retained.refreshBase()
+      const preparedSlice = await retained.queryRange({ startIndex: 0, endIndex: 20 })
+
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let paintedTokens: EditorTokenStore = EditorTokenStore.empty()
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'prepared-stage-adopt-full-fallback',
+        getCurrentSessionDocumentId: () => 'prepared-stage-adopt-full-fallback',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => ({ startIndex: 0, endIndex: 20 }),
+        adoptTokens: (tokens) => {
+          paintedTokens = tokens
+        },
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: retained.runtimeSessionId,
+          provider,
+          configurationTag: [],
+          session: retained,
+          range: { startIndex: 0, endIndex: 20 },
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(preparedSlice),
+          readyResult: preparedSlice,
+          dispose: () => retained.dispose(),
+        },
+      }
+      try {
+        // Case A: range queries disabled before staging and adoption.
+        allowRange = false
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-stage-adopt-full-fallback',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        paintedTokens = syntax.stagePreparedReadyTokens(prepared)
+        syntax.adoptPreparedReadyResults(prepared)
+        expect(syntax.renderDataReady).toBe(true)
+        expect(paintedTokens.toTokens()).toEqual([{ start: 0, end: 4, style: { color: 'blue' } }])
+        expect(syntax.copyTokens.toTokens()).toEqual([
+          { start: 0, end: 4, style: { color: 'blue' } },
+        ])
+
+        // Case B: range queries disabled AFTER staging red tokens and BEFORE adoption.
+        allowRange = true
+        const retainedB = analysis.borrowStructural({
+          languageId: 'typescript',
+          includeCaptures: false,
+          includeHighlights: true,
+          syntaxMode: 'range',
+          provider,
+          configurationTag: [],
+        })!
+        const preparedB = {
+          ...prepared,
+          structural: {
+            ...prepared.structural,
+            runtimeSessionId: retainedB.runtimeSessionId,
+            session: retainedB,
+            dispose: () => retainedB.dispose(),
+          },
+        }
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-stage-adopt-full-fallback',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          preparedB,
+        )
+        paintedTokens = syntax.stagePreparedReadyTokens(preparedB)
+        expect(paintedTokens.toTokens()).toEqual([{ start: 0, end: 4, style: { color: 'red' } }])
+        allowRange = false
+        syntax.adoptPreparedReadyResults(preparedB)
+        expect(syntax.renderDataReady).toBe(true)
+        expect(paintedTokens.toTokens()).toEqual([{ start: 0, end: 4, style: { color: 'blue' } }])
+        expect(syntax.copyTokens.toTokens()).toEqual([
+          { start: 0, end: 4, style: { color: 'blue' } },
+        ])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

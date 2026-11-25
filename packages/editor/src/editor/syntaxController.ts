@@ -881,6 +881,7 @@ export class EditorSyntaxController {
       this.#acceptedCopyTokens = EditorTokenStore.empty()
       if (this.#copyOwner === 'range') this.#copyOwner = 'none'
     }
+    const previousTokens = this.#currentTokens
     this.#currentTokens = tokens
     if (current) {
       this.#copyOwner = owner
@@ -891,7 +892,7 @@ export class EditorSyntaxController {
     }
     if (this.#preparedInitialTokensInstalled) {
       this.#preparedInitialTokensInstalled = false
-      return
+      if (tokens === previousTokens) return
     }
     this.options.adoptTokens(tokens)
   }
@@ -910,15 +911,23 @@ export class EditorSyntaxController {
 
   stagePreparedReadyTokens(prepared: EditorPreparedDocumentPayload | null): EditorTokenStore {
     const highlighterResult = prepared?.highlighter?.readyResult
+    const canRange = Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
     const structuralResult = prepared?.structural?.readyResult
+      ? canRange
+        ? prepared.structural.readyResult
+        : (this.retainedSyntax?.readBaseResult() ?? prepared.structural.readyResult)
+      : undefined
     const structuralTokens = prepared?.highlighter ? undefined : structuralResult?.tokens
     const tokens = highlighterResult?.tokens ?? toEditorTokenStore(structuralTokens ?? [])
 
     this.#currentTokens = tokens
     const structural = prepared?.structural
-    const read = structural?.session.read(structural.range)
+    const read = canRange ? structural?.session.read(structural.range) : undefined
     this.#rangeTokenOwner =
-      !prepared?.highlighter && read?.kind === 'ready' && read.result === structuralResult
+      !prepared?.highlighter &&
+      canRange &&
+      read?.kind === 'ready' &&
+      read.result === structuralResult
         ? { store: tokens, snapshot: read.snapshot }
         : null
     this.#preparedInitialTokensInstalled = Boolean(highlighterResult || structuralTokens)
@@ -1921,7 +1930,7 @@ export class EditorSyntaxController {
           kind === 'visible' &&
           !this.#canProviderQuerySyntaxRange() &&
           (result.skipApply ||
-            isTerminalIncompleteSyntaxResult(result.result) ||
+            result.result.projection.analysis?.kind === 'partial' ||
             result.result.projection.analysis?.kind === 'cancelled' ||
             result.result.degraded?.kind === 'range-unavailable' ||
             !syntaxResultCoversRange(result.result, result.range)) &&
