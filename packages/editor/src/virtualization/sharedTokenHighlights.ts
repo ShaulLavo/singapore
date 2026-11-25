@@ -19,7 +19,7 @@ type SharedTokenGroup = {
 // `<style>` in `<head>` + its own registry entries means every editor mount triggers a
 // document-wide style recalc. This shares one ref-counted rule + Highlight per token
 // `styleKey` per document, so mounting an editor whose styles already exist costs nothing.
-const sharedByDocument = new WeakMap<Document, SharedTokenHighlights>()
+const sharedByDocument = new WeakMap<Document, WeakMap<HighlightRegistry, SharedTokenHighlights>>()
 let nextSharedTokenId = 0
 export const SHARED_TOKEN_HIGHLIGHT_PREFIX = 'editor-shared-token-'
 
@@ -27,13 +27,18 @@ export function getSharedTokenHighlights(
   doc: Document,
   registry: HighlightRegistry | null,
 ): SharedTokenHighlights | null {
-  if (!registry) return null
+  if (!registry || typeof Highlight !== 'function') return null
 
-  const existing = sharedByDocument.get(doc)
+  let byRegistry = sharedByDocument.get(doc)
+  if (!byRegistry) {
+    byRegistry = new WeakMap()
+    sharedByDocument.set(doc, byRegistry)
+  }
+  const existing = byRegistry.get(registry)
   if (existing) return existing
 
   const created = new SharedTokenHighlights(doc, registry)
-  sharedByDocument.set(doc, created)
+  byRegistry.set(registry, created)
   return created
 }
 

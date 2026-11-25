@@ -165,6 +165,7 @@ export default defineConfig({
             'test/highlightPaint.browser.test.ts',
             'test/markdownFencePaint.browser.test.ts',
             'test/paintOrigin.browser.test.ts',
+            'test/rowTokenPainter.browser.test.ts',
           ]),
         },
       },
@@ -297,6 +298,7 @@ export default defineConfig({
           include: [
             'test/highlightPaint.browser.test.ts',
             'test/markdownFencePaint.browser.test.ts',
+            'test/rowTokenPainter.browser.test.ts',
           ],
           browser: {
             enabled: true,

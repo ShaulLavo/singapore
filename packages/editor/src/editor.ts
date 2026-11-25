@@ -85,6 +85,7 @@ export type {
   EditorSetTextOptions,
   EditorState,
   EditorSyntaxStatus,
+  EditorTokenPainting,
   HighlightRegistry,
 } from './editor/types'
 export type { EditorCommandContext, EditorCommandId } from './editor/commands'

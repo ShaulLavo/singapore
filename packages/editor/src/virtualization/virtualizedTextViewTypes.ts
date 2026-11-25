@@ -104,6 +104,12 @@ export type VirtualizedTextViewOptions = {
   readonly textMetrics?: BrowserTextMetrics
   /** Applied before the initial font measurement so themed font rules measure once on mount. */
   readonly theme?: EditorTheme | null
+  /**
+   * How mounted rows paint syntax tokens: `'css-highlight'` uses CSS Custom Highlights, `'spans'`
+   * renders minimal inline `<span>` runs, and `'auto'` (default) uses CSS Custom Highlights for
+   * virtualized views and falls back to `'spans'` when unsupported or in large unvirtualized views.
+   */
+  readonly tokenPainting?: EditorTokenPainting
   /** Defaults to the textarea; EditContext is taken only where the engine has it. */
   readonly inputRoute?: EditorInputRoute
   /** The input's accessible name. Defaults to "Editor input". */
@@ -127,6 +133,10 @@ export type EditorWrapBreak = WrapBreak
  * where the textarea leaves some to be diffed back out of its value; only Chromium has it.
  */
 export type EditorInputRoute = 'textarea' | 'edit-context'
+
+export type RowTokenPainterKind = 'css-highlight' | 'spans'
+
+export type EditorTokenPainting = 'auto' | RowTokenPainterKind
 
 export type VirtualizedTextViewScrollMode = 'virtualized' | 'static' | 'content'
 
@@ -322,6 +332,9 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly gutterCursorLineBackgroundLaneIds: readonly string[]
   readonly mountedPaintSupport: 'replayable' | 'unreplayable-plugin-css'
   readonly coreBidiRefusal: boolean
+  readonly hasTokenSpans: boolean
+  readonly baseDomRevision: number
+  readonly tokenDomRevision: number
   readonly textRevision: number
   readonly tokenHighlightSlotId: number
   readonly chunkKey: string

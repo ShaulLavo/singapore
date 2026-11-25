@@ -364,7 +364,7 @@ export function tokenRowSignature(
 }
 
 function tokenRowBaseSignature(row: MountedVirtualizedTextRow): string {
-  return `${row.chunkKey}:${row.text.length}`
+  return `${row.chunkKey}:${row.text.length}:${row.baseDomRevision}`
 }
 
 function tokenSegmentSignature(segment: TokenRowSegment): string {

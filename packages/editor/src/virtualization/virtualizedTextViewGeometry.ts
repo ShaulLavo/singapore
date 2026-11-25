@@ -479,6 +479,7 @@ type NativeRowCache = {
   readonly styles: string
   readonly text: string
   readonly node: Text
+  readonly tokenDomRevision: number
 }
 
 const nativeRows = new WeakMap<MountedVirtualizedTextRow, NativeRowCache>()
@@ -494,26 +495,36 @@ function nativeRowCarets(
   if (view.monospace || row.inlineMapping || row.text.length >= PROPORTIONAL_INTACT_NODE_CEILING)
     return null
   if (!isSimpleRowText(row) || row.textRenderMode !== 'simple') return null
-  if (row.chunks[0]?.localStart !== 0 || row.chunks.at(-1)?.localEnd !== row.text.length)
+  const chunk = row.chunks[0]
+  if (!chunk || chunk.localStart !== 0 || row.chunks.at(-1)?.localEnd !== row.text.length)
     return null
+  const rowText = typeof row.text === 'string' ? row.text : null
+  if (rowText === null) return null
   const styles = `${row.inlineKindsClassName}:${row.rowDecorationKey}`
   const cached = nativeRows.get(row)
   if (
     cached?.glyphs === view.glyphs &&
     cached.tabSize === view.tabSize &&
     cached.styles === styles &&
-    cached.text === row.textNode.data &&
-    cached.node === row.textNode
+    cached.text === rowText &&
+    cached.node === row.textNode &&
+    cached.tokenDomRevision === row.tokenDomRevision
   )
     return cached.carets
-  const carets = createNativeCarets(row.element, row.textNode, () => rowClientRectScale(row))
+  const textParts =
+    row.hasTokenSpans || chunk.parts.length > 1 ? allTextPartsOrNull(chunk.parts) : null
+  if (row.hasTokenSpans && !textParts) return null
+  const carets = createNativeCarets(row.element, textParts ?? row.textNode, () =>
+    rowClientRectScale(row),
+  )
   nativeRows.set(row, {
     carets,
     glyphs: view.glyphs,
     tabSize: view.tabSize,
     styles,
-    text: row.textNode.data,
+    text: rowText,
     node: row.textNode,
+    tokenDomRevision: row.tokenDomRevision,
   })
   recordEditorPerformanceDiagnostic('view.nativeShaping', () => ({
     length: row.text.length,
@@ -521,6 +532,15 @@ function nativeRowCarets(
     path: 'mounted-intact',
   }))
   return carets
+}
+
+function allTextPartsOrNull(
+  parts: readonly VirtualizedTextChunkPart[],
+): readonly VirtualizedTextChunkTextPart[] | null {
+  for (const part of parts) {
+    if (part.kind !== 'text') return null
+  }
+  return parts as readonly VirtualizedTextChunkTextPart[]
 }
 
 export function offsetToX(
@@ -1665,6 +1685,7 @@ function rowGeometryCacheKey(
 ): string {
   return [
     row.textRevision,
+    row.tokenDomRevision,
     // Display text and source spans can stay equal while a fresh inline projection changes the
     // rendered glyphs or turns a row into an endpoint-only refusal placeholder.
     view.displayProjectionRevision,
@@ -3472,8 +3493,12 @@ function offsetFromElementBoundary(
   if (chunk && offset >= node.childNodes.length) return chunk.endOffset
 
   const part = partAtElementChildBoundary(row, node, offset)
-  if (!part) return row.endOffset
-  return rowOffsetForLocalIndex(row, part.localStart)
+  if (part) return rowOffsetForLocalIndex(row, part.localStart)
+  if (node !== row.element) {
+    const trailing = lastPartInElement(row, node)
+    if (trailing) return rowOffsetForLocalIndex(row, trailing.localEnd)
+  }
+  return row.endOffset
 }
 
 function chunkForElement(
@@ -3541,7 +3566,22 @@ function partForNode(row: MountedVirtualizedTextRow, node: Node): VirtualizedTex
   return null
 }
 
+function lastPartInElement(
+  row: MountedVirtualizedTextRow,
+  element: HTMLElement,
+): VirtualizedTextChunkPart | null {
+  let last: VirtualizedTextChunkPart | null = null
+  for (const chunk of row.chunks) {
+    for (const part of chunk.parts) {
+      if (partContainsNode(part, element)) last = part
+    }
+  }
+  return last
+}
+
 function partContainsNode(part: VirtualizedTextChunkPart, node: Node): boolean {
-  if (part.kind === 'text') return part.node === node
+  if (part.kind === 'text') {
+    return part.node === node || (isHtmlElement(node) && node.contains(part.node))
+  }
   return part.element === node || part.element.contains(node)
 }

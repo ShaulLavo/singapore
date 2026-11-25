@@ -245,13 +245,13 @@ it('observes a cleared paint frame and retains unchanged-row range identities', 
     ]
     view.setTokens(initial)
     expect(mountedColors(editor, 17)).toEqual(tokenColors(initial, 'unchanged\nchanged'))
-    const firstRow = [...view['view'].rowTokenRanges.values()][0]!
+    const firstRow = [...view['view'].tokenPainter.rowTokenRanges!.values()][0]!
     const retained = [...firstRow.values()].flat()
     const complete = [initial[0]!, { start: 10, end: 17, style: { color: '#00ff00' } }]
     view.setTokens(complete)
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     expect(mountedColors(editor, 17)).toEqual(tokenColors(complete, 'unchanged\nchanged'))
-    expect([...view['view'].rowTokenRanges.values()][0]).toBe(firstRow)
+    expect([...view['view'].tokenPainter.rowTokenRanges!.values()][0]).toBe(firstRow)
     const ranges = [...firstRow.values()].flat()
     expect(ranges.length).toBe(retained.length)
     for (let index = 0; index < ranges.length; index++) expect(ranges[index]).toBe(retained[index])

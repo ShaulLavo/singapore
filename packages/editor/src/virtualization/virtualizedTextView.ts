@@ -101,8 +101,14 @@ import {
   setRangeHighlight,
   setSelection,
   setSelections,
+  setTokenPaintingMode,
   setTokens as setViewTokens,
 } from './virtualizedTextViewHighlights'
+import {
+  createRowTokenPainter,
+  normalizeTokenPainting,
+  resolveTokenPainterKind,
+} from './rowTokenPainter'
 import {
   DEFAULT_SUSPICIOUS_SETTINGS,
   normalizeHiddenCharactersMode,
@@ -209,9 +215,11 @@ import type {
 } from './virtualizedTextViewInternals'
 import type {
   EditorCursorLineHighlightOptions,
+  EditorTokenPainting,
   HiddenCharactersMode,
   MultiLineEditPatch,
   NativeGeometryValidation,
+  RowTokenPainterKind,
   SameLineEditPatch,
   VirtualizedFoldMarker,
   VirtualizedTextRowDecoration,
@@ -417,6 +425,16 @@ export class VirtualizedTextView {
     this.contentElement = contentElement
     this.inputElement = inputElement
     this.editContext = isTextareaElement(inputElement) ? null : createEditContext(inputElement)
+    const highlightRegistry = options.highlightRegistry ?? getDefaultHighlightRegistry()
+    const tokenPainting = normalizeTokenPainting(options.tokenPainting)
+    const initialTokenPainterKind = resolveTokenPainterKind(
+      tokenPainting,
+      highlightRegistry,
+      scrollMode,
+      null,
+      0,
+      0,
+    )
     this.view = {
       disposed: false,
       provisional: false,
@@ -451,7 +469,7 @@ export class VirtualizedTextView {
       cursorLineHighlight: normalizeCursorLineHighlight(options.cursorLineHighlight),
       rowElements: new Map(),
       rowPool: [],
-      highlightRegistry: options.highlightRegistry ?? getDefaultHighlightRegistry(),
+      highlightRegistry,
       selectionHighlightName: options.selectionHighlightName ?? DEFAULT_SELECTION_HIGHLIGHT,
       selectionHighlight: null,
       rangeHighlightGroups: new Map(),
@@ -476,9 +494,9 @@ export class VirtualizedTextView {
       onStyledFaceChange: () => this.scheduleStyledFaceRefresh(),
       glyphs: measuredFace.monospace ? null : glyphAdvancesFor(scrollElement),
       tabSize,
-      tokenGroups: new Map(),
+      tokenPainting,
+      tokenPainter: null as unknown as VirtualizedTextViewInternal['tokenPainter'],
       rowTokenSignatures: new Map(),
-      rowTokenRanges: new Map(),
       tokenProjectionDirtyStartRow: null,
       nextTokenHighlightSlotId: 0,
       selectionStart: null,
@@ -506,11 +524,13 @@ export class VirtualizedTextView {
       suspiciousCharacters: DEFAULT_SUSPICIOUS_SETTINGS,
     }
 
+    this.view.tokenPainter = createRowTokenPainter(this.view, initialTokenPainterKind)
     scrollElement.style.setProperty('--editor-gutter-width', '0px')
     scrollElement.style.setProperty('--editor-tab-size', String(tabSize))
     setScrollModeAttribute(scrollElement, scrollMode)
     applySizingStyle(scrollElement, sizing)
     scrollElement.dataset.editorRowPositioning = rowPositioning
+    scrollElement.dataset.editorTokenPainting = initialTokenPainterKind
     applyRowHeight(this.view, rowHeight)
     gutterElement.className = 'editor-virtualized-gutter'
     caretLayerElement.className = 'editor-virtualized-caret-layer'
@@ -1249,6 +1269,14 @@ export class VirtualizedTextView {
     updateVirtualizerRows(view)
   }
 
+  public setTokenPainting(mode: EditorTokenPainting | undefined): boolean {
+    return setTokenPaintingMode(this.view, mode)
+  }
+
+  public getActiveTokenPainting(): RowTokenPainterKind {
+    return this.view.tokenPainter.kind
+  }
+
   public setTokens(tokens: EditorTokenInput): void {
     setViewTokens(this.view, tokens)
   }
@@ -1945,7 +1973,7 @@ export class VirtualizedTextView {
     }
 
     view.lastRenderedRowsKey = key
-    renderRows(view, snapshot, (rowSlotId) => deleteTokenRangesForRow(view, rowSlotId))
+    renderRows(view, snapshot, (row) => deleteTokenRangesForRow(view, row))
     if (view.disposed) return
     this.applyKnownContentWidths(snapshot)
     renderTokenHighlights(view)

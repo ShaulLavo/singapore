@@ -19,6 +19,7 @@ import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
 import type {
   EditorInputKind,
   EditorInputRoute,
+  EditorTokenPainting,
   EditorWrapBreak,
 } from '../virtualization/virtualizedTextViewTypes'
 import type { EditorKeymapOptions } from '../keymap/presets'
@@ -34,6 +35,7 @@ import type { EditorHeight } from './editorHeight'
 import type { EditorWorkScheduler } from './workScheduler'
 
 export type { EditorHeight } from './editorHeight'
+export type { EditorTokenPainting } from '../virtualization/virtualizedTextViewTypes'
 
 /** Minimal interface for the CSS Custom Highlight API registry. */
 export interface HighlightRegistry {
@@ -167,6 +169,12 @@ export type EditorOptions = {
   readonly gutterScroll?: EditorGutterScroll
   readonly rowGap?: number
   readonly rowPositioning?: EditorRowPositioning
+  /**
+   * How mounted rows paint syntax tokens: `'css-highlight'` uses CSS Custom Highlights, `'spans'`
+   * renders minimal inline `<span>` runs, and `'auto'` (default) keeps CSS Custom Highlights for
+   * virtualized views while falling back to `'spans'` when unsupported or in large unvirtualized views.
+   */
+  readonly tokenPainting?: EditorTokenPainting
   /**
    * Moves character-step carets by screen direction; word and subword motion stay logical.
    * Defaults off on Windows and on elsewhere.

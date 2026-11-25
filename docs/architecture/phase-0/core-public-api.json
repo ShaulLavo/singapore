@@ -1192,6 +1192,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorTokenPainting",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorTokenStoreOrigin",
           "source": "packages/editor/src/syntax/tokenStore.ts",
           "via": "packages/editor/src/index.ts"
@@ -4356,6 +4362,12 @@
           "kind": "type",
           "name": "EditorThemeJSON",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorTokenPainting",
+          "source": "packages/editor/src/editor/types.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {

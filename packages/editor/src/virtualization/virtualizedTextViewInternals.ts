@@ -23,12 +23,13 @@ import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVirtualizer } from './fixedRowVirtualizer'
 import type { SuspiciousCharacterSettings } from './virtualizedTextViewHiddenCharacters'
 import type { VirtualizedTextViewModelState } from './virtualizedTextViewModel'
+import type { RowTokenPainter } from './rowTokenPainter'
 import type {
   EditorCursorLineHighlightOptions,
+  EditorTokenPainting,
   HiddenCharactersMode,
   HighlightRegistry,
   MountedVirtualizedTextRow,
-  TokenGroup,
   VirtualizedFoldMarker,
   VirtualizedTextViewRowPositioning,
   VirtualizedTextViewScrollMode,
@@ -84,7 +85,7 @@ export type EditorPaintSnapshotSupport = {
 
 export type VirtualizedTextHighlightGroup = {
   readonly name: string
-  readonly highlight: Highlight
+  readonly highlight: Highlight | null
   ranges: readonly VirtualizedTextHighlightRange[]
   style: VirtualizedTextHighlightStyle
   registered: boolean
@@ -171,9 +172,9 @@ export interface VirtualizedTextViewInternal {
   /** The face's glyph advances while it is proportional; null keeps every estimate on columns. */
   glyphs: GlyphAdvances | null
   tabSize: number
-  tokenGroups: Map<string, TokenGroup>
+  tokenPainting: EditorTokenPainting
+  tokenPainter: RowTokenPainter
   rowTokenSignatures: Map<number, string>
-  rowTokenRanges: Map<number, Map<string, readonly AbstractRange[]>>
   tokenProjectionDirtyStartRow: number | null
   nextTokenHighlightSlotId: number
   selectionStart: number | null

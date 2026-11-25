@@ -205,6 +205,8 @@ function releaseProvisionalSlot(
     rowDecorationKey: '',
     rowDecorationSnapshotStyle: false,
     inlineKindsClassName: '',
+    hasTokenSpans: false,
+    baseDomRevision: slot.baseDomRevision + 1,
   })
   view.rowPool.push(slot)
 }
