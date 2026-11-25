@@ -7177,5 +7177,80 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clips wider shared-cache range answers to the controller owned viewport in paint and copy', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'wider-shared-cache-clipped-to-owned-range',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          tokens: [
+            { start: 4, end: 6, style: { color: 'green' } },
+            { start: 80, end: 82, style: { color: 'purple' } },
+          ],
+        }),
+      )
+      const provider = structuralProvider(query)
+      const viewA = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 100 })
+      const viewB = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+      try {
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewA.syntax.status).toBe('ready'))
+
+        viewB.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewB.syntax.status).toBe('ready'))
+
+        expect(viewB.syntax.tokens.toTokens()).toEqual([
+          { start: 4, end: 6, style: { color: 'green' } },
+        ])
+        expect(viewB.syntax.copyTokens.toTokens()).toEqual([
+          { start: 4, end: 6, style: { color: 'green' } },
+        ])
+        expect(viewB.syntax.tokens).toBe(viewB.syntax.copyTokens)
+      } finally {
+        viewA.dispose()
+        viewB.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('shares one EditorTokenStore between tokens and copyTokens across overlapping scrolls', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'overlapping-scroll-shares-token-store',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          tokens: [
+            {
+              start: range.startIndex + 1,
+              end: range.startIndex + 3,
+              style: { color: range.startIndex === 0 ? 'green' : 'blue' },
+            },
+          ],
+        }),
+      )
+      const provider = structuralProvider(query)
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.tokens).toBe(view.syntax.copyTokens)
+
+        view.setRange({ startIndex: 10, endIndex: 30 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(view.syntax.tokens.toTokens().some((t) => t.start === 21)).toBe(true),
+        )
+        expect(view.syntax.status).toBe('ready')
+        expect(view.syntax.tokens).toBe(view.syntax.copyTokens)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

@@ -3571,10 +3571,11 @@ export class EditorSyntaxController {
       }
 
       if (!this.#highlighterSession) {
-        const nextTokens =
-          nextEntries.length === 1 && canOwnRanges && !isEmptyRange
-            ? incomingTokens
-            : mergeTokensOnStrips(this.#currentTokens, incomingTokens, owned)
+        const previousTokens = this.#currentTokens
+        const singleRangeOwned = nextEntries.length === 1 && canOwnRanges && !isEmptyRange
+        const nextTokens = singleRangeOwned
+          ? mergeTokensOnStrips(EditorTokenStore.empty(), incomingTokens, owned)
+          : mergeTokensOnStrips(previousTokens, incomingTokens, owned)
         this.#currentTokens = nextTokens
         setRangeTokenOwner(nextTokens)
 
@@ -3583,7 +3584,9 @@ export class EditorSyntaxController {
             this.#copyOwner === 'range' ? this.#rangeCopyTokens : EditorTokenStore.empty()
           const allCopyEligible = nextEntries.every((item) => item.copyEligible)
           const nextCopyTokens =
-            allCopyEligible && canOwnRanges && nextTokens === incomingTokens
+            allCopyEligible &&
+            canOwnRanges &&
+            (singleRangeOwned || (this.#copyOwner === 'range' && baseCopyTokens === previousTokens))
               ? nextTokens
               : mergeTokensOnStrips(baseCopyTokens, incomingTokens, owned)
           this.#rangeCopyTokens = nextCopyTokens
@@ -3633,8 +3636,9 @@ export class EditorSyntaxController {
       this.#rangeEntries = nextEntries
 
       if (!this.#highlighterSession) {
-        const baseWasEmpty = this.#currentTokens.length === 0
-        const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
+        const previousTokens = this.#currentTokens
+        const baseWasEmpty = previousTokens.length === 0
+        const nextTokens = mergeTokensOnStrips(previousTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
         setRangeTokenOwner(nextTokens)
 
@@ -3645,9 +3649,8 @@ export class EditorSyntaxController {
           const nextCopyTokens =
             allCopyEligible &&
             canOwnRanges &&
-            nextEntries.length === 1 &&
-            baseWasEmpty &&
-            baseCopyTokens.length === 0
+            ((nextEntries.length === 1 && baseWasEmpty && baseCopyTokens.length === 0) ||
+              (this.#copyOwner === 'range' && baseCopyTokens === previousTokens))
               ? nextTokens
               : mergeTokensOnStrips(baseCopyTokens, incomingTokens, claimable)
           this.#rangeCopyTokens = nextCopyTokens
