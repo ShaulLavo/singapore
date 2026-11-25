@@ -5072,5 +5072,141 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clips out-of-bounds tokens from a terminal partial on a fresh view in both paint and copy stores', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'terminal-partial-fresh-view-clip',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        const covered = { startIndex: 60, endIndex: 80 }
+        if (range.startIndex === 60 && range.endIndex === 120) {
+          return {
+            ...answerFor(covered, {
+              tokens: [{ start: 75, end: 85, style: { color: 'keyword' } }],
+            }),
+            projection: {
+              ...answerFor(covered).projection,
+              analysis: {
+                kind: 'partial',
+                coveredRange: covered,
+                background: {
+                  kind: 'cancelled',
+                  reason: 'budget',
+                  coveredRange: covered,
+                  elapsedMs: 50,
+                  budgetMs: 50,
+                },
+              },
+            },
+          }
+        }
+        return answerFor(range)
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 60,
+        endIndex: 120,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.syntax.renderDataReady).toBe(true)
+
+        expect(view.syntax.tokens.toTokens()).toEqual([
+          { start: 75, end: 80, style: { color: 'keyword' } },
+        ])
+        expect(view.syntax.copyTokens.toTokens()).toEqual([
+          { start: 75, end: 80, style: { color: 'keyword' } },
+        ])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('does not let a sibling view overwrite a fresher bypassCache Markdown slot in shared cache', async () => {
+      const buffer = createEditorTextBuffer('# Heading\n'.repeat(30))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'sibling-view-preserves-fresh-markdown-slot',
+      })
+      const staleBracket = {
+        index: 96,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      let firstHundredCalls = 0
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        const base = answerFor(range)
+        const isFirstHundred = range.startIndex === 0 && range.endIndex === 100
+        if (isFirstHundred) firstHundredCalls += 1
+        return {
+          ...base,
+          brackets: isFirstHundred && firstHundredCalls === 1 ? [staleBracket] : [],
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([
+              range.startIndex,
+              range.endIndex,
+              isFirstHundred ? firstHundredCalls : 1,
+            ]),
+          },
+        }
+      })
+      const provider = structuralProvider(query)
+      const viewA = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 100 })
+      const viewB = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 100 })
+      let viewC: ReturnType<typeof createView> | null = null
+      try {
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        viewB.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewA.syntax.status).toBe('ready')
+          expect(viewB.syntax.status).toBe('ready')
+        })
+        expect(viewA.syntax.brackets).toEqual([staleBracket])
+        expect(viewB.syntax.brackets).toEqual([staleBracket])
+
+        // View A scrolls to [80, 140) and back to [0, 100), replacing the shared [0, 100) slot.
+        viewA.setRange({ startIndex: 80, endIndex: 140 })
+        viewA.syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: [
+            { startIndex: 0, endIndex: 100 },
+            { startIndex: 80, endIndex: 140 },
+          ],
+        })
+        viewA.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewA.records()?.data).toEqual(new Uint32Array([80, 140, 1])))
+
+        viewA.setRange({ startIndex: 0, endIndex: 100 })
+        viewA.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewA.records()?.data).toEqual(new Uint32Array([0, 100, 2])))
+        expect(viewA.syntax.brackets).toEqual([])
+
+        // View B publishes another frame; its older contributor must NOT overwrite the fresher slot.
+        viewB.syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: [{ startIndex: 0, endIndex: 100 }],
+        })
+
+        // A newly attached View C must receive the fresh [0, 100) result without the stale bracket.
+        viewC = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 100 })
+        viewC.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(viewC!.syntax.status).toBe('ready'))
+        expect(viewC.records()?.data).toEqual(new Uint32Array([0, 100, 2]))
+        expect(viewC.syntax.brackets).toEqual([])
+      } finally {
+        viewC?.dispose()
+        viewB.dispose()
+        viewA.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

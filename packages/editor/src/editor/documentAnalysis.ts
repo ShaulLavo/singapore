@@ -855,12 +855,15 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       readonly snapshot: DocumentTextSnapshot
       readonly point: DocumentSyncPoint
       readonly generation: number
+      readonly order: number
     }
   >()
   private ranges = new Map<string, ReadyRange>()
+  private latestRangeOrder = new Map<string, number>()
   private queries = new Map<string, PendingRangeQuery>()
   /** Identifies each range query, so its release timer belongs to it alone. */
   private nextQueryId = 0
+  private nextOriginOrder = 0
   private rangePoint: DocumentSyncPoint | null = null
   private stoppedWarmGeneration: number | null = null
   private static readonly MAX_INCREMENTAL_STEPS = 16
@@ -1034,8 +1037,9 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   ): void {
     const snapshot = this.buffer.getTextSnapshot()
     const origin = this.resultOrigins.get(contributor.result)
-    let cached = this.ranges.get(rangeKey(contributor.range))
-    if (cached?.result !== contributor.result) cached = undefined
+    const key = rangeKey(contributor.range)
+    const existing = this.ranges.get(key)
+    let cached = existing?.result === contributor.result ? existing : undefined
     cached ??= [...this.ranges.values()].find(
       (candidate) =>
         candidate.result === contributor.result &&
@@ -1048,8 +1052,13 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       origin.point === this.buffer.getDocumentSyncPoint() &&
       origin.generation === this.generation
     ) {
+      if (existing && existing.point === origin.point) {
+        protectedSlots.add(existing)
+        return
+      }
+      if (origin.order < (this.latestRangeOrder.get(key) ?? 0)) return
       cached = { ...contributor, point: origin.point }
-      this.ranges.set(rangeKey(contributor.range), cached)
+      this.ranges.set(key, cached)
     }
     if (cached) protectedSlots.add(cached)
   }
@@ -1213,6 +1222,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     this.contributors.clear()
     this.queryWaiters.clear()
     this.ranges.clear()
+    this.latestRangeOrder.clear()
     for (const query of this.queries.values()) query.release?.cancel()
     this.queries.clear()
     super.dispose()
@@ -1358,13 +1368,21 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
           syntaxResultCoversRange(result, range) &&
           this.isCurrentPendingRange(key, pending)
         ) {
+          const order = ++this.nextOriginOrder
           this.resultOrigins.set(result, {
             snapshot: pending.snapshot,
             point,
             generation: this.generation,
+            order,
           })
           if (pending.admission === 'cache' && !isTerminalIncompleteSyntaxResult(result)) {
-            this.ranges.set(rangeKey(range), { point, range, result })
+            const cacheKey = rangeKey(range)
+            const previous = this.ranges.get(cacheKey)
+            if (previous && previous.result !== result) {
+              this.resultOrigins.delete(previous.result)
+            }
+            this.latestRangeOrder.set(cacheKey, order)
+            this.ranges.set(cacheKey, { point, range, result })
           }
         }
         this.retention.changed()
@@ -1434,6 +1452,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   protected override runtimeResultChanged(): void {
     this.generation += 1
     this.ranges.clear()
+    this.latestRangeOrder.clear()
     this.previousRanges = null
     this.incrementalSteps = []
     for (const query of this.queries.values()) query.admission = 'return-only'
@@ -1492,12 +1511,16 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
           for (const cached of this.previousRanges.entries.values()) {
             const promoted = syntaxRangeProjector(cached.range, cached.result, steps)
             if (!promoted) continue
+            const order = ++this.nextOriginOrder
+            const cacheKey = rangeKey(promoted.range)
             this.resultOrigins.set(promoted.result, {
               snapshot: state.snapshot,
               point: read.revision.point,
               generation,
+              order,
             })
-            this.ranges.set(rangeKey(promoted.range), {
+            this.latestRangeOrder.set(cacheKey, order)
+            this.ranges.set(cacheKey, {
               point: read.revision.point,
               range: promoted.range,
               result: promoted.result,
@@ -1531,6 +1554,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }
     }
     this.ranges = new Map()
+    this.latestRangeOrder.clear()
     super.changed(read)
   }
 }

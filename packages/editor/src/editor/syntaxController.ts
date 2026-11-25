@@ -3383,14 +3383,8 @@ export class EditorSyntaxController {
       this.#rangeEntries = nextEntries
 
       if (!this.#highlighterSession) {
-        const nextTokens =
-          nextEntries.length === 1 &&
-          canOwnRanges &&
-          this.#currentTokens.length === 0 &&
-          sameSyntaxRanges(claimable, [range]) &&
-          (!partial || sameSyntaxRange(result.projection.analysis!.coveredRange, range))
-            ? incomingTokens
-            : mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
+        const baseWasEmpty = this.#currentTokens.length === 0
+        const nextTokens = mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
         setRangeTokenOwner(nextTokens)
 
@@ -3399,7 +3393,11 @@ export class EditorSyntaxController {
             this.#copyOwner === 'range' ? this.#rangeCopyTokens : EditorTokenStore.empty()
           const allCopyEligible = nextEntries.every((item) => item.copyEligible)
           const nextCopyTokens =
-            allCopyEligible && canOwnRanges && nextTokens === incomingTokens
+            allCopyEligible &&
+            canOwnRanges &&
+            nextEntries.length === 1 &&
+            baseWasEmpty &&
+            baseCopyTokens.length === 0
               ? nextTokens
               : mergeTokensOnStrips(baseCopyTokens, incomingTokens, claimable)
           this.#rangeCopyTokens = nextCopyTokens
