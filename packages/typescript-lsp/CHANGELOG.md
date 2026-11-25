@@ -1,5 +1,13 @@
 # @singapore-editor/typescript-lsp
 
+## 0.2.15
+
+### Patch Changes
+
+- Updated dependencies [6a3cf24]
+  - @singapore-editor/lsp@0.2.12
+  - @singapore-editor/lsp-plugin@0.2.15
+
 ## 0.2.14
 
 ### Patch Changes
