@@ -342,6 +342,24 @@ describe('LspConnectionPool', () => {
     expect(servers).toHaveLength(2)
   })
 
+  it('keeps waiting for an old server after a connection that was waiting for it closes', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    provider.acquire(stoppingOptions(), callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+    provider.acquire(stoppingOptions(), callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+
+    provider.acquire(stoppingOptions(), callbacks())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(FakeTransport.created).toHaveLength(1)
+
+    ;(FakeTransport.created[0] as StoppingTransport).confirmGone()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(FakeTransport.created).toHaveLength(2)
+  })
+
   it('starts a key at once when no server of it is still going', async () => {
     vi.useFakeTimers()
     const provider = pool.provider(KEY)

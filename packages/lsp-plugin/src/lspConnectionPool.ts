@@ -86,8 +86,8 @@ type ImmutableInitializationContract = {
  */
 export class LspConnectionPool {
   readonly #entries = new Map<string, PooledConnection>()
-  /** Per key, the going of a server whose connection is already disposed. Cleared when it settles. */
-  readonly #retiring = new Map<string, Promise<void>>()
+  /** Per key, a disposed connection whose server may still be going. Cleared when it is gone. */
+  readonly #retiring = new Map<string, LspConnection>()
   readonly #idleGraceMs: number
   readonly #onEvent?: (event: LspConnectionPoolEvent) => void
 
@@ -144,16 +144,18 @@ export class LspConnectionPool {
   /**
    * Disposes the connection and remembers, by key, a server of it that is still going. Nothing
    * here waits: the next connection for the key does, before it asks for its first transport.
+   * Remembered before `dispose()`, whose stop hook may already acquire the key again.
    */
   #disposeConnection(entry: PooledConnection): void {
-    entry.connection.dispose()
-    const gone = entry.connection.retirement
-    if (!gone) return
-
-    this.#retiring.set(entry.key, gone)
-    void gone.then(() => {
-      if (this.#retiring.get(entry.key) === gone) this.#retiring.delete(entry.key)
-    })
+    const connection = entry.connection
+    this.#retiring.set(entry.key, connection)
+    connection.dispose()
+    const forget = (): void => {
+      if (this.#retiring.get(entry.key) === connection) this.#retiring.delete(entry.key)
+    }
+    const gone = connection.retirement
+    if (gone) void gone.then(forget)
+    else forget()
   }
 
   /** The host's factory, held back while the key's previous server is still going. */
@@ -162,7 +164,7 @@ export class LspConnectionPool {
     createTransport: LspConnectionOptions['createTransport'],
   ): LspConnectionOptions['createTransport'] {
     return () => {
-      const retiring = this.#retiring.get(entry.key)
+      const retiring = this.#retiring.get(entry.key)?.retirement
       if (!retiring) return createTransport()
 
       return retiring.then(() => {

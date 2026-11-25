@@ -100,6 +100,8 @@ export class LspConnection {
   private retiring: Promise<void> | null = null
   /** A start is under way: waiting on `retiring`, or in the factory, until a transport attaches. */
   private starting = false
+  /** What an async factory has yet to return. Its server may already be running. */
+  private pendingTransport: Promise<LspManagedTransport> | null = null
   /** Why the server said it is going, reported as the reason for the close that follows. */
   private exit: LspServerExitedParams | null = null
 
@@ -201,9 +203,14 @@ export class LspConnection {
     try {
       const transport = this.options.createTransport()
       if (isTransportPromise(transport)) {
+        this.pendingTransport = transport
         void transport
-          .then((value) => this.connectManagedTransport(value))
+          .then((value) => {
+            this.pendingTransport = null
+            this.connectManagedTransport(value)
+          })
           .catch((error) => {
+            this.pendingTransport = null
             this.handleConnectError(error)
           })
         return
@@ -285,14 +292,27 @@ export class LspConnection {
     this.closeTransport()
   }
 
-  /** Closes the transport and keeps its server's going as what the next start waits for. */
+  /**
+   * Closes the transport and keeps its server's going as what the next start waits for. That is
+   * recorded before `close()`, whose stop hook may already ask for the next start.
+   */
   private closeTransport(): void {
-    this.transport?.close()
+    const transport = this.transport
+    const gone = this.transportGone ?? this.pendingTransportGone()
     this.transport = null
-    const gone = this.transportGone
     this.transportGone = null
-    if (!gone) return
+    if (gone) this.retire(gone)
+    transport?.close()
+  }
 
+  /** The factory's server that has yet to attach: a disposed connection closes it on arrival. */
+  private pendingTransportGone(): Promise<void> | null {
+    const pending = this.pendingTransport
+    this.pendingTransport = null
+    return pending?.then((transport) => settled(transport.gone) ?? undefined, ignore) ?? null
+  }
+
+  private retire(gone: Promise<void>): void {
     this.retiring = gone
     void gone.then(() => {
       if (this.retiring === gone) this.retiring = null
