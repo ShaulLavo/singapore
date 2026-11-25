@@ -3235,26 +3235,87 @@ export class EditorSyntaxController {
       this.#unavailableEmptyRange = requestRange
       if (!options.preserveProvisionalPaint) this.#unavailableEmptyClearsScope = true
     }
-    if (!options.preserveProvisionalPaint && !this.#highlighterSession && gaps.length > 0) {
-      const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
-      const ownsProjectedPaint =
-        this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens
-      const fallback =
-        snapshot !== null && this.#externalBaseTokens?.snapshot === snapshot
-          ? this.#externalBaseTokens.store
-          : EditorTokenStore.empty()
-      const nextTokens =
-        ownsProjectedPaint && this.#rangeEntries.length === 0
-          ? EditorTokenStore.empty()
-          : mergeTokensOnStrips(this.#currentTokens, fallback, gaps)
-      if (nextTokens !== this.#currentTokens) {
-        this.#currentTokens = nextTokens
-        if (ownsProjectedPaint || this.#rangeTokenOwner !== null) {
-          this.#rangeTokenOwner = snapshot ? { store: nextTokens, snapshot } : null
-          this.#projectedRangeTokens = null
-          this.#awaitingProjectedEditTokens = false
+    if (!options.preserveProvisionalPaint && (gaps.length > 0 || emptyGap)) {
+      const nextEntries: CachedSyntaxRangeEntry[] = []
+      let entriesChanged = false
+      for (const existing of this.#rangeEntries) {
+        if (!existing.tokensOnly) {
+          nextEntries.push(existing)
+          continue
         }
-        this.options.adoptTokens(nextTokens)
+        if (
+          emptyGap &&
+          existing.range.endIndex <= existing.range.startIndex &&
+          sameSyntaxRange(existing.range, requestRange)
+        ) {
+          entriesChanged = true
+          continue
+        }
+        if (gaps.length === 0) {
+          nextEntries.push(existing)
+          continue
+        }
+        const nextTokenOwned = subtractSyntaxRanges(existing.tokenOwnedRanges, gaps)
+        if (
+          nextTokenOwned.length === existing.tokenOwnedRanges.length &&
+          nextTokenOwned.every((item, index) =>
+            sameSyntaxRange(item, existing.tokenOwnedRanges[index]!),
+          )
+        ) {
+          nextEntries.push(existing)
+          continue
+        }
+        entriesChanged = true
+        if (nextTokenOwned.length === 0 && existing.range.endIndex > existing.range.startIndex) {
+          continue
+        }
+        nextEntries.push({ ...existing, tokenOwnedRanges: nextTokenOwned })
+      }
+      if (entriesChanged) {
+        this.#rangeEntries = nextEntries
+        this.#lastRangeTrim = null
+      }
+
+      if (!this.#highlighterSession) {
+        const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+        if (gaps.length > 0) {
+          const ownsProjectedPaint =
+            this.#projectedRangeTokens !== null &&
+            this.#projectedRangeTokens === this.#currentTokens
+          const rangeOwned =
+            snapshot !== null &&
+            this.#rangeTokenOwner?.store === this.#currentTokens &&
+            this.#rangeTokenOwner.snapshot === snapshot
+          const fallback =
+            snapshot !== null && this.#externalBaseTokens?.snapshot === snapshot
+              ? this.#externalBaseTokens.store
+              : EditorTokenStore.empty()
+          const nextTokens =
+            (ownsProjectedPaint || rangeOwned) && this.#rangeEntries.length === 0
+              ? EditorTokenStore.empty()
+              : rangeOwned
+                ? compactSyntaxRangeTokens(
+                    this.#currentTokens,
+                    this.#tokenCoverage(this.#rangeEntries),
+                  )
+                : mergeTokensOnStrips(this.#currentTokens, fallback, gaps)
+          if (nextTokens !== this.#currentTokens) {
+            this.#currentTokens = nextTokens
+            if (ownsProjectedPaint || this.#rangeTokenOwner !== null) {
+              this.#rangeTokenOwner = snapshot ? { store: nextTokens, snapshot } : null
+              this.#projectedRangeTokens = null
+              this.#awaitingProjectedEditTokens = false
+            }
+            this.options.adoptTokens(nextTokens)
+          }
+        }
+        if (this.#copyOwner === 'range' && (gaps.length > 0 || entriesChanged)) {
+          const currentRangeOwned =
+            snapshot !== null &&
+            this.#rangeTokenOwner?.store === this.#currentTokens &&
+            this.#rangeTokenOwner.snapshot === snapshot
+          this.#compactRangeCopyStore(this.#rangeEntries, this.#currentTokens, currentRangeOwned)
+        }
       }
     }
     const visibleRange = this.options.getVisibleSyntaxRange()
@@ -4322,6 +4383,12 @@ export class EditorSyntaxController {
           this.#copyOwner = 'range'
           const primary = this.#primaryCopyContributor(promotedEntries)
           this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+          if (
+            this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+            this.#acceptedTokensTextVersion === this.options.getTextVersion()
+          ) {
+            this.#acceptedCopyTokens = nextCopyTokens
+          }
         }
         if (restoredHostPaint || nextTokens !== previousTokens) {
           this.options.adoptTokens(this.#currentTokens)
@@ -4337,6 +4404,12 @@ export class EditorSyntaxController {
           this.#rangeCopyTokens = EditorTokenStore.empty()
           this.rangeCopyOwner = null
           this.#copyOwner = 'none'
+          if (
+            this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+            this.#acceptedTokensTextVersion === this.options.getTextVersion()
+          ) {
+            this.#acceptedCopyTokens = EditorTokenStore.empty()
+          }
         }
         this.options.adoptTokens(this.#currentTokens)
       } else {
@@ -4346,6 +4419,12 @@ export class EditorSyntaxController {
             this.#rangeCopyTokens = EditorTokenStore.empty()
             this.rangeCopyOwner = null
             this.#copyOwner = 'none'
+            if (
+              this.#acceptedTokensDocumentVersion === this.options.getDocumentVersion() &&
+              this.#acceptedTokensTextVersion === this.options.getTextVersion()
+            ) {
+              this.#acceptedCopyTokens = EditorTokenStore.empty()
+            }
           }
           if (canOwnRanges) {
             this.#currentTokens = EditorTokenStore.empty()

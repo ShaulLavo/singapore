@@ -257,9 +257,14 @@ export const mergeTokensOnStrips = (
   strips: readonly SyntaxRange[],
 ): EditorTokenStore => {
   let current = target
+  const removedStyleIds = new Set<number>()
   for (const strip of strips) {
     if (strip.endIndex <= strip.startIndex) continue
-    current = mergeTokensOnSingleStrip(current, incoming, strip)
+    current = mergeTokensOnSingleStrip(current, incoming, strip, removedStyleIds)
+  }
+  if (current.length === 0) return EditorTokenStore.empty()
+  if (removedStyleIds.size > 0 && hasUnusedCandidateStyle(current, removedStyleIds)) {
+    return compactTokenStorePalette(current)
   }
   return current
 }
@@ -267,10 +272,74 @@ export const mergeTokensOnStrips = (
 const tokenStyleKey = (style: EditorTokenStyle): string =>
   `${style.color ?? ''}\0${style.backgroundColor ?? ''}\0${style.fontStyle ?? ''}\0${style.fontWeight ?? ''}\0${style.textDecoration ?? ''}`
 
+const hasUnusedCandidateStyle = (
+  store: EditorTokenStore,
+  candidateIds: ReadonlySet<number>,
+): boolean => {
+  const candidate = new Uint8Array(store.styles.length)
+  let remaining = 0
+  for (const id of candidateIds) {
+    if (id >= 0 && id < candidate.length && candidate[id] === 0) {
+      candidate[id] = 1
+      remaining += 1
+    }
+  }
+  if (remaining === 0) return false
+  for (let i = 0; i < store.length && remaining > 0; i += 1) {
+    const id = store.styleIdAt(i)
+    if (candidate[id] === 1) {
+      candidate[id] = 0
+      remaining -= 1
+    }
+  }
+  return remaining > 0
+}
+
+const compactTokenStorePalette = (store: EditorTokenStore): EditorTokenStore => {
+  if (store.length === 0) return EditorTokenStore.empty()
+  const styleRemap = new Int32Array(store.styles.length)
+  styleRemap.fill(-1)
+  const nextStyles: EditorTokenStyle[] = []
+  const styleIdByKey = new Map<string, number>()
+
+  const count = store.length
+  const starts = new Uint32Array(count)
+  const ends = new Uint32Array(count)
+  const styleIds = new Uint32Array(count)
+  let out = 0
+  store.forEachInRange(0, count, (start, end, styleId) => {
+    let mapped = styleRemap[styleId]!
+    if (mapped === -1) {
+      const style = store.styles[styleId]!
+      const key = tokenStyleKey(style)
+      const existing = styleIdByKey.get(key)
+      if (existing !== undefined) {
+        mapped = existing
+      } else {
+        mapped = nextStyles.length
+        nextStyles.push(style)
+        styleIdByKey.set(key, mapped)
+      }
+      styleRemap[styleId] = mapped
+    }
+    starts[out] = start
+    ends[out] = end
+    styleIds[out] = mapped
+    out += 1
+  })
+  return EditorTokenStore.empty().replaceRange(
+    0,
+    0,
+    { starts, ends, styleIds },
+    { delta: 0, keepsLiveRanges: null, styles: nextStyles },
+  )
+}
+
 const mergeTokensOnSingleStrip = (
   target: EditorTokenStore,
   incoming: EditorTokenStore,
   strip: SyntaxRange,
+  removedStyleIds: Set<number>,
 ): EditorTokenStore => {
   const { startIndex: s, endIndex: e } = strip
   const inLast = incoming.firstStartingAtOrAfter(e)
@@ -283,6 +352,7 @@ const mergeTokensOnSingleStrip = (
     inLast === incoming.length &&
     (incoming.length === 0 || (incoming.startAt(0) >= s && maxTokenEnd(incoming) <= e))
   ) {
+    removedStyleIds.clear()
     return incoming
   }
 
@@ -314,6 +384,7 @@ const mergeTokensOnSingleStrip = (
         postCount += 1
         return
       }
+      removedStyleIds.add(styleId)
       if (start < s) {
         ;(preStarts ??= []).push(start)
         ;(preEnds ??= []).push(s)
@@ -329,32 +400,62 @@ const mergeTokensOnSingleStrip = (
     })
   }
 
-  let styles: EditorTokenStyle[]
-  let remap: Uint32Array | null = null
   const replacesAll = first === 0 && last === target.length && preCount === 0 && postCount === 0
+  if (replacesAll && inFirst >= inLast) {
+    removedStyleIds.clear()
+    return EditorTokenStore.empty()
+  }
+  if (first === last && inFirst >= inLast) {
+    return target
+  }
+
+  let styles: EditorTokenStyle[]
+  let stylesCloned = false
+  let styleIdByKey: Map<string, number> | null = null
+  let incomingRemap: Int32Array | null = null
+
   if (replacesAll || target.styles.length === 0) {
-    styles = incoming.styles as EditorTokenStyle[]
-  } else if (target.styles === incoming.styles) {
-    styles = target.styles as EditorTokenStyle[]
+    removedStyleIds.clear()
+    styles = []
+    stylesCloned = true
+    styleIdByKey = new Map<string, number>()
+    if (inFirst < inLast) {
+      incomingRemap = new Int32Array(incoming.styles.length)
+      incomingRemap.fill(-1)
+    }
   } else {
-    styles = target.styles.slice()
-    const styleIdByKey = new Map<string, number>()
-    for (let i = 0; i < styles.length; i += 1) {
-      const key = tokenStyleKey(styles[i]!)
-      if (!styleIdByKey.has(key)) styleIdByKey.set(key, i)
+    styles = target.styles as EditorTokenStyle[]
+    if (inFirst < inLast && target.styles !== incoming.styles) {
+      incomingRemap = new Int32Array(incoming.styles.length)
+      incomingRemap.fill(-1)
     }
-    remap = new Uint32Array(incoming.styles.length)
-    for (let i = 0; i < incoming.styles.length; i += 1) {
-      const style = incoming.styles[i]!
-      const key = tokenStyleKey(style)
-      let id = styleIdByKey.get(key)
-      if (id === undefined) {
-        id = styles.length
-        styles.push(style)
-        styleIdByKey.set(key, id)
+  }
+
+  const resolveIncomingStyleId = (incomingStyleId: number): number => {
+    if (!incomingRemap) return incomingStyleId
+    const cached = incomingRemap[incomingStyleId]!
+    if (cached !== -1) return cached
+    if (!styleIdByKey) {
+      styleIdByKey = new Map<string, number>()
+      for (let i = 0; i < styles.length; i += 1) {
+        const key = tokenStyleKey(styles[i]!)
+        if (!styleIdByKey.has(key)) styleIdByKey.set(key, i)
       }
-      remap[i] = id
     }
+    const style = incoming.styles[incomingStyleId]!
+    const key = tokenStyleKey(style)
+    let id = styleIdByKey.get(key)
+    if (id === undefined) {
+      if (!stylesCloned) {
+        styles = styles.slice()
+        stylesCloned = true
+      }
+      id = styles.length
+      styles.push(style)
+      styleIdByKey.set(key, id)
+    }
+    incomingRemap[incomingStyleId] = id
+    return id
   }
 
   const capacity = preCount + (inLast - inFirst) + postCount
@@ -386,11 +487,16 @@ const mergeTokensOnSingleStrip = (
       const clippedStart = start < s ? s : start
       const clippedEnd = end > e ? e : end
       if (clippedEnd <= clippedStart) return
-      emit(clippedStart, clippedEnd, remap ? remap[styleId]! : styleId)
+      emit(clippedStart, clippedEnd, resolveIncomingStyleId(styleId))
     })
   }
   for (let i = 0; i < postCount; i += 1) {
     emit(postStarts![i]!, postEnds![i]!, postStyles![i]!)
+  }
+
+  if (replacesAll && count === 0) {
+    removedStyleIds.clear()
+    return EditorTokenStore.empty()
   }
 
   if (!sorted) {

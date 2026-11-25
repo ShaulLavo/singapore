@@ -6570,5 +6570,160 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears firstRows colors from copyTokens as well as paint when the visible range fails with range-unavailable', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(5000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'first-rows-copy-cleared-on-range-unavailable',
+      })
+      let resolveVisible: ((result: EditorSyntaxResult) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return answerFor(range, {
+            tokens: [{ start: 5, end: 7, style: { color: 'blue' } }],
+          })
+        }
+        return await new Promise<EditorSyntaxResult>((resolve) => {
+          resolveVisible = resolve
+        })
+      })
+      const provider = structuralProvider(query)
+      let lastAdopted = EditorTokenStore.empty()
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'first-rows-copy-cleared-on-range-unavailable',
+        getCurrentSessionDocumentId: () => 'first-rows-copy-cleared-on-range-unavailable',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getMountedSyntaxRange: () => ({ startIndex: 0, endIndex: 20 }),
+        getVisibleSyntaxRange: () => ({ startIndex: 0, endIndex: 5000 }),
+        adoptTokens: (tokens) => {
+          lastAdopted = tokens
+        },
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'first-rows-copy-cleared-on-range-unavailable',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveVisible).not.toBeNull())
+        expect(syntax.tokens.toTokens()).toEqual([{ start: 5, end: 7, style: { color: 'blue' } }])
+        expect(syntax.copyTokens.toTokens()).toEqual([
+          { start: 5, end: 7, style: { color: 'blue' } },
+        ])
+
+        resolveVisible!({
+          ...answerFor({ startIndex: 0, endIndex: 5000 }),
+          degraded: { kind: 'range-unavailable', message: 'visible unavailable' },
+        })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+        expect(syntax.tokens.length).toBe(0)
+        expect(lastAdopted.length).toBe(0)
+        expect(syntax.copyTokens.length).toBe(0)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('keeps the token store palette bounded across repeated look-ahead prefetch evictions when host paint is installed', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(500))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prefetch-eviction-palette-bounded',
+      })
+      let prefetchColorIndex = 0
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return answerFor(range, { tokens: [] })
+        }
+        prefetchColorIndex += 1
+        return answerFor(range, {
+          tokens: [
+            {
+              start: range.startIndex,
+              end: range.endIndex,
+              style: { color: `prefetch-${prefetchColorIndex}` },
+            },
+          ],
+        })
+      })
+      const provider = structuralProvider(query)
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'prefetch-eviction-palette-bounded',
+        getCurrentSessionDocumentId: () => 'prefetch-eviction-palette-bounded',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => ({ startIndex: 0, endIndex: 20 }),
+        adoptTokens: () =>
+          syntax.setDisplayDemand({
+            kind: 'frame',
+            snapshot: buffer.getTextSnapshot(),
+            ranges: [{ startIndex: 0, endIndex: 20 }],
+          }),
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        const hostTokens = EditorTokenStore.fromTokens([
+          { start: 90, end: 91, style: { color: 'host-gold' } },
+        ])
+        syntax.startDocument({
+          analysis,
+          documentId: 'prefetch-eviction-palette-bounded',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.setTokens(hostTokens, true)
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        for (let i = 0; i < 40; i += 1) {
+          const range =
+            i % 2 === 0 ? { startIndex: 100, endIndex: 101 } : { startIndex: 102, endIndex: 103 }
+          expect(syntax.prefetchVisibleRange(1, range, { delayMs: 0 })).toBe(true)
+          await vi.waitFor(() =>
+            expect(syntax.tokens.toTokens().some((t) => t.start === range.startIndex)).toBe(true),
+          )
+        }
+
+        expect(prefetchColorIndex).toBe(40)
+        expect(syntax.tokens.length).toBe(2)
+        expect(syntax.tokens.styles.length).toBe(2)
+        expect(syntax.copyTokens).toBe(hostTokens)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
