@@ -436,6 +436,9 @@ function staleFace(
     : null
   const currentCacheStale =
     cachedForCurrent !== null && !watchedSizeMatches(box, cachedForCurrent.watchedSize)
+  // Without a metrics baseline for the target key (e.g. a styled row that only cached glyph
+  // advances), we cannot verify that any cached glyph table matches the observed face.
+  const currentGlyphStale = cachedForCurrent === null || currentCacheStale
 
   if (firstObservation) {
     const wasUnmeasured = face.wasUnmeasured
@@ -449,7 +452,7 @@ function staleFace(
         probe: entry.target,
         face,
         invalidateMetricsKey: currentCacheStale ? currentCacheKey : null,
-        invalidateGlyphKey: currentCacheStale ? currentGlyphKey : null,
+        invalidateGlyphKey: currentGlyphStale ? currentGlyphKey : null,
       }
     }
     if (baseline !== null) {
@@ -486,7 +489,7 @@ function staleFace(
     probe: entry.target,
     face,
     invalidateMetricsKey: currentCacheStale ? currentCacheKey : null,
-    invalidateGlyphKey: currentCacheStale ? currentGlyphKey : null,
+    invalidateGlyphKey: currentGlyphStale ? currentGlyphKey : null,
   }
 }
 

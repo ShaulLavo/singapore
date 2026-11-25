@@ -331,3 +331,57 @@ test('styled row rewraps when a pre-loaded FontFace is added before its first Re
     clearBrowserTextMetricsCache()
   }
 })
+
+test('styled row rewraps with updated glyph widths after switching fonts while its replacement loads', async () => {
+  clearBrowserTextMetricsCache()
+  const family = 'Styled Switch Mono'
+  const fallbackFamily = 'Styled Switch Serif'
+  const fallback = new FontFace(fallbackFamily, `url(${serifFontUrl})`)
+  document.fonts.add(await fallback.load())
+  const preloaded = new FontFace(family, `url(${monoFontUrl})`)
+  await preloaded.load()
+
+  const sheet = document.createElement('style')
+  const ruleA = `.editor-virtualized-row.styled-switch-row { font-family: "${family}", "${fallbackFamily}"; font-size: 20px; }`
+  const ruleB = `.editor-virtualized-row.styled-switch-row { font-family: monospace; font-size: 16px; }`
+  sheet.textContent = ruleA
+  document.head.append(sheet)
+
+  const host = document.createElement('div')
+  host.style.cssText = 'display:flex;width:230px;height:260px'
+  document.body.append(host)
+  const editor = new Editor(host, {
+    fontFamily: 'monospace',
+    fontSize: 13,
+    lineHeight: 24,
+    wordWrap: true,
+  })
+  const baseScroll = host.querySelector<HTMLElement>('.editor-virtualized')!
+  try {
+    editor.setText('W'.repeat(80))
+    editor.setRowDecorations(new Map([[0, { className: 'styled-switch-row' }]]))
+    await frames()
+    const baseGlyphsBefore = glyphAdvancesFor(baseScroll)
+    const fallbackSegments = host.querySelectorAll('[data-editor-virtual-row]').length
+    expect(fallbackSegments).toBeGreaterThan(5)
+
+    // Switch the styled row away from font A to font B, settle ResizeObserver, then add the
+    // preloaded replacement for A while A is unobserved, and switch back to A.
+    sheet.textContent = ruleB
+    await frames()
+    document.fonts.add(preloaded)
+    sheet.textContent = ruleA
+
+    await expect
+      .poll(() => host.querySelectorAll('[data-editor-virtual-row]').length)
+      .toBeLessThan(fallbackSegments)
+    expect(glyphAdvancesFor(baseScroll)).toBe(baseGlyphsBefore)
+  } finally {
+    editor.dispose()
+    host.remove()
+    sheet.remove()
+    document.fonts.delete(preloaded)
+    document.fonts.delete(fallback)
+    clearBrowserTextMetricsCache()
+  }
+})
