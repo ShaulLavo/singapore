@@ -631,6 +631,9 @@ type DocumentTransactionIntent = DocumentTransactionMetadata['intent']
 
 type TypingRunKind = 'insert' | 'backspace' | 'delete'
 
+// Idle pause that breaks a contiguous typing or deletion run into a fresh undo step.
+const TYPING_RUN_IDLE_BREAK_MS = 500
+
 // Whether the run currently ends in a space, and whether that space had one
 // before it. A lone space belongs to the word that follows, so it must not end
 // a run; a second one is deliberate enough that the text either side of it is
@@ -2002,16 +2005,33 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       edits,
       options.metadata,
     )
+    const committedAt = this.now()
+    const previousCommittedAt = this.history.nodes.get(this.history.currentId)?.committedAt
+    const idleExpired =
+      previousCommittedAt !== undefined && isTypingRunIdleExpired(previousCommittedAt, committedAt)
     if (
       options.history === 'record' &&
       (this.applyLocalEdits === applyBatchToPieceTable || this.applyLocalEdits.history)
     ) {
-      this.commitRecordedEdit(snapshot, selections, edits, options, transaction)
+      this.commitRecordedEdit(
+        snapshot,
+        selections,
+        edits,
+        options,
+        transaction,
+        committedAt,
+        idleExpired,
+      )
     } else {
       this.history = replaceEditorHistoryState(this.history, snapshot, selections)
     }
 
-    this.typingRun = createTypingRun(this.typingRun, edits, options.metadata.intent, transaction)
+    this.typingRun = createTypingRun(
+      idleExpired ? null : this.typingRun,
+      edits,
+      options.metadata.intent,
+      transaction,
+    )
     const publication = {
       edits,
       logicalRevisionCount: options.metadata.logicalRevisionCount,
@@ -2036,6 +2056,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     edits: readonly TextEdit[],
     options: CommitEditOptions,
     transaction: DocumentTransaction,
+    committedAt: number,
+    idleExpired: boolean,
   ): void {
     const previous = this.history.undo?.transaction
     const kind = typingRunKind(options.metadata.intent)
@@ -2054,7 +2076,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
           selectionBefore: previous.selectionBefore,
           authored: { ...transaction.authored, before: previous.authored.before },
         },
-        { committedAt: this.now() },
+        { committedAt },
       )
       return
     }
@@ -2063,20 +2085,20 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       !transaction.authored &&
       kind &&
       previous &&
-      this.shouldAmendTypingRun(kind, edits, transaction, previous)
+      this.shouldAmendTypingRun(kind, edits, transaction, previous, idleExpired)
     ) {
       this.history = amendEditorHistory(
         this.history,
         snapshot,
         selections,
         createAmendedTypingTransaction(previous, transaction, kind),
-        { committedAt: this.now() },
+        { committedAt },
       )
       return
     }
 
     this.history = commitEditorHistory(this.history, snapshot, selections, transaction, {
-      committedAt: this.now(),
+      committedAt,
       selectionsBefore: options.selectionBefore,
     })
   }
@@ -2086,9 +2108,10 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     edits: readonly TextEdit[],
     transaction: DocumentTransaction,
     previous: DocumentTransaction,
+    idleExpired: boolean,
   ): boolean {
     const run = this.typingRun
-    if (!run || run.kind !== kind) return false
+    if (!run || run.kind !== kind || idleExpired) return false
 
     const edit = singleTypingRunEdit(edits, kind)
     if (!edit) return false
@@ -3036,6 +3059,11 @@ function typingRunKind(intent: DocumentTransactionIntent): TypingRunKind | null 
   if (intent === 'backspace') return 'backspace'
   if (intent === 'delete') return 'delete'
   return null
+}
+
+function isTypingRunIdleExpired(previousCommittedAt: number, committedAt: number): boolean {
+  const elapsed = committedAt - previousCommittedAt
+  return elapsed < 0 || elapsed > TYPING_RUN_IDLE_BREAK_MS
 }
 
 // A run is what one held-down key produces, so it is built from single edits

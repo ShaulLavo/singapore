@@ -542,14 +542,24 @@ long-press selection is expected browser behavior. The defect is allowing two
 selection owners to handle the same editor contact.
 
 [TouchSelectionController](../../packages/editor/src/editor/touchSelection.ts)
-sets `data-editor-touch-selecting` in the capture-phase `touchstart` listener,
-before recognition and host callbacks. [style.css](../../packages/editor/src/style.css)
-makes visible rows unselectable for that contact and disables native touch
-callouts on the virtualized editor. Touch-originated row `selectstart` and
-`contextmenu` events are cancelled. Release and cancellation restore selectable
-rows, retaining CSS Highlight paint and generic DOM-range behavior. Permanently
-unselectable rows failed 15 WebKit paint assertions and four Chromium iframe
-DOM-selection assertions in the reviewed control.
+keeps `touchstart` and `touchmove` passive at rest (switching `touchstart` to
+non-passive only while press participants or a multi-tap window are active) so
+ordinary mobile scroll swipes stay on the compositor without blocking on script
+or triggering a frame-0 full-editor style recalc. For a single-finger stationary hold, it delays setting
+`data-editor-touch-selecting` for 180 ms (cancelling immediately if the contact
+moves past `MOVE_SLOP`), which lands well before iOS's native long-press
+recognition while leaving scroll swipes untouched. Multi-tap contacts
+(`tapCount > 1`, where selection starts immediately) set the attribute and
+attach the non-passive `touchmove` drag listener immediately; single-finger
+holds attach the non-passive `touchmove` listener once the 550 ms hold activates
+selection. [style.css](../../packages/editor/src/style.css)
+makes visible rows unselectable while `data-editor-touch-selecting` is active
+and disables native touch callouts on the virtualized editor. Touch-originated
+row `selectstart` and `contextmenu` events are cancelled. Release and
+cancellation restore selectable rows and remove the non-passive `touchmove`
+listener, retaining CSS Highlight paint and generic DOM-range behavior.
+Permanently unselectable rows failed 15 WebKit paint assertions and four
+Chromium iframe DOM-selection assertions in the reviewed control.
 
 The portable reproduction is
 [mobile-custom-selection.html](../../examples/app/test/fixtures/mobile-custom-selection.html).
@@ -783,3 +793,34 @@ rows then paint the editor's part from `selectionchange`.
   // Firefox: "Title\nfirst line\nsecond line".
 </script>
 ```
+
+<a id="firefox-beforeinput-textarea-rewrite"></a>
+
+## Rewriting a textarea inside `beforeinput` drops Firefox's native `input` event
+
+Verified 2026-11-25 on Linux with Firefox 157 (Playwright). Chromium recomputes the native edit
+against the updated textarea value and fires `input`; Firefox aborts the native edit and emits no
+`input` event.
+
+### Symptom
+
+After lazy sequential typing leaves the hidden `<textarea>` behind the live document, pressing a
+native deletion shortcut whose editor keybinding is unbound (for example `Ctrl+Backspace` firing a
+trusted `deleteWordBackward` `beforeinput`) drops the deletion completely in Firefox when the
+`beforeinput` listener flushes `textarea.value`.
+
+### Root cause
+
+When script assigns `textarea.value` inside a trusted delete `beforeinput` listener, Gecko cancels
+the pending native editor mutation instead of re-running it on the new value, so the follow-up
+`input` event never fires.
+
+### Fix
+
+In `InputSelectionController.#handleBeforeInput`
+([inputSelectionController.ts](../../packages/editor/src/editor/inputSelectionController.ts)),
+whenever the hidden textarea is stale and a cancelable native delete `beforeinput` arrives
+(`deleteContentBackward`, `deleteContentForward`, `deleteWordBackward`, `deleteWordForward`,
+`deleteSoftLineBackward`, `deleteHardLineBackward`, `deleteSoftLineForward`,
+`deleteHardLineForward`), the editor cancels the native event with `event.preventDefault()`,
+applies the deletion directly against the live `DocumentSession`, and flushes the hidden textarea.

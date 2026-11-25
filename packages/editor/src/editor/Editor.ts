@@ -4372,8 +4372,12 @@ export class Editor {
 
   private registerPressParticipant(participant: EditorPressParticipant): EditorDisposable {
     this.pressParticipants.add(participant)
+    this.inputSelection.setHasPressParticipants(this.pressParticipants.size > 0)
     return this.claimForContribution(
-      disposableOnce(() => this.pressParticipants.delete(participant)),
+      disposableOnce(() => {
+        this.pressParticipants.delete(participant)
+        this.inputSelection.setHasPressParticipants(this.pressParticipants.size > 0)
+      }),
     )
   }
 

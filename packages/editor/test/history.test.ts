@@ -162,6 +162,46 @@ describe('editor history branches', () => {
     expect(sibling.nodes.get(returned.currentId)?.sealed).toBe(true)
   })
 
+  it('amends the unsealed tip without cloning the retained node map or mutating prior history', () => {
+    const { history: full } = commitRange(CAP)
+    const baseBefore = Reflect.get(full.nodes, 'base')
+    expect(baseBefore).toBeInstanceOf(Map)
+
+    const initialTipSnapshot = full.current
+    const initialTipNode = full.nodes.get(full.currentId)!
+    let cursor = full
+    for (let step = 1; step <= 25; step += 1) {
+      cursor = amendEditorHistory(
+        cursor,
+        { id: 1000 + step },
+        { caret: 1000 + step },
+        { label: `amended-${step}` },
+        { committedAt: 5000 + step },
+      )
+      expect(Reflect.get(cursor.nodes, 'base')).toBe(baseBefore)
+    }
+
+    expect(cursor.nodes.size).toBe(CAP + 1)
+    expect(cursor.current).toEqual({ id: 1025 })
+    expect(cursor.nodes.get(cursor.currentId)).toMatchObject({
+      committedAt: 5025,
+      revision: 25,
+      snapshot: { id: 1025 },
+      transaction: { label: 'amended-25' },
+    })
+    // Prior history snapshot remains untouched and immutable.
+    expect(full.current).toBe(initialTipSnapshot)
+    expect(full.nodes.get(full.currentId)).toBe(initialTipNode)
+    expect(full.nodes.get(full.currentId)?.revision).toBe(0)
+    // Superseded typing-run intermediates are not retained by the amended history.
+    expect(isReachableFrom(cursor, initialTipSnapshot)).toBe(false)
+    // Creation-order iteration still lists the amended tip last.
+    const listed = editorHistoryNodes(cursor)
+    expect(listed).toHaveLength(CAP + 1)
+    expect(listed.at(-1)?.id).toBe(cursor.currentId)
+    expect(listed.at(-1)?.snapshot).toEqual({ id: 1025 })
+  })
+
   it('clears redo without dropping the branch from the graph', () => {
     const { c, bId, cId } = branched()
     const atA = clearEditorHistoryRedo(undoEditorHistory(c))

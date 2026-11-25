@@ -285,4 +285,204 @@ describe('platform selections in the bounded textarea', () => {
     await commands.proofNativeInsertText('!')
     expect(editor.materializeFullText()).toBe('alpha 日本! charlie')
   })
+
+  it('skips hidden textarea rewrites during real sequential typing and pointer drag while preserving cursor jumps and IME', async () => {
+    const input = await inputAt(6)
+    let selectionWrites = 0
+    const origSetSelectionRange = input.setSelectionRange.bind(input)
+    input.setSelectionRange = ((
+      start: number | null,
+      end: number | null,
+      direction?: 'forward' | 'backward' | 'none',
+    ) => {
+      selectionWrites += 1
+      return origSetSelectionRange(start, end, direction)
+    }) as typeof input.setSelectionRange
+
+    // Plain sequential typing via real browser input skips per-key textarea rewrites.
+    await commands.proofNativeInsertText('x')
+    await commands.proofNativeInsertText('y')
+    await commands.proofNativeInsertText('z')
+    expect(editor.materializeFullText()).toBe('alpha xyzbravo charlie')
+    expect(selectionWrites).toBe(0)
+
+    // Moving the caret flushes the deferred textarea window.
+    await commands.proofKeyPress('ArrowLeft')
+    expect(selectionWrites).toBe(1)
+    expect(input.value).toBe('alpha xyzbravo charlie')
+    expect([input.selectionStart, input.selectionEnd]).toEqual([8, 8])
+
+    // On Chromium, real engine IME composition immediately after lazy typing commits at the real caret.
+    if (navigator.userAgent.includes('Chrome')) {
+      selectionWrites = 0
+      await commands.proofNativeInsertText('!')
+      expect(selectionWrites).toBe(0)
+      await commands.proofImeComposition('日本')
+      await commands.proofInsertText('日本')
+      expect(editor.materializeFullText()).toBe('alpha xy!日本zbravo charlie')
+      expect(input.value).toBe('alpha xy!日本zbravo charlie')
+    }
+
+    // Pointer drag mousemove skips textarea rewrites and syncs once on mouseup.
+    const row = host.querySelector<HTMLElement>('.editor-virtualized-row')!
+    const rect = row.getBoundingClientRect()
+    const y = rect.top + rect.height / 2
+    row.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        detail: 1,
+        clientX: rect.left + 2,
+        clientY: y,
+      }),
+    )
+    selectionWrites = 0
+    for (let step = 1; step <= 6; step += 1) {
+      document.dispatchEvent(
+        new MouseEvent('mousemove', {
+          bubbles: true,
+          cancelable: true,
+          buttons: 1,
+          clientX: rect.left + step * 12,
+          clientY: y,
+        }),
+      )
+    }
+    expect(selectionWrites).toBe(0)
+    document.dispatchEvent(
+      new MouseEvent('mouseup', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: rect.left + 72,
+        clientY: y,
+      }),
+    )
+    expect(selectionWrites).toBe(1)
+    expect(input.selectionEnd).toBeGreaterThan(input.selectionStart)
+  })
+
+  it('handles native backward delete after emoji input and right-side native selection after lazy typing', async () => {
+    editor.setText('abc')
+    const input = await inputAt(3)
+
+    // Inserting an emoji syncs the textarea so Chromium native backward delete removes the full pair.
+    await commands.proofNativeInsertText('😀')
+    expect(editor.materializeFullText()).toBe('abc😀')
+    expect(input.value).toBe('abc😀')
+    document.execCommand('delete')
+    expect(editor.materializeFullText()).toBe('abc')
+
+    // Typing ASCII immediately after an emoji also keeps native delete aligned.
+    await commands.proofNativeInsertText('😀')
+    await commands.proofNativeInsertText('a')
+    expect(editor.materializeFullText()).toBe('abc😀a')
+    document.execCommand('delete')
+    expect(editor.materializeFullText()).toBe('abc😀')
+
+    // Selecting the textarea character immediately to the right of a lazily typed burst selects
+    // only that character, not the lazily inserted prefix.
+    editor.setText('alpha bravo charlie')
+    const focused = await inputAt(6)
+    for (const ch of ['x', 'y', 'z']) {
+      focused.dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: ch,
+        }),
+      )
+    }
+    expect(editor.materializeFullText()).toBe('alpha xyzbravo charlie')
+    expect(focused.value).toBe('alpha bravo charlie')
+    focused.setSelectionRange(6, 7)
+    focused.dispatchEvent(new Event('select', { bubbles: true }))
+    const rightSelection = editor.getSelections()[0]!
+    expect(rightSelection).toMatchObject({ anchorOffset: 9, headOffset: 10 })
+    expect(
+      editor.materializeFullText().slice(rightSelection.startOffset, rightSelection.endOffset),
+    ).toBe('b')
+  })
+
+  it('handles native deleteWordBackward after deferred typing with trusted keys and preserves native range on immediate copy/cut', async () => {
+    // 1. Unbind editor keybindings so the browser handles Ctrl+Backspace (Alt+Backspace on macOS)
+    // via a trusted native deleteWordBackward beforeinput while the hidden textarea is stale.
+    editor.setKeymap({ packs: [] })
+    editor.setText('hello ')
+    const input = await inputAt(6)
+    await commands.proofKeyPress('x')
+    expect(editor.materializeFullText()).toBe('hello x')
+    expect(input.value).toBe('hello ')
+
+    const wordDeleteKey = /Mac/i.test(navigator.platform) ? 'Alt+Backspace' : 'Control+Backspace'
+    await commands.proofKeyPress(wordDeleteKey)
+    expect(editor.materializeFullText()).toBe('hello ')
+    expect(input.value).toBe('hello ')
+    expect(input.selectionStart).toBe(6)
+
+    // 2. Cutting a newly set native textarea range before `select` fires cuts only that character,
+    // not the entire line.
+    editor.setText('alpha bravo\ncharlie')
+    const cutInput = await inputAt(6)
+    cutInput.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: 'x',
+      }),
+    )
+    expect(editor.materializeFullText()).toBe('alpha xbravo\ncharlie')
+    expect(cutInput.value).toBe('alpha bravo\ncharlie')
+
+    cutInput.setSelectionRange(6, 7)
+    let copiedText = ''
+    const readCopy = (event: ClipboardEvent): void => {
+      copiedText = event.clipboardData?.getData('text/plain') ?? ''
+    }
+    host.addEventListener('copy', readCopy)
+    cutInput.dispatchEvent(
+      new ClipboardEvent('copy', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: new DataTransfer(),
+      }),
+    )
+    host.removeEventListener('copy', readCopy)
+    expect(copiedText).toBe('b')
+    expect(editor.materializeFullText()).toBe('alpha xbravo\ncharlie')
+
+    // Repeat with a fresh deferred insert and immediate cut (before `select` fires).
+    editor.setText('alpha bravo\ncharlie')
+    const cutInput2 = await inputAt(6)
+    cutInput2.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: 'x',
+      }),
+    )
+    expect(editor.materializeFullText()).toBe('alpha xbravo\ncharlie')
+    expect(cutInput2.value).toBe('alpha bravo\ncharlie')
+
+    cutInput2.setSelectionRange(6, 7)
+    let cutText = ''
+    const readCut = (event: ClipboardEvent): void => {
+      cutText = event.clipboardData?.getData('text/plain') ?? ''
+    }
+    host.addEventListener('cut', readCut)
+    cutInput2.dispatchEvent(
+      new ClipboardEvent('cut', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: new DataTransfer(),
+      }),
+    )
+    host.removeEventListener('cut', readCut)
+    expect(cutText).toBe('b')
+    expect(editor.materializeFullText()).toBe('alpha xravo\ncharlie')
+  })
 })
