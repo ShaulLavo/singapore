@@ -3,6 +3,12 @@ import type { LspTransport, LspTransportHandler } from './types'
 export type LspManagedTransport = LspTransport & {
   onDidClose(handler: (error?: unknown) => void): () => void
   close(): void
+  /**
+   * For a transport whose server outlives `close()` for a while, such as a process being stopped:
+   * settles once that server is gone. Whoever replaces the transport waits for it first, so two
+   * servers never run side by side.
+   */
+  readonly gone?: Promise<void>
 }
 
 /** A socket close the transport did not ask for: what the socket reported, and how busy it was. */

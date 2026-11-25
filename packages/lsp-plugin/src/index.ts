@@ -77,7 +77,10 @@ export {
 export {
   documentUriToFileName,
   fileNameToDocumentUri,
+  fileUriToPath,
   pathOrUriToDocumentUri,
+  pathToFileUri,
+  sameFileUri,
   sourcePathToFileName,
 } from './paths'
 export type {

@@ -42,6 +42,8 @@ export {
   REQUEST_CANCELLED,
   type LspServerExitedParams,
 } from './protocol'
+export { LspFrameDecoder, LspFramingError, encodeLspFrame } from './framing'
+export { createStdioLspTransport, type LspStdio, type LspStdioOptions } from './stdioTransport'
 export {
   LspTransportClosedError,
   createWebSocketLspTransport,

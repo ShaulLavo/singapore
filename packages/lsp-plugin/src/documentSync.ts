@@ -8,7 +8,7 @@ import type { LspTextDocumentSnapshot, LspWorkspace } from '@singapore-editor/ls
 import type * as lsp from 'vscode-languageserver-protocol'
 import { projectDiagnosticsInSnapshot } from './diagnosticProjection'
 import type { LanguageServerDocumentUriTransition } from './documentSyncController'
-import { pathOrUriToDocumentUri } from './paths'
+import { pathOrUriToDocumentUri, sameFileUri } from './paths'
 import type { ActiveDocument, DocumentDescriptor } from './pluginTypes'
 import { viewDocumentSnapshot } from './viewDocumentSnapshot'
 import {
@@ -149,7 +149,7 @@ export class DocumentSync {
   publishDiagnostics(params: unknown): void {
     const diagnostics = publishDiagnosticsParams(params)
     const active = this.document
-    if (!diagnostics || !active || diagnostics.uri !== active.uri) return
+    if (!diagnostics || !active || !sameFileUri(diagnostics.uri, active.uri)) return
     if (diagnostics.version !== null && diagnostics.version !== active.lspVersion) return
     this.replaceDiagnostics(active, diagnostics.version, diagnostics.diagnostics)
   }

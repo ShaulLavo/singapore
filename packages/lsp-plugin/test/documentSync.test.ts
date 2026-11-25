@@ -146,6 +146,23 @@ describe('document protocol presentation', () => {
     expect(f.presenter.clear).toHaveBeenCalled()
   })
 
+  it('accepts diagnostics for the open document when the server escapes its URI differently', async () => {
+    const f = fixture('abc', { uriForDocument: () => 'file:///app/(shop)/page.tsx' })
+    await f.sync.sync(f.snapshot())
+    const diagnostic = {
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+      message: 'fixture',
+    }
+
+    f.sync.publishDiagnostics({
+      uri: 'file:///app/%28shop%29/page.tsx',
+      version: 0,
+      diagnostics: [diagnostic],
+    })
+
+    expect(f.sync.diagnostics).toEqual([diagnostic])
+  })
+
   it('keeps presentation errors outside the already accepted source acknowledgement', async () => {
     const f = fixture('abc')
     f.presenter.render.mockImplementationOnce(() => {
