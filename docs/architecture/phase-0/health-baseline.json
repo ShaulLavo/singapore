@@ -74,8 +74,10 @@
         "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
         "packages/editor/src/virtualization/foldMarkerSource.ts",
         "packages/editor/src/virtualization/geckoHighlightRepaint.ts",
+        "packages/editor/src/virtualization/nativeCarets.ts",
         "packages/editor/src/virtualization/pointViewport.ts",
         "packages/editor/src/virtualization/rowDecorationProjection.ts",
+        "packages/editor/src/virtualization/rowTokenPainter.ts",
         "packages/editor/src/virtualization/scrollViewport.ts",
         "packages/editor/src/virtualization/sharedTokenHighlights.ts",
         "packages/editor/src/virtualization/virtualizedTextView.ts",
@@ -109,6 +111,7 @@
         "packages/editor/src/virtualization/displayProjectionWrap.ts"
       ],
       [
+        "packages/editor/src/virtualization/rowTokenPainter.ts",
         "packages/editor/src/virtualization/scrollViewport.ts",
         "packages/editor/src/virtualization/virtualizedTextViewGeometry.ts",
         "packages/editor/src/virtualization/virtualizedTextViewHelpers.ts",

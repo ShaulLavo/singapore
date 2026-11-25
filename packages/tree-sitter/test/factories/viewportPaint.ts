@@ -28,11 +28,14 @@ export function mountedColors(editor: Editor, length: number): readonly (string 
   }
   const colors: (string | null)[] = Array.from({ length }, () => null)
   const registered = new Map(view.highlightRegistry?.entries?.() ?? [])
-  const ranges = [...view.rowTokenRanges.values()].flatMap((row) =>
+  const rowTokenRanges = view.tokenPainter.rowTokenRanges
+  const tokenGroups = view.tokenPainter.tokenGroups
+  if (!rowTokenRanges || !tokenGroups) return colors
+  const ranges = [...rowTokenRanges.values()].flatMap((row) =>
     [...row].flatMap(([key, spans]) => spans.map((range) => ({ key, range }))),
   )
   for (const { key, range } of ranges) {
-    const group = view.tokenGroups.get(key)
+    const group = tokenGroups.get(key)
     if (!group || registered.get(group.name) !== group.highlight || !group.highlight.has(range))
       continue
     const start = offsets.get(range.startContainer)

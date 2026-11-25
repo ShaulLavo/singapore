@@ -824,3 +824,57 @@ whenever the hidden textarea is stale and a cancelable native delete `beforeinpu
 `deleteSoftLineBackward`, `deleteHardLineBackward`, `deleteSoftLineForward`,
 `deleteHardLineForward`), the editor cancels the native event with `event.preventDefault()`,
 applies the deletion directly against the live `DocumentSession`, and flushes the hidden textarea.
+
+## CSS Custom Highlight cross-engine repaint and scale costs (`tokenPainting` fallback)
+
+Verified 2026-11-25 against Chromium 156, Firefox 155, and WebKit 26.6.
+
+### Symptom
+
+CSS Custom Highlights remains Singapore's default token paint path for normal virtualized views,
+but carries three engine-level costs today:
+
+- **Chromium:** Mutating `CSS.highlights` or row DOM triggers a full-viewport highlight repaint
+  across every mounted highlighted row (~40–49 paints per keystroke), and large unvirtualized or
+  tall content-mode views with tens of thousands of `StaticRange` entries drop to ~20–25 fps.
+- **Firefox:** `scheduleHighlightRepaintNudge()` must delete and re-insert every `CSS.highlights`
+  entry after highlight mutations over recycled rows (see above).
+- **WebKit:** Carrying ~30,000 live `StaticRange` entries costs ~65 ms/frame even without DOM
+  mutations.
+
+### Seam and behavior
+
+Row syntax token painting is abstracted behind `RowTokenPainter`
+(`packages/editor/src/virtualization/rowTokenPainter.ts`) with two implementations selectable via
+`tokenPainting?: 'auto' | 'css-highlight' | 'spans'` (and `setTokenPainting()`):
+
+- `'css-highlight'`: uses the existing `CSS.highlights` + `SharedTokenHighlights` path.
+- `'spans'`: renders minimal inline `<span class="editor-token-N editor-token">` runs inside mounted
+  rows backed by `SharedStyleRules`, emitting bare `Text` nodes for unstyled runs and coalescing
+  adjacent same-style runs.
+- `'auto'` (default): keeps `'css-highlight'` for standard virtualized views, and falls back to
+  `'spans'` when `CSS.highlights` / `Highlight` is unavailable or when a non-virtualized (`content`
+  or `static`) view mounts at least 200 rows or 2,000 token segments (with hysteresis at 140 rows
+  and 1,400 segments).
+
+### Documented `'spans'` mode tradeoffs
+
+- **Missing Highlight API:** When `CSS.highlights` or `Highlight` is absent, syntax tokens and
+  highlight overlays (`dim` / `textDecoration`) still paint through `'spans'`; ordinary non-overlay
+  range highlights (`find`, `semantic`, `diagnostics`, `bracket-match`) store their logical ranges
+  without throwing and degrade cleanly to no-op paint.
+- **Overlapping syntax tokens:** Resolved deterministically via an O(k log k) endpoint sweep where
+  later segments win per paint property (`color`, `backgroundColor`, `textDecoration`), rather than
+  document-global `CSS.highlights` registration order; translucent syntax backgrounds do not
+  alpha-stack within the syntax layer.
+- **Range highlight stacking:** Per CSS Pseudo-Elements Level 4, any color-producing `::highlight()`
+  range highlight paints above DOM `<span>` text color (including negative-priority ones), and a
+  colorless `::highlight()` background wash paints behind text glyphs and above any `<span>`
+  `background-color` (whereas in `'css-highlight'` mode a priority `-100` wash paints below a
+  priority `0` token background).
+- **Gecko non-inherited `::highlight()` backgrounds on token spans:** In Firefox, a rule matching
+  only `.editor-virtualized-row::highlight(name)` does not apply non-inherited properties such as
+  `background-color` to text nodes inside descendant `<span class="editor-token-N editor-token">`
+  elements. `rangeHighlightRule()` targets both `.editor-virtualized-row::highlight(name)` and
+  `.editor-token::highlight(name)` inside the view's highlight scope so range backgrounds paint
+  consistently across Chromium, Firefox, and WebKit without using a universal `*` selector.

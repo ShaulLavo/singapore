@@ -619,6 +619,7 @@ export class Editor {
       lineHeight: options.lineHeight,
       rowGap: options.rowGap,
       rowPositioning: options.rowPositioning,
+      tokenPainting: options.tokenPainting,
       sizing: editorSizing(options.height, options.maxHeight, options.scrollMode),
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
@@ -2446,6 +2447,10 @@ export class Editor {
   /** @deprecated Use `setHeight`. */
   setScrollMode(scrollMode: EditorOptions['scrollMode']): void {
     this.setHeight(editorSizing(undefined, undefined, scrollMode).height)
+  }
+
+  setTokenPainting(mode: EditorOptions['tokenPainting']): void {
+    this.view.setTokenPainting(mode)
   }
 
   addPlugin(plugin: EditorPlugin): EditorDisposable {

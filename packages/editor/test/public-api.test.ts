@@ -561,9 +561,11 @@ describe('public API facade', () => {
   })
 
   it('exposes the pass and cursor-history methods hosts drive the editor through', () => {
-    for (const method of ['runInOperation', 'cursorUndo', 'cursorRedo']) {
+    for (const method of ['runInOperation', 'cursorUndo', 'cursorRedo', 'setTokenPainting']) {
       expect(Editor.prototype[method as keyof Editor]).toBeTypeOf('function')
     }
+    const tokenPainting: core.EditorTokenPainting = 'auto'
+    expect(tokenPainting).toBe('auto')
   })
 
   it('exposes named category entrypoints for public, test, internal, and debug consumers', () => {

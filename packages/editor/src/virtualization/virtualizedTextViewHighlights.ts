@@ -1,3 +1,4 @@
+import { isElementNode } from '../dom'
 import {
   type HighlightOverlay,
   type HighlightOverlayRange,
@@ -17,12 +18,19 @@ import { scheduleFrame } from '../editor/scheduleFrame'
 import { tokenProjectionLiveRangeStatus } from '../editor/tokenProjection'
 import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
 import { lowerBound, upperBound } from './rowHeightIndex'
-import { getSharedTokenHighlights, SHARED_TOKEN_HIGHLIGHT_PREFIX } from './sharedTokenHighlights'
+import { SHARED_TOKEN_HIGHLIGHT_PREFIX } from './sharedTokenHighlights'
+import {
+  createRowTokenPainter,
+  normalizeTokenPainting,
+  resolveChunkLocalIntervals,
+  resolveTokenPainterKind,
+  resolveTokenPainterKindByRowCount,
+  supportsCssHighlights,
+} from './rowTokenPainter'
 import { rowLocalIndexForOffset } from './virtualizedTextViewInlineMapping'
 import { rowForCaretPosition } from './virtualizedTextViewLayout'
 import { reregisterHighlights, scheduleHighlightRepaintNudge } from './geckoHighlightRepaint'
 import {
-  addTokenRangeToChunk,
   appendTokenRange,
   appendTokenSegmentForChunk,
   getOrCreateTokenSegments,
@@ -38,13 +46,21 @@ import {
   getMountedRows,
   positionInputAtCaret,
   refreshCursorLineRows,
+  resolveMountedOffset,
+  textOffsetFromDomBoundary,
 } from './virtualizedTextViewRows'
 import { renderHiddenCharacters } from './virtualizedTextViewHiddenCharacters'
 import { clearSelectionLayer, renderSelectionLayer } from './virtualizedTextViewSelectionLayer'
-import { createDomRangeForChunkRange } from './virtualizedTextViewGeometry'
+import {
+  createDomRangeForChunkLocalRange,
+  createDomRangeForChunkRange,
+  domBoundaryForRowLocalOffset,
+  localOffsetFromDomBoundary,
+} from './virtualizedTextViewGeometry'
 import type {
+  EditorTokenPainting,
   MountedVirtualizedTextRow,
-  TokenGroup,
+  RowTokenPainterKind,
   TokenRowSegment,
   HighlightRegistry,
   VirtualizedTextChunk,
@@ -80,9 +96,11 @@ type TokenSegmentBuildStats = {
 
 type TokenRangeAddResult = {
   readonly addedRangeCount: number
+  readonly deletedRangeCount: number
   readonly liveRangeCount: number
   readonly staticRangeCount: number
   readonly styleRulesDirty: boolean
+  readonly domMutated: boolean
 }
 
 type TokenRangeReconcileStats = {
@@ -133,18 +151,34 @@ export function adoptTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
   const projectionStatus = tokenProjectionLiveRangeStatus(view.tokens, tokens)
   if (projectionStatus === true && !view.sameLineTokenEdit) {
     installTokens(view, tokens)
-    if (view.rowTokenRanges.size === 0 && tokens.length > 0) renderTokenHighlights(view)
+    if (
+      needsPainterReconcileForTokens(view) ||
+      (!view.tokenPainter.hasPaintedState() && tokens.length > 0)
+    ) {
+      renderTokenHighlights(view)
+    }
     return
   }
 
   if (canKeepLiveTokenRanges(view, tokens, projectionStatus)) {
     installTokens(view, tokens)
+    if (needsPainterReconcileForTokens(view)) {
+      view.sameLineTokenEdit = null
+      view.tokenProjectionDirtyStartRow = null
+      renderTokenHighlights(view)
+      return
+    }
     reconcileTokenHighlightsAfterSameLineEdit(view)
     return
   }
 
   if (view.tokens === tokens) {
-    if (view.rowTokenRanges.size === 0 && tokens.length > 0) renderTokenHighlights(view)
+    if (
+      needsPainterReconcileForTokens(view) ||
+      (!view.tokenPainter.hasPaintedState() && tokens.length > 0)
+    ) {
+      renderTokenHighlights(view)
+    }
     return
   }
 
@@ -168,7 +202,7 @@ function adoptChangedTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
   const pendingEdit = takeSameLineTokenEdit(view)
   const dirtyStartRow = view.tokenProjectionDirtyStartRow
   installTokens(view, tokens)
-  if (pendingEdit) {
+  if (pendingEdit && !needsPainterReconcileForTokens(view)) {
     reconcileTokenHighlightsFromRow(
       view,
       dirtyTokenProjectionStartRow(dirtyStartRow, pendingEdit.rowIndex),
@@ -179,6 +213,29 @@ function adoptChangedTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
 
   view.tokenProjectionDirtyStartRow = null
   renderTokenHighlights(view)
+}
+
+function needsPainterReconcileForTokens(view: VirtualizedTextViewInternal): boolean {
+  if (view.provisional) return false
+  const decidedByRowCount = resolveTokenPainterKindByRowCount(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    view.rowElements.size,
+  )
+  if (decidedByRowCount !== null) return decidedByRowCount !== view.tokenPainter.kind
+
+  const mountedRows = getMountedRows(view)
+  const desired = resolveTokenPainterKind(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    mountedRows.length,
+    tokenSegmentCount(tokenSegmentsForRows(view, mountedRows)),
+  )
+  return desired !== view.tokenPainter.kind
 }
 
 // A palette only changes by growing or being replaced, so its identity says when groups are stale.
@@ -282,7 +339,7 @@ export function setRangeHighlight(
   const group = getOrCreateRangeHighlightGroup(view, name, style)
   // Equal-priority highlights paint in registry order, which we cannot keep stable across mount
   // cycles, so the declared stacking is mirrored onto the Highlight itself.
-  group.highlight.priority = (style.zIndex ?? 0) - (style.color ? 0 : 100)
+  if (group.highlight) group.highlight.priority = (style.zIndex ?? 0) - (style.color ? 0 : 100)
   if (canSkipRangeHighlightUpdate(view, group, nextRanges, style)) return
 
   if (!sameHighlightStyle(group.style, style)) view.rangeHighlightRuleVersion += 1
@@ -331,6 +388,7 @@ function renderPaintGroup(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
 ): void {
+  if (!group.highlight) return
   const signature = rangeHighlightSignature(view, group)
   if (signature === group.signature) return
 
@@ -504,6 +562,169 @@ export function clampStoredSelection(view: VirtualizedTextViewInternal): void {
   setPrimarySelection(view, view.selections[0] ?? null)
 }
 
+export function setTokenPaintingMode(
+  view: VirtualizedTextViewInternal,
+  mode: EditorTokenPainting | undefined,
+): boolean {
+  const next = normalizeTokenPainting(mode)
+  if (view.tokenPainting === next) return false
+
+  view.tokenPainting = next
+  if (view.provisional || view.sameLineTokenEdit) return true
+
+  const mountedRows = getMountedRows(view)
+  const desired = resolveTokenPainterKind(
+    next,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    mountedRows.length,
+    0,
+  )
+  switchTokenPainterIfNeeded(view, desired, mountedRows)
+  renderTokenHighlights(view)
+  return true
+}
+
+export function syncTokenPainterAfterProvisionalCommit(view: VirtualizedTextViewInternal): void {
+  if (view.provisional) return
+  const mountedRows = getMountedRows(view)
+  const desired = resolveTokenPainterKind(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    mountedRows.length,
+    0,
+  )
+  switchTokenPainterIfNeeded(view, desired, mountedRows)
+}
+
+function switchTokenPainterIfNeeded(
+  view: VirtualizedTextViewInternal,
+  desired: RowTokenPainterKind,
+  mountedRows: readonly MountedVirtualizedTextRow[],
+): boolean {
+  if (desired === view.tokenPainter.kind) return false
+
+  preserveNativeSelectionAroundDomMutation(view, () => {
+    const outgoing = view.tokenPainter
+    const previousPaintsOverlayBase = outgoing.paintsOverlayBase
+    const wasSpans = outgoing.kind === 'spans'
+    outgoing.clearAll(mountedRows)
+    outgoing.flushStyles()
+    view.rowTokenSignatures.clear()
+    view.tokenPainter = createRowTokenPainter(view, desired)
+    view.scrollElement.dataset.editorTokenPainting = desired
+    view.tokenPaletteDirty = true
+    view.rangeHighlightRuleVersion += 1
+    if (previousPaintsOverlayBase !== view.tokenPainter.paintsOverlayBase) {
+      syncOverlayBaseGroups(view)
+      for (const base of view.overlayBaseGroups.values()) renderPaintGroup(view, base)
+    }
+    if (wasSpans) refreshRangeHighlightsAfterTokenDomChange(view)
+    rebuildStyleRules(view)
+  })
+  return true
+}
+
+function refreshRangeHighlightsAfterTokenDomChange(view: VirtualizedTextViewInternal): void {
+  if (view.rangeHighlightGroups.size === 0 || !supportsCssHighlights(view.highlightRegistry)) return
+  for (const name of view.rangeHighlightGroups.keys()) renderRangeHighlight(view, name)
+}
+
+type CapturedSelectionEndpoint =
+  | { readonly kind: 'dom'; readonly node: Node | null; readonly offset: number }
+  | {
+      readonly kind: 'row-local'
+      readonly row: MountedVirtualizedTextRow
+      readonly localOffset: number
+    }
+  | { readonly kind: 'editor'; readonly offset: number }
+
+function isPreservedInlineSubtreeNode(node: Node, boundary: HTMLElement): boolean {
+  const element = isElementNode(node) ? node : node.parentElement
+  if (!element || !boundary.contains(element)) return false
+  const preserved = element.closest<HTMLElement>(
+    '[data-editor-inline-widget], .editor-virtualized-control-character',
+  )
+  return preserved !== null && boundary.contains(preserved)
+}
+
+function mountedRowContainingNode(
+  view: VirtualizedTextViewInternal,
+  node: Node,
+): MountedVirtualizedTextRow | null {
+  for (const row of view.rowElements.values()) {
+    if (row.element === node || row.element.contains(node)) return row
+  }
+  return null
+}
+
+function captureSelectionEndpoint(
+  view: VirtualizedTextViewInternal,
+  node: Node | null,
+  offset: number,
+): CapturedSelectionEndpoint {
+  if (!node || !view.scrollElement.contains(node)) return { kind: 'dom', node, offset }
+  if (isPreservedInlineSubtreeNode(node, view.scrollElement)) {
+    return { kind: 'dom', node, offset }
+  }
+  const row = mountedRowContainingNode(view, node)
+  if (row) {
+    const localOffset = localOffsetFromDomBoundary(row, node, offset)
+    if (localOffset !== null) return { kind: 'row-local', row, localOffset }
+  }
+  const textOffset = textOffsetFromDomBoundary(view, node, offset)
+  if (textOffset === null) return { kind: 'dom', node, offset }
+  return { kind: 'editor', offset: textOffset }
+}
+
+function resolveSelectionEndpoint(
+  view: VirtualizedTextViewInternal,
+  endpoint: CapturedSelectionEndpoint,
+): { readonly node: Node; readonly offset: number } | null {
+  if (endpoint.kind === 'dom') {
+    if (!endpoint.node || !endpoint.node.isConnected) return null
+    return { node: endpoint.node, offset: endpoint.offset }
+  }
+  if (endpoint.kind === 'row-local') {
+    if (!endpoint.row.element.isConnected) return null
+    return domBoundaryForRowLocalOffset(endpoint.row, endpoint.localOffset)
+  }
+  return resolveMountedOffset(view, endpoint.offset)
+}
+
+function preserveNativeSelectionAroundDomMutation<T>(
+  view: VirtualizedTextViewInternal,
+  mutate: () => T,
+): T {
+  const selection = view.scrollElement.ownerDocument.defaultView?.getSelection()
+  if (!selection || selection.rangeCount === 0) return mutate()
+  const { anchorNode, anchorOffset, focusNode, focusOffset } = selection
+  if (
+    (!anchorNode || !view.scrollElement.contains(anchorNode)) &&
+    (!focusNode || !view.scrollElement.contains(focusNode))
+  ) {
+    return mutate()
+  }
+
+  const anchor = captureSelectionEndpoint(view, anchorNode, anchorOffset)
+  const focus = captureSelectionEndpoint(view, focusNode, focusOffset)
+  const result = mutate()
+  const restoredAnchor = resolveSelectionEndpoint(view, anchor)
+  const restoredFocus = resolveSelectionEndpoint(view, focus)
+  if (restoredAnchor && restoredFocus) {
+    selection.setBaseAndExtent(
+      restoredAnchor.node,
+      restoredAnchor.offset,
+      restoredFocus.node,
+      restoredFocus.offset,
+    )
+  }
+  return result
+}
+
 export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
   if (view.provisional) return
   if (view.highlightOverlaySnapshot && view.highlightOverlaySnapshot !== view.model.textSnapshot) {
@@ -511,14 +732,42 @@ export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
     return
   }
   const pendingEdit = view.sameLineTokenEdit
-  if (
-    !view.highlightRegistry ||
-    view.tokens.length === 0 ||
-    view.model.textLength === 0 ||
-    view.rowElements.size === 0
-  ) {
+  if (view.model.textLength === 0 || view.rowElements.size === 0) {
     clearTokenHighlights(view)
     return
+  }
+
+  const mountedRows = getMountedRows(view)
+  if (view.tokens.length === 0) {
+    const desired = resolveTokenPainterKind(
+      view.tokenPainting,
+      view.highlightRegistry,
+      view.scrollMode,
+      view.tokenPainter.kind,
+      mountedRows.length,
+      0,
+    )
+    switchTokenPainterIfNeeded(view, desired, mountedRows)
+    if (!view.tokenPainter.paintsOverlayBase || view.highlightOverlayMask.length === 0) {
+      clearTokenHighlights(view)
+      return
+    }
+  } else if (
+    view.tokenPainter.kind === 'css-highlight' &&
+    !supportsCssHighlights(view.highlightRegistry)
+  ) {
+    const desired = resolveTokenPainterKind(
+      view.tokenPainting,
+      view.highlightRegistry,
+      view.scrollMode,
+      view.tokenPainter.kind,
+      mountedRows.length,
+      0,
+    )
+    if (!switchTokenPainterIfNeeded(view, desired, mountedRows)) {
+      clearTokenHighlights(view)
+      return
+    }
   }
 
   if (pendingEdit) return
@@ -526,22 +775,61 @@ export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
   // TODO: Smooth first syntax paint without forcing CSS Highlight API color animation.
   // Highlight pseudo styles do not reliably animate color, so this likely needs a
   // separate transition/overlay strategy that preserves the current range model.
-  const mountedRows = getMountedRows(view)
   const reconcileStats = createTokenRangeReconcileStats(view, mountedRows)
   const reconcileStartedAt = reconcileStats ? performanceNow() : 0
-  const segmentsByRow = tokenSegmentsForRows(view, mountedRows)
-  let styleRulesDirty = false
-  for (const row of mountedRows) {
-    styleRulesDirty =
-      reconcileTokenHighlightsForRow(
+  let segmentsByRow = tokenSegmentsForRows(view, mountedRows)
+  const desired = resolveTokenPainterKind(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    mountedRows.length,
+    tokenSegmentCount(segmentsByRow),
+  )
+  const previousPaintsOverlayBase = view.tokenPainter.paintsOverlayBase
+  if (switchTokenPainterIfNeeded(view, desired, mountedRows)) {
+    if (
+      previousPaintsOverlayBase !== view.tokenPainter.paintsOverlayBase &&
+      view.highlightOverlayMask.length > 0
+    ) {
+      segmentsByRow = tokenSegmentsForRows(view, mountedRows)
+    } else {
+      syncTokenGroupsToPalette(view)
+    }
+  }
+
+  if (
+    view.tokenPainter.kind === 'css-highlight' &&
+    !supportsCssHighlights(view.highlightRegistry)
+  ) {
+    clearTokenHighlights(view)
+    return
+  }
+
+  const paintBatch = () => {
+    let styleRulesDirty = false
+    let domMutated = false
+    for (const row of mountedRows) {
+      const outcome = reconcileTokenHighlightsForRow(
         view,
         row,
         segmentsByRow.get(row.tokenHighlightSlotId) ?? [],
         shouldForceTokenRowRebuild(row, null),
         reconcileStats,
-      ) || styleRulesDirty
+      )
+      styleRulesDirty = outcome.styleRulesDirty || styleRulesDirty
+      domMutated = outcome.domMutated || domMutated
+    }
+    return { styleRulesDirty, domMutated }
   }
+
+  const { styleRulesDirty, domMutated } =
+    view.tokenPainter.kind === 'spans'
+      ? preserveNativeSelectionAroundDomMutation(view, paintBatch)
+      : paintBatch()
+
   recordTokenRangeReconcileStats(reconcileStats, reconcileStartedAt)
+  if (domMutated) refreshRangeHighlightsAfterTokenDomChange(view)
   if (styleRulesDirty) rebuildStyleRules(view)
 }
 
@@ -551,29 +839,24 @@ function reconcileTokenHighlightsForRow(
   segments: readonly TokenRowSegment[],
   force = false,
   stats: TokenRangeReconcileStats | null = null,
-): boolean {
+): { readonly styleRulesDirty: boolean; readonly domMutated: boolean } {
   const signature = tokenRowSignature(row, segments)
   const previousSignature = view.rowTokenSignatures.get(row.tokenHighlightSlotId)
   if (!force && previousSignature === signature) {
     if (stats) stats.skippedRowCount += 1
-    return false
-  }
-
-  const deletedRangeCount = deleteTokenRangesForRow(view, row.tokenHighlightSlotId)
-  if (stats) {
-    stats.rebuiltRowCount += 1
-    stats.deletedRangeCount += deletedRangeCount
+    return { styleRulesDirty: false, domMutated: false }
   }
 
   const result = addTokenSegmentsForRow(view, row, segments)
   if (stats) {
+    stats.rebuiltRowCount += 1
+    stats.deletedRangeCount += result.deletedRangeCount
     stats.addedRangeCount += result.addedRangeCount
     stats.liveRangeCount += result.liveRangeCount
     stats.staticRangeCount += result.staticRangeCount
   }
   view.rowTokenSignatures.set(row.tokenHighlightSlotId, signature)
-  scheduleHighlightRepaintNudge(view.highlightRegistry)
-  return result.styleRulesDirty
+  return { styleRulesDirty: result.styleRulesDirty, domMutated: result.domMutated }
 }
 
 function reconcileTokenHighlightsAfterSameLineEdit(view: VirtualizedTextViewInternal): void {
@@ -604,16 +887,24 @@ function reconcileSameLineTokenRows(
   if (rows.length === 0) return
 
   const segmentsByRow = tokenSegmentsForRows(view, rows)
-  let styleRulesDirty = false
-  for (const row of rows) {
-    styleRulesDirty =
-      reconcileTokenHighlightsForRow(
+  const run = () => {
+    let styleRulesDirty = false
+    let domMutated = false
+    for (const row of rows) {
+      const outcome = reconcileTokenHighlightsForRow(
         view,
         row,
         segmentsByRow.get(row.tokenHighlightSlotId) ?? [],
         true,
-      ) || styleRulesDirty
+      )
+      styleRulesDirty = outcome.styleRulesDirty || styleRulesDirty
+      domMutated = outcome.domMutated || domMutated
+    }
+    return { styleRulesDirty, domMutated }
   }
+  const { styleRulesDirty, domMutated } =
+    view.tokenPainter.kind === 'spans' ? preserveNativeSelectionAroundDomMutation(view, run) : run()
+  if (domMutated) refreshRangeHighlightsAfterTokenDomChange(view)
   if (styleRulesDirty) rebuildStyleRules(view)
 }
 
@@ -626,16 +917,24 @@ function reconcileTokenHighlightsFromRow(
   if (rows.length === 0) return
 
   const segmentsByRow = tokenSegmentsForRows(view, rows)
-  let styleRulesDirty = false
-  for (const row of rows) {
-    styleRulesDirty =
-      reconcileTokenHighlightsForRow(
+  const run = () => {
+    let styleRulesDirty = false
+    let domMutated = false
+    for (const row of rows) {
+      const outcome = reconcileTokenHighlightsForRow(
         view,
         row,
         segmentsByRow.get(row.tokenHighlightSlotId) ?? [],
         force,
-      ) || styleRulesDirty
+      )
+      styleRulesDirty = outcome.styleRulesDirty || styleRulesDirty
+      domMutated = outcome.domMutated || domMutated
+    }
+    return { styleRulesDirty, domMutated }
   }
+  const { styleRulesDirty, domMutated } =
+    view.tokenPainter.kind === 'spans' ? preserveNativeSelectionAroundDomMutation(view, run) : run()
+  if (domMutated) refreshRangeHighlightsAfterTokenDomChange(view)
   if (styleRulesDirty) rebuildStyleRules(view)
 }
 
@@ -689,64 +988,37 @@ export function clearTokenHighlightsFromRow(
   view: VirtualizedTextViewInternal,
   startRow: number,
 ): void {
-  for (const row of getMountedRows(view)) {
-    if (row.index < startRow) continue
+  const run = () => {
+    for (const row of getMountedRows(view)) {
+      if (row.index < startRow) continue
 
-    deleteTokenRangesForRow(view, row.tokenHighlightSlotId)
-    view.rowTokenSignatures.delete(row.tokenHighlightSlotId)
+      view.tokenPainter.clearRow(row.tokenHighlightSlotId, row)
+      view.rowTokenSignatures.delete(row.tokenHighlightSlotId)
+    }
   }
-  scheduleHighlightRepaintNudge(view.highlightRegistry)
+  if (view.tokenPainter.kind === 'spans') preserveNativeSelectionAroundDomMutation(view, run)
+  else run()
 }
 
 export function restoreHighlightsAfterPresentation(view: VirtualizedTextViewInternal): void {
+  if (!view.scrollElement.isConnected) return
+  view.tokenPainter.restore('presentation')
   const registry = view.highlightRegistry
-  if (!registry || !view.scrollElement.isConnected) return
-  restoreTokenHighlightGroups(view, registry)
-  restoreRangeHighlightGroups(view, registry)
-  restoreStyleRuleElements(view)
-
-  // WebKit bug: async syntax ranges registered while hidden can stay unpainted on reveal.
-  // NBSP support selects WebKit, not the bug; remove this when native paint passes without refresh.
-  if (!view.scrollElement.ownerDocument.defaultView?.CSS.supports('-webkit-nbsp-mode', 'space'))
-    return
-
-  // Token groups can contain other editors' ranges. Refresh only this view's memberships.
-  for (const rangesByStyle of view.rowTokenRanges.values()) {
-    for (const [styleKey, ranges] of rangesByStyle) {
-      const group = view.tokenGroups.get(styleKey)
-      if (!group) continue
-      for (const range of ranges) {
-        group.highlight.delete(range)
-        group.highlight.add(range)
-      }
-    }
-  }
+  if (registry) restoreRangeHighlightGroups(view, registry)
+  syncStyleElementConnection(view, view.styleEl.textContent ?? '')
 }
 
 export function restoreHighlightsAfterBrowserResume(view: VirtualizedTextViewInternal): void {
-  const registry = view.highlightRegistry
-  if (!registry) return
   if (!view.scrollElement.isConnected) return
 
-  const restoredTokenHighlights = restoreTokenHighlightGroups(view, registry)
-  const restoredRangeHighlights = restoreRangeHighlightGroups(view, registry)
-  restoreStyleRuleElements(view)
-  if (!restoredTokenHighlights && !restoredRangeHighlights) return
+  const restoredTokenHighlights = view.tokenPainter.restore('resume')
+  const registry = view.highlightRegistry
+  const restoredRangeHighlights = registry ? restoreRangeHighlightGroups(view, registry) : false
+  syncStyleElementConnection(view, view.styleEl.textContent ?? '')
+  if (!registry || (!restoredTokenHighlights && !restoredRangeHighlights)) return
+  if (view.tokenPainter.kind === 'spans' && !restoredRangeHighlights) return
 
   reregisterHighlights(registry)
-}
-
-function restoreTokenHighlightGroups(
-  view: VirtualizedTextViewInternal,
-  registry: HighlightRegistry,
-): boolean {
-  let restored = false
-  for (const group of view.tokenGroups.values()) {
-    registry.set(group.name, group.highlight)
-    restored = true
-  }
-
-  return restored
 }
 
 function restoreRangeHighlightGroups(
@@ -768,14 +1040,9 @@ function restorePaintGroup(
   registry: HighlightRegistry,
   group: VirtualizedTextHighlightGroup,
 ): boolean {
-  if (!group.registered) return false
+  if (!group.registered || !group.highlight) return false
   registry.set(group.name, group.highlight)
   return true
-}
-
-function restoreStyleRuleElements(view: VirtualizedTextViewInternal): void {
-  getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)?.restore()
-  syncStyleElementConnection(view, view.styleEl.textContent ?? '')
 }
 
 // Groups follow the palette, which is a few dozen styles however long the document is.
@@ -803,8 +1070,13 @@ function retainOverlayTokenStyles(
   for (const style of [...styles.values()]) {
     for (const overlay of overlays.values()) {
       const twin = overlayColorStyle(style, overlay)
-      const key = serializeTokenStyle(twin)
-      if (view.tokenGroups.has(key)) styles.set(key, twin)
+      styles.set(serializeTokenStyle(twin), twin)
+    }
+  }
+  if (view.tokenPainter.paintsOverlayBase) {
+    for (const overlay of overlays.values()) {
+      const base = overlayColorStyle({}, overlay)
+      styles.set(serializeTokenStyle(base), base)
     }
   }
 }
@@ -864,12 +1136,40 @@ export function documentPaintTokenRanges(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): readonly { readonly style: EditorTokenStyle; readonly range: AbstractRange }[] {
-  if (!view.highlightRegistry || view.tokens.length === 0) return []
+  if (view.tokens.length === 0) return []
+  if (view.tokenPainter.kind === 'css-highlight' && !supportsCssHighlights(view.highlightRegistry))
+    return []
   const segments = new Map<number, TokenRowSegment[]>()
   appendTokenSegmentsForMountedRow(view, segments, row, null)
+  const rowSegments = segments.get(row.tokenHighlightSlotId) ?? []
+  if (view.tokenPainter.kind === 'spans') {
+    const byChunk = new Map<VirtualizedTextChunk, TokenRowSegment[]>()
+    for (const segment of rowSegments) {
+      const existing = byChunk.get(segment.chunk)
+      if (existing) existing.push(segment)
+      else byChunk.set(segment.chunk, [segment])
+    }
+    const resolved: { readonly style: EditorTokenStyle; readonly range: AbstractRange }[] = []
+    for (const chunk of row.chunks) {
+      const chunkSegments = byChunk.get(chunk)
+      if (!chunkSegments) continue
+      for (const interval of resolveChunkLocalIntervals(row, chunk, chunkSegments)) {
+        const range = createDomRangeForChunkLocalRange(
+          row.element.ownerDocument,
+          chunk,
+          interval.start,
+          interval.end,
+        )
+        if (!range) continue
+        resolved.push({ style: interval.style, range })
+      }
+    }
+    return resolved
+  }
+
   const styles = new Map<string, EditorTokenStyle>()
   const ranges = new Map<string, AbstractRange[]>()
-  for (const segment of segments.get(row.tokenHighlightSlotId) ?? []) {
+  for (const segment of rowSegments) {
     const range = tokenRangeForChunk(
       row.element.ownerDocument,
       row,
@@ -896,13 +1196,30 @@ function appendTokenSegmentsForChunk(
   if (chunk.endOffset <= chunk.startOffset) return
   if (stats) stats.chunkCount += 1
 
+  const paintsOverlayBase =
+    view.tokenPainter.paintsOverlayBase && view.highlightOverlayMask.length > 0
   const tokens = view.tokens
   const endIndex = tokens.firstStartingAtOrAfter(chunk.endOffset)
   const startIndex = tokens.firstEndingAfter(chunk.startOffset, endIndex)
-  if (startIndex >= endIndex) return
+  if (startIndex >= endIndex) {
+    if (paintsOverlayBase) {
+      const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
+      appendOverlayBaseTokenSegments(
+        view,
+        segments,
+        row,
+        chunk,
+        chunk.startOffset,
+        chunk.endOffset,
+        stats,
+      )
+    }
+    return
+  }
 
   const textLength = view.model.textLength
   const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
+  let coveredUntil = chunk.startOffset
   tokens.forEachInRange(startIndex, endIndex, (tokenStart, tokenEnd, styleId) => {
     if (stats) stats.tokenScanCount += 1
 
@@ -911,6 +1228,22 @@ function appendTokenSegmentsForChunk(
     const start = clamp(tokenStart, 0, textLength)
     const end = clamp(tokenEnd, start, textLength)
     if (end <= start || end <= chunk.startOffset) return
+
+    if (paintsOverlayBase) {
+      const clippedStart = Math.max(start, chunk.startOffset)
+      if (clippedStart > coveredUntil) {
+        appendOverlayBaseTokenSegments(
+          view,
+          segments,
+          row,
+          chunk,
+          coveredUntil,
+          clippedStart,
+          stats,
+        )
+      }
+      coveredUntil = Math.max(coveredUntil, Math.min(end, chunk.endOffset))
+    }
 
     if (view.highlightOverlayMask.length > 0) {
       appendOverlayTokenSegments(view, segments, row, chunk, start, end, renderStyle, stats)
@@ -926,6 +1259,30 @@ function appendTokenSegmentsForChunk(
     )
     recordTokenSegmentAppend(stats, result)
   })
+  if (paintsOverlayBase && coveredUntil < chunk.endOffset) {
+    appendOverlayBaseTokenSegments(view, segments, row, chunk, coveredUntil, chunk.endOffset, stats)
+  }
+}
+
+function appendOverlayBaseTokenSegments(
+  view: VirtualizedTextViewInternal,
+  segments: TokenRowSegment[],
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  start: number,
+  end: number,
+  stats: TokenSegmentBuildStats | null,
+): void {
+  if (end <= start) return
+  for (const part of splitHighlightOverlay(start, end, view.highlightOverlayMask)) {
+    if (!part.overlay) continue
+    const style = overlayColorStyle({}, part.overlay)
+    const key = serializeTokenStyle(style)
+    recordTokenSegmentAppend(
+      stats,
+      appendTokenSegmentForChunk(segments, row, chunk, part, style, key),
+    )
+  }
 }
 
 function createTokenSegmentBuildStats(
@@ -1049,79 +1406,22 @@ function addTokenSegmentsForRow(
   row: MountedVirtualizedTextRow,
   segments: readonly TokenRowSegment[],
 ): TokenRangeAddResult {
-  const rangesByStyle = new Map<string, AbstractRange[]>()
-  const document = view.scrollElement.ownerDocument
-  let addedRangeCount = 0
-  let liveRangeCount = 0
-  let staticRangeCount = 0
-  let styleRulesDirty = false
-  for (const segment of segments) {
-    const result = ensureTokenGroup(view, segment.styleKey, segment.style)
-    const group = result.group
-    if (!group) continue
-
-    const range = addTokenRangeToChunk(
-      document,
-      group.highlight,
-      row,
-      segment.chunk,
-      segment.start,
-      segment.end,
-    )
-    if (!range) continue
-
-    addedRangeCount += 1
-    if (isLiveRange(document, range)) liveRangeCount += 1
-    else staticRangeCount += 1
-    styleRulesDirty = styleRulesDirty || result.created
-    appendTokenRange(rangesByStyle, segment.styleKey, range)
-  }
-
-  if (rangesByStyle.size > 0) {
-    view.rowTokenRanges.set(row.tokenHighlightSlotId, rangesByStyle)
-  }
-
-  return { addedRangeCount, liveRangeCount, staticRangeCount, styleRulesDirty }
-}
-
-function isLiveRange(document: Document, range: AbstractRange): boolean {
-  const RangeConstructor = document.defaultView?.Range
-  return RangeConstructor ? range instanceof RangeConstructor : false
-}
-
-function ensureTokenGroup(
-  view: VirtualizedTextViewInternal,
-  styleKey: string,
-  style: EditorTokenStyle,
-): { readonly group: TokenGroup | null; readonly created: boolean } {
-  const existing = view.tokenGroups.get(styleKey)
-  if (existing) return { group: existing, created: false }
-
-  const shared = getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)
-  if (!shared) return { group: null, created: false }
-
-  const handle = shared.acquire(styleKey, style)
-  const group = {
-    name: handle.name,
-    highlight: handle.highlight,
-    style,
-    styleKey,
-  }
-  view.tokenGroups.set(styleKey, group)
-  return { group, created: true }
+  return view.tokenPainter.paintRow(row, segments)
 }
 
 export function clearTokenHighlights(view: VirtualizedTextViewInternal): void {
-  if (view.tokenGroups.size === 0 && view.rowTokenRanges.size === 0) return
+  if (!view.tokenPainter.hasPaintedState() && view.rowTokenSignatures.size === 0) return
 
-  // Deletes this view's ranges out of the (shared) Highlight objects via tokenGroups,
-  // so it must run before tokenGroups is cleared.
-  clearRowTokenState(view)
-
-  const shared = getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)
-  for (const group of view.tokenGroups.values()) shared?.release(group.styleKey)
-
-  view.tokenGroups.clear()
+  const run = () => {
+    view.tokenPainter.clearAll(getMountedRows(view))
+    view.rowTokenSignatures.clear()
+  }
+  if (view.tokenPainter.kind === 'spans') {
+    preserveNativeSelectionAroundDomMutation(view, run)
+    refreshRangeHighlightsAfterTokenDomChange(view)
+  } else {
+    run()
+  }
   rebuildStyleRules(view)
 }
 
@@ -1135,55 +1435,10 @@ function syncTokenGroupsToStyles(
     return
   }
 
-  const added = ensureTokenGroupsForStyles(view, styles)
-  const removed = removeUnusedTokenGroups(view, new Set(styles.keys()))
-  if (added || removed) rebuildStyleRules(view)
-}
-
-function ensureTokenGroupsForStyles(
-  view: VirtualizedTextViewInternal,
-  styles: ReadonlyMap<string, EditorTokenStyle>,
-): boolean {
-  let added = false
-  for (const [styleKey, style] of styles) {
-    const result = ensureTokenGroup(view, styleKey, style)
-    added = added || result.created
-  }
-
-  return added
-}
-
-function removeUnusedTokenGroups(
-  view: VirtualizedTextViewInternal,
-  styleKeys: ReadonlySet<string>,
-): boolean {
-  const shared = getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)
-  let removed = false
-  for (const [key, group] of view.tokenGroups) {
-    if (styleKeys.has(key)) continue
-
-    deleteViewTokenRangesForStyle(view, key, group.highlight)
-    shared?.release(key)
-    view.tokenGroups.delete(key)
-    removed = true
-  }
-
-  return removed
-}
-
-function deleteViewTokenRangesForStyle(
-  view: VirtualizedTextViewInternal,
-  styleKey: string,
-  highlight: Highlight,
-): void {
-  for (const [rowSlotId, rangesByStyle] of view.rowTokenRanges) {
-    const ranges = rangesByStyle.get(styleKey)
-    if (!ranges) continue
-
-    for (const range of ranges) highlight.delete(range)
-    rangesByStyle.delete(styleKey)
+  const changed = view.tokenPainter.syncPalette(styles, (rowSlotId) => {
     view.rowTokenSignatures.delete(rowSlotId)
-  }
+  })
+  if (changed) rebuildStyleRules(view)
 }
 
 function canKeepLiveTokenRanges(
@@ -1198,38 +1453,26 @@ function canKeepLiveTokenRanges(
 
 export function deleteTokenRangesForRow(
   view: VirtualizedTextViewInternal,
-  rowSlotId: number,
+  row: MountedVirtualizedTextRow,
 ): number {
-  const rangesByStyle = view.rowTokenRanges.get(rowSlotId)
-  if (!rangesByStyle) return 0
-
-  let deletedRangeCount = 0
-  for (const [styleKey, capturedRanges] of rangesByStyle) {
-    const group = view.tokenGroups.get(styleKey)
-    if (!group) continue
-
-    for (const range of capturedRanges) {
-      group.highlight.delete(range)
-    }
-    deletedRangeCount += capturedRanges.length
-  }
-
-  view.rowTokenRanges.delete(rowSlotId)
-  // Covers release-only paths (fold collapse, viewport shrink) where rows are
-  // dropped without any row rebuild scheduling the nudge.
-  if (deletedRangeCount > 0) {
-    scheduleHighlightRepaintNudge(view.highlightRegistry)
-  }
-  return deletedRangeCount
+  return view.tokenPainter.clearRow(row.tokenHighlightSlotId, row)
 }
 
 export function clearRowTokenState(view: VirtualizedTextViewInternal): void {
-  for (const rowSlotId of view.rowTokenRanges.keys()) {
-    deleteTokenRangesForRow(view, rowSlotId)
+  const run = () => {
+    view.tokenPainter.clearRows(getMountedRows(view))
+    view.rowTokenSignatures.clear()
   }
+  if (view.tokenPainter.kind === 'spans') {
+    preserveNativeSelectionAroundDomMutation(view, run)
+    refreshRangeHighlightsAfterTokenDomChange(view)
+  } else {
+    run()
+  }
+}
 
-  view.rowTokenSignatures.clear()
-  view.rowTokenRanges.clear()
+function createHighlight(view: VirtualizedTextViewInternal): Highlight | null {
+  return supportsCssHighlights(view.highlightRegistry) ? new Highlight() : null
 }
 
 function getOrCreateRangeHighlightGroup(
@@ -1242,7 +1485,7 @@ function getOrCreateRangeHighlightGroup(
 
   const group: VirtualizedTextHighlightGroup = {
     name,
-    highlight: new Highlight(),
+    highlight: createHighlight(view),
     ranges: [],
     style,
     registered: false,
@@ -1393,6 +1636,7 @@ function addRangeHighlightToChunk(
   chunk: VirtualizedTextChunk,
   range: VirtualizedTextHighlightRange,
 ): void {
+  if (!group.highlight) return
   const domRange = createDomRangeForChunkRange(
     view.scrollElement.ownerDocument,
     row,
@@ -1411,7 +1655,7 @@ function ensureRangeHighlightRegistered(
   group: VirtualizedTextHighlightGroup,
 ): void {
   if (group.registered) return
-  if (!view.highlightRegistry) return
+  if (!view.highlightRegistry || !group.highlight) return
 
   view.highlightRegistry.set(group.name, group.highlight)
   group.registered = true
@@ -1551,10 +1795,10 @@ function hideSecondaryCaretElements(view: VirtualizedTextViewInternal, startInde
 export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
   if (view.provisional) return
   orderRangeHighlights(view)
-  // Token highlight rules live in the shared per-document stylesheet
-  // (sharedTokenHighlights), written once here per batch. The per-view style element only
-  // carries range/decoration highlight rules, which are specific to this view's ranges.
-  getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)?.flush()
+  // Token paint rules live in the shared per-document stylesheet (highlight or span),
+  // written once here per batch. The per-view style element only carries range/decoration
+  // highlight rules, which are specific to this view's ranges.
+  view.tokenPainter.flushStyles()
 
   // A range rule reads only a group's name and its style, so a call that moved ranges around cannot
   // have changed any of them. Without this, a repaint that pushes N groups rebuilds every rule N
@@ -1573,9 +1817,10 @@ export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
   if (view.rangeHighlightRuleVersion === view.renderedRangeHighlightRuleVersion) return
   view.renderedRangeHighlightRuleVersion = view.rangeHighlightRuleVersion
 
+  const includeTokenSpans = view.tokenPainter.kind === 'spans'
   const rules: string[] = []
   for (const group of view.rangeHighlightGroups.values()) {
-    const rule = rangeHighlightRule(view.highlightScope, group.name, group.style)
+    const rule = rangeHighlightRule(view.highlightScope, group.name, group.style, includeTokenSpans)
     if (rule) rules.push(rule)
     for (const twin of group.twins?.values() ?? []) appendPaintRule(rules, view, twin)
   }
@@ -1606,6 +1851,7 @@ function rangeHighlightRule(
   scope: string,
   name: string,
   style: VirtualizedTextHighlightStyle,
+  includeTokenSpans: boolean,
 ): string | null {
   const declarations = []
   if (style.backgroundColor) declarations.push(`background-color: ${style.backgroundColor};`)
@@ -1614,7 +1860,12 @@ function rangeHighlightRule(
   if (declarations.length === 0) return null
 
   // Mounting one excerpt must not invalidate highlights in every other editor.
-  return `[data-editor-highlight-scope="${scope}"] .editor-virtualized-row::highlight(${name}) { ${declarations.join(' ')} }`
+  // In spans mode, also target `.editor-token::highlight()` so non-inherited properties
+  // (`background-color`) paint over descendant token spans in Gecko as well as Blink and WebKit.
+  const selector = includeTokenSpans
+    ? `[data-editor-highlight-scope="${scope}"] .editor-virtualized-row::highlight(${name}), [data-editor-highlight-scope="${scope}"] .editor-token::highlight(${name})`
+    : `[data-editor-highlight-scope="${scope}"] .editor-virtualized-row::highlight(${name})`
+  return `${selector} { ${declarations.join(' ')} }`
 }
 
 function mixRangeHighlightChunkSignature(
@@ -1639,6 +1890,7 @@ function mixRangeHighlightChunkSignature(
   let mixed = mixSignatureHash(hash, row.index)
   // Text replacement collapses live DOM ranges even when their source offsets stay unchanged.
   mixed = mixSignatureHash(mixed, row.textRevision)
+  mixed = mixSignatureHash(mixed, row.tokenDomRevision)
   mixed = mixSignatureHash(mixed, row.tokenHighlightSlotId)
   mixed = mixSignatureHash(mixed, chunk.localStart)
   mixed = mixSignatureHash(mixed, chunk.startOffset)
@@ -1662,11 +1914,11 @@ function clearPaintGroup(
   group: VirtualizedTextHighlightGroup,
 ): void {
   for (const twin of group.twins?.values() ?? []) {
-    twin.highlight.clear()
+    twin.highlight?.clear()
     unregisterRangeHighlight(view, twin)
   }
   group.twins?.clear()
-  group.highlight.clear()
+  group.highlight?.clear()
   unregisterRangeHighlight(view, group)
 }
 
@@ -1701,6 +1953,13 @@ function refreshHighlightOverlayMask(view: VirtualizedTextViewInternal): void {
 // One base group per distinct overlay, reused across edits, so the registry grows with the
 // overlay kinds in play and a keystroke re-fills Highlights instead of re-registering them.
 function syncOverlayBaseGroups(view: VirtualizedTextViewInternal): void {
+  if (view.tokenPainter.paintsOverlayBase) {
+    if (view.overlayBaseGroups.size === 0) return
+    for (const base of view.overlayBaseGroups.values()) clearPaintGroup(view, base)
+    view.overlayBaseGroups.clear()
+    view.rangeHighlightRuleVersion++
+    return
+  }
   const rangesByKey = new Map<string, HighlightOverlayRange[]>()
   for (const range of view.highlightOverlayMask) {
     const key = overlayKey(range.overlay)
@@ -1725,7 +1984,7 @@ function syncOverlayBaseGroups(view: VirtualizedTextViewInternal): void {
     const style = { ...overlayColorStyle({}, ranges[0]!.overlay), zIndex: 0 }
     view.overlayBaseGroups.set(
       key,
-      createOverlayPaintGroup(nextOverlayBaseName(view), ranges, style),
+      createOverlayPaintGroup(view, nextOverlayBaseName(view), ranges, style),
     )
     view.rangeHighlightRuleVersion++
   }
@@ -1744,12 +2003,13 @@ function nextOverlayBaseName(view: VirtualizedTextViewInternal): string {
 }
 
 function createOverlayPaintGroup(
+  view: VirtualizedTextViewInternal,
   name: string,
   ranges: readonly VirtualizedTextHighlightRange[],
   style: VirtualizedTextHighlightStyle,
 ): OverlayPaintGroup {
-  const highlight = new Highlight()
-  highlight.priority = style.zIndex ?? 0
+  const highlight = createHighlight(view)
+  if (highlight) highlight.priority = style.zIndex ?? 0
   return {
     name,
     ranges: [...ranges],
@@ -1774,7 +2034,7 @@ function prepareRangeHighlightTwins(
   const twins = new Map<string, OverlayPaintGroup>()
   for (const range of group.ranges) {
     for (const part of splitHighlightOverlay(range.start, range.end, view.highlightOverlayMask)) {
-      appendRangeOverlayPart(group, part, ordinary, twins)
+      appendRangeOverlayPart(view, group, part, ordinary, twins)
     }
   }
   group.paintRanges = ordinary
@@ -1783,6 +2043,7 @@ function prepareRangeHighlightTwins(
 }
 
 function appendRangeOverlayPart(
+  view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
   part: ReturnType<typeof splitHighlightOverlay>[number],
   ordinary: VirtualizedTextHighlightRange[],
@@ -1803,7 +2064,10 @@ function appendRangeOverlayPart(
     existing.ranges.push(part)
     return
   }
-  twins.set(key, createOverlayPaintGroup(`${group.name}-overlay-${twins.size}`, [part], style))
+  twins.set(
+    key,
+    createOverlayPaintGroup(view, `${group.name}-overlay-${twins.size}`, [part], style),
+  )
 }
 
 function appendOverlayTokenSegments(
@@ -1893,7 +2157,7 @@ function reregisterPaintGroup(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
 ): void {
-  if (!group.registered) return
+  if (!group.registered || !group.highlight) return
   view.highlightRegistry?.delete(group.name)
   view.highlightRegistry?.set(group.name, group.highlight)
 }
@@ -1903,6 +2167,11 @@ function appendPaintRule(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
 ): void {
-  const rule = rangeHighlightRule(view.highlightScope, group.name, group.style)
+  const rule = rangeHighlightRule(
+    view.highlightScope,
+    group.name,
+    group.style,
+    view.tokenPainter.kind === 'spans',
+  )
   if (rule) rules.push(rule)
 }

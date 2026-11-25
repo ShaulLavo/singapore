@@ -313,6 +313,7 @@ export type {
   EditorSetTextOptions,
   EditorState,
   EditorSyntaxStatus,
+  EditorTokenPainting,
   HighlightRegistry,
 } from './editor'
 export type {

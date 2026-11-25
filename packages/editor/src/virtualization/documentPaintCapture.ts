@@ -85,7 +85,8 @@ function captureDocumentRowBatches(
 ): string | null {
   const count = view.model.visibleLineCount
   const mounted = getMountedRows(view)
-  if (mounted.length === count) return capture(view, mounted)
+  if (mounted.length === count && !mounted.some((row) => row.hasTokenSpans))
+    return capture(view, mounted)
 
   const snapshot = view.virtualizer.getViewportSnapshot()
   if (snapshot.viewportWidth <= 0) return 'document-layout-not-ready'
@@ -271,7 +272,7 @@ function captureRuns(
     const styles: {
       start: number
       end: number
-      style: NonNullable<ReturnType<typeof view.tokenGroups.get>>['style']
+      style: EditorTokenStyle
     }[] = []
     for (const { range, style } of ranges) {
       const first = nodeIndexes.get(range.startContainer as Text)

@@ -193,7 +193,7 @@ export function rowsKey(
 export function renderRows(
   view: VirtualizedTextViewInternal,
   snapshot: FixedRowVirtualizerSnapshot,
-  onRemoveSlot: (rowSlotId: number) => void,
+  onRemoveSlot: (row: MountedVirtualizedTextRow) => void,
 ): void {
   if (view.disposed) return
   const updatePass = createRowUpdatePass(view, snapshot.virtualItems)
@@ -213,7 +213,7 @@ function reconcileRows(
   items: readonly FixedRowVirtualItem[],
   snapshot: FixedRowVirtualizerSnapshot,
   updatePass: RowUpdatePass,
-  onRemoveSlot: (rowSlotId: number) => void,
+  onRemoveSlot: (row: MountedVirtualizedTextRow) => void,
 ): void {
   const contributions = view.gutterContributions
   const reusableRows = releaseRowsOutside(view, items)
@@ -335,6 +335,9 @@ export function createRow(view: VirtualizedTextViewInternal): MountedVirtualized
     gutterCursorLineBackgroundLaneIds: [],
     mountedPaintSupport: 'replayable',
     coreBidiRefusal: false,
+    hasTokenSpans: false,
+    baseDomRevision: 0,
+    tokenDomRevision: 0,
     textRevision: -1,
     tokenHighlightSlotId: view.nextTokenHighlightSlotId++,
     chunkKey: '',
@@ -968,7 +971,7 @@ function updateRowTextForSameLineEdit(
     return false
   }
 
-  if (row.textNode.data !== row.text) {
+  if (row.hasTokenSpans || row.textNode.data !== row.text) {
     updateRowTextChunks(view, row, content, startOffset, mapping, snapshot)
     return false
   }
@@ -1070,8 +1073,13 @@ function setDirectRowText(
     return
   }
 
-  if (row.textRenderMode !== 'simple' || rowHasInlineAttachments(row)) {
-    if (!isSoleRowChild(row, row.textNode)) row.element.replaceChildren(row.textNode)
+  if (row.textRenderMode !== 'simple' || row.hasTokenSpans || rowHasInlineAttachments(row)) {
+    if (!isSoleRowChild(row, row.textNode)) {
+      row.element.replaceChildren(row.textNode)
+      markRowBaseDomReplaced(row)
+    } else if (row.hasTokenSpans) {
+      markRowBaseDomReplaced(row)
+    }
     setTextRenderMode(row, 'simple')
   }
   if (row.textNode.data !== text) row.textNode.data = text
@@ -1106,6 +1114,9 @@ function setRenderedDirectRowText(
 
   if (!adoptRenderedSingleTextPart(row, rendered)) {
     row.element.replaceChildren(...rendered.nodes)
+    markRowBaseDomReplaced(row)
+  } else if (row.hasTokenSpans) {
+    markRowBaseDomReplaced(row)
   }
   setTextRenderMode(row, 'rendered')
   syncDirectRowChunk(row, text, startOffset, mapping, rendered.parts, rendered.textNode)
@@ -1148,6 +1159,12 @@ function reuseDirectRowText(
   mapping: RowInlineMapping | null,
 ): boolean {
   if (row.text !== text) return false
+  if (row.hasTokenSpans && (row.textRenderMode === 'simple' || row.textRenderMode === 'rendered')) {
+    const chunk = row.chunks[0]
+    if (!isReusableRenderedDirectChunk(row, chunk)) return false
+    syncRowChunkOffsets(row, startOffset, mapping)
+    return true
+  }
   if (row.textRenderMode === 'simple') {
     syncSimpleDirectRowChunk(row, text, startOffset, mapping)
     return true
@@ -1362,6 +1379,7 @@ function setInlineRunRowText(
   }
 
   row.element.replaceChildren(row.leftSpacerElement, ...rendered.nodes)
+  markRowBaseDomReplaced(row)
   setTextRenderMode(row, 'widget')
   updateMutableRowChunks(row, [
     {
@@ -1666,8 +1684,8 @@ function inlineClassRunElements(
 
   for (const part of chunk.parts) {
     if (part.kind !== 'text') continue
-    const parent = part.node.parentElement
-    if (!parent || parent === row.element) continue
+    const parent = part.node.parentElement?.closest<HTMLElement>('[data-editor-inline-run]')
+    if (!parent || !row.element.contains(parent)) continue
     if (boxes.at(-1) !== parent) boxes.push(parent)
   }
 
@@ -1894,6 +1912,7 @@ function setChunkedRowText(
   row.element.dataset.editorVirtualWindowStart = String(window.start)
   row.element.dataset.editorVirtualWindowEnd = String(window.end)
   row.element.replaceChildren(row.leftSpacerElement, ...elements)
+  markRowBaseDomReplaced(row)
   setTextRenderMode(row, 'chunked')
   updateMutableRowChunks(row, chunks)
 }
@@ -1910,23 +1929,31 @@ function reuseRowChunks(
   if (row.chunks[0]?.localStart !== window.start) return false
   if (row.chunks.at(-1)?.localEnd !== window.end) return false
 
+  let rebuiltCount = 0
   for (const chunk of row.chunks) {
     if (chunk.element === null) return false
-    updateRowChunk(view, chunk, chunk.element, text, startOffset, mapping)
+    if (updateRowChunk(view, row, chunk, chunk.element, text, startOffset, mapping)) {
+      rebuiltCount += 1
+    }
   }
 
+  if (rebuiltCount > 0) {
+    if (rebuiltCount === row.chunks.length) markRowBaseDomReplaced(row)
+    else markRowPartialBaseDomReplaced(row)
+  }
   updateMutableRowChunks(row, row.chunks)
   return true
 }
 
 function updateRowChunk(
   view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   element: HTMLSpanElement,
   text: TextContent,
   startOffset: number,
   mapping: RowInlineMapping | null,
-): void {
+): boolean {
   const mutableChunk = chunk as {
     startOffset: number
     endOffset: number
@@ -1940,14 +1967,14 @@ function updateRowChunk(
   const chunkText = text.slice(chunk.localStart, chunk.localEnd)
   if (chunkText === chunk.text) {
     refreshChunkControlWidths(view, chunk)
-    return
+    return false
   }
 
-  const paint = patchSimpleChunkText(chunk, chunkText)
+  const paint = row.hasTokenSpans ? null : patchSimpleChunkText(chunk, chunkText)
   mutableChunk.text = chunkText
   if (paint !== null) {
     mutableChunk.mountedPaint = paint
-    return
+    return false
   }
 
   const rendered = createRowChunkParts(view, chunkText, chunk.localStart)
@@ -1955,6 +1982,7 @@ function updateRowChunk(
   mutableChunk.parts = rendered.parts
   mutableChunk.textNode = rendered.textNode
   mutableChunk.mountedPaint = captureMountedPaint(rendered.parts)
+  return true
 }
 
 function refreshChunkControlWidths(
@@ -2153,6 +2181,7 @@ function setUnmeasurableBidiRowText(
   element.append(startEndpoint, endEndpoint)
   setLeftSpacerWidth(row, 0)
   row.element.replaceChildren(element)
+  markRowBaseDomReplaced(row)
   setTextRenderMode(row, 'widget')
   syncDirectRowChunk(
     row,
@@ -2758,6 +2787,17 @@ function setCoreBidiRefusal(row: MountedVirtualizedTextRow, active: boolean): vo
   mutable.coreBidiRefusal = active
 }
 
+function markRowBaseDomReplaced(row: MountedVirtualizedTextRow): void {
+  const mutable = row as { hasTokenSpans: boolean; baseDomRevision: number }
+  mutable.hasTokenSpans = false
+  mutable.baseDomRevision += 1
+}
+
+function markRowPartialBaseDomReplaced(row: MountedVirtualizedTextRow): void {
+  const mutable = row as { baseDomRevision: number }
+  mutable.baseDomRevision += 1
+}
+
 function updateMountedRowPaintFacts(row: MountedVirtualizedTextRow, state: RowUpdateState): void {
   const unsupportedClass =
     row.inlineKindsClassName.length > 0 ||
@@ -2880,12 +2920,12 @@ function releaseRowsOutside(
 function removeReusableRows(
   view: VirtualizedTextViewInternal,
   rows: readonly MountedVirtualizedTextRow[],
-  onRemoveSlot: (rowSlotId: number) => void,
+  onRemoveSlot: (row: MountedVirtualizedTextRow) => void,
 ): void {
   if (rows.length === 0) return
 
   for (const row of rows) {
-    onRemoveSlot(row.tokenHighlightSlotId)
+    onRemoveSlot(row)
     view.rowTokenSignatures.delete(row.tokenHighlightSlotId)
     clearHiddenCharactersForRow(row)
   }
