@@ -472,6 +472,142 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     expect(result.tokens.toTokens().some((token) => token.end > secondText.length)).toBe(true)
     second!.dispose()
   })
+
+  it('skips cyclic preloads with a missing dependency without blocking healthy documents', async () => {
+    const baseTheme = {
+      name: 'custom-base',
+      type: 'dark',
+      colors: { 'editor.background': '#111111', 'editor.foreground': '#eeeeee' },
+      tokenColors: [{ scope: 'token.healthy', settings: { foreground: '#33aa55' } }],
+    }
+    const grammarA = {
+      name: 'cycle-a',
+      scopeName: 'source.cycle-a',
+      embeddedLangs: ['cycle-b', 'missing-lang'],
+      patterns: [{ match: '\\ba\\b', name: 'token.a' }],
+    }
+    const grammarB = {
+      name: 'cycle-b',
+      scopeName: 'source.cycle-b',
+      embeddedLangs: ['cycle-a'],
+      patterns: [{ match: '\\bb\\b', name: 'token.b' }],
+    }
+    const healthyGrammar = {
+      name: 'healthy',
+      scopeName: 'source.healthy',
+      patterns: [{ match: '\\bword\\b', name: 'token.healthy' }],
+    }
+
+    await workerOwner.preload({
+      languageRegistrations: [grammarA, grammarB],
+      themeRegistrations: [baseTheme],
+    })
+    await workerOwner.awaitIdleFence()
+
+    const text = 'word'
+    const session = createHighlighterDocument(workerOwner, {
+      documentId: 'healthy.txt',
+      languageId: 'healthy',
+      lang: 'healthy',
+      theme: 'custom-base',
+      registrations: {
+        languageRegistrations: [healthyGrammar],
+        themeRegistration: baseTheme,
+        themeRegistrations: [baseTheme],
+      },
+      text: readAll(createDocumentTextSnapshot(createPieceTableSnapshot(text), text)),
+    })!
+
+    const result = await session.run()
+    expect(result.tokens.toTokens()).toMatchObject([
+      { start: 0, end: 4, style: { color: '#33AA55' } },
+    ])
+    session.dispose()
+  })
+
+  it('isolates custom themes and custom grammars sharing the same name across documents on the shared worker', async () => {
+    const redTheme = {
+      name: 'custom',
+      type: 'dark',
+      colors: { 'editor.background': '#111111', 'editor.foreground': '#dddddd' },
+      tokenColors: [
+        { scope: 'token.a', settings: { foreground: '#ff0000' } },
+        { scope: 'token.b', settings: { foreground: '#00ff00' } },
+      ],
+    }
+    const greenTheme = {
+      name: 'custom',
+      type: 'dark',
+      colors: { 'editor.background': '#111111', 'editor.foreground': '#eeeeee' },
+      tokenColors: [
+        { scope: 'token.a', settings: { foreground: '#ff0000' } },
+        { scope: 'token.b', settings: { foreground: '#00ff00' } },
+      ],
+    }
+    const grammarA = {
+      name: 'custom-lang',
+      scopeName: 'source.custom-a',
+      patterns: [{ match: '\\bword\\b', name: 'token.a' }],
+    }
+    const grammarB = {
+      name: 'custom-lang',
+      scopeName: 'source.custom-b',
+      patterns: [{ match: '\\bword\\b', name: 'token.b' }],
+    }
+
+    const docA = createHighlighterDocument(workerOwner, {
+      documentId: 'a.custom',
+      runtimeSessionId: 'rt-custom-a',
+      languageId: 'custom-lang',
+      lang: 'custom-lang',
+      theme: 'custom',
+      registrations: {
+        languageRegistrations: [grammarA],
+        themeRegistration: redTheme,
+        themeRegistrations: [redTheme],
+      },
+      text: 'word',
+    })!
+    const docB = createHighlighterDocument(workerOwner, {
+      documentId: 'b.custom',
+      runtimeSessionId: 'rt-custom-b',
+      languageId: 'custom-lang',
+      lang: 'custom-lang',
+      theme: 'custom',
+      registrations: {
+        languageRegistrations: [grammarB],
+        themeRegistration: greenTheme,
+        themeRegistrations: [greenTheme],
+      },
+      text: 'word',
+    })!
+
+    const resA = await docA.run()
+    const resB = await docB.run()
+    expect(resA.theme?.foregroundColor).toBe('#dddddd')
+    expect(resB.theme?.foregroundColor).toBe('#eeeeee')
+    expect(resA.tokens.toTokens()).toMatchObject([
+      { start: 0, end: 4, style: { color: '#FF0000' } },
+    ])
+    expect(resB.tokens.toTokens()).toMatchObject([
+      { start: 0, end: 4, style: { color: '#00FF00' } },
+    ])
+
+    // Editing docA must keep docA's red palette and grammar rather than adopting docB's theme.
+    const editedA = await docA.edit([{ from: 4, to: 4, text: ' word' }])
+    expect(editedA.theme?.foregroundColor).toBe('#dddddd')
+    expect(editedA.tokens.toTokens()).toMatchObject([
+      { start: 0, end: 4, style: { color: '#FF0000' } },
+      { start: 4, end: 5, style: { color: '#DDDDDD' } },
+      { start: 5, end: 9, style: { color: '#FF0000' } },
+    ])
+
+    const retention = await workerOwner.inspectRetention()
+    expect(retention?.shared.highlighterCount).toBe(1)
+
+    docA.dispose()
+    docB.dispose()
+  })
 })
 
 async function resolveRegistrations(): Promise<ShikiResolvedRegistrations> {

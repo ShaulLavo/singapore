@@ -532,6 +532,76 @@ describe('clipboard', () => {
         else Reflect.deleteProperty(globalThis, 'ClipboardItem')
       }
     })
+
+    it('preserves a leading U+FEFF across programmatic cut, copy, and Async Clipboard paste', async () => {
+      let clipboardText = ''
+      class MockClipboardItem {
+        readonly types: readonly string[]
+        readonly #entries: Record<string, Blob>
+        constructor(entries: Record<string, Blob>) {
+          this.#entries = entries
+          this.types = Object.keys(entries)
+        }
+        async getType(type: string): Promise<Blob> {
+          return this.#entries[type]!
+        }
+      }
+      const write = vi.fn(async (items: MockClipboardItem[]) => {
+        const plain = await items[0]!.getType('text/plain')
+        // Simulate Chromium's ClipboardItem UTF-8 BOM-stripping decode on text/plain Blobs.
+        clipboardText = await plain.text()
+      })
+      const writeText = vi.fn(async (value: string) => {
+        clipboardText = value
+      })
+      const read = vi.fn(async () => [
+        new MockClipboardItem({
+          'text/plain': new Blob([new TextEncoder().encode(clipboardText)], {
+            type: 'text/plain',
+          }),
+        }),
+      ])
+      const readText = vi.fn(async () => clipboardText)
+      const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      const previousClipboardItem = Object.getOwnPropertyDescriptor(globalThis, 'ClipboardItem')
+      Object.defineProperty(globalThis, 'ClipboardItem', {
+        configurable: true,
+        value: MockClipboardItem,
+      })
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { write, writeText, read, readText },
+      })
+
+      try {
+        editor.setText('A\uFEFFhello')
+        editor.setSelection(1, 7)
+        expect(editor.dispatchCommand('cut')).toBe(true)
+        await vi.waitFor(() => expect(editor.materializeFullText()).toBe('A'))
+        expect(clipboardText).toBe('\uFEFFhello')
+        expect(writeText).toHaveBeenCalledWith('\uFEFFhello')
+        expect(write).not.toHaveBeenCalled()
+
+        // Paste reads the UTF-8 Blob via clipboard.read() and must not drop the leading U+FEFF.
+        editor.setSelection(1, 1)
+        expect(editor.dispatchCommand('paste')).toBe(true)
+        await vi.waitFor(() => expect(editor.materializeFullText()).toBe('A\uFEFFhello'))
+
+        // Highlighted copy starting with U+FEFF also uses writeText to avoid Chromium BOM stripping.
+        editor.setTokens([{ start: 1, end: 7, style: { color: '#569cd6' } }])
+        editor.setSelection(1, 7)
+        expect(editor.dispatchCommand('copy')).toBe(true)
+        await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(2))
+        expect(clipboardText).toBe('\uFEFFhello')
+        expect(write).not.toHaveBeenCalled()
+      } finally {
+        if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+        if (previousClipboardItem)
+          Object.defineProperty(globalThis, 'ClipboardItem', previousClipboardItem)
+        else Reflect.deleteProperty(globalThis, 'ClipboardItem')
+      }
+    })
   })
 })
 

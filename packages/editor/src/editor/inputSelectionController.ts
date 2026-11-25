@@ -2408,12 +2408,18 @@ export class InputSelectionController {
     const window = this.options.el.ownerDocument.defaultView
     const ClipboardItemCtor = window?.ClipboardItem ?? globalThis.ClipboardItem
     const BlobCtor = window?.Blob ?? globalThis.Blob
+    const html = action === 'copy' ? this.#richTextHtml(payload) : null
+    // Chromium decodes text/plain Blobs in ClipboardItem with BOM stripping, which silently drops
+    // a leading U+FEFF. Use writeText directly when no HTML is needed or a leading BOM must survive.
+    const preferClipboardItem =
+      (html !== null && !payload.text.startsWith('\uFEFF')) ||
+      typeof clipboard.writeText !== 'function'
     if (
+      preferClipboardItem &&
       typeof clipboard.write === 'function' &&
       typeof ClipboardItemCtor === 'function' &&
       typeof BlobCtor === 'function'
     ) {
-      const html = action === 'copy' ? this.#richTextHtml(payload) : null
       const items: Record<string, Blob> = {
         'text/plain': new BlobCtor([payload.text], { type: 'text/plain' }),
       }
@@ -2444,7 +2450,7 @@ export class InputSelectionController {
             const blob = await item.getType(rawType)
             const type = rawType.startsWith('web ') ? rawType.slice(4) : rawType
             if (type.startsWith('text/') || type === CLIPBOARD_METADATA_TYPE) {
-              if (!values.has(type)) values.set(type, await blob.text())
+              if (!values.has(type)) values.set(type, await readClipboardTextBlob(blob))
             } else if (typeof FileCtor === 'function') {
               files.push(new FileCtor([blob], clipboardFilenameForType(type), { type }))
             }
@@ -4743,6 +4749,17 @@ function isSelectionList(
   selection: EditorSelectionRange | readonly EditorSelectionRange[] | undefined,
 ): selection is readonly EditorSelectionRange[] {
   return Array.isArray(selection)
+}
+
+/**
+ * Decodes clipboard text blobs without UTF-8 BOM stripping so leading U+FEFF characters survive
+ * Async Clipboard paste in browsers where `Blob.prototype.text()` strips a leading BOM.
+ */
+async function readClipboardTextBlob(blob: Blob): Promise<string> {
+  if (typeof blob.arrayBuffer === 'function' && typeof TextDecoder === 'function') {
+    return new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blob.arrayBuffer())
+  }
+  return blob.text()
 }
 
 function clipboardFilenameForType(type: string): string {

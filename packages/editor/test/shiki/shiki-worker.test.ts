@@ -410,6 +410,168 @@ describe('shiki worker', () => {
     expect(flatOrder).not.toContain('orphan')
   })
 
+  it('rejects a cycle containing a missing dependency without poisoning subsequent loads', async () => {
+    const loaded = new Set<string>()
+    const loadOrder: string[][] = []
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    setupScope(postMessage)
+    createHighlighterCore.mockResolvedValue(
+      externalHighlighter({
+        getLoadedLanguages: () => [...loaded],
+        loadLanguage: vi.fn(
+          async (
+            ...registrations: {
+              readonly name: string
+              readonly embeddedLangs?: readonly string[]
+            }[]
+          ) => {
+            const batchNames = new Set(registrations.map((r) => r.name))
+            for (const registration of registrations) {
+              for (const dep of registration.embeddedLangs ?? []) {
+                if (!loaded.has(dep) && !batchNames.has(dep)) {
+                  throw new Error(`Missing languages ${dep}, required by ${registration.name}`)
+                }
+              }
+            }
+            for (const registration of registrations) loaded.add(registration.name)
+            loadOrder.push(registrations.map((r) => r.name))
+          },
+        ),
+      }),
+    )
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = workerHandler()
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          id: 1,
+          payload: {
+            type: 'preload',
+            languageRegistrations: [
+              { ...languageRegistration('a'), embeddedLangs: ['b', 'missing'] },
+              { ...languageRegistration('b'), embeddedLangs: ['a'] },
+              { ...languageRegistration('c'), embeddedLangs: ['b'] },
+              languageRegistration('healthy'),
+            ],
+            themeRegistrations: [themeRegistration('github-dark')],
+          },
+        },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
+    onmessage(new MessageEvent('message', { data: { id: 2, payload: { type: 'idleFence' } } }))
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
+
+    expect(loadOrder).toEqual([['healthy']])
+  })
+
+  it('keeps distinct custom themes with the same name isolated across concurrent documents on edit', async () => {
+    const themesByName = new Map<string, { bg: string; fg: string }>()
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    setupScope(postMessage)
+    createHighlighterCore.mockImplementation(
+      async (options: { themes?: { name: string; bg?: string; fg?: string }[] }) => {
+        for (const theme of options.themes ?? []) {
+          themesByName.set(theme.name, { bg: theme.bg ?? '#000000', fg: theme.fg ?? '#ffffff' })
+        }
+        return {
+          ...externalHighlighter(languageApi(), true),
+          loadTheme: vi.fn(async (theme: { name: string; bg?: string; fg?: string }) => {
+            themesByName.set(theme.name, { bg: theme.bg ?? '#000000', fg: theme.fg ?? '#ffffff' })
+          }),
+          getTheme: (name: string) => {
+            const theme = themesByName.get(name) ?? { bg: '#000000', fg: '#ffffff' }
+            return {
+              ...theme,
+              settings: [{ settings: { foreground: theme.fg, background: theme.bg } }],
+            }
+          },
+        }
+      },
+    )
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = workerHandler()
+    const redTheme = { name: 'custom', bg: '#111111', fg: '#ff0000' }
+    const greenTheme = { name: 'custom', bg: '#111111', fg: '#00ff00' }
+
+    const openA = openRequest({
+      documentId: 'doc-a',
+      text: 'const a = 1;',
+      lang: 'typescript',
+      theme: 'custom',
+    })
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          ...openA,
+          id: 1,
+          payload: {
+            ...openA.payload,
+            themeRegistration: redTheme,
+            themeRegistrations: [redTheme],
+          },
+        },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
+
+    // Register a distinct worker source identity for doc-b so doc-a's revision point stays intact.
+    const identityB = { ...identity, documentId: 'worker-source-b', registrationId: 2 }
+    const pointB = { segment: 'worker-source-b-segment', revision: 0, textVersion: 0 }
+    sendSource({ kind: 'register', identity: identityB })
+    sendSource({
+      kind: 'reset',
+      identity: identityB,
+      base: null,
+      target: pointB,
+      chunks: ['const b = 2;'],
+      lineEnding: '\n',
+      byteOrderMark: '',
+      containsUnusualLineTerminators: false,
+    })
+    sendSource({ kind: 'pin', identity: identityB, point: pointB, readId: 'read-doc-b' })
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          id: 2,
+          payload: {
+            type: 'open',
+            documentId: 'doc-b',
+            runtimeSessionId: 'doc-b:runtime',
+            lang: 'typescript',
+            theme: 'custom',
+            source: { identity: identityB, point: pointB, readId: 'read-doc-b' },
+            maxLineLength: 20000,
+            languageRegistrations: [languageRegistration('typescript')],
+            themeRegistration: greenTheme,
+            themeRegistrations: [greenTheme],
+          },
+        },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
+
+    const editA = editRequest({
+      documentId: 'doc-a',
+      lang: 'typescript',
+      theme: 'custom',
+      edits: [{ from: 6, to: 7, text: 'alpha' }],
+    })
+    onmessage(new MessageEvent('message', { data: { ...editA, id: 3 } }))
+    await waitFor(() => responseWithId(postMessage, 3) !== undefined)
+
+    const resA = responseWithId(postMessage, 1)
+    const resB = responseWithId(postMessage, 2)
+    const resEditA = responseWithId(postMessage, 3)
+    expect(resA?.ok && resA.result?.theme?.foregroundColor).toBe('#ff0000')
+    expect(resB?.ok && resB.result?.theme?.foregroundColor).toBe('#00ff00')
+    expect(resEditA?.ok && resEditA.result?.theme?.foregroundColor).toBe('#ff0000')
+  })
+
   it('tokenizes opened documents line-by-line without calling materializeFullText', async () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
