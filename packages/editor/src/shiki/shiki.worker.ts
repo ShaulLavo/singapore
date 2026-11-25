@@ -7,7 +7,7 @@ import {
   type ThemeRegistrationAny,
 } from 'shiki/core'
 import { createIncrementalTokenizer, type CreateIncrementalTokenizerResult } from './tokenizer'
-import { packTokenLines, snapshotToPackedEditorTokens } from './editor-tokens'
+import { packTokenLines } from './editor-tokens'
 import type { EditorTheme } from '../theme'
 import { packedEditorTokenTransfers } from '../syntax/packedTokens'
 import {
@@ -47,8 +47,14 @@ const documents = new Map<string, DocumentState>()
 const documentTasks = new Map<string, Promise<ShikiWorkerTransportResult | undefined>>()
 const disposedRuntimeSessions = new Set<string>()
 const activeWorkerTasks = new Set<Promise<void>>()
-const highlighterPromises = new Map<string, Promise<HighlighterGeneric<string, string>>>()
-const backgroundLanguages = new WeakMap<HighlighterGeneric<string, string>, Set<string>>()
+let sharedHighlighterPromise: Promise<HighlighterGeneric<string, string>> | null = null
+const loadedThemeKeys = new Set<string>()
+const pendingThemeLoads = new Map<string, Promise<void>>()
+const pendingLanguageLoads = new Map<string, Promise<void>>()
+const scheduledPreloadLanguages = new Set<string>()
+let workerGeneration = 0
+let yieldChannel: MessageChannel | null = null
+let pendingYieldResolvers: (() => void)[] = []
 const MAX_DISPOSED_RUNTIME_SESSIONS = 1_024
 
 self.onmessage = (event: MessageEvent<ShikiWorkerRequest>): void => {
@@ -122,7 +128,10 @@ const awaitWorkerTasks = async (): Promise<void> => {
 }
 
 const inspectRetention = async (): Promise<ShikiWorkerTransportResult> => {
-  const highlighterResults = await Promise.allSettled(highlighterPromises.values())
+  const highlighterPromise = sharedHighlighterPromise
+  const highlighterResults = highlighterPromise
+    ? await Promise.allSettled([highlighterPromise])
+    : []
   const highlighters = new Set<HighlighterGeneric<string, string>>()
   for (const result of highlighterResults) {
     if (result.status === 'fulfilled') highlighters.add(result.value)
@@ -144,7 +153,7 @@ const inspectRetention = async (): Promise<ShikiWorkerTransportResult> => {
     tokenCount: retainedDocuments.reduce((sum, state) => sum + state.tokenCount, 0),
     documents: retainedDocuments,
     shared: {
-      highlighterEntries: highlighterPromises.size,
+      highlighterEntries: sharedHighlighterPromise ? 1 : 0,
       highlighterCount: highlighters.size,
       highlighters: Array.from(highlighters, (highlighter) => ({
         languageNames: highlighter.getLoadedLanguages(),
@@ -196,7 +205,7 @@ const openDocument = async (
   const { tokenizer } = await createIncrementalTokenizer({
     lang: payload.lang,
     theme: payload.theme,
-    code: source.text.materializeFullText(),
+    source: source.text,
     highlighter,
     maxLineLength: payload.maxLineLength,
   })
@@ -271,7 +280,7 @@ const recolorDocument = async (
   const state = documents.get(payload.runtimeSessionId)
   if (!state) return undefined
 
-  await state.highlighter.loadTheme(payload.themeRegistration as ThemeRegistrationAny)
+  await ensureThemes(state.highlighter, [payload.themeRegistration])
   state.tokenizer.setTheme(payload.theme)
   state.theme = payload.theme
   state.themeRegistration = payload.themeRegistration
@@ -279,11 +288,8 @@ const recolorDocument = async (
 }
 
 /**
- * The highlighter for a document, with that document's grammar loaded and nothing else waited on.
- *
- * Loading the host's whole preload set up front measured 1 280–1 780 ms for 53 grammars, all of it
- * ahead of the first paint of a single TypeScript file. The set is still loaded — a language switch
- * should not stall either — but behind the answer rather than in front of it.
+ * The worker keeps one shared Oniguruma highlighter and loads themes and grammars incrementally
+ * on demand so theme-array permutations never duplicate WASM engines.
  */
 const ensureHighlighter = async (
   options: ShikiWorkerDocumentOptions,
@@ -292,7 +298,7 @@ const ensureHighlighter = async (
   const themes = uniqueThemeRegistrations(
     [options.themeRegistration].concat(options.themeRegistrations),
   )
-  const highlighter = await ensureHighlighterFor(languages, themes)
+  const highlighter = await ensureSharedHighlighter(languages, themes)
   await ensureLanguages(highlighter, languages)
 
   return highlighter
@@ -302,76 +308,153 @@ const ensureLanguages = async (
   highlighter: HighlighterGeneric<string, string>,
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): Promise<void> => {
+  const unique = uniqueLanguageRegistrations(registrations)
   const loaded = new Set(highlighter.getLoadedLanguages())
-  const missing = registrations.filter((registration) => !loaded.has(registration.name))
-  if (missing.length === 0) return
+  const toWait: Promise<void>[] = []
+  const missing: ShikiWorkerLanguageRegistration[] = []
 
-  await highlighter.loadLanguage(...(missing as unknown as LanguageRegistration[]))
+  for (const registration of unique) {
+    if (loaded.has(registration.name)) continue
+    const key = languageRegistrationKey(registration)
+    const pending = pendingLanguageLoads.get(key)
+    if (pending) {
+      toWait.push(pending)
+      continue
+    }
+    missing.push(registration)
+  }
+
+  if (missing.length > 0) {
+    const keys = missing.map(languageRegistrationKey)
+    const load = Promise.resolve(
+      highlighter.loadLanguage(...(missing as unknown as LanguageRegistration[])),
+    ).finally(() => {
+      for (const key of keys) {
+        if (pendingLanguageLoads.get(key) === load) pendingLanguageLoads.delete(key)
+      }
+    })
+    for (const key of keys) pendingLanguageLoads.set(key, load)
+    toWait.push(load)
+  }
+
+  if (toWait.length > 0) await Promise.all(toWait)
+}
+
+const ensureThemes = async (
+  highlighter: HighlighterGeneric<string, string>,
+  registrations: readonly ShikiWorkerThemeRegistration[],
+): Promise<void> => {
+  const unique = uniqueThemeRegistrations(registrations)
+  const generation = workerGeneration
+  const tasks: Promise<void>[] = []
+
+  for (const registration of unique) {
+    const key = themeRegistrationKey(registration)
+    if (loadedThemeKeys.has(key)) continue
+    const pending = pendingThemeLoads.get(key)
+    if (pending) {
+      tasks.push(pending)
+      continue
+    }
+    if (typeof highlighter.loadTheme !== 'function') {
+      if (generation === workerGeneration) loadedThemeKeys.add(key)
+      continue
+    }
+    const load = Promise.resolve(highlighter.loadTheme(registration as ThemeRegistrationAny))
+      .then(() => {
+        if (generation === workerGeneration) loadedThemeKeys.add(key)
+      })
+      .finally(() => {
+        if (pendingThemeLoads.get(key) === load) pendingThemeLoads.delete(key)
+      })
+    pendingThemeLoads.set(key, load)
+    tasks.push(load)
+  }
+
+  if (tasks.length > 0) await Promise.all(tasks)
 }
 
 /**
- * Once per language and highlighter, on a timer rather than a microtask.
- *
- * A microtask here runs *between* the tokenizer's awaits and competes with it for the one worker
- * thread — measured at 526 ms of tokenization becoming 1 187 ms. The delay puts the whole preload
- * set behind the paint that matters instead of inside it. A failure costs a stall on some later
- * language switch, never a paint. A later preload with other languages (a workspace switch)
- * schedules only the ones no earlier preload asked for.
+ * Loads explicitly requested preload grammars cooperatively one at a time, yielding between each
+ * grammar via MessageChannel so urgent open/edit requests preempt background warming instead of
+ * waiting behind a monolithic delayed burst.
  */
-const scheduleBackgroundLanguages = (
+const scheduleCooperativeLanguagePreload = (
   highlighter: HighlighterGeneric<string, string>,
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): void => {
-  const scheduled = backgroundLanguages.get(highlighter) ?? new Set<string>()
-  backgroundLanguages.set(highlighter, scheduled)
-  const fresh = registrations.filter((registration) => !scheduled.has(registration.name))
+  const loaded = new Set(highlighter.getLoadedLanguages())
+  const fresh = registrations.filter(
+    (registration) =>
+      !loaded.has(registration.name) && !scheduledPreloadLanguages.has(registration.name),
+  )
   if (fresh.length === 0) return
 
-  for (const registration of fresh) scheduled.add(registration.name)
-  const task = new Promise<void>((resolve) => {
-    setTimeout(() => {
-      const complete = () => resolve()
-      void ensureLanguages(highlighter, fresh).then(complete, complete)
-    }, 1_000)
-  })
+  for (const registration of fresh) scheduledPreloadLanguages.add(registration.name)
+  const generation = workerGeneration
+  const task = (async () => {
+    for (const registration of fresh) {
+      await yieldWorkerMacrotask()
+      if (generation !== workerGeneration) return
+      try {
+        await ensureLanguages(highlighter, [registration])
+      } catch {
+        // Failed background warming never fails paint; opening a document retries on demand.
+      }
+    }
+  })()
   trackWorkerTask(task)
 }
 
-const ensureHighlighterFor = (
+const ensureSharedHighlighter = async (
   languages: readonly ShikiWorkerLanguageRegistration[],
   themes: readonly ShikiWorkerThemeRegistration[],
 ): Promise<HighlighterGeneric<string, string>> => {
-  const key = highlighterKey(themes)
-  const existing = highlighterPromises.get(key)
-  if (existing) return existing
+  const uniqueThemes = uniqueThemeRegistrations(themes)
+  if (!sharedHighlighterPromise) {
+    const uniqueLanguages = uniqueLanguageRegistrations(languages)
+    const initialThemeKeys = uniqueThemes.map(themeRegistrationKey)
+    const generation = workerGeneration
+    const created = (
+      createHighlighterCore({
+        engine: createOnigurumaEngine(wasm),
+        langs: uniqueLanguages as unknown as LanguageRegistration[],
+        themes: uniqueThemes as unknown as ThemeRegistrationAny[],
+      }) as Promise<HighlighterGeneric<string, string>>
+    ).then(
+      (highlighter) => {
+        if (generation === workerGeneration) {
+          for (const key of initialThemeKeys) loadedThemeKeys.add(key)
+        }
+        return highlighter
+      },
+      (error: unknown) => {
+        if (sharedHighlighterPromise === created) sharedHighlighterPromise = null
+        throw error
+      },
+    )
+    sharedHighlighterPromise = created
+  }
 
-  const promise = createHighlighterCore({
-    engine: createOnigurumaEngine(wasm),
-    langs: languages as unknown as LanguageRegistration[],
-    themes: themes as unknown as ThemeRegistrationAny[],
-  }) as Promise<HighlighterGeneric<string, string>>
-  highlighterPromises.set(key, promise)
-  return promise
+  const highlighter = await sharedHighlighterPromise
+  await ensureThemes(highlighter, uniqueThemes)
+  return highlighter
 }
 
 const loadTheme = async (payload: ShikiWorkerThemeRequest): Promise<ShikiWorkerTransportResult> => {
   const themes = uniqueThemeRegistrations(
     [payload.themeRegistration].concat(payload.themeRegistrations),
   )
-  const highlighter = await ensureHighlighterFor([], themes)
+  const highlighter = await ensureSharedHighlighter([], themes)
   return {
     theme: editorThemeFromHighlighter(highlighter, payload.theme, payload.themeRegistration),
   }
 }
 
-/**
- * Snippets share one highlighter keyed by no theme set, so a preview of forty themes loads forty
- * themes into one engine instead of building forty engines.
- */
 const preloadRegistrations = async (payload: ShikiWorkerPreloadRequest): Promise<undefined> => {
   const themes = uniqueThemeRegistrations(payload.themeRegistrations)
-  const highlighter = await ensureHighlighterFor([], themes)
-  scheduleBackgroundLanguages(
+  const highlighter = await ensureSharedHighlighter([], themes)
+  scheduleCooperativeLanguagePreload(
     highlighter,
     uniqueLanguageRegistrations(payload.languageRegistrations),
   )
@@ -380,7 +463,7 @@ const preloadRegistrations = async (payload: ShikiWorkerPreloadRequest): Promise
 
 const resultFromState = (state: DocumentState): ShikiWorkerTransportResult => ({
   documentId: state.documentId,
-  tokensPacked: snapshotToPackedEditorTokens(state.tokenizer.getSnapshot()),
+  tokensPacked: packTokenLines(state.tokenizer.getLineSnapshots(), 0),
   untokenizedLines: state.tokenizer.untokenizedLineCount(),
   theme: editorThemeFromHighlighter(state.highlighter, state.theme, state.themeRegistration),
 })
@@ -403,16 +486,52 @@ const markRuntimeSessionDisposed = (runtimeSessionId: string): void => {
 }
 
 const disposeAll = (): void => {
+  workerGeneration += 1
+  closeYieldChannel()
   for (const state of documents.values()) state.source.dispose()
   documents.clear()
   sourceReader.dispose()
   documentTasks.clear()
   activeWorkerTasks.clear()
   disposedRuntimeSessions.clear()
-  for (const promise of highlighterPromises.values()) {
+  loadedThemeKeys.clear()
+  pendingThemeLoads.clear()
+  pendingLanguageLoads.clear()
+  scheduledPreloadLanguages.clear()
+  const promise = sharedHighlighterPromise
+  sharedHighlighterPromise = null
+  if (promise) {
     void promise.then((highlighter) => highlighter.dispose()).catch(() => undefined)
   }
-  highlighterPromises.clear()
+}
+
+const yieldWorkerMacrotask = (): Promise<void> => {
+  if (typeof MessageChannel !== 'function') return Promise.resolve()
+  if (!yieldChannel) {
+    yieldChannel = new MessageChannel()
+    yieldChannel.port1.onmessage = () => {
+      const next = pendingYieldResolvers.shift()
+      next?.()
+    }
+  }
+  return new Promise<void>((resolve) => {
+    pendingYieldResolvers.push(resolve)
+    yieldChannel!.port2.postMessage(undefined)
+  })
+}
+
+const closeYieldChannel = (): void => {
+  if (yieldChannel) {
+    yieldChannel.port1.onmessage = null
+    yieldChannel.port1.close()
+    yieldChannel.port2.close()
+    yieldChannel = null
+  }
+  if (pendingYieldResolvers.length > 0) {
+    const resolvers = pendingYieldResolvers
+    pendingYieldResolvers = []
+    for (const resolve of resolvers) resolve()
+  }
 }
 
 const postResponse = (response: ShikiWorkerResponse): void => {
@@ -437,19 +556,14 @@ function responseTransfers(response: ShikiWorkerResponse): Transferable[] {
   return transfers
 }
 
-/**
- * Themes only. Languages are loaded into whichever highlighter a theme-registration set already
- * has, so keying on them too would rebuild and reload the whole grammar set for each document.
- */
-const highlighterKey = (themes: readonly ShikiWorkerThemeRegistration[]): string =>
-  JSON.stringify(themes.map(themeRegistrationKey).sort())
-
 const themeRegistrationKey = (theme: ShikiWorkerThemeRegistration): string => JSON.stringify(theme)
+
+const languageRegistrationKey = (registration: ShikiWorkerLanguageRegistration): string =>
+  `${registration.name}\u0000${registration.scopeName}`
 
 const uniqueLanguageRegistrations = (
   registrations: readonly ShikiWorkerLanguageRegistration[],
-): ShikiWorkerLanguageRegistration[] =>
-  uniqueBy(registrations, (registration) => `${registration.name}\u0000${registration.scopeName}`)
+): ShikiWorkerLanguageRegistration[] => uniqueBy(registrations, languageRegistrationKey)
 
 const uniqueThemeRegistrations = (
   registrations: readonly ShikiWorkerThemeRegistration[],

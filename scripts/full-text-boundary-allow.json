@@ -5,11 +5,6 @@
     "reason": "Explicit full-view serialization of the revision the snapshot captured; the caller owns the string."
   },
   {
-    "file": "packages/editor/src/shiki/shiki.worker.ts",
-    "function": "openDocument",
-    "reason": "Shiki initializes its incremental tokenizer from the acknowledged worker read as one string; later tokenization applies incremental edits."
-  },
-  {
     "file": "packages/lsp/src/client.ts",
     "function": "documentPayloadText",
     "reason": "LSP didOpen, and didSave when the server asks for text, send the whole document by protocol."

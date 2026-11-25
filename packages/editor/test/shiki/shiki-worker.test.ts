@@ -17,13 +17,18 @@ import { unpackEditorTokens } from '../../src/syntax/packedTokens'
 const createHighlighterCore = vi.hoisted(() => vi.fn())
 const createOnigurumaEngine = vi.hoisted(() => vi.fn(() => Promise.resolve('oniguruma')))
 
-/** What a real shiki highlighter exposes for loading grammars after construction. */
+/** What a real shiki highlighter exposes for loading grammars and themes after construction. */
 function languageApi() {
   const loaded: string[] = []
+  const loadedThemes: string[] = []
   return {
     getLoadedLanguages: () => [...loaded],
+    getLoadedThemes: () => [...loadedThemes],
     loadLanguage: vi.fn(async (...registrations: { readonly name: string }[]) => {
       loaded.push(...registrations.map((registration) => registration.name))
+    }),
+    loadTheme: vi.fn(async (...registrations: { readonly name: string }[]) => {
+      loadedThemes.push(...registrations.map((registration) => registration.name))
     }),
   }
 }
@@ -99,8 +104,8 @@ describe('shiki worker', () => {
     expect(dispose).toHaveBeenCalledOnce()
   })
 
-  it('keeps an idle fence behind scheduled background language loading', async () => {
-    vi.useFakeTimers()
+  it('keeps an idle fence behind cooperative background language loading without a 1s timer', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
     const languageLoad = deferred<void>()
     const loadLanguage = vi.fn(() => languageLoad.promise)
     const postMessage =
@@ -124,22 +129,19 @@ describe('shiki worker', () => {
         }),
       }),
     )
-    await flushMicrotasks()
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
     onmessage(
       new MessageEvent('message', {
         data: { ...message({ type: 'idleFence' }), id: 2 },
       }),
     )
-    await flushMicrotasks()
 
-    expect(responseWithId(postMessage, 2)).toBeUndefined()
-
-    await vi.advanceTimersByTimeAsync(1_000)
-    expect(loadLanguage).toHaveBeenCalledOnce()
+    await waitFor(() => loadLanguage.mock.calls.length === 1)
+    expect(setTimeoutSpy).not.toHaveBeenCalled()
     expect(responseWithId(postMessage, 2)).toBeUndefined()
 
     languageLoad.resolve(undefined)
-    await flushMicrotasks()
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
     expect(responseWithId(postMessage, 2)).toMatchObject({ id: 2, ok: true })
 
     onmessage(
@@ -154,18 +156,25 @@ describe('shiki worker', () => {
         },
       }),
     )
-    await flushMicrotasks()
-    await vi.advanceTimersByTimeAsync(1_000)
+    await waitFor(() => responseWithId(postMessage, 3) !== undefined)
+    onmessage(
+      new MessageEvent('message', {
+        data: { ...message({ type: 'idleFence' }), id: 4 },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 4) !== undefined)
 
     expect(responseWithId(postMessage, 3)).toMatchObject({ id: 3, ok: true })
     expect(createHighlighterCore).toHaveBeenCalledOnce()
     expect(loadLanguage).toHaveBeenCalledOnce()
   })
 
-  it('loads the languages a later preload adds, once each', async () => {
-    vi.useFakeTimers()
+  it('loads preloaded languages cooperatively one-by-one, once each, without setTimeout', async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
     const api = languageApi()
-    setupScope(vi.fn())
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    setupScope(postMessage)
     createHighlighterCore.mockResolvedValue(externalHighlighter(api))
     await import('../../src/shiki/shiki.worker')
 
@@ -185,16 +194,163 @@ describe('shiki worker', () => {
       )
 
     preload(1, ['typescript', 'json'])
-    await flushMicrotasks()
-    await vi.advanceTimersByTimeAsync(1_000)
-    preload(2, ['json', 'rust'])
-    await flushMicrotasks()
-    await vi.advanceTimersByTimeAsync(1_000)
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
+    onmessage(new MessageEvent('message', { data: { ...message({ type: 'idleFence' }), id: 2 } }))
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
 
+    preload(3, ['json', 'rust'])
+    await waitFor(() => responseWithId(postMessage, 3) !== undefined)
+    onmessage(new MessageEvent('message', { data: { ...message({ type: 'idleFence' }), id: 4 } }))
+    await waitFor(() => responseWithId(postMessage, 4) !== undefined)
+
+    expect(setTimeoutSpy).not.toHaveBeenCalled()
     const loaded = api.loadLanguage.mock.calls.map((registrations) =>
       registrations.map((registration) => registration.name),
     )
-    expect(loaded).toEqual([['typescript', 'json'], ['rust']])
+    expect(loaded).toEqual([['typescript'], ['json'], ['rust']])
+  })
+
+  it('reuses one shared HighlighterCore across differing theme arrays and loads themes incrementally', async () => {
+    const api = languageApi()
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    setupScope(postMessage)
+    createHighlighterCore.mockResolvedValue(externalHighlighter(api))
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = workerHandler()
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          id: 1,
+          payload: {
+            type: 'theme',
+            theme: 'github-dark',
+            themeRegistration: themeRegistration('github-dark'),
+            themeRegistrations: [themeRegistration('github-dark')],
+          },
+        },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
+
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          id: 2,
+          payload: {
+            type: 'theme',
+            theme: 'github-light',
+            themeRegistration: themeRegistration('github-light'),
+            themeRegistrations: [
+              themeRegistration('github-light'),
+              themeRegistration('github-dark'),
+            ],
+          },
+        },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
+
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          ...openRequest({
+            documentId: 'doc',
+            text: 'const x = 1',
+            lang: 'typescript',
+            theme: 'nord',
+          }),
+          id: 3,
+        },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 3) !== undefined)
+
+    onmessage(
+      new MessageEvent('message', {
+        data: { id: 4, payload: { type: 'idleFence', includeRetention: true } },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 4) !== undefined)
+
+    expect(createHighlighterCore).toHaveBeenCalledOnce()
+    expect(createOnigurumaEngine).toHaveBeenCalledOnce()
+    expect(api.loadTheme.mock.calls.map(([registration]) => registration.name)).toEqual([
+      'github-light',
+      'nord',
+    ])
+    const retentionResponse = responseWithId(postMessage, 4)
+    expect(retentionResponse?.ok && retentionResponse.result?.retention?.shared).toMatchObject({
+      highlighterEntries: 1,
+      highlighterCount: 1,
+    })
+  })
+
+  it('tokenizes opened documents line-by-line without calling materializeFullText', async () => {
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    const api = languageApi()
+    const tokenizedLines: string[] = []
+    setupScope(postMessage)
+    createHighlighterCore.mockResolvedValue({
+      ...externalHighlighter(api, true),
+      getLanguage: () => ({
+        tokenizeLine: (line: string) => {
+          tokenizedLines.push(line)
+          return {
+            ruleStack: INITIAL,
+            tokens: Array.from(line.matchAll(/\w+/g), (match) => ({
+              startIndex: match.index,
+              endIndex: match.index + match[0].length,
+              scopes: ['keyword'],
+            })),
+          }
+        },
+      }),
+    })
+    const snapshotModule = await import('../../src/documentTextSnapshot')
+    const realCreate = snapshotModule.createDocumentTextSnapshot
+    vi.spyOn(snapshotModule, 'createDocumentTextSnapshot').mockImplementation(
+      (pieceTableSnapshot, materializedText) => {
+        const snapshot = realCreate(pieceTableSnapshot, materializedText)
+        return {
+          ...snapshot,
+          get length() {
+            return snapshot.length
+          },
+          get lineCount() {
+            return snapshot.lineCount
+          },
+          lineStart: (line) => snapshot.lineStart(line),
+          lineRange: (line) => snapshot.lineRange(line),
+          lineAt: (offset) => snapshot.lineAt(offset),
+          readRange: (start, end) => snapshot.readRange(start, end),
+          forEachTextChunk: (visit) => snapshot.forEachTextChunk(visit),
+          materializeFullText: () => {
+            throw new Error('shiki.worker must not call materializeFullText')
+          },
+        }
+      },
+    )
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = workerHandler()
+    onmessage(
+      new MessageEvent('message', {
+        data: openRequest({
+          documentId: 'doc',
+          text: 'const a = 1\r\nconst b = 2\nconst c = 3',
+          lang: 'typescript',
+          theme: 'github-dark',
+        }),
+      }),
+    )
+    await waitFor(() => postMessage.mock.calls.length > 0)
+
+    const response = postMessage.mock.calls[0]?.[0]
+    expect(response?.ok).toBe(true)
+    expect(tokenizedLines).toEqual(['const a = 1', 'const b = 2', 'const c = 3'])
   })
 
   it('returns editor theme colors from the loaded Shiki theme', async () => {
@@ -629,17 +785,15 @@ const languageRegistration = (name: string) => ({
 
 const themeRegistration = (name: string) => ({ name })
 
+const realSetTimeout = globalThis.setTimeout
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1000
   while (Date.now() < deadline) {
     if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => realSetTimeout(resolve, 0))
   }
   throw new Error('Timed out waiting for worker response')
-}
-
-async function flushMicrotasks(): Promise<void> {
-  for (let index = 0; index < 8; index += 1) await Promise.resolve()
 }
 
 function responseWithId(

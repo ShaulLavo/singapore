@@ -1,11 +1,20 @@
 import './style.css'
-import type { TextReadSnapshot } from '@singapore-editor/core/document'
+import { TextBlockReader, type TextReadSnapshot } from '@singapore-editor/core/document'
 import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
 import { Kind } from 'tree-sitter-md'
-import { markdownLinkDestination } from './linkDestination'
+import { indexMarkdownDefinitions, markdownLinkDestination } from './linkDestination'
 import { renderMarkdownLinks, type MarkdownLink, type MarkdownLinkOptions } from './linkRender'
 
 type Span = { readonly start: number; readonly end: number }
+type Container = Span & { readonly order: number }
+type PendingMarkerOwner = Span & {
+  readonly from: number
+  readonly to: number
+}
+
+const BACKTICK_CODE = 0x60
+const SPACE_CODE = 0x20
+const TILDE_CODE = 0x7e
 
 /** Inline replacements returned in a new array owned by the caller. */
 export function markdownInlineReplacements(
@@ -13,10 +22,21 @@ export function markdownInlineReplacements(
   records: Uint32Array,
   options: MarkdownLinkOptions = {},
 ): InlineReplacementSpec[] {
+  const reader = new TextBlockReader(text)
   const specs: InlineReplacementSpec[] = []
   const links: (Span & { readonly kind: number })[] = []
   const renderedLinks: MarkdownLink[] = []
-  const containers = containerSpans(records)
+  const containers = collectContainers(records)
+  const pendingOwners = new Map<number, PendingMarkerOwner[]>()
+  let cachedDefinitions: ReadonlyMap<string, string | null> | null = null
+  const linkLookupOptions = {
+    reader,
+    definitions: () => {
+      cachedDefinitions ??= indexMarkdownDefinitions(text, records, reader)
+      return cachedDefinitions
+    },
+  }
+
   for (let index = 0; index < records.length; index += 4) {
     const start = records[index]!,
       end = records[index + 1]!
@@ -29,40 +49,83 @@ export function markdownInlineReplacements(
       const link = links.pop()
       const href =
         link?.kind === Kind.Link
-          ? markdownLinkDestination(text, link, { start, end }, records)
+          ? markdownLinkDestination(text, link, { start, end }, records, linkLookupOptions)
           : null
-      if (link?.kind === Kind.Image || href !== null) appendLink(specs, text, link, { start, end })
+      if (link?.kind === Kind.Image || href !== null)
+        appendLink(specs, reader, link, { start, end })
       if (link && href !== null) renderedLinks.push({ span: link, label: { start, end }, href })
     }
     const before = specs.length
-    appendMarker(specs, text, { start, end }, kind, extra)
-    const owner = markerOwner(containers, { start, end }, kind)
-    if (owner) applyRevealRange(specs, before, owner)
+    appendMarker(specs, reader, { start, end }, kind, extra)
+    if (specs.length > before) {
+      const parent = markerParentKind(kind)
+      if (parent !== undefined && containers.byKind.has(parent)) {
+        let bucket = pendingOwners.get(parent)
+        if (!bucket) {
+          bucket = []
+          pendingOwners.set(parent, bucket)
+        }
+        bucket.push({ from: before, to: specs.length, start, end })
+      }
+    }
   }
+
+  for (const [parentKind, markers] of pendingOwners) {
+    const parentContainers = containers.byKind.get(parentKind)
+    if (parentContainers && parentContainers.length > 0) {
+      assignMarkerOwners(specs, markers, parentContainers)
+    }
+  }
+
   renderMarkdownLinks(specs, text, renderedLinks, options)
-  return preserveTableWidths(specs, text, containers)
+  return preserveTableWidths(specs, text, containers.tables)
 }
 
 function preserveTableWidths(
-  specs: readonly InlineReplacementSpec[],
+  specs: InlineReplacementSpec[],
   source: TextReadSnapshot,
-  containers: readonly Container[],
+  tables: readonly Container[],
 ): InlineReplacementSpec[] {
-  const tables = containers.filter((container) => container.kind === Kind.Table)
-  return specs.map((spec) => {
-    if (!tables.some((table) => table.start <= spec.startIndex && table.end >= spec.endIndex))
-      return spec
-    const width = source.readRange(spec.startIndex, spec.endIndex).length
+  if (tables.length === 0 || specs.length === 0) return specs
+
+  const sortedTables = sortSpansByStart(tables)
+  const specOrder = sortedSpecIndices(specs)
+  let tableIndex = 0
+  const activeTables: Container[] = []
+
+  for (let orderPos = 0; orderPos < specOrder.length; orderPos++) {
+    const specIndex = specOrder[orderPos]!
+    const spec = specs[specIndex]!
+    while (tableIndex < sortedTables.length && sortedTables[tableIndex]!.start <= spec.startIndex) {
+      const table = sortedTables[tableIndex++]!
+      if (table.end >= spec.startIndex) activeTables.push(table)
+    }
+    if (activeTables.length === 0) continue
+
+    let write = 0
+    let insideTable = false
+    for (let i = 0; i < activeTables.length; i++) {
+      const table = activeTables[i]!
+      if (table.end < spec.startIndex) continue
+      activeTables[write++] = table
+      if (table.end >= spec.endIndex) insideTable = true
+    }
+    activeTables.length = write
+    if (!insideTable) continue
+
+    const width = Math.max(0, Math.min(source.length, spec.endIndex) - Math.max(0, spec.startIndex))
     const padding = ' '.repeat(Math.max(0, width - spec.text.length))
-    if (!padding) return spec
+    if (!padding) continue
     const render = spec.render
-    return {
+    specs[specIndex] = {
       ...spec,
       text: spec.text + padding,
       className: 'editor-markdown-text',
       render: paddedRender(render, spec.text.length),
     }
-  })
+  }
+
+  return specs
 }
 
 function paddedRender(
@@ -86,7 +149,7 @@ function paddedRender(
 
 function appendMarker(
   specs: InlineReplacementSpec[],
-  text: TextReadSnapshot,
+  reader: TextBlockReader,
   span: Span,
   kind: number,
   extra: number,
@@ -98,13 +161,13 @@ function appendMarker(
     kind === Kind.Strikethrough ||
     kind === Kind.CodeSpan
   ) {
-    const count = delimiterLength(text, span, kind)
+    const count = delimiterLength(reader, span, kind)
     specs.push(replacement(span.start, span.start + count, '', 'marker', group))
     specs.push(replacement(span.end - count, span.end, '', 'marker', group))
     return
   }
   if (kind === Kind.HeadingMark) {
-    const end = span.end + leadingSpaces(text, span.end)
+    const end = span.end + leadingSpaces(reader, span.end)
     specs.push(replacement(span.start, end, '', `heading-marker-${extra}`, group))
     return
   }
@@ -117,7 +180,7 @@ function appendMarker(
     return
   }
   if (kind !== Kind.ListMark && kind !== Kind.QuoteMark) return
-  const source = text.readRange(span.start, span.end)
+  const source = reader.slice(span.start, span.end)
   if (kind === Kind.ListMark && /^[-*+]/.test(source)) {
     specs.push(replacement(span.start, span.end, `•${source.slice(1)}`, 'list-marker', group))
   }
@@ -126,42 +189,44 @@ function appendMarker(
   }
 }
 
-function delimiterLength(text: TextReadSnapshot, span: Span, kind: number): number {
+function delimiterLength(reader: TextBlockReader, span: Span, kind: number): number {
   if (kind === Kind.Strong) return 2
   if (kind === Kind.Emphasis) return 1
-  if (kind === Kind.Strikethrough)
-    return text.readRange(span.start, span.start + 2) === '~~' ? 2 : 1
+  if (kind === Kind.Strikethrough) {
+    return reader.charCodeAt(span.start) === TILDE_CODE &&
+      reader.charCodeAt(span.start + 1) === TILDE_CODE
+      ? 2
+      : 1
+  }
   let count = 0
-  while (
-    span.start + count < span.end &&
-    text.readRange(span.start + count, span.start + count + 1) === '`'
-  )
+  while (span.start + count < span.end && reader.charCodeAt(span.start + count) === BACKTICK_CODE) {
     count++
+  }
   return count
 }
 
 function appendLink(
   specs: InlineReplacementSpec[],
-  text: TextReadSnapshot,
+  reader: TextBlockReader,
   link: Span | undefined,
   label: Span,
 ): void {
   if (!link) return
   const group = `link:${link.start}:${link.end}`
-  appendHiddenLines(specs, text, link.start, label.start, 'link-marker', group, link)
-  appendHiddenLines(specs, text, label.end, link.end, 'link-target', group, link)
+  appendHiddenLines(specs, reader, link.start, label.start, 'link-marker', group, link)
+  appendHiddenLines(specs, reader, label.end, link.end, 'link-target', group, link)
 }
 
 function appendHiddenLines(
   specs: InlineReplacementSpec[],
-  text: TextReadSnapshot,
+  reader: TextBlockReader,
   start: number,
   end: number,
   kind: string,
   group: string,
   owner: Span,
 ): void {
-  const source = text.readRange(start, end)
+  const source = reader.slice(start, end)
   let offset = start
   for (const line of source.split(/(\r?\n)/)) {
     if (line && !line.includes('\n'))
@@ -183,39 +248,135 @@ function replacement(
   return { id: `${kind}:${startIndex}:${endIndex}`, startIndex, endIndex, text, kind, groupId }
 }
 
-function leadingSpaces(text: TextReadSnapshot, offset: number): number {
+function leadingSpaces(reader: TextBlockReader, offset: number): number {
   let count = 0
-  while (offset + count < text.length && text.readRange(offset + count, offset + count + 1) === ' ')
+  while (offset + count < reader.length && reader.charCodeAt(offset + count) === SPACE_CODE) {
     count++
+  }
   return count
 }
 
-type Container = Span & { readonly kind: number }
+type CollectedContainers = {
+  readonly byKind: ReadonlyMap<number, readonly Container[]>
+  readonly tables: readonly Container[]
+}
 
-function containerSpans(records: Uint32Array): readonly Container[] {
-  const containers: Container[] = []
+function collectContainers(records: Uint32Array): CollectedContainers {
+  const byKind = new Map<number, Container[]>()
+  const tables: Container[] = []
+  let order = 0
   for (let i = 0; i < records.length; i += 4) {
     const kind = records[i + 2]!
+    if (kind === Kind.Table) {
+      tables.push({ start: records[i]!, end: records[i + 1]!, order: order++ })
+      continue
+    }
     if (
       kind === Kind.Heading ||
-      kind === Kind.Table ||
       kind === Kind.CodeBlock ||
       kind === Kind.BlockQuote ||
       kind === Kind.ListItem
     ) {
-      containers.push({ start: records[i]!, end: records[i + 1]!, kind })
+      let bucket = byKind.get(kind)
+      if (!bucket) {
+        bucket = []
+        byKind.set(kind, bucket)
+      }
+      bucket.push({ start: records[i]!, end: records[i + 1]!, order: order++ })
+    }
+  }
+  return { byKind, tables }
+}
+
+function assignMarkerOwners(
+  specs: InlineReplacementSpec[],
+  markers: readonly PendingMarkerOwner[],
+  containers: readonly Container[],
+): void {
+  const sortedContainers = sortContainersByStart(containers)
+  const sortedMarkers = sortSpansByStart(markers)
+  let containerIndex = 0
+  const active: Container[] = []
+  let activeNested = true
+
+  for (const marker of sortedMarkers) {
+    while (
+      containerIndex < sortedContainers.length &&
+      sortedContainers[containerIndex]!.start <= marker.start
+    ) {
+      const next = sortedContainers[containerIndex++]!
+      if (next.end < marker.start) continue
+      while (activeNested && active.length > 0 && active[active.length - 1]!.end < marker.start) {
+        active.pop()
+      }
+      if (active.length > 0) {
+        const top = active[active.length - 1]!
+        if (next.end > top.end || next.order < top.order) activeNested = false
+      }
+      active.push(next)
+    }
+
+    if (activeNested) {
+      while (active.length > 0 && active[active.length - 1]!.end < marker.start) {
+        active.pop()
+      }
+      let owner: Container | undefined
+      for (let i = active.length - 1; i >= 0; i--) {
+        if (active[i]!.end >= marker.end) {
+          owner = active[i]
+          break
+        }
+      }
+      if (owner) applyRevealRange(specs, marker.from, marker.to, owner)
+      continue
+    }
+
+    let write = 0
+    let owner: Container | undefined
+    for (let i = 0; i < active.length; i++) {
+      const candidate = active[i]!
+      if (candidate.end < marker.start) continue
+      active[write++] = candidate
+      if (candidate.end >= marker.end && (!owner || candidate.order > owner.order)) {
+        owner = candidate
+      }
+    }
+    active.length = write
+    if (owner) applyRevealRange(specs, marker.from, marker.to, owner)
+  }
+}
+
+function sortContainersByStart(containers: readonly Container[]): readonly Container[] {
+  for (let i = 1; i < containers.length; i++) {
+    const prev = containers[i - 1]!
+    const curr = containers[i]!
+    if (prev.start > curr.start || (prev.start === curr.start && prev.order > curr.order)) {
+      return containers.toSorted(
+        (left, right) => left.start - right.start || left.order - right.order,
+      )
     }
   }
   return containers
 }
 
-function markerOwner(containers: readonly Container[], span: Span, kind: number): Span | undefined {
-  const parent = markerParentKind(kind)
-  if (!parent) return undefined
-  return containers.findLast(
-    (container) =>
-      container.kind === parent && container.start <= span.start && container.end >= span.end,
-  )
+function sortSpansByStart<T extends Span>(spans: readonly T[]): readonly T[] {
+  for (let i = 1; i < spans.length; i++) {
+    if (spans[i - 1]!.start > spans[i]!.start) {
+      return spans.toSorted((left, right) => left.start - right.start)
+    }
+  }
+  return spans
+}
+
+function sortedSpecIndices(specs: readonly InlineReplacementSpec[]): Uint32Array {
+  const order = new Uint32Array(specs.length)
+  let sorted = true
+  for (let i = 0; i < specs.length; i++) {
+    order[i] = i
+    if (i > 0 && specs[i - 1]!.startIndex > specs[i]!.startIndex) sorted = false
+  }
+  if (sorted) return order
+  return order.sort((left, right) => specs[left]!.startIndex - specs[right]!.startIndex)
 }
 
 function markerParentKind(kind: number): number | undefined {
@@ -226,8 +387,14 @@ function markerParentKind(kind: number): number | undefined {
   return undefined
 }
 
-function applyRevealRange(specs: InlineReplacementSpec[], from: number, owner: Span): void {
-  for (let i = from; i < specs.length; i++) {
-    specs[i] = { ...specs[i]!, revealRange: owner }
+function applyRevealRange(
+  specs: InlineReplacementSpec[],
+  from: number,
+  to: number,
+  owner: Span,
+): void {
+  const revealRange: Span = { start: owner.start, end: owner.end }
+  for (let i = from; i < to; i++) {
+    specs[i] = { ...specs[i]!, revealRange }
   }
 }

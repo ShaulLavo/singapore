@@ -3598,6 +3598,12 @@
         },
         {
           "kind": "unknown",
+          "name": "TextBlockReader",
+          "source": "packages/editor/src/textWindows.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "wordRangeAtOffset",
           "source": "packages/editor/src/textRanges.ts",
           "via": "packages/editor/src/public/document.ts"

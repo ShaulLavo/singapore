@@ -502,9 +502,12 @@ export class InputSelectionController {
       !event.shiftKey
     )
       return true
-    this.options.view.focusInput()
-    const document = this.options.el.ownerDocument
-    return typeof document.execCommand === 'function' && document.execCommand(command)
+    if (command !== 'paste' && !this.#clipboardPayload()) return false
+    if (this.#asyncClipboard(command)) {
+      void this.#runClipboardAction(command)
+      return true
+    }
+    return this.#execDocumentClipboardCommand(command)
   }
 
   applyHistoryCommand(command: 'undo' | 'redo', context: EditorCommandContext): boolean {
@@ -2374,43 +2377,76 @@ export class InputSelectionController {
   }
 
   async applyClipboardAction(action: 'copy' | 'cut' | 'paste'): Promise<void> {
-    const session = this.session
+    await this.#runClipboardAction(action)
+  }
+
+  #asyncClipboard(action: 'copy' | 'cut' | 'paste'): Clipboard | null {
     const clipboard = this.options.el.ownerDocument.defaultView?.navigator.clipboard
-    if (!session || !clipboard) return
-    const snapshot = session.getSnapshot()
-    const selections = session.getSelections()
-    const payload = this.#clipboardPayload()
-    if (action !== 'paste' && !payload) return
-    if (action !== 'copy' && !this.#canTypeText()) return
-    const pasted = action === 'paste' ? await clipboard.readText() : null
-    if (payload && action !== 'paste') {
-      await clipboard.writeText(payload.text)
-      rememberClipboardPayload(payload.text, payload.metadata)
+    if (!clipboard) return null
+    if (action === 'paste') return typeof clipboard.readText === 'function' ? clipboard : null
+    return typeof clipboard.writeText === 'function' ? clipboard : null
+  }
+
+  #execDocumentClipboardCommand(command: 'copy' | 'cut' | 'paste'): boolean {
+    this.options.view.focusInput()
+    const document = this.options.el.ownerDocument
+    return typeof document.execCommand === 'function' && document.execCommand(command)
+  }
+
+  async #runClipboardAction(action: 'copy' | 'cut' | 'paste'): Promise<boolean> {
+    const session = this.session
+    if (!session) return false
+    if (action !== 'copy' && !this.#canTypeText()) return false
+    const payload = action === 'paste' ? null : this.#clipboardPayload()
+    if (action !== 'paste' && !payload) return false
+
+    const clipboard = this.#asyncClipboard(action)
+    if (clipboard) {
+      const snapshot = session.getSnapshot()
+      const selections = session.getSelections()
+      try {
+        const pasted = action === 'paste' ? await clipboard.readText() : null
+        if (payload && action !== 'paste') {
+          await clipboard.writeText(payload.text)
+          rememberClipboardPayload(payload.text, payload.metadata)
+        }
+        // A permission prompt can outlive this document or its selection; keep the user's new intent.
+        if (
+          this.session !== session ||
+          session.getSnapshot() !== snapshot ||
+          session.getSelections() !== selections
+        )
+          return false
+        if (action === 'copy') return true
+        if (pasted !== null) {
+          const window = this.options.el.ownerDocument.defaultView
+          if (!window) return false
+          const transfer = new window.DataTransfer()
+          transfer.setData('text/plain', pasted)
+          this.#handlePaste(new window.ClipboardEvent('paste', { clipboardData: transfer }))
+          return true
+        }
+        this.options.runInOperation(() => {
+          if (!this.#canTypeText()) return
+          let change: DocumentSessionChange
+          if (payload?.metadata.pasteOnNewLine) change = this.#deleteCaretLines(session)
+          else change = this.#mirrorSelectionDelete(session) ?? session.deleteSelection()
+          this.#markSessionSelectionForNextInput()
+          this.applyChange(change, `input.clipboard.${action}`, nowMs())
+        })
+        return true
+      } catch {
+        // Fall back to execCommand when Async Clipboard is unavailable or denied, if state still matches.
+        if (
+          this.session !== session ||
+          session.getSnapshot() !== snapshot ||
+          session.getSelections() !== selections
+        )
+          return false
+      }
     }
-    // A permission prompt can outlive this document or its selection; keep the user's new intent.
-    if (
-      this.session !== session ||
-      session.getSnapshot() !== snapshot ||
-      session.getSelections() !== selections
-    )
-      return
-    if (action === 'copy') return
-    if (pasted !== null) {
-      const window = this.options.el.ownerDocument.defaultView
-      if (!window) return
-      const transfer = new window.DataTransfer()
-      transfer.setData('text/plain', pasted)
-      this.#handlePaste(new window.ClipboardEvent('paste', { clipboardData: transfer }))
-      return
-    }
-    this.options.runInOperation(() => {
-      if (!this.#canTypeText()) return
-      let change: DocumentSessionChange
-      if (payload?.metadata.pasteOnNewLine) change = this.#deleteCaretLines(session)
-      else change = this.#mirrorSelectionDelete(session) ?? session.deleteSelection()
-      this.#markSessionSelectionForNextInput()
-      this.applyChange(change, `input.clipboard.${action}`, nowMs())
-    })
+
+    return this.#execDocumentClipboardCommand(action)
   }
 
   #setDomSelectionRange(range: Range | null, backward: boolean): void {

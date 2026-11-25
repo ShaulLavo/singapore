@@ -70,6 +70,7 @@ export type {
 export { createDocumentLogicalRevisionScope } from '../editor/editChain'
 export { documentTextRoundTripStatus } from '@singapore-editor/textbuffer/internal/lineEndings'
 export { createDocumentTextSnapshot, createStringTextSnapshot } from '../documentTextSnapshot'
+export { TextBlockReader } from '../textWindows'
 export {
   characterClassAt,
   clampTextOffset,

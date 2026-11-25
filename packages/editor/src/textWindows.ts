@@ -51,11 +51,42 @@ export class TextBlockReader {
     if (offset < 0 || offset >= this.length) return Number.NaN
 
     const index = Math.floor(offset / TEXT_WINDOW_LENGTH)
+    return this.blockAt(index).charCodeAt(offset - index * TEXT_WINDOW_LENGTH)
+  }
+
+  /** Reads `[start, end)` from cached aligned blocks when compact, avoiding per-span tree walks. */
+  slice(start: number, end: number): string {
+    const from = Math.max(0, start)
+    const to = Math.min(this.length, end)
+    if (to <= from) return ''
+
+    const startBlock = Math.floor(from / TEXT_WINDOW_LENGTH)
+    const endBlock = Math.floor((to - 1) / TEXT_WINDOW_LENGTH)
+    if (startBlock === endBlock) {
+      const offset = startBlock * TEXT_WINDOW_LENGTH
+      return this.blockAt(startBlock).slice(from - offset, to - offset)
+    }
+    if (endBlock - startBlock < BLOCK_CACHE_SIZE) {
+      let result = ''
+      for (let index = startBlock; index <= endBlock; index += 1) {
+        const block = this.blockAt(index)
+        const blockStart = index * TEXT_WINDOW_LENGTH
+        result += block.slice(
+          Math.max(0, from - blockStart),
+          Math.min(block.length, to - blockStart),
+        )
+      }
+      return result
+    }
+    return this.source.readRange(from, to)
+  }
+
+  private blockAt(index: number): string {
     if (index !== this.lastIndex) {
       this.lastBlock = this.block(index)
       this.lastIndex = index
     }
-    return this.lastBlock.charCodeAt(offset - index * TEXT_WINDOW_LENGTH)
+    return this.lastBlock
   }
 
   private block(index: number): string {

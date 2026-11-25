@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '../src/editor'
 import { createDocumentSession } from '../src/public/document'
 import { setHighlightRegistry } from '../src/public/testing'
@@ -349,6 +349,121 @@ describe('clipboard', () => {
 
       expect(editor.materializeFullText()).toBe('one\none\ntwo\none\nthree')
       expect(selectionHeads(session)).toEqual([8, 16])
+    })
+  })
+
+  describe('unified clipboard commands', () => {
+    it('routes programmatic copy, cut, and paste commands through Async Clipboard first', async () => {
+      let stored = ''
+      const writeText = vi.fn(async (text: string) => {
+        stored = text
+      })
+      const readText = vi.fn(async () => stored)
+      const execCommand = vi.fn(() => true)
+      const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      const previousExec = Object.getOwnPropertyDescriptor(document, 'execCommand')
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText, readText },
+      })
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: execCommand,
+      })
+
+      try {
+        editor.setText('alpha\nbeta')
+        editor.setSelection(1, 1)
+
+        expect(editor.dispatchCommand('copy')).toBe(true)
+        await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('alpha\n'))
+        expect(execCommand).not.toHaveBeenCalled()
+
+        editor.setSelection(8, 8)
+        expect(editor.dispatchCommand('paste')).toBe(true)
+        await vi.waitFor(() => expect(editor.materializeFullText()).toBe('alpha\nalpha\nbeta'))
+        expect(execCommand).not.toHaveBeenCalled()
+
+        editor.setSelection(0, 6)
+        expect(editor.dispatchCommand('cut')).toBe(true)
+        await vi.waitFor(() => expect(editor.materializeFullText()).toBe('alpha\nbeta'))
+        expect(writeText).toHaveBeenLastCalledWith('alpha\n')
+        expect(execCommand).not.toHaveBeenCalled()
+      } finally {
+        if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+        if (previousExec) Object.defineProperty(document, 'execCommand', previousExec)
+        else Reflect.deleteProperty(document, 'execCommand')
+      }
+    })
+
+    it('falls back to document.execCommand when Async Clipboard is unavailable or denied', async () => {
+      const execCommand = vi.fn(() => true)
+      const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      const previousExec = Object.getOwnPropertyDescriptor(document, 'execCommand')
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: execCommand,
+      })
+
+      try {
+        // Case 1: navigator.clipboard absent
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+        editor.setText('hello world')
+        editor.setSelection(0, 5)
+        expect(editor.dispatchCommand('copy')).toBe(true)
+        expect(execCommand).toHaveBeenCalledWith('copy')
+
+        // Case 2: navigator.clipboard.readText rejects (permission denied)
+        execCommand.mockClear()
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: {
+            readText: vi.fn(async () => {
+              throw new DOMException('Denied', 'NotAllowedError')
+            }),
+            writeText: vi.fn(async () => {
+              throw new DOMException('Denied', 'NotAllowedError')
+            }),
+          },
+        })
+        expect(editor.dispatchCommand('paste')).toBe(true)
+        await vi.waitFor(() => expect(execCommand).toHaveBeenCalledWith('paste'))
+      } finally {
+        if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+        if (previousExec) Object.defineProperty(document, 'execCommand', previousExec)
+        else Reflect.deleteProperty(document, 'execCommand')
+      }
+    })
+
+    it('keeps native Ctrl/Cmd+C/X/V shortcuts passing through without calling Async Clipboard or execCommand', () => {
+      const writeText = vi.fn(async () => undefined)
+      const execCommand = vi.fn(() => true)
+      const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+      const previousExec = Object.getOwnPropertyDescriptor(document, 'execCommand')
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText, readText: vi.fn(async () => '') },
+      })
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: execCommand,
+      })
+
+      try {
+        editor.setText('hello')
+        editor.setSelection(0, 5)
+        const event = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true })
+        expect(editor.dispatchCommand('copy', { event })).toBe(true)
+        expect(writeText).not.toHaveBeenCalled()
+        expect(execCommand).not.toHaveBeenCalled()
+      } finally {
+        if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard)
+        else Reflect.deleteProperty(navigator, 'clipboard')
+        if (previousExec) Object.defineProperty(document, 'execCommand', previousExec)
+        else Reflect.deleteProperty(document, 'execCommand')
+      }
     })
   })
 })

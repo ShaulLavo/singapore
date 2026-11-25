@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createHighlighter } from 'shiki'
+import type { TextReadSnapshot } from '../../src/documentTextSnapshot'
 
 import {
   createIncrementalTokenizer as createCoreIncrementalTokenizer,
@@ -557,5 +558,84 @@ describe('grammar state stabilization', () => {
 
     expect(tokenize.mock.calls.length).toBeGreaterThan(0)
     expect(tokenize.mock.calls.every((args) => args[2] === 0)).toBe(true)
+  })
+
+  it('streams multi-line stateful constructs line-by-line with exact parity to full-string tokenization', async () => {
+    const real = await createHighlighter({
+      themes: ['github-dark'],
+      langs: ['typescript', 'markdown'],
+    })
+    highlighters.push(real)
+
+    const tsCode = [
+      '/* block comment start',
+      ' * still inside comment',
+      ' */',
+      'const tpl = `line one',
+      '  ${42} line two',
+      '  line three`',
+      'const done = true\r',
+      'const afterCrLf = 1',
+    ].join('\n')
+
+    const mdCode = [
+      '# Title',
+      '```ts',
+      '/* comment inside fence',
+      ' * line 2',
+      ' */',
+      'const inside = 1',
+      '```',
+      'plain paragraph',
+    ].join('\n')
+
+    for (const [lang, code] of [
+      ['typescript', tsCode],
+      ['markdown', mdCode],
+    ] as const) {
+      // Split into tiny chunks that deliberately split CRLF (\r | \n) and multi-line constructs.
+      const chunks: string[] = []
+      for (let i = 0; i < code.length; i += 7) chunks.push(code.slice(i, i + 7))
+      const chunkedSource: TextReadSnapshot = {
+        length: code.length,
+        lineCount: code.split('\n').length,
+        lineStart: () => 0,
+        lineRange: () => ({ start: 0, end: 0 }),
+        lineAt: () => 0,
+        readRange: () => {
+          throw new Error('streaming tokenizer should use forEachTextChunk')
+        },
+        forEachTextChunk: (visit) => {
+          let offset = 0
+          for (const chunk of chunks) {
+            visit(chunk, offset, offset + chunk.length)
+            offset += chunk.length
+          }
+        },
+      }
+
+      const fromString = await createCoreIncrementalTokenizer({
+        lang,
+        theme: 'github-dark',
+        maxLineLength: DEFAULT_SHIKI_MAX_TOKENIZATION_LINE_LENGTH,
+        code,
+        highlighter: real,
+      })
+      const fromSource = await createCoreIncrementalTokenizer({
+        lang,
+        theme: 'github-dark',
+        maxLineLength: DEFAULT_SHIKI_MAX_TOKENIZATION_LINE_LENGTH,
+        source: chunkedSource,
+        highlighter: real,
+      })
+
+      expect(fromSource.tokenizer.getLineSnapshots()).toEqual(
+        fromString.tokenizer.getLineSnapshots(),
+      )
+      expect(fromSource.tokenizer.getCode()).toBe(code)
+      expect(fromSource.tokenizer.inspectRetention()).toEqual(
+        fromString.tokenizer.inspectRetention(),
+      )
+    }
   })
 })

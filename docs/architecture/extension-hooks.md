@@ -57,13 +57,13 @@ exported), **host** (the host's API, not a plugin hook), **gap** (not available)
 
 ### Selections
 
-| Hook                                               | Scope, phase, rights                                   | Order, cancel, dispose                             | Consumer                   | Status    |
-| -------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------- | -------------------------- | --------- |
-| `getSelections`                                    | Edit and internal feature contexts. Resolved offsets.  | Current at call time.                              | find, lsp-plugin           | supported |
-| `setSelection`, `setSelections`                    | View context. Reveal options.                          | Runs in an editor operation.                       | find, lsp, diff            | supported |
-| `snapshot.selections` with update kind `selection` | View contributions.                                    | Every view contribution is visited for every kind. | bracket match, occurrences | supported |
-| `EditorSelectionRangeProvider`                     | Per editor. Asked on every expand; union of providers. | No invalidation event: read fresh.                 | tree-sitter                | supported |
-| `trackRanges`, `trackPoint`                        | View context. Anchors that follow edits.               | Live until dropped; no disposal needed.            | find                       | supported |
+| Hook                                               | Scope, phase, rights                                   | Order, cancel, dispose                             | Consumer                          | Status    |
+| -------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------- | --------------------------------- | --------- |
+| `getSelections`                                    | Edit contribution context. Resolved offsets.           | Current at call time.                              | find, lsp-plugin, merge conflicts | supported |
+| `setSelection`, `setSelections`                    | View context. Reveal options.                          | Runs in an editor operation.                       | find, lsp, diff                   | supported |
+| `snapshot.selections` with update kind `selection` | View contributions.                                    | Every view contribution is visited for every kind. | bracket match, occurrences        | supported |
+| `EditorSelectionRangeProvider`                     | Per editor. Asked on every expand; union of providers. | No invalidation event: read fresh.                 | tree-sitter                       | supported |
+| `trackRanges`, `trackPoint`                        | View context. Anchors that follow edits.               | Live until dropped; no disposal needed.            | find                              | supported |
 
 ### Commands
 
@@ -141,23 +141,22 @@ viewport-fixed paint in `viewportOverlayElement`. Mount paint that moves with do
 
 ### Document lifecycle
 
-| Hook                                                 | Scope, phase, rights                                 | Order, cancel, dispose                                      | Consumer                | Status    |
-| ---------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------- | ----------------------- | --------- |
-| Update kinds `document` and `clear`                  | View contributions, after the new document renders.  | No will-change phase; row handles abort before replacement. | every view contribution | supported |
-| `handleEditorChange(null)`                           | Decoration and feature contributions on replacement. | —                                                           | diff, merge conflicts   | supported |
-| `onChange`, `onInitialPaint`, `onPresentationChange` | Host options.                                        | —                                                           | Platform                | host      |
-| Open, save, dirty state, file identity               | Host.                                                | —                                                           | Platform                | host      |
-| Document-scoped contributions                        | —                                                    | —                                                           | —                       | gap       |
+| Hook                                                 | Scope, phase, rights                                | Order, cancel, dispose                                      | Consumer                | Status    |
+| ---------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------- | ----------------------- | --------- |
+| Update kinds `document` and `clear`                  | View contributions, after the new document renders. | No will-change phase; row handles abort before replacement. | every view contribution | supported |
+| `handleEditorChange(null)`                           | Decoration contributions on replacement.            | —                                                           | diff, merge conflicts   | supported |
+| `onChange`, `onInitialPaint`, `onPresentationChange` | Host options.                                       | —                                                           | Platform                | host      |
+| Open, save, dirty state, file identity               | Host.                                               | —                                                           | Platform                | host      |
+| Document-scoped contributions                        | —                                                   | —                                                           | —                       | gap       |
 
 ### View lifecycle
 
-| Hook                                                                  | Scope, phase, rights                                           | Order, cancel, dispose                                                   | Consumer         | Status    |
-| --------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------- | --------- |
-| `EditorPlugin.install`, `activate`, `update`, `deactivate`, `dispose` | Per editor.                                                    | Phase registrations unwind with the phase; a throw unwinds partial work. | every plugin     | supported |
-| Contribution providers (view, command, capability, edit, decoration)  | Created per editor, late providers get an initial update.      | A throwing factory or update removes the contribution and logs it.       | every plugin     | supported |
-| `registerEditorFeatureContribution`                                   | Internal combined context (DOM, edits, commands, decorations). | Reached by a cast from `mergeConflictPlugin`.                            | merge conflicts  | internal  |
-| `registerAmbientEditorPlugin`                                         | Module-global demand-loaded plugin.                            | Installed while a provider of `demand` exists.                           | hover            | supported |
-| `registerLogger`, `log`                                               | Per editor.                                                    | A throwing logger is ignored.                                            | Platform logging | supported |
+| Hook                                                                  | Scope, phase, rights                                      | Order, cancel, dispose                                                   | Consumer         | Status    |
+| --------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------- | --------- |
+| `EditorPlugin.install`, `activate`, `update`, `deactivate`, `dispose` | Per editor.                                               | Phase registrations unwind with the phase; a throw unwinds partial work. | every plugin     | supported |
+| Contribution providers (view, command, capability, edit, decoration)  | Created per editor, late providers get an initial update. | A throwing factory or update removes the contribution and logs it.       | every plugin     | supported |
+| `registerAmbientEditorPlugin`                                         | Module-global demand-loaded plugin.                       | Installed while a provider of `demand` exists.                           | hover            | supported |
+| `registerLogger`, `log`                                               | Per editor.                                               | A throwing logger is ignored.                                            | Platform logging | supported |
 
 ## Input: event order and the contract
 

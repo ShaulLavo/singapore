@@ -360,3 +360,89 @@ it('orders nested formatting markers beyond the first 16 bits of source offsets'
   const prefix = `${'a'.repeat(70_000)} `
   expect(preview(`${prefix}[***both*** and **bold**](url)`)).toBe(`${prefix}both and bold`)
 })
+
+it('preserves container revealRange ownership on nested quotes, lists, headings, and fences', () => {
+  const source = [
+    '# Heading   title',
+    '',
+    '> outer',
+    '> > inner',
+    '',
+    '- outer item',
+    '  - [x] nested task',
+    '',
+    '```ts',
+    'const x = 1',
+    '```',
+  ].join('\n')
+  const records = parseMarkdown(source)
+  const specs = markdownInlineReplacements(createStringTextSnapshot(source), records)
+
+  const heading = specs.find((spec) => spec.kind === 'heading-marker-1')
+  expect(heading?.endIndex).toBe(2)
+  expect(heading?.revealRange).toEqual({ start: 0, end: '# Heading   title\n'.length })
+
+  const quotes = specs.filter((spec) => spec.kind === 'quote-marker')
+  expect(quotes).toHaveLength(3)
+  // Second `>` on `> > inner` belongs to the inner blockquote, not the outer one.
+  expect(quotes[2]!.revealRange!.start).toBeGreaterThan(quotes[0]!.revealRange!.start)
+
+  const tasks = specs.filter((spec) => spec.kind === 'task-marker')
+  expect(tasks).toHaveLength(1)
+  expect(tasks[0]!.revealRange!.start).toBe(source.indexOf('  - [x] nested task') + 2)
+
+  const fences = specs.filter((spec) => spec.kind === 'fence-marker')
+  expect(fences).toHaveLength(3)
+  expect(
+    new Set(fences.map((spec) => `${spec.revealRange?.start}:${spec.revealRange?.end}`)).size,
+  ).toBe(1)
+})
+
+it('scales linearly with bounded TextReadSnapshot.readRange calls on large Markdown documents', () => {
+  const blocks: string[] = []
+  for (let i = 0; i < 400; i++) {
+    blocks.push(
+      `##   Heading ${i}`,
+      `> > nested quote ${i} with \`\`code_${i}\`\` and **bold_${i}** and [ref_${i}]`,
+      `- [x] task ${i}`,
+      `| col a | col b |\n| --- | --- |\n| **cell_${i}** | \`val_${i}\` |`,
+    )
+  }
+  for (let i = 0; i < 400; i++) {
+    blocks.push(`[ref_${i}]: https://example.com/${i}`)
+  }
+  const source = blocks.join('\n\n')
+  const records = parseMarkdown(source)
+  const baseSnapshot = createStringTextSnapshot(source)
+  let readRangeCalls = 0
+  let singleCharReads = 0
+  const countedSnapshot: typeof baseSnapshot = {
+    get length() {
+      return baseSnapshot.length
+    },
+    get lineCount() {
+      return baseSnapshot.lineCount
+    },
+    lineStart: (line) => baseSnapshot.lineStart(line),
+    lineRange: (line) => baseSnapshot.lineRange(line),
+    lineAt: (offset) => baseSnapshot.lineAt(offset),
+    forEachTextChunk: (visit) => baseSnapshot.forEachTextChunk(visit),
+    materializeFullText: () => baseSnapshot.materializeFullText(),
+    readRange: (start, end) => {
+      readRangeCalls += 1
+      if (end - start <= 1) singleCharReads += 1
+      return baseSnapshot.readRange(start, end)
+    },
+  }
+
+  const startedAt = performance.now()
+  const specs = markdownInlineReplacements(countedSnapshot, records)
+  const elapsedMs = performance.now() - startedAt
+
+  expect(specs.length).toBeGreaterThan(4_000)
+  // Zero 1-char piece-table reads; TextBlockReader reads 16 KiB blocks instead.
+  expect(singleCharReads).toBe(0)
+  // 400 blocks with links + tables + headings + code spans should need far fewer reads than markers.
+  expect(readRangeCalls).toBeLessThan(specs.length / 4)
+  expect(elapsedMs).toBeLessThan(500)
+})
