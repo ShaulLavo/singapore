@@ -6050,5 +6050,164 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears prior-parse prefetch entries on the retrying view when parseId changes on same-text retry', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'retrying-view-clears-old-prefetch-on-parseid-change',
+      })
+      let baseAttempt = 0
+      const oldBracket = {
+        index: 60,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        baseAttempt === 1
+          ? answerFor(range, {
+              brackets: range.endIndex > 60 ? [oldBracket] : [],
+              tokens:
+                range.endIndex > 60
+                  ? [{ start: 60, end: 62, style: { color: 'red' } }]
+                  : [{ start: 0, end: 2, style: { color: 'green' } }],
+            })
+          : answerFor(range, {
+              brackets: [],
+              tokens: [
+                { start: range.startIndex, end: range.startIndex + 2, style: { color: 'blue' } },
+              ],
+            }),
+      )
+      const provider = structuralProvider(query, {
+        analyze: async () => {
+          baseAttempt += 1
+          return baseAttempt === 1
+            ? {
+                ...createEmptySyntaxResult(),
+                degraded: {
+                  kind: 'optional-phase-failed',
+                  phase: 'parse',
+                  message: 'initial degraded base',
+                },
+              }
+            : createEmptySyntaxResult()
+        },
+      })
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        view.syntax.prefetchVisibleRange(1, { startIndex: 20, endIndex: 100 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        await settle()
+
+        // Retry on the same text -> healthy second parse (parseId changes from 1 to 2).
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(baseAttempt).toBe(2))
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Scroll to [50, 80) -> must query the new parse instead of reusing parse 1's [20, 100) prefetch.
+        view.setRange({ startIndex: 50, endIndex: 80 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(query.mock.calls.some(([r]) => r.startIndex === 50 && r.endIndex === 80)).toBe(
+            true,
+          ),
+        )
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.brackets).toEqual([])
+        expect(view.syntax.copyTokens.toTokens().some((t) => t.style.color === 'red')).toBe(false)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('adopts restored host paint into the renderer when an edit settles as range-unavailable', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'host-paint-adopted-when-edit-settles-degraded',
+      })
+      let edited = false
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (edited) {
+          return {
+            ...answerFor(range),
+            degraded: { kind: 'range-unavailable', message: 'unavailable after edit' },
+          }
+        }
+        return answerFor(range, {
+          tokens:
+            range.startIndex === 40 && range.endIndex === 80
+              ? [{ start: 60, end: 64, style: { color: 'red' } }]
+              : [{ start: 0, end: 2, style: { color: 'green' } }],
+        })
+      })
+      let lastAdopted = EditorTokenStore.empty()
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const viewport: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'host-paint-adopted-when-edit-settles-degraded',
+        getCurrentSessionDocumentId: () => 'host-paint-adopted-when-edit-settles-degraded',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => viewport,
+        adoptTokens: (tokens) => {
+          lastAdopted = tokens
+        },
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'host-paint-adopted-when-edit-settles-degraded',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.setTokens(
+          EditorTokenStore.fromTokens([{ start: 60, end: 64, style: { color: 'blue' } }]),
+        )
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        syntax.prefetchVisibleRange(1, { startIndex: 40, endIndex: 80 }, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(lastAdopted.toTokens().some((t) => t.style.color === 'red')).toBe(true),
+        )
+
+        edited = true
+        const previousSnapshot = buffer.getTextSnapshot()
+        const edit: TextEdit = { from: 0, to: 0, text: 'x' }
+        const change = session.applyEdits([edit])
+        syntax.acceptChange(change)
+        syntax.setTokens(projectTokensThroughEdit(syntax.tokens, edit, previousSnapshot), false)
+        syntax.refresh(1, change, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+
+        expect(syntax.tokens.toTokens()).toEqual([{ start: 61, end: 65, style: { color: 'blue' } }])
+        expect(lastAdopted.toTokens()).toEqual([{ start: 61, end: 65, style: { color: 'blue' } }])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

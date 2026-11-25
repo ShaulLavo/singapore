@@ -355,6 +355,7 @@ export class EditorSyntaxController {
   #parseGeneration = 0
   #acceptedContentVersion: number | null = null
   #acceptedParseGeneration: number | null = null
+  #acceptedParseId: number | null = null
   #publishedScope: PublishedViewportScope | null = null
   #applyingRenderData = false
   #initialHighlightState: EditorInitialHighlightStatus = 'idle'
@@ -4158,11 +4159,13 @@ export class EditorSyntaxController {
   ): void {
     const alreadyAcceptedThisParse =
       this.#acceptedContentVersion === guard.contentVersion &&
-      this.#acceptedParseGeneration === guard.parseGeneration
+      this.#acceptedParseGeneration === guard.parseGeneration &&
+      this.#acceptedParseId === parseId
 
     this.#carriedEntries = null
     this.#acceptedContentVersion = guard.contentVersion
     this.#acceptedParseGeneration = guard.parseGeneration
+    this.#acceptedParseId = parseId
     this.#parseState = {
       kind: 'parsed',
       contentVersion: guard.contentVersion,
@@ -4175,6 +4178,7 @@ export class EditorSyntaxController {
 
     if (alreadyAcceptedThisParse) return
 
+    const previousEntries = this.#rangeEntries
     this.#publishedScope = null
     this.#unavailableRanges = []
     this.#unavailableClearsScopeRanges = []
@@ -4194,11 +4198,18 @@ export class EditorSyntaxController {
         (this.#rangeTokenOwner?.store === this.#currentTokens ||
           ownsProjectedPaint ||
           this.#currentTokens.length === 0)
+      const priorUnownedStrips =
+        !canOwnRanges && (this.#pendingUnownedStrips.length > 0 || previousEntries.length > 0)
+          ? mergeSyntaxRanges(
+              this.#pendingUnownedStrips.concat(this.#tokenCoverage(previousEntries)),
+            )
+          : []
       if (promotedEntries.length > 0) {
         let nextTokens = canOwnRanges ? EditorTokenStore.empty() : this.#currentTokens
-        if (!canOwnRanges && this.#pendingUnownedStrips.length > 0) {
+        let restoredHostPaint = false
+        if (!canOwnRanges && priorUnownedStrips.length > 0) {
           const staleStrips = subtractSyntaxRanges(
-            this.#pendingUnownedStrips,
+            priorUnownedStrips,
             this.#tokenCoverage(promotedEntries),
           )
           if (staleStrips.length > 0) {
@@ -4207,6 +4218,7 @@ export class EditorSyntaxController {
                 ? this.#externalBaseTokens.store
                 : EditorTokenStore.empty()
             nextTokens = mergeTokensOnStrips(nextTokens, fallback, staleStrips)
+            restoredHostPaint = true
           }
         }
         this.#pendingUnownedStrips = []
@@ -4226,19 +4238,38 @@ export class EditorSyntaxController {
           const primary = this.#primaryCopyContributor(promotedEntries)
           this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
         }
-      } else if (!canOwnRanges && this.#pendingUnownedStrips.length > 0) {
+        if (restoredHostPaint) {
+          this.options.adoptTokens(this.#currentTokens)
+        }
+      } else if (!canOwnRanges && priorUnownedStrips.length > 0) {
         const fallback =
           this.#externalBaseTokens?.snapshot === snapshot
             ? this.#externalBaseTokens.store
             : EditorTokenStore.empty()
-        this.#currentTokens = mergeTokensOnStrips(
-          this.#currentTokens,
-          fallback,
-          this.#pendingUnownedStrips,
-        )
+        this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, priorUnownedStrips)
         this.#pendingUnownedStrips = []
+        if (this.#copyOwner === 'range') {
+          this.#rangeCopyTokens = EditorTokenStore.empty()
+          this.rangeCopyOwner = null
+          this.#copyOwner = 'none'
+        }
+        this.options.adoptTokens(this.#currentTokens)
       } else {
         this.#pendingUnownedStrips = []
+        if (previousEntries.length > 0) {
+          if (this.#copyOwner === 'range') {
+            this.#rangeCopyTokens = EditorTokenStore.empty()
+            this.rangeCopyOwner = null
+            this.#copyOwner = 'none'
+          }
+          if (canOwnRanges) {
+            this.#currentTokens = EditorTokenStore.empty()
+            this.#rangeTokenOwner = snapshot ? { store: this.#currentTokens, snapshot } : null
+            this.#projectedRangeTokens = null
+            this.#awaitingProjectedEditTokens = false
+            this.options.adoptTokens(this.#currentTokens)
+          }
+        }
       }
     }
   }
@@ -4389,6 +4420,7 @@ export class EditorSyntaxController {
     this.#lastRangeTrim = null
     this.#acceptedContentVersion = null
     this.#acceptedParseGeneration = null
+    this.#acceptedParseId = null
     this.#rangeTokenOwner = null
     this.#projectedRangeTokens = null
     this.#awaitingProjectedEditTokens = false
