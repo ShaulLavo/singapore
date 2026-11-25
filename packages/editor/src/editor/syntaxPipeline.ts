@@ -1,4 +1,5 @@
 import type { DocumentSessionChange } from '../documentSession'
+import type { DocumentTextSnapshot } from '../documentTextSnapshot'
 import type { EditorInitialHighlightStatus } from '../plugins'
 import type { EditorSyntaxInjection, BracketInfo } from '../syntax/session'
 import { EditorTokenStore } from '../syntax/tokenStore'
@@ -98,6 +99,11 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
   #acceptedCopyTokens = EditorTokenStore.empty()
   #acceptedTokensDocumentVersion = -1
   #acceptedTokensTextVersion = -1
+  #copyOwner: 'none' | 'external' = 'none'
+  #externalBaseTokens: {
+    readonly store: EditorTokenStore
+    readonly snapshot: DocumentTextSnapshot
+  } | null = null
   // Set once the full controller has taken the document. A handover can happen inside one of this
   // pipeline's own callbacks (a host adding a highlighter when the text paints), so every step that
   // follows a callback checks it and stops rather than publish state that is no longer the editor's.
@@ -125,6 +131,8 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
       acceptedCopyTokens: this.#acceptedCopyTokens,
       acceptedTokensDocumentVersion: this.#acceptedTokensDocumentVersion,
       acceptedTokensTextVersion: this.#acceptedTokensTextVersion,
+      copyOwner: this.#copyOwner,
+      externalBaseTokens: this.#externalBaseTokens,
     }
   }
 
@@ -203,6 +211,9 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
     if (!current && tokens !== this.#tokens) this.#acceptedCopyTokens = EditorTokenStore.empty()
     this.#tokens = tokens
     if (current) {
+      this.#copyOwner = 'external'
+      const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+      this.#externalBaseTokens = snapshot ? { store: tokens, snapshot } : null
       this.#acceptedCopyTokens = copyTokens
       this.#acceptedTokensDocumentVersion = this.options.getDocumentVersion()
       this.#acceptedTokensTextVersion = this.options.getTextVersion()
@@ -229,6 +240,8 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
 
     this.#configurationGeneration += 1
     this.#contentVersion += 1
+    this.#copyOwner = 'none'
+    this.#externalBaseTokens = null
     this.#analysis = document.analysis ?? null
     this.#structuralConfigurationTag = document.structuralConfigurationTag ?? []
     this.#highlighterConfigurationTag = document.highlighterConfigurationTag ?? []
@@ -266,6 +279,8 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
     this.#initialHighlightPaintEmitted = false
     this.#pendingReplacement = null
     this.#contentVersion += 1
+    this.#copyOwner = 'none'
+    this.#externalBaseTokens = null
     this.#includesCaptures = false
     this.#analysis = null
     this.#settlePlainInitialHighlight()
@@ -361,6 +376,8 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
   acceptChange(change: DocumentSessionChange): void {
     if (ignoresChange(change)) return
     this.#contentVersion += 1
+    this.#copyOwner = 'none'
+    this.#externalBaseTokens = null
     this.#pendingReplacement = null
   }
 

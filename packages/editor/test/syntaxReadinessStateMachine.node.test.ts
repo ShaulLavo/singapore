@@ -11,6 +11,7 @@ import {
   type EditorDocumentAnalysis,
 } from '../src/editor/documentAnalysis'
 import { EditorSyntaxController } from '../src/editor/syntaxController'
+import { EditorPlainSyntax } from '../src/editor/syntaxPipeline'
 import { compactSyntaxRangeTokens } from '../src/editor/syntaxRangeProjection'
 import { createEditorStructuralOperation } from '../src/editor/syntaxOperations'
 import { projectTokensThroughEdit } from '../src/editor/tokenProjection'
@@ -7035,6 +7036,141 @@ describe('viewport syntax readiness state machine (#169)', () => {
 
         expect(syntax.status).toBe('degraded')
         expect(query.mock.calls.length).toBe(callsAfterSettle)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('does not flip syntax from error back to loading when a superseded initial range reply resolves after a newer visible query rejected', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(6000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'superseded-initial-reply-after-visible-error',
+      })
+      let resolveInitial: ((result: EditorSyntaxResult) => void) | null = null
+      let rejectNewer: ((error: Error) => void) | null = null
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return answerFor(range)
+        }
+        if (range.startIndex === 0 && range.endIndex === 5000) {
+          return await new Promise<EditorSyntaxResult>((resolve) => {
+            resolveInitial = resolve
+          })
+        }
+        return await new Promise<EditorSyntaxResult>((_resolve, reject) => {
+          rejectNewer = reject
+        })
+      })
+      const provider = structuralProvider(query)
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 5000 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'superseded-initial-reply-after-visible-error',
+        getCurrentSessionDocumentId: () => 'superseded-initial-reply-after-visible-error',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getMountedSyntaxRange: () => ({ startIndex: 0, endIndex: 20 }),
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'superseded-initial-reply-after-visible-error',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveInitial).not.toBeNull())
+
+        currentRange = { startIndex: 100, endIndex: 4900 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(rejectNewer).not.toBeNull())
+        rejectNewer!(new Error('newer visible query failed'))
+        await vi.waitFor(() => expect(syntax.status).toBe('error'))
+        expect(syntax.renderDataReady).toBe(true)
+
+        resolveInitial!(answerFor({ startIndex: 0, endIndex: 5000 }))
+        await settle()
+        expect(syntax.status).toBe('error')
+        expect(syntax.renderDataReady).toBe(true)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('preserves host copyTokens across plain-to-full syntax pipeline handover when the first syntax provider registers', async () => {
+      const buffer = createEditorTextBuffer('abcdef')
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'plain-to-full-preserves-host-copy-tokens',
+      })
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost()
+      const options = {
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'plain-to-full-preserves-host-copy-tokens',
+        getCurrentSessionDocumentId: () => 'plain-to-full-preserves-host-copy-tokens',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => ({ startIndex: 0, endIndex: 6 }),
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      }
+      const plain = new EditorPlainSyntax(options)
+      const hostTokens = EditorTokenStore.fromTokens([
+        { start: 2, end: 3, style: { color: 'red' } },
+      ])
+      plain.startDocument({
+        analysis,
+        documentId: 'plain-to-full-preserves-host-copy-tokens',
+        languageId: 'typescript',
+        snapshot: session.getSnapshot(),
+        textSnapshot: session.getTextSnapshot(),
+      })
+      plain.setTokens(hostTokens, true)
+
+      const provider = structuralProvider(async (range) =>
+        answerFor(range, {
+          tokens: [{ start: 2, end: 3, style: { color: 'blue' } }],
+        }),
+      )
+      const syntax = new EditorSyntaxController(options)
+      syntax.adoptPlainState(plain.handOver())
+      try {
+        pluginHost.addPlugin({
+          activate: (context) => context.registerSyntaxProvider(provider),
+        })
+        syntax.reloadSyntaxSession()
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.tokens.toTokens()).toEqual([{ start: 2, end: 3, style: { color: 'blue' } }])
+        expect(syntax.copyTokens).toBe(hostTokens)
+        expect(syntax.copyTokens.toTokens()).toEqual([
+          { start: 2, end: 3, style: { color: 'red' } },
+        ])
       } finally {
         syntax.dispose()
         pluginHost.dispose()

@@ -154,6 +154,11 @@ export type EditorPlainSyntaxState = {
   readonly acceptedCopyTokens: EditorTokenStore
   readonly acceptedTokensDocumentVersion: number
   readonly acceptedTokensTextVersion: number
+  readonly copyOwner: 'none' | 'external'
+  readonly externalBaseTokens: {
+    readonly store: EditorTokenStore
+    readonly snapshot: DocumentTextSnapshot
+  } | null
 }
 
 export type EditorSyntaxRefreshOptions = {
@@ -497,6 +502,8 @@ export class EditorSyntaxController {
     this.#acceptedCopyTokens = state.acceptedCopyTokens
     this.#acceptedTokensDocumentVersion = state.acceptedTokensDocumentVersion
     this.#acceptedTokensTextVersion = state.acceptedTokensTextVersion
+    this.#copyOwner = state.copyOwner
+    this.#externalBaseTokens = state.externalBaseTokens
   }
 
   setDisplayDemand(demand: EditorAnalysisDisplayDemand): void {
@@ -1011,6 +1018,8 @@ export class EditorSyntaxController {
     this.#advanceInitialHighlightConfigurationGeneration()
     this.#disposeSyntaxSession()
     this.#disposeHighlighterSession()
+    this.#externalBaseTokens = null
+    this.#pendingUnownedStrips = []
     this.#clearSyntaxRangeCache()
     this.#copyOwner = 'none'
     this.#resetSyntaxContentVersion()
@@ -2751,6 +2760,18 @@ export class EditorSyntaxController {
       return false
     }
 
+    // Ignore superseded document-refresh range replies BEFORE accepting parse state so an older
+    // reply cannot overwrite a newer error/full state and strand the editor in `loading`.
+    if (
+      loadResult.updatesDocument &&
+      loadResult.range !== null &&
+      !isFirstRows &&
+      loadResult.visibleSequence !== undefined &&
+      loadResult.visibleSequence !== this.#visibleRangeSequence
+    ) {
+      return false
+    }
+
     // Handle base parse / document acceptance FIRST when updatesDocument is true.
     if (loadResult.updatesDocument) {
       const baseResult = loadResult.baseResult ?? result
@@ -2794,18 +2815,6 @@ export class EditorSyntaxController {
       loadResult.range !== null &&
       this.#parseState.kind === 'parsed' &&
       this.#parseState.mode === 'full'
-    ) {
-      return false
-    }
-
-    // Ignore superseded document-refresh range replies once a newer visible range request
-    // or cached viewport settlement has taken over on this parse.
-    if (
-      loadResult.updatesDocument &&
-      loadResult.range !== null &&
-      !isFirstRows &&
-      loadResult.visibleSequence !== undefined &&
-      loadResult.visibleSequence !== this.#visibleRangeSequence
     ) {
       return false
     }
