@@ -4116,5 +4116,145 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears stale folds and captures when a budget cancellation settles a viewport that already has a range-unavailable gap', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'unavailable-then-budget-cancel',
+      })
+      const foldAtMid: FoldRange = {
+        startIndex: 21,
+        endIndex: 39,
+        startLine: 10,
+        endLine: 19,
+        type: 'block',
+      }
+      const captureAtMid: EditorSyntaxCapture = {
+        startIndex: 21,
+        endIndex: 39,
+        captureName: 'function',
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'range-unavailable', message: 'unavailable-0-20' },
+          }
+        }
+        if (range.startIndex === 40 && range.endIndex === 60) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            projection: {
+              ...createEmptySyntaxResult({ requestedRanges: [range] }).projection,
+              analysis: {
+                kind: 'cancelled',
+                reason: 'budget',
+                coveredRange: { startIndex: 0, endIndex: 0 },
+                elapsedMs: 100,
+                budgetMs: 50,
+              },
+            },
+          }
+        }
+        return answerFor(range, { folds: [foldAtMid], captures: [captureAtMid] })
+      })
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query),
+        { startIndex: 20, endIndex: 40 },
+        { needsCaptures: true },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.folds()).toEqual([foldAtMid])
+        expect(view.captures()).toEqual([captureAtMid])
+
+        // Widen to [0, 60): [0, 20) returns range-unavailable, then [40, 60) budget-cancels.
+        // Because [0, 20) was range-unavailable, settling [0, 60) MUST clear stale folds & captures!
+        view.setRange({ startIndex: 0, endIndex: 60 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.folds()).toEqual([])
+        expect(view.captures()).toEqual([])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('preserves folds and captures from a budget-cancelled viewport when an off-screen prefetch arrives', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'budget-cancel-preserved-across-prefetch',
+      })
+      const foldAtStart: FoldRange = {
+        startIndex: 1,
+        endIndex: 19,
+        startLine: 0,
+        endLine: 9,
+        type: 'block',
+      }
+      const captureAtStart: EditorSyntaxCapture = {
+        startIndex: 1,
+        endIndex: 19,
+        captureName: 'function',
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 20 && range.endIndex === 40) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            projection: {
+              ...createEmptySyntaxResult({ requestedRanges: [range] }).projection,
+              analysis: {
+                kind: 'cancelled',
+                reason: 'budget',
+                coveredRange: { startIndex: 0, endIndex: 0 },
+                elapsedMs: 100,
+                budgetMs: 50,
+              },
+            },
+          }
+        }
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return answerFor(range, { folds: [foldAtStart], captures: [captureAtStart] })
+        }
+        return answerFor(range)
+      })
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query),
+        { startIndex: 0, endIndex: 20 },
+        { needsCaptures: true },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.folds()).toEqual([foldAtStart])
+        expect(view.captures()).toEqual([captureAtStart])
+
+        // Widen to [0, 40) and budget-cancel [20, 40) -> folds & captures stay preserved.
+        view.setRange({ startIndex: 0, endIndex: 40 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.folds()).toEqual([foldAtStart])
+        expect(view.captures()).toEqual([captureAtStart])
+
+        // An off-screen prefetch [40, 60) must NOT erase the folds & captures preserved by budget cancellation.
+        view.syntax.prefetchVisibleRange(1, { startIndex: 40, endIndex: 60 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(3))
+        await settle()
+        expect(view.syntax.status).toBe('degraded')
+        expect(view.folds()).toEqual([foldAtStart])
+        expect(view.captures()).toEqual([captureAtStart])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

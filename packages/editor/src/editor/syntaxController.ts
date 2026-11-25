@@ -1491,16 +1491,7 @@ export class EditorSyntaxController {
 
     // If all missing parts of `range` are already terminally unavailable, reconcile & settle.
     if (!this.#needsAuthoritativeRecordsQuery(range) && this.#rangeCoveredBySettled(range)) {
-      const clearsScope =
-        range.endIndex <= range.startIndex
-          ? this.#unavailableEmptyClearsScope &&
-            this.#unavailableEmptyRange !== null &&
-            sameSyntaxRange(this.#unavailableEmptyRange, range)
-          : syntaxRangeListsIntersect(this.#unavailableClearsScopeRanges, [range])
-      this.#reconcileViewportScope(range, {
-        configurationGeneration,
-        preserveProvisionalPaint: !clearsScope,
-      })
+      this.#reconcileViewportScope(range, { configurationGeneration })
       return
     }
 
@@ -2059,7 +2050,6 @@ export class EditorSyntaxController {
 
     const reconciled = this.#reconcileViewportScope(range, {
       configurationGeneration,
-      preserveProvisionalPaint: false,
     })
     if (reconciled.kind === 'needs-authoritative-records-query') {
       this.options.adoptTokens(this.#currentTokens)
@@ -2808,7 +2798,6 @@ export class EditorSyntaxController {
     if (!partial && !isFirstRows && visibleRange) {
       const reconciled = this.#reconcileViewportScope(visibleRange, {
         configurationGeneration: guard.configurationGeneration,
-        preserveProvisionalPaint: false,
       })
       if (reconciled.kind === 'settled') {
         settledStatus = reconciled.degraded ? 'degraded' : 'painted'
@@ -2988,7 +2977,6 @@ export class EditorSyntaxController {
     const visibleRange = this.options.getVisibleSyntaxRange() ?? sampledRange
     const reconciled = this.#reconcileViewportScope(visibleRange, {
       configurationGeneration: guard.configurationGeneration,
-      preserveProvisionalPaint: false,
     })
     if (reconciled.kind === 'settled') {
       if (!this.#highlighterSession) {
@@ -3102,7 +3090,6 @@ export class EditorSyntaxController {
 
     const reconciled = this.#reconcileViewportScope(visibleRange, {
       configurationGeneration: guard.configurationGeneration,
-      preserveProvisionalPaint: options.preserveProvisionalPaint,
     })
     if (reconciled.kind === 'incomplete') {
       this.refreshVisibleRange(guard.documentVersion, { delayMs: 0, range: visibleRange })
@@ -3615,7 +3602,6 @@ export class EditorSyntaxController {
     visibleRange: EditorSyntaxRange,
     options: {
       readonly configurationGeneration: number
-      readonly preserveProvisionalPaint: boolean
     },
   ): ReconcileViewportResult {
     if (this.#parseState.kind !== 'parsed' || this.#parseState.mode !== 'range') {
@@ -3700,6 +3686,12 @@ export class EditorSyntaxController {
 
     // 3. Check whether complete ∪ unavailable covers ALL of the viewport (terminal degraded settlement).
     if (this.#rangeCoveredBySettled(visibleRange)) {
+      const clearsScope =
+        visibleRange.endIndex <= visibleRange.startIndex
+          ? this.#unavailableEmptyClearsScope &&
+            this.#unavailableEmptyRange !== null &&
+            sameSyntaxRange(this.#unavailableEmptyRange, visibleRange)
+          : syntaxRangeListsIntersect(this.#unavailableClearsScopeRanges, [visibleRange])
       this.#currentBrackets = []
       this.#currentInjections = []
       this.#publishedScope = {
@@ -3708,7 +3700,7 @@ export class EditorSyntaxController {
         degraded: true,
         unavailable: true,
       }
-      if (!options.preserveProvisionalPaint) {
+      if (clearsScope) {
         this.#rangeScopeOwners = []
         this.options.clearSyntaxFolds()
         this.options.setSyntaxCaptures?.([], undefined)
