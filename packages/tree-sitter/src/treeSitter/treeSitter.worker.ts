@@ -334,7 +334,7 @@ const registerLanguage = (descriptor: TreeSitterLanguageDescriptor): void => {
 const warmLanguages = async (languageIds: readonly TreeSitterLanguageId[]): Promise<undefined> => {
   for (const languageId of languageIds) {
     if (runtimePromises.has(languageId) || !languageDescriptors.has(languageId)) continue
-    await yieldToMessages()
+    await yieldWorker()
     await warmLanguage(languageId).catch(() => undefined)
   }
   return undefined
@@ -384,10 +384,6 @@ const warmLanguage = async (languageId: TreeSitterLanguageId): Promise<void> => 
   ensureQuery(runtime, 'fold')
   ensureQuery(runtime, 'injection')
 }
-
-// @justification Yields one macrotask between warm-up compiles so a parse or edit message queued
-// meanwhile runs before the next language; worker-task tracking keeps idle fences behind warm-up.
-const yieldToMessages = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
 const ensureRuntime = async (languageId: TreeSitterLanguageId): Promise<Runtime> => {
   const existing = runtimePromises.get(languageId)
@@ -1006,60 +1002,11 @@ const parseFullDocument = async (
     assertRuntimeSessionActive(request.runtimeSessionId)
     replaceCachedDocument(request.runtimeSessionId, parsedDocument)
     disposeBootstrap(request.runtimeSessionId)
-    if (!viewportFirst && !parsedDocument.readOnly)
-      scheduleIdleReparse(request.runtimeSessionId, parsedDocument, runtime)
     return parsedDocument
   } catch (error) {
     if (parsedDocument) disposeCachedSnapshot(parsedDocument)
     else rootLayer.tree.delete()
     throw error
-  }
-}
-
-// The first edit of a freshly parsed tree can reparse the whole document: tree-sitter refuses to
-// reuse a node whose first token was lexed in another state, and markdown's external scanner makes
-// that every block (43 ms at 1 MB). One unchanged reparse while the worker is idle takes it off the
-// first keystroke.
-const scheduleIdleReparse = (
-  runtimeSessionId: string,
-  document: ParsedDocument,
-  runtime: Runtime,
-): void => {
-  // @justification Runs after the parse answer is posted; it re-checks that the document is still
-  // cached and idle, so a late or stale callback does nothing.
-  setTimeout(() => {
-    if (!activeRuntimeTasks.has(runtimeSessionId)) {
-      reparseIdleDocument(runtimeSessionId, document, runtime)
-      return
-    }
-    // A range query that runs in slices is between two of them: the first highlight goes first,
-    // and the reparse is tried again once the session's requests have settled.
-    void awaitRuntimeTasks(runtimeSessionId).then(() => {
-      if (isCachedSnapshot(runtimeSessionId, document))
-        scheduleIdleReparse(runtimeSessionId, document, runtime)
-    })
-  }, 0)
-}
-
-const reparseIdleDocument = (
-  runtimeSessionId: string,
-  document: ParsedDocument,
-  runtime: Runtime,
-): void => {
-  if (activeRuntimeTasks.has(runtimeSessionId)) return
-  const cache = documentCaches.get(runtimeSessionId)
-  const index = cache?.snapshots.indexOf(document) ?? -1
-  if (!cache || index === -1) return
-
-  const [root, ...injections] = document.layers
-  if (!root) return
-  const context = createCancellationContext(undefined, PARSE_BUDGET_MS)
-  try {
-    const tree = parseSource(runtime.parser, document.source, root.tree, context)
-    cache.snapshots[index] = { ...document, layers: [{ ...root, tree }].concat(injections) }
-    root.tree.delete()
-  } catch (error) {
-    recordOptionalWorkerPhaseFailure('idle reparse', error, [], 'optional-phase-failed')
   }
 }
 
@@ -1738,6 +1685,7 @@ const yieldWorker = (): Promise<void> =>
       yieldChannel.port1.onmessage = () => pendingYields.shift()?.()
       // Node keeps a port with a listener alive; the worker's lifetime is its owner's decision.
       ;(yieldChannel.port1 as { unref?: () => void }).unref?.()
+      ;(yieldChannel.port2 as { unref?: () => void }).unref?.()
     }
     pendingYields.push(resolve)
     yieldChannel.port2.postMessage(null)
@@ -4965,6 +4913,11 @@ const disposeAll = (): void => {
   activeWorkerTasks.clear()
   disposedRuntimeSessions.clear()
   parserInitPromise = null
+  if (yieldChannel && pendingYields.length === 0) {
+    yieldChannel.port1.close()
+    yieldChannel.port2.close()
+    yieldChannel = null
+  }
 }
 
 const disposeRuntime = (runtime: Runtime): void => {
@@ -5445,6 +5398,9 @@ export const __treeSitterWorkerInternalsForTests = {
   runCancellableRequest,
   assertNotCancelled,
   cancellationAnalysis,
+  parseFullDocument,
+  registerLanguages,
+  yieldWorker,
 }
 
 const postResponse = (response: TreeSitterWorkerResponse): void => {
