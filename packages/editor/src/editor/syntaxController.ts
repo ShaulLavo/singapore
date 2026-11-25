@@ -2102,9 +2102,9 @@ export class EditorSyntaxController {
     if (error instanceof DOMException && error.name === 'AbortError') return
     if (!this.#isRequestCurrent(guard)) return
     if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'full') return
-    const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(range)
+    const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(range, guard)
     if (gaps.length === 0 && !emptyGap && !recordsGap) {
-      if (!this.#publishedScopeCoversViewport()) {
+      if (!this.#publishedScopeCoversViewport() && !this.#activePendingVisibleRange(guard)) {
         this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
       }
       return
@@ -3182,9 +3182,9 @@ export class EditorSyntaxController {
     options: { readonly preserveProvisionalPaint: boolean },
   ): void {
     if (this.#parseState.kind === 'parsed' && this.#parseState.mode === 'full') return
-    const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(requestRange)
+    const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(requestRange, guard)
     if (gaps.length === 0 && !emptyGap && !recordsGap) {
-      if (!this.#publishedScopeCoversViewport()) {
+      if (!this.#publishedScopeCoversViewport() && !this.#activePendingVisibleRange(guard)) {
         this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
       }
       return
@@ -3223,14 +3223,38 @@ export class EditorSyntaxController {
     this.options.notifyChange(null)
   }
 
-  #stillRequiredGaps(range: EditorSyntaxRange): {
+  #activePendingVisibleRange(guard: RequestGuard): EditorSyntaxRange | null {
+    if (!this.rangeRequests.isActive()) return null
+    const pending = this.#pendingVisibleRange
+    if (!pending) return null
+    if (
+      pending.documentVersion !== guard.documentVersion ||
+      pending.contentVersion !== guard.contentVersion ||
+      pending.parseGeneration !== guard.parseGeneration
+    ) {
+      return null
+    }
+    return pending.range
+  }
+
+  #stillRequiredGaps(
+    range: EditorSyntaxRange,
+    guard?: RequestGuard,
+  ): {
     readonly gaps: readonly EditorSyntaxRange[]
     readonly emptyGap: boolean
     readonly recordsGap: boolean
   } {
     const visible = this.options.getVisibleSyntaxRange()
     if (!visible) return { gaps: [], emptyGap: false, recordsGap: false }
+    const pendingVisible = guard ? this.#activePendingVisibleRange(guard) : null
+    const recordsCoveredByPending =
+      pendingVisible !== null &&
+      (visible.endIndex <= visible.startIndex
+        ? sameSyntaxRange(pendingVisible, visible)
+        : syntaxRangeCoverage(visible, [pendingVisible]) === 'full')
     const recordsGap =
+      !recordsCoveredByPending &&
       this.#needsAuthoritativeRecordsQuery(visible) &&
       (visible.endIndex <= visible.startIndex
         ? sameSyntaxRange(range, visible)
@@ -3238,7 +3262,10 @@ export class EditorSyntaxController {
     if (visible.endIndex <= visible.startIndex) {
       return {
         gaps: [],
-        emptyGap: sameSyntaxRange(range, visible) && !this.#hasCompleteEmptyEntry(visible),
+        emptyGap:
+          sameSyntaxRange(range, visible) &&
+          !this.#hasCompleteEmptyEntry(visible) &&
+          !(pendingVisible !== null && sameSyntaxRange(pendingVisible, visible)),
         recordsGap,
       }
     }
@@ -3246,8 +3273,11 @@ export class EditorSyntaxController {
     if (required.length === 0) {
       return { gaps: [], emptyGap: false, recordsGap }
     }
+    const excluded = pendingVisible
+      ? appendCachedSyntaxRange(this.#completeScopeCoverage(), pendingVisible)
+      : this.#completeScopeCoverage()
     return {
-      gaps: subtractSyntaxRanges(required, this.#completeScopeCoverage()),
+      gaps: subtractSyntaxRanges(required, excluded),
       emptyGap: false,
       recordsGap,
     }
@@ -4225,6 +4255,7 @@ export class EditorSyntaxController {
         for (const entry of promotedEntries) {
           nextTokens = mergeTokensOnStrips(nextTokens, entry.tokens, entry.tokenOwnedRanges)
         }
+        const previousTokens = this.#currentTokens
         this.#currentTokens = nextTokens
         this.#rangeTokenOwner = canOwnRanges && snapshot ? { store: nextTokens, snapshot } : null
         if (canOwnRanges) {
@@ -4238,7 +4269,7 @@ export class EditorSyntaxController {
           const primary = this.#primaryCopyContributor(promotedEntries)
           this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
         }
-        if (restoredHostPaint) {
+        if (restoredHostPaint || nextTokens !== previousTokens) {
           this.options.adoptTokens(this.#currentTokens)
         }
       } else if (!canOwnRanges && priorUnownedStrips.length > 0) {
