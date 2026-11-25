@@ -95,6 +95,7 @@ export type FindHarness = {
   pressReplaceEnter(): void
   selectAllMatches(): boolean
   closeFind(): boolean
+  setSelection(anchor: number, head?: number): void
   setVisibleRange(range: FindRangeTuple | null): void
   announcements(): readonly string[]
   state(): FindObservedState
@@ -374,6 +375,9 @@ function createFindHarness(fixture: FindFixture): FindHarness {
     pressReplaceEnter: () => pressKey(replaceInput(container), 'Enter', false),
     selectAllMatches: () => controller.selectAllMatches(),
     closeFind: () => controller.close(),
+    setSelection: (anchor, head = anchor) => {
+      selections = [resolveSelection({ anchor, head })]
+    },
     setVisibleRange: (range) => {
       visibleRange = range ? { start: range[0], end: range[1] } : null
     },

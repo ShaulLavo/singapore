@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import {
+  createFindRangeScanner,
   FIND_MATCHES_LIMIT,
   FIND_SELECT_ALL_LIMIT,
   FIND_SYNC_THRESHOLD,
@@ -257,9 +258,10 @@ describe('large-file viewport-first chunked find', () => {
       // Viewport matches painted, background scan still pending.
       expect(harness.state().count).toBe('? of 5+')
 
-      // Edit the document mid-scan; old scan must cancel and deferred re-search
-      // must pick up the edited document instead of committing stale offsets.
+      // Edit the document mid-scan; old scan must cancel and keep the partial
+      // count provisional (`+`) until the deferred replacement search finishes.
       harness.typeInDocument(0, 'alpha ')
+      expect(harness.state().count).toBe('? of 5+')
 
       await waitFor(() => harness.state().count === `? of ${LINE_COUNT + 1}`)
 
@@ -379,6 +381,109 @@ describe('large-file viewport-first chunked find', () => {
       expect(harness.state().matches).toEqual([])
     },
   )
+
+  findTest(
+    'does not scan a multi-megabyte tail synchronously or re-read offset 0 when viewport matches overflow above the caret',
+    {
+      text: `${'a '.repeat(FIND_MATCHES_LIMIT + 1)}\n${'z'.repeat(80)}\n`.concat(
+        `${'z'.repeat(80)}\n`.repeat(35_000),
+      ),
+      selection: (FIND_MATCHES_LIMIT + 1) * 2 + 1,
+      visibleRange: [0, (FIND_MATCHES_LIMIT + 1) * 2 + 10],
+      options: { seedSearchStringFromSelection: 'never', cursorMoveOnType: true },
+    },
+    async (harness) => {
+      const tailStart = (FIND_MATCHES_LIMIT + 1) * 2 + 1
+      harness.openFind()
+      const readsBefore = harness.documentReads().length
+      harness.typeSearch('a')
+
+      // Frame 0 only scanned the visible viewport and never scanned the 3 MB tail
+      // synchronously on the input stack.
+      const frame0Reads = harness.documentReads().slice(readsBefore)
+      expect(frame0Reads.every(([, end]) => end < tailStart + 100)).toBe(true)
+      expect(countLeadingScans(harness)).toBe(1)
+
+      // Cooperative tail search finishes and wraps to match 0 using the already
+      // collected prefix without reading offset 0 a second time.
+      await waitFor(() => harness.state().count === `1 of ${FIND_MATCHES_LIMIT}+`)
+      expect(harness.state().selections[0]).toEqual([0, 1])
+      expect(countLeadingScans(harness)).toBe(1)
+    },
+  )
+
+  findTest(
+    'does not overwrite a selection extended leftward with the same endOffset while a scan is in flight',
+    {
+      text: `${LARGE_TEXT.slice(0, MID_START)}needle_unique_7f3a\n${LARGE_TEXT.slice(MID_START)}`,
+      selection: 3,
+      visibleRange: [0, LINE.length * 5 - 1],
+      options: { seedSearchStringFromSelection: 'never', cursorMoveOnType: true },
+    },
+    async (harness) => {
+      harness.openFind()
+      harness.typeSearch('needle_unique_7f3a')
+      expect(harness.state().count).toBe('Searching…')
+
+      // Extend selection leftward: endOffset stays 3, anchor=3 head=2.
+      harness.setSelection(3, 2)
+
+      await waitFor(() => harness.state().count === '? of 1')
+      expect(harness.state().selectionDetails).toEqual([{ anchor: 3, head: 2, affinity: 'after' }])
+    },
+  )
+
+  findTest(
+    'updates current match highlight and widget position when selectAllMatches caps from a match past FIND_SELECT_ALL_LIMIT',
+    {
+      text: 'a\n'.repeat(FIND_MATCHES_LIMIT + 2),
+      selection: FIND_SELECT_ALL_LIMIT * 2,
+      options: CAPPED_OPTIONS,
+    },
+    (harness) => {
+      harness.openFind()
+      harness.typeSearch('a')
+      harness.pressEnter()
+      // Now standing on match 10,001 (index 10,000, past the 10,000 cursor cap).
+      expect(harness.state().current).toEqual([
+        FIND_SELECT_ALL_LIMIT * 2,
+        FIND_SELECT_ALL_LIMIT * 2 + 1,
+      ])
+      expect(harness.state().count).toBe(`${FIND_SELECT_ALL_LIMIT + 1} of ${FIND_MATCHES_LIMIT}+`)
+
+      expect(harness.selectAllMatches()).toBe(true)
+      assertFindState(harness, {
+        matches: FIND_MATCHES_LIMIT,
+        current: [0, 1],
+        selection: [0, 1],
+        selectionCount: FIND_SELECT_ALL_LIMIT,
+        count: `1 of ${FIND_MATCHES_LIMIT}+`,
+      })
+    },
+  )
+
+  it('yields inside a multi-megabyte single line when candidates are filtered out by wholeWord', () => {
+    // 2,000,000 rejected whole-word candidates on one line; scanner must yield
+    // intra-window rather than blocking for the entire line.
+    const text = 'ba'.repeat(1_000_000)
+    const source = stringSource(text)
+    const scanner = createFindRangeScanner(
+      source,
+      { searchString: 'a', isRegex: false, matchCase: true, wholeWord: true },
+      null,
+      FIND_MATCHES_LIMIT,
+    )
+    let steps = 0
+    let total = 0
+    while (true) {
+      const result = scanner.step(1, 32)
+      steps += 1
+      total += result.matches.length
+      if (result.done) break
+    }
+    expect(total).toBe(0)
+    expect(steps).toBeGreaterThan(1)
+  })
 })
 
 describe('find replace one', () => {

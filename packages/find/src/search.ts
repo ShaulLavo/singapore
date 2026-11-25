@@ -301,12 +301,16 @@ export type FindRangeScanner = {
  * Keeps at most `limit` matches and sets `truncated: true` if an additional
  * match exists past `limit` (stopping immediately without scanning further).
  * A `limit` of `0` collects nothing and only checks whether any match exists.
+ * When `minMatchStart` is given, matches starting before that offset are
+ * skipped while scanning from whole-line boundaries so regexes and word
+ * boundaries remain exact.
  */
 export function createFindRangeScanner(
   source: FindTextSource,
   query: FindQuery,
   ranges: readonly FindRange[] | null,
   limit: number,
+  minMatchStart = 0,
 ): FindRangeScanner {
   const compiled = compileFindQuery(query)
   if (!compiled || limit < 0 || (ranges !== null && ranges.length === 0)) {
@@ -315,7 +319,7 @@ export function createFindRangeScanner(
 
   const normalized = searchRanges(source, ranges)
   if (compiled.plan.kind === 'range') {
-    return createWholeRangeScanner(source, compiled, normalized, limit)
+    return createWholeRangeScanner(source, compiled, normalized, limit, minMatchStart)
   }
   if (compiled.plan.kind === 'literal-lines') {
     return createSpanningLiteralScanner(
@@ -324,9 +328,10 @@ export function createFindRangeScanner(
       normalized,
       compiled.plan.lineBreaks,
       limit,
+      minMatchStart,
     )
   }
-  return createLineRangeScanner(source, compiled, normalized, limit)
+  return createLineRangeScanner(source, compiled, normalized, limit, minMatchStart)
 }
 
 /** The line holding `offset`, break excluded. */
@@ -635,10 +640,18 @@ function isLineSafeGroupOpener(pattern: string, index: number): boolean {
 }
 
 // Only a positive class naming its members outright: a negated one holds a break
-// unless it names it, and an escape inside one can bring a whole class with it.
+// unless it names it, an escape inside one can bring a whole class with it, and
+// a range like `[\t- ]` (U+0009..U+0020) spans LF (U+000A) without naming it.
 function isLineSafeCharacterClass(body: string): boolean {
   if (body.startsWith('^')) return false
-  return !body.includes('\\') && !body.includes('\n')
+  if (body.includes('\\') || body.includes('\n')) return false
+  for (let index = 1; index < body.length - 1; index += 1) {
+    if (body[index] !== '-') continue
+    const lo = body.charCodeAt(index - 1)
+    const hi = body.charCodeAt(index + 1)
+    if (lo <= 0x0a && hi >= 0x0a) return false
+  }
+  return true
 }
 
 function characterClassEnd(pattern: string, from: number): number | null {
@@ -830,24 +843,46 @@ function scanLineWindow(
   range: FindRange,
   captureMatches: boolean,
   visit: FindMatchVisitor,
+  budget?: FindWindowBudget,
+  startLineOffset = 0,
 ): boolean {
   if (query.plan.kind !== 'anchored-lines')
-    return scanWindow(window, query, range, captureMatches, visit)
+    return scanWindow(window, query, range, captureMatches, visit, undefined, budget)
 
   // `^` and `$` answer for the ends of the haystack, so each line is its own.
-  let lineStart = 0
+  let lineStart = startLineOffset
+  let linesChecked = 0
   while (lineStart <= window.text.length) {
     const found = window.text.indexOf('\n', lineStart)
     const lineEnd = found === -1 ? window.text.length : found
-    const line = {
-      text: window.text.slice(lineStart, lineEnd),
-      start: window.start + lineStart,
-      from: Math.max(0, window.from - lineStart),
+    if (lineEnd >= window.from) {
+      const line = {
+        text: window.text.slice(lineStart, lineEnd),
+        start: window.start + lineStart,
+        from: Math.max(0, window.from - lineStart),
+      }
+      if (!scanWindow(line, query, range, captureMatches, visit, undefined, budget)) {
+        if (budget?.yielded) {
+          budget.resumeAt = lineStart + budget.resumeAt
+          budget.resumeLineStart = lineStart
+        }
+        return false
+      }
     }
-    if (lineEnd >= window.from && !scanWindow(line, query, range, captureMatches, visit))
-      return false
 
     lineStart = lineEnd + 1
+    linesChecked += 1
+    if (
+      budget &&
+      lineStart <= window.text.length &&
+      linesChecked % REGEX_SLICE_CHECK_INTERVAL === 0 &&
+      nowMs() >= budget.deadline
+    ) {
+      budget.resumeAt = Math.max(window.from, lineStart)
+      budget.resumeLineStart = lineStart
+      budget.yielded = true
+      return false
+    }
   }
 
   return true
@@ -918,6 +953,15 @@ function readWindow(
 // one the whole-word filter rejects, so the scan keeps one non-overlap phase.
 type FindCursor = { offset: number }
 
+// Cooperative intra-window yield state so even a single multi-megabyte line
+// yields on time instead of blocking the main thread.
+type FindWindowBudget = {
+  readonly deadline: number
+  resumeAt: number
+  resumeLineStart: number
+  yielded: boolean
+}
+
 /** False once the range is spent or the visitor stopped, so no later window can add anything. */
 function scanWindow(
   window: FindWindow,
@@ -926,11 +970,20 @@ function scanWindow(
   captureMatches: boolean,
   visit: FindMatchVisitor,
   cursor?: FindCursor,
+  budget?: FindWindowBudget,
 ): boolean {
   if (query.simpleSearch && !captureMatches)
-    return scanSimpleMatches(window, query.simpleSearch, query.wholeWord, range, visit, cursor)
+    return scanSimpleMatches(
+      window,
+      query.simpleSearch,
+      query.wholeWord,
+      range,
+      visit,
+      cursor,
+      budget,
+    )
 
-  return scanRegexMatches(window, query, range, captureMatches, visit, cursor)
+  return scanRegexMatches(window, query, range, captureMatches, visit, cursor, budget)
 }
 
 function scanSimpleMatches(
@@ -940,10 +993,12 @@ function scanSimpleMatches(
   range: FindRange,
   visit: FindMatchVisitor,
   cursor?: FindCursor,
+  budget?: FindWindowBudget,
 ): boolean {
   // Searched as-is: no folded copy of the text is allocated, and every index
   // returned addresses the window it came from.
   let index = window.text.indexOf(searchString, window.from)
+  let iterations = 0
   while (index !== -1) {
     const start = window.start + index
     const end = start + searchString.length
@@ -953,7 +1008,15 @@ function scanSimpleMatches(
       if (!visit(start, end, null)) return false
     }
 
-    index = window.text.indexOf(searchString, index + searchString.length)
+    const nextFrom = index + searchString.length
+    iterations += 1
+    if (budget && iterations % REGEX_SLICE_CHECK_INTERVAL === 0 && nowMs() >= budget.deadline) {
+      budget.resumeAt = nextFrom
+      budget.yielded = true
+      return false
+    }
+
+    index = window.text.indexOf(searchString, nextFrom)
   }
 
   return true
@@ -966,8 +1029,10 @@ function scanRegexMatches(
   captureMatches: boolean,
   visit: FindMatchVisitor,
   cursor?: FindCursor,
+  budget?: FindWindowBudget,
 ): boolean {
   query.regex.lastIndex = window.from
+  let iterations = 0
   while (true) {
     const match = query.regex.exec(window.text)
     if (!match) return true
@@ -980,7 +1045,17 @@ function scanRegexMatches(
       if (!visit(start, end, captureMatches ? match : null)) return false
     }
 
-    if (match[0].length === 0) advancePastEmptyMatch(query.regex, window.text)
+    if (match[0].length === 0) {
+      advancePastEmptyMatch(query.regex, window.text)
+      if (query.regex.lastIndex > window.text.length) return true
+    }
+
+    iterations += 1
+    if (budget && iterations % REGEX_SLICE_CHECK_INTERVAL === 0 && nowMs() >= budget.deadline) {
+      budget.resumeAt = query.regex.lastIndex
+      budget.yielded = true
+      return false
+    }
   }
 }
 
@@ -1038,10 +1113,14 @@ function createLineRangeScanner(
   query: CompiledFindQuery,
   ranges: readonly FindRange[],
   limit: number,
+  minMatchStart: number,
 ): FindRangeScanner {
   const lineStartsView = source.lineStartsView
   let rangeIndex = 0
   let lineIndex = -1
+  let activeWindow: FindWindow | null = null
+  let activeWindowLastLine = -1
+  let activeLineStart = 0
   let collected = 0
   let done = false
   let truncated = false
@@ -1059,28 +1138,60 @@ function createLineRangeScanner(
 
       while (rangeIndex < ranges.length) {
         const range = ranges[rangeIndex]!
-        if (lineIndex < 0) lineIndex = lineStartsView.indexForOffset(range.start)
+        if (!activeWindow) {
+          if (lineIndex < 0) lineIndex = lineStartsView.indexForOffset(range.start)
 
-        const start = lineStartsView.at(lineIndex)
-        if (start === undefined || start > range.end) {
-          rangeIndex += 1
-          lineIndex = -1
-          continue
+          const start = lineStartsView.at(lineIndex)
+          if (start === undefined || start > range.end) {
+            rangeIndex += 1
+            lineIndex = -1
+            continue
+          }
+
+          activeWindowLastLine = lastWindowLine(source, lineIndex, start, range.end)
+          activeWindow = readWindow(source, start, lineEndAt(source, activeWindowLastLine), range)
+          activeLineStart = 0
         }
 
-        const last = lastWindowLine(source, lineIndex, start, range.end)
-        const window = readWindow(source, start, lineEndAt(source, last), range)
-        scanLineWindow(window, query, range, false, (matchStart, matchEnd, captures) => {
-          if (collected >= limit) {
-            truncated = true
-            return false
-          }
-          sliceMatches.push({ start: matchStart, end: matchEnd, matches: captures })
-          collected += 1
-          return true
-        })
+        const budget: FindWindowBudget = {
+          deadline,
+          resumeAt: activeWindow.from,
+          resumeLineStart: activeLineStart,
+          yielded: false,
+        }
+        scanLineWindow(
+          activeWindow,
+          query,
+          range,
+          false,
+          (matchStart, matchEnd, captures) => {
+            if (matchStart < minMatchStart) return true
+            if (collected >= limit) {
+              truncated = true
+              return false
+            }
+            sliceMatches.push({ start: matchStart, end: matchEnd, matches: captures })
+            collected += 1
+            return true
+          },
+          budget,
+          activeLineStart,
+        )
 
-        lineIndex = last + 1
+        if (truncated) {
+          activeWindow = null
+          done = true
+          return { matches: sliceMatches, done: true, truncated: true, windowsScanned }
+        }
+        if (budget.yielded) {
+          activeWindow = { ...activeWindow, from: budget.resumeAt }
+          activeLineStart = budget.resumeLineStart
+          return { matches: sliceMatches, done: false, truncated: false, windowsScanned }
+        }
+
+        activeWindow = null
+        activeLineStart = 0
+        lineIndex = activeWindowLastLine + 1
         const nextStart = lineStartsView.at(lineIndex)
         if (nextStart === undefined || nextStart > range.end) {
           rangeIndex += 1
@@ -1088,10 +1199,6 @@ function createLineRangeScanner(
         }
         windowsScanned += 1
 
-        if (truncated) {
-          done = true
-          return { matches: sliceMatches, done: true, truncated: true, windowsScanned }
-        }
         if (rangeIndex >= ranges.length) {
           done = true
           return { matches: sliceMatches, done: true, truncated: false, windowsScanned }
@@ -1113,12 +1220,15 @@ function createSpanningLiteralScanner(
   ranges: readonly FindRange[],
   lineBreaks: number,
   limit: number,
+  minMatchStart: number,
 ): FindRangeScanner {
   const lineStartsView = source.lineStartsView
   let rangeIndex = 0
   let first = -1
   let finalLine = -1
   let cursor: FindCursor = { offset: 0 }
+  let activeWindow: FindWindow | null = null
+  let activeWindowLast = -1
   let collected = 0
   let done = false
   let truncated = false
@@ -1136,31 +1246,41 @@ function createSpanningLiteralScanner(
 
       while (rangeIndex < ranges.length) {
         const range = ranges[rangeIndex]!
-        if (first < 0) {
-          first = lineStartsView.indexForOffset(range.start)
-          finalLine = lineStartsView.indexForOffset(range.end)
-          cursor = { offset: range.start }
+        if (!activeWindow) {
+          if (first < 0) {
+            first = lineStartsView.indexForOffset(range.start)
+            finalLine = lineStartsView.indexForOffset(range.end)
+            cursor = { offset: range.start }
+          }
+
+          if (first > finalLine) {
+            rangeIndex += 1
+            first = -1
+            continue
+          }
+
+          const start = lineStartsView.at(first) ?? 0
+          activeWindowLast = Math.min(
+            finalLine,
+            Math.max(first + lineBreaks, lastWindowLine(source, first, start, range.end)),
+          )
+          const text = source.readRange(start, Math.max(start, lineEndAt(source, activeWindowLast)))
+          activeWindow = { text, start, from: Math.max(0, cursor.offset - start) }
         }
 
-        if (first > finalLine) {
-          rangeIndex += 1
-          first = -1
-          continue
+        const budget: FindWindowBudget = {
+          deadline,
+          resumeAt: activeWindow.from,
+          resumeLineStart: 0,
+          yielded: false,
         }
-
-        const start = lineStartsView.at(first) ?? 0
-        const last = Math.min(
-          finalLine,
-          Math.max(first + lineBreaks, lastWindowLine(source, first, start, range.end)),
-        )
-        const text = source.readRange(start, Math.max(start, lineEndAt(source, last)))
-        const window = { text, start, from: Math.max(0, cursor.offset - start) }
         scanWindow(
-          window,
+          activeWindow,
           query,
           range,
           false,
           (matchStart, matchEnd, captures) => {
+            if (matchStart < minMatchStart) return true
             if (collected >= limit) {
               truncated = true
               return false
@@ -1170,19 +1290,27 @@ function createSpanningLiteralScanner(
             return true
           },
           cursor,
+          budget,
         )
 
-        windowsScanned += 1
         if (truncated) {
+          activeWindow = null
           done = true
           return { matches: sliceMatches, done: true, truncated: true, windowsScanned }
         }
+        if (budget.yielded) {
+          activeWindow = { ...activeWindow, from: budget.resumeAt }
+          return { matches: sliceMatches, done: false, truncated: false, windowsScanned }
+        }
 
-        if (last === finalLine) {
+        activeWindow = null
+        windowsScanned += 1
+
+        if (activeWindowLast === finalLine) {
           rangeIndex += 1
           first = -1
         } else {
-          first = last + 1 - lineBreaks
+          first = activeWindowLast + 1 - lineBreaks
         }
 
         if (rangeIndex >= ranges.length) {
@@ -1205,11 +1333,11 @@ function createWholeRangeScanner(
   query: CompiledFindQuery,
   ranges: readonly FindRange[],
   limit: number,
+  minMatchStart: number,
 ): FindRangeScanner {
   const lineStartsView = source.lineStartsView
   let rangeIndex = 0
   let activeWindow: FindWindow | null = null
-  let regexLastIndex = 0
   let collected = 0
   let done = false
   let truncated = false
@@ -1231,48 +1359,40 @@ function createWholeRangeScanner(
           const start = lineStartsView.at(lineStartsView.indexForOffset(range.start)) ?? 0
           const end = lineEndAt(source, lineStartsView.indexForOffset(range.end))
           activeWindow = readWindow(source, start, Math.max(start, end), range)
-          regexLastIndex = activeWindow.from
         }
 
-        query.regex.lastIndex = regexLastIndex
-        let iterations = 0
-        let yielded = false
-
-        while (true) {
-          const match = query.regex.exec(activeWindow.text)
-          if (!match) break
-
-          const start = activeWindow.start + match.index
-          const end = start + match[0].length
-          if (start > range.end || end > range.end) break
-
-          if (
-            validWholeWordMatch(activeWindow.text, match.index, match[0].length, query.wholeWord)
-          ) {
+        const budget: FindWindowBudget = {
+          deadline,
+          resumeAt: activeWindow.from,
+          resumeLineStart: 0,
+          yielded: false,
+        }
+        scanRegexMatches(
+          activeWindow,
+          query,
+          range,
+          false,
+          (matchStart, matchEnd, captures) => {
+            if (matchStart < minMatchStart) return true
             if (collected >= limit) {
               truncated = true
-              done = true
-              activeWindow = null
-              return { matches: sliceMatches, done: true, truncated: true, windowsScanned }
+              return false
             }
-            sliceMatches.push({ start, end, matches: null })
+            sliceMatches.push({ start: matchStart, end: matchEnd, matches: captures })
             collected += 1
-          }
+            return true
+          },
+          undefined,
+          budget,
+        )
 
-          if (match[0].length === 0) {
-            advancePastEmptyMatch(query.regex, activeWindow.text)
-            if (query.regex.lastIndex > activeWindow.text.length) break
-          }
-
-          regexLastIndex = query.regex.lastIndex
-          iterations += 1
-          if (iterations % REGEX_SLICE_CHECK_INTERVAL === 0 && nowMs() >= deadline) {
-            yielded = true
-            break
-          }
+        if (truncated) {
+          activeWindow = null
+          done = true
+          return { matches: sliceMatches, done: true, truncated: true, windowsScanned }
         }
-
-        if (yielded) {
+        if (budget.yielded) {
+          activeWindow = { ...activeWindow, from: budget.resumeAt }
           return { matches: sliceMatches, done: false, truncated: false, windowsScanned }
         }
 

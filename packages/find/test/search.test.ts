@@ -833,8 +833,9 @@ describe('searching text a line at a time', () => {
   it('answers a pattern whose break-matching construct nobody enumerated', () => {
     // Deciding by listing the constructs that CAN hold a break means one nobody
     // thought of answers "no results" for text that is plainly there.
-    for (const pattern of ['a[\\s\\S]b', 'a\\u000ab', 'a\\x0ab', 'a[^x]b']) {
+    for (const pattern of ['a[\\s\\S]b', 'a\\u000ab', 'a\\x0ab', 'a[^x]b', 'a[\t- ]b']) {
       expect(found('a\nb', regex(pattern))).toEqual([[0, 3]])
+      expect(findQueryPlan(regex(pattern))?.kind).toBe('range')
     }
   })
 
