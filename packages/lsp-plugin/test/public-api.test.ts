@@ -21,10 +21,22 @@ import type {
   ApplyWorkspaceEditResult,
   LanguageServerLaneHostOptions,
   LanguageServerDocumentSyncOptions,
+  LanguageServerPluginOptions,
   LanguageServerRenamePrompt,
   OnApplyWorkspaceEdit,
   WorkspaceEditOriginGuard,
 } from '@singapore-editor/lsp-plugin'
+
+describe('LanguageServerPluginOptions', () => {
+  it('takes no WebSocket signal, because the connection owns the one it passes', () => {
+    const options: LanguageServerPluginOptions['webSocketTransportOptions'] = {
+      // @ts-expect-error The connection aborts its own signal; a caller's would be dropped.
+      signal: AbortSignal.abort(),
+    }
+
+    expect(options).toBeDefined()
+  })
+})
 
 describe('WorkspaceEdit public API', () => {
   it('exports parser and replay contracts from root and workspace-edit', () => {

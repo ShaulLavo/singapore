@@ -25,7 +25,19 @@ export type LspReconnectOptions = {
   readonly delaysMs: readonly number[]
 }
 
-export type LspConnectionTransportFactory = () => LspManagedTransport | Promise<LspManagedTransport>
+/**
+ * Starts a server and returns its transport. A connection closed while the factory is still running
+ * waits for it: the next start for the same work begins only once the factory has settled and the
+ * transport's `gone`, if it has one, has too. `signal` is aborted when that connection closes, so
+ * honour it: stop a handshake and settle. A factory that ignores it and never settles blocks every
+ * later start for its key.
+ */
+export type LspConnectionTransportFactory = (
+  signal: AbortSignal,
+) => LspManagedTransport | Promise<LspManagedTransport>
+
+/** WebSocket options for a connection's factory. The signal is the connection's own. */
+export type LspWebSocketFactoryOptions = Omit<LspWebSocketTransportOptions, 'signal'>
 
 export type LspConnectionOptions = {
   readonly rootUri: lsp.DocumentUri | null
@@ -50,7 +62,8 @@ export type LspConnectionOptions = {
   readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
   /** Reconnects a transport that closed or failed on its own. Absent, the first loss is final. */
   readonly reconnect?: LspReconnectOptions
-  createTransport(): LspManagedTransport | Promise<LspManagedTransport>
+  /** See LspConnectionTransportFactory for what a closed connection waits for. */
+  readonly createTransport: LspConnectionTransportFactory
 }
 
 export type LspConnectionCallbacks = {
@@ -100,6 +113,8 @@ export class LspConnection {
   private retiring: Promise<void> | null = null
   /** A start is under way: waiting on `retiring`, or in the factory, until a transport attaches. */
   private starting = false
+  /** The factory call under way, recorded before it runs. Its server may already be running. */
+  private inFlight: InFlightStart | null = null
   /** Why the server said it is going, reported as the reason for the close that follows. */
   private exit: LspServerExitedParams | null = null
 
@@ -128,17 +143,45 @@ export class LspConnection {
     return this.retiring
   }
 
+  /**
+   * The connection's state, retirement included, is final before any host code runs: a stop hook,
+   * `close()`, the factory's abort listener, a status callback. One that re-enters finds the
+   * retirement already recorded. A host call that throws goes to `onError`, and the rest still run;
+   * an `onError` that throws is rethrown once they have.
+   */
   public dispose(): void {
     if (this.disposed) return
 
     this.disposed = true
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
-    this.removeTransportCloseListener?.()
+    const transport = this.transport
+    const start = this.inFlight
+    const removeCloseListener = this.removeTransportCloseListener
+    const gone = this.transportGone ?? (start ? startGone(start) : null)
+    this.transport = null
+    this.transportGone = null
+    this.inFlight = null
     this.removeTransportCloseListener = null
-    this.client.disconnect()
-    this.closeTransport()
-    this.setStatus('idle')
+    if (gone) this.retire(gone)
+
+    runEach(
+      [
+        () => removeCloseListener?.(),
+        () => this.client.disconnect(),
+        () => transport?.close(),
+        () => start?.controller.abort(new Error('LSP connection was closed')),
+        () => this.setStatus('idle'),
+      ].map((call) => () => this.callHost(call)),
+    )
+  }
+
+  private callHost(call: () => void): void {
+    try {
+      call()
+    } catch (error) {
+      this.handleError(error)
+    }
   }
 
   private createClient(): LspClient {
@@ -198,21 +241,34 @@ export class LspConnection {
   private readonly startTransport = (): void => {
     if (this.disposed) return
 
+    // Recorded before the factory runs, which may close this connection before it returns.
+    const start = inFlightStart()
+    this.inFlight = start
     try {
-      const transport = this.options.createTransport()
+      const transport = this.options.createTransport(start.controller.signal)
       if (isTransportPromise(transport)) {
         void transport
-          .then((value) => this.connectManagedTransport(value))
-          .catch((error) => {
-            this.handleConnectError(error)
-          })
+          .then((value) => this.startArrived(start, value))
+          .catch((error: unknown) => this.startFailed(start, error))
         return
       }
 
-      this.connectManagedTransport(transport)
+      this.startArrived(start, transport)
     } catch (error) {
-      this.handleConnectError(error)
+      this.startFailed(start, error)
     }
+  }
+
+  private startArrived(start: InFlightStart, transport: LspManagedTransport): void {
+    if (this.inFlight === start) this.inFlight = null
+    start.settle(transport)
+    this.connectManagedTransport(transport)
+  }
+
+  private startFailed(start: InFlightStart, error: unknown): void {
+    if (this.inFlight === start) this.inFlight = null
+    start.settle(null)
+    this.handleConnectError(error)
   }
 
   private connectManagedTransport(transport: LspManagedTransport): void {
@@ -220,7 +276,7 @@ export class LspConnection {
     // Observed from the first moment, so a server that fails to go never rejects unheard.
     const gone = settled(transport.gone)
     if (this.disposed) {
-      transport.close()
+      this.callHost(() => transport.close())
       return
     }
 
@@ -285,14 +341,20 @@ export class LspConnection {
     this.closeTransport()
   }
 
-  /** Closes the transport and keeps its server's going as what the next start waits for. */
+  /**
+   * Closes the transport and keeps its server's going as what the next start waits for. That is
+   * recorded before `close()`, whose stop hook may already ask for the next start.
+   */
   private closeTransport(): void {
-    this.transport?.close()
-    this.transport = null
+    const transport = this.transport
     const gone = this.transportGone
+    this.transport = null
     this.transportGone = null
-    if (!gone) return
+    if (gone) this.retire(gone)
+    transport?.close()
+  }
 
+  private retire(gone: Promise<void>): void {
     this.retiring = gone
     void gone.then(() => {
       if (this.retiring === gone) this.retiring = null
@@ -341,12 +403,13 @@ export class LspConnection {
 
 export function createWebSocketLspTransportFactory(
   route: string | URL,
-  options?: LspWebSocketTransportOptions,
+  options?: LspWebSocketFactoryOptions,
 ): LspConnectionTransportFactory {
-  return () =>
+  return (signal) =>
     createWebSocketLspTransport(route, {
       protocols: options?.protocols,
       WebSocketCtor: options?.WebSocketCtor,
+      signal,
     })
 }
 
@@ -370,6 +433,39 @@ function settled(gone: Promise<void> | undefined): Promise<void> | null {
 }
 
 const ignore = (): void => undefined
+
+/** Runs every step, even after one throws, then throws the first failure. For teardown. */
+export function runEach(steps: readonly (() => void)[]): void {
+  let failure: { readonly error: unknown } | null = null
+  for (const step of steps) {
+    try {
+      step()
+    } catch (error) {
+      failure ??= { error }
+    }
+  }
+  if (failure) throw failure.error
+}
+
+/** A factory call. `arrived` settles with its transport, or with null when the call failed. */
+type InFlightStart = {
+  readonly controller: AbortController
+  readonly arrived: Promise<LspManagedTransport | null>
+  settle(transport: LspManagedTransport | null): void
+}
+
+function inFlightStart(): InFlightStart {
+  let settle!: (transport: LspManagedTransport | null) => void
+  const arrived = new Promise<LspManagedTransport | null>((resolve) => {
+    settle = resolve
+  })
+  return { controller: new AbortController(), arrived, settle }
+}
+
+/** A closed connection's unfinished start retires once the factory settles and its server is gone. */
+function startGone(start: InFlightStart): Promise<void> {
+  return start.arrived.then((transport) => settled(transport?.gone) ?? undefined)
+}
 
 function isTransportPromise(
   value: LspManagedTransport | Promise<LspManagedTransport>,

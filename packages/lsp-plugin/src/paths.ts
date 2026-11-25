@@ -36,8 +36,10 @@ export function pathToFileUri(path: string): lsp.DocumentUri {
   return `file://${encodePathname(path)}`
 }
 
-/** `file:`, an optional `//authority`, then an absolute path; a query or fragment is dropped. */
-const FILE_URI = /^file:(?:\/\/([^/?#]*))?(\/[^?#]*)/i
+/** `file://authority/path`; a query or fragment is dropped. */
+const FILE_URI_WITH_AUTHORITY = /^file:\/\/([^/?#]*)(\/[^?#]*)?/i
+/** The short local form, `file:/path`. */
+const FILE_URI_SHORT = /^file:(\/[^?#]*)/i
 
 /**
  * The exact path of a local `file:` URI: segments are decoded and nothing else is touched, so
@@ -45,12 +47,19 @@ const FILE_URI = /^file:(?:\/\/([^/?#]*))?(\/[^?#]*)/i
  * a file on another host and a segment that would decode to a separator.
  */
 export function fileUriToPath(uri: string): string | null {
-  const [, authority, encoded] = FILE_URI.exec(uri) ?? []
-  // Everything after an empty authority is path, leading slashes included.
-  if (encoded === undefined || authority) return null
+  const encoded = localEncodedPath(uri)
+  if (encoded === null) return null
 
   const segments = encoded.split('/').map(decodeSegment)
   return segments.includes(null) ? null : segments.join('/')
+}
+
+/** Only an empty authority is local, and everything after it is path, leading slashes included. */
+function localEncodedPath(uri: string): string | null {
+  const withAuthority = FILE_URI_WITH_AUTHORITY.exec(uri)
+  if (withAuthority) return withAuthority[1] === '' ? (withAuthority[2] ?? null) : null
+
+  return FILE_URI_SHORT.exec(uri)?.[1] ?? null
 }
 
 function decodeSegment(segment: string): string | null {

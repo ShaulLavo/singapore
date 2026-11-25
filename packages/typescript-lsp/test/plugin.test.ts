@@ -42,6 +42,7 @@ import {
   createTypeScriptLspPlugin as createBaseTypeScriptLspPlugin,
   TypeScriptLspWorkspace,
   type TypeScriptLspDiagnosticSummary,
+  type TypeScriptLspPluginOptions,
 } from '../src'
 import {
   createTestEditContributionContext,
@@ -182,6 +183,17 @@ class FakeWebSocket implements LspWebSocketLike {
     return listeners
   }
 }
+
+describe('TypeScript LSP WebSocket options', () => {
+  it('takes no signal, because the connection owns the one it passes', () => {
+    const options: TypeScriptLspPluginOptions['webSocketTransportOptions'] = {
+      // @ts-expect-error The connection aborts its own signal; a caller's would be dropped.
+      signal: AbortSignal.abort(),
+    }
+
+    expect(options).toBeDefined()
+  })
+})
 
 describe('createTypeScriptLspPlugin', () => {
   afterEach(() => {

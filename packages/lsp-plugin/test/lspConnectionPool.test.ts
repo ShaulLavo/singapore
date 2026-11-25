@@ -1,7 +1,11 @@
 import {
   LspServerExitedError,
+  createStdioLspTransport,
   type LspManagedTransport,
+  type LspStdio,
   type LspTransportHandler,
+  type LspWebSocketLike,
+  type LspWorkerLike,
 } from '@singapore-editor/lsp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,7 +16,12 @@ import type {
   LspConnectionOptions,
   LspConnectionPoolEvent,
 } from '../src/index.ts'
-import { LspConnection, LspConnectionPool } from '../src/index.ts'
+import {
+  LspConnection,
+  LspConnectionPool,
+  createWebSocketLspTransportFactory,
+  createWorkerLspTransportFactory,
+} from '../src/index.ts'
 
 /** The socket the pool is supposed to stop rebuilding. */
 class FakeTransport implements LspManagedTransport {
@@ -74,6 +83,50 @@ class StoppingTransport extends FakeTransport {
       this.confirmGone = resolve
       this.failGone = reject
     })
+  }
+}
+
+/** A socket whose handshake never finishes, and which reports nothing when it is closed. */
+class ConnectingSocket implements LspWebSocketLike {
+  public static readonly created: ConnectingSocket[] = []
+  public readyState = 0
+
+  public constructor() {
+    ConnectingSocket.created.push(this)
+  }
+
+  public send(): void {}
+
+  public close(): void {
+    this.readyState = 3
+  }
+
+  public addEventListener(): void {}
+
+  public removeEventListener(): void {}
+}
+
+/** A server process behind a stdio transport, recorded in `servers` when started. */
+function stdioOptions(
+  servers: LspStdio[],
+  stop: () => void = () => undefined,
+): LspConnectionOptions {
+  return connectionOptions({
+    timeoutMs: 600_000,
+    createTransport: () => {
+      const server = createStdioLspTransport({ stop })
+      servers.push(server)
+      return server.transport
+    },
+  })
+}
+
+function worker(terminate: () => void): LspWorkerLike {
+  return {
+    addEventListener: () => undefined,
+    postMessage: () => undefined,
+    removeEventListener: () => undefined,
+    terminate,
   }
 }
 
@@ -272,6 +325,252 @@ describe('LspConnectionPool', () => {
     expect(FakeTransport.created).toHaveLength(1)
 
     silent.confirmGone()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(FakeTransport.created).toHaveLength(2)
+  })
+
+  it('waits for a server whose factory had not returned when its connection closed', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    let starts = 0
+    let attach!: (transport: LspManagedTransport) => void
+    const options = connectionOptions({
+      createTransport: () => {
+        starts += 1
+        if (starts > 1) return new StoppingTransport()
+        return new Promise<LspManagedTransport>((resolve) => {
+          attach = resolve
+        })
+      },
+    })
+    provider.acquire(options, callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+
+    provider.acquire(options, callbacks())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(starts).toBe(1)
+
+    const late = new StoppingTransport()
+    attach(late)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(late.closed).toBe(true)
+    expect(starts).toBe(1)
+
+    late.confirmGone()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(starts).toBe(2)
+  })
+
+  it('holds back a replacement that the old server asks for while it is being stopped', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    const servers: LspStdio[] = []
+    let replacement: LspConnectionLease | null = null
+    const options: LspConnectionOptions = connectionOptions({
+      timeoutMs: 600_000,
+      createTransport: () => {
+        const server = createStdioLspTransport({
+          stop: () => {
+            replacement ??= provider.acquire(options, callbacks())
+          },
+        })
+        servers.push(server)
+        return server.transport
+      },
+    })
+    provider.acquire(options, callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+    expect(replacement).not.toBeNull()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(servers).toHaveLength(1)
+
+    servers[0]!.exited()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(servers).toHaveLength(2)
+  })
+
+  it('holds back a key that another key asks for while the pool is being disposed', async () => {
+    vi.useFakeTimers()
+    const first: LspStdio[] = []
+    const second: LspStdio[] = []
+    const secondOptions = stdioOptions(second)
+    let asked = false
+    const askForSecond = (): void => {
+      if (asked) return
+      asked = true
+      pool.provider('second').acquire(secondOptions, callbacks())
+    }
+    pool.provider('first').acquire(stdioOptions(first, askForSecond), callbacks())
+    pool.provider('second').acquire(secondOptions, callbacks())
+
+    pool.dispose()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(asked).toBe(true)
+    expect(second).toHaveLength(1)
+
+    second[0]!.exited()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(second).toHaveLength(2)
+  })
+
+  it('holds back a replacement that a factory asks for before it returns', async () => {
+    vi.useFakeTimers()
+    const servers: LspStdio[] = []
+    let asked = false
+    const options: LspConnectionOptions = connectionOptions({
+      timeoutMs: 600_000,
+      createTransport: async () => {
+        const server = createStdioLspTransport({ stop: () => undefined })
+        servers.push(server)
+        if (!asked) {
+          asked = true
+          pool.dispose()
+          pool.provider(KEY).acquire(options, callbacks())
+        }
+        return server.transport
+      },
+    })
+    pool.provider(KEY).acquire(options, callbacks())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(asked).toBe(true)
+    expect(servers).toHaveLength(1)
+
+    servers[0]!.exited()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(servers).toHaveLength(2)
+  })
+
+  it('cancels an unfinished WebSocket handshake and replaces it without waiting for it', async () => {
+    ConnectingSocket.created.length = 0
+    const provider = pool.provider(KEY)
+    const options = connectionOptions({
+      createTransport: createWebSocketLspTransportFactory('ws://lsp.test', {
+        WebSocketCtor: ConnectingSocket,
+      }),
+    })
+    provider.acquire(options, callbacks())
+    pool.dispose()
+    provider.acquire(options, callbacks())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(ConnectingSocket.created).toHaveLength(2)
+    expect(ConnectingSocket.created[0]!.readyState).toBe(3)
+  })
+
+  it('closes every connection of a disposed pool when one worker fails to stop', () => {
+    const terminated: string[] = []
+    const failing = callbacks()
+    const stopFailure = new Error('worker would not stop')
+    const failingWorker = worker(() => {
+      throw stopFailure
+    })
+    pool.provider('first').acquire(
+      connectionOptions({
+        createTransport: createWorkerLspTransportFactory(() => failingWorker),
+      }),
+      failing,
+    )
+    pool.provider('second').acquire(
+      connectionOptions({
+        createTransport: createWorkerLspTransportFactory(() =>
+          worker(() => terminated.push('second')),
+        ),
+      }),
+      callbacks(),
+    )
+
+    pool.dispose()
+
+    expect(terminated).toEqual(['second'])
+    expect(failing.onError).toHaveBeenCalledWith(stopFailure)
+  })
+
+  it('finishes disposing the pool when an error reporter throws', async () => {
+    const terminated: string[] = []
+    const reporterFailure = new Error('reporter failed')
+    const failingWorker = worker(() => {
+      throw new Error('worker would not stop')
+    })
+    pool.provider('first').acquire(
+      connectionOptions({
+        createTransport: createWorkerLspTransportFactory(() => failingWorker),
+      }),
+      {
+        ...callbacks(),
+        onError: () => {
+          throw reporterFailure
+        },
+      },
+    )
+    const secondOptions = connectionOptions({
+      createTransport: createWorkerLspTransportFactory(() =>
+        worker(() => terminated.push('second')),
+      ),
+    })
+    pool.provider('second').acquire(secondOptions, callbacks())
+
+    expect(() => pool.dispose()).toThrow(reporterFailure)
+    expect(terminated).toEqual(['second'])
+
+    let restarted = 0
+    pool.provider('second').acquire(
+      connectionOptions({
+        createTransport: () => {
+          restarted += 1
+          return new FakeTransport()
+        },
+      }),
+      callbacks(),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(restarted).toBe(1)
+  })
+
+  it('gives a borrower that retries on a failed connection a new one', async () => {
+    let starts = 0
+    let retry: LspConnectionLease | null = null
+    const provider = pool.provider(KEY)
+    const options = connectionOptions({
+      createTransport: () => {
+        starts += 1
+        return new FakeTransport()
+      },
+    })
+    const failed = provider.acquire(options, {
+      ...callbacks(),
+      onStatusChange: (status) => {
+        if (status === 'error') retry ??= provider.acquire(options, callbacks())
+      },
+    })
+
+    FakeTransport.created[0]!.fail()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(retry).not.toBeNull()
+    expect(retry!.connection).not.toBe(failed.connection)
+    expect(starts).toBe(2)
+  })
+
+  it('keeps waiting for an old server after a connection that was waiting for it closes', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    provider.acquire(stoppingOptions(), callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+    provider.acquire(stoppingOptions(), callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+
+    provider.acquire(stoppingOptions(), callbacks())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(FakeTransport.created).toHaveLength(1)
+
+    ;(FakeTransport.created[0] as StoppingTransport).confirmGone()
     await vi.advanceTimersByTimeAsync(0)
 
     expect(FakeTransport.created).toHaveLength(2)

@@ -58,6 +58,8 @@ export type LspWebSocketConstructor = new (
 export type LspWebSocketTransportOptions = {
   readonly protocols?: string | readonly string[]
   readonly WebSocketCtor?: LspWebSocketConstructor
+  /** Aborting it before the socket opens closes the socket and rejects with the abort reason. */
+  readonly signal?: AbortSignal
 }
 
 export type LspWorkerMessageFormat = 'string' | 'json'
@@ -95,12 +97,14 @@ export const createWebSocketLspTransport = (
 ): Promise<LspManagedTransport> => {
   const WebSocketCtor = options.WebSocketCtor ?? globalThis.WebSocket
   if (!WebSocketCtor) return Promise.reject(new Error('WebSocket is not available'))
+  if (options.signal?.aborted) return Promise.reject(options.signal.reason)
 
   const socket = new WebSocketCtor(url, mutableProtocols(options.protocols))
   const transport = new WebSocketLspTransport(socket)
+  if (options.signal?.aborted) return Promise.reject(closeForAbort(transport, options.signal))
   if (socket.readyState === WEB_SOCKET_OPEN) return Promise.resolve(transport)
 
-  return waitForWebSocketOpen(socket, transport)
+  return waitForWebSocketOpen(socket, transport, options.signal)
 }
 
 export const createWorkerLspTransport = (
@@ -296,12 +300,18 @@ function workerError(event: Event): unknown {
 const waitForWebSocketOpen = (
   socket: LspWebSocketLike,
   transport: LspManagedTransport,
+  signal: AbortSignal | undefined,
 ): Promise<LspManagedTransport> =>
   new Promise((resolve, reject) => {
     const cleanup = (): void => {
       socket.removeEventListener('open', handleOpen)
       socket.removeEventListener('error', handleError)
       socket.removeEventListener('close', handleClose)
+      signal?.removeEventListener('abort', handleAbort)
+    }
+    const handleAbort = (): void => {
+      cleanup()
+      if (signal) reject(closeForAbort(transport, signal))
     }
     const handleOpen = (): void => {
       cleanup()
@@ -319,7 +329,20 @@ const waitForWebSocketOpen = (
     socket.addEventListener('open', handleOpen)
     socket.addEventListener('error', handleError)
     socket.addEventListener('close', handleClose)
+    signal?.addEventListener('abort', handleAbort)
+    // The socket's own listener calls may have aborted it before that listener was in place.
+    if (signal?.aborted) handleAbort()
   })
+
+/** Closes a cancelled handshake's socket; the abort reason, or what closing threw instead. */
+const closeForAbort = (transport: LspManagedTransport, signal: AbortSignal): unknown => {
+  try {
+    transport.close()
+  } catch (error) {
+    return error
+  }
+  return signal.reason
+}
 
 const messageEventData = (event: Event): string | null => {
   const data = (event as MessageEvent).data

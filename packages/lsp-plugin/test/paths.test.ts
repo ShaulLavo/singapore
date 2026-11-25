@@ -82,6 +82,10 @@ describe('language server path helpers', () => {
 
   it('has no local path for another host, another scheme or a broken escape', () => {
     expect(fileUriToPath('file://server/share/a.ts')).toBeNull()
+    expect(fileUriToPath('file://project')).toBeNull()
+    expect(fileUriToPath('file://project?x')).toBeNull()
+    expect(fileUriToPath('file://project#x')).toBeNull()
+    expect(fileUriToPath('file://')).toBeNull()
     expect(fileUriToPath('untitled:Untitled-1')).toBeNull()
     expect(fileUriToPath('file:///a%E0%A4%A.ts')).toBeNull()
   })
@@ -93,6 +97,7 @@ describe('language server path helpers', () => {
     )
     expect(sameFileUri('file:///a%5Cb.ts', 'file:///a/b.ts')).toBe(false)
     expect(sameFileUri('file://server/a.ts', 'file:///a.ts')).toBe(false)
+    expect(sameFileUri('file://project', 'file:////project')).toBe(false)
     expect(sameFileUri('untitled:1', 'untitled:1')).toBe(true)
   })
 

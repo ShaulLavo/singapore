@@ -6,6 +6,7 @@ import type {
 
 import {
   LspConnection,
+  runEach,
   type LspConnectionCallbacks,
   type LspConnectionLease,
   type LspConnectionOptions,
@@ -70,6 +71,8 @@ type PooledConnection = {
   connected: boolean
   readyAt: number | null
   idleTimer: ReturnType<typeof setTimeout> | null
+  /** Set once the entry has left the pool and its key is gated: what disposes its connection. */
+  disposal: (() => void) | null
 }
 
 type ImmutableInitializationContract = {
@@ -86,7 +89,7 @@ type ImmutableInitializationContract = {
  */
 export class LspConnectionPool {
   readonly #entries = new Map<string, PooledConnection>()
-  /** Per key, the going of a server whose connection is already disposed. Cleared when it settles. */
+  /** Per key, open once the last disposed connection's server is gone. Cleared when it is. */
   readonly #retiring = new Map<string, Promise<void>>()
   readonly #idleGraceMs: number
   readonly #onEvent?: (event: LspConnectionPoolEvent) => void
@@ -135,25 +138,39 @@ export class LspConnectionPool {
   public dispose(): void {
     const entries = Array.from(this.#entries.values())
     this.#entries.clear()
-    for (const entry of entries) {
-      if (entry.idleTimer !== null) clearTimeout(entry.idleTimer)
-      this.#disposeConnection(entry)
-    }
+    // Every key is gated before any connection runs host code, which may acquire any of them.
+    runEach(entries.map((entry) => this.#gateRetirement(entry)))
   }
 
   /**
-   * Disposes the connection and remembers, by key, a server of it that is still going. Nothing
-   * here waits: the next connection for the key does, before it asks for its first transport.
+   * Gates the entry's key, then returns the step that disposes its connection. The gate is in place
+   * before that step runs host code, which may acquire the key again, and opens once the connection
+   * is disposed and its server is gone. Nothing here waits: the next connection for the key does,
+   * before it asks for its first transport.
    */
-  #disposeConnection(entry: PooledConnection): void {
-    entry.connection.dispose()
-    const gone = entry.connection.retirement
-    if (!gone) return
-
-    this.#retiring.set(entry.key, gone)
-    void gone.then(() => {
-      if (this.#retiring.get(entry.key) === gone) this.#retiring.delete(entry.key)
+  #gateRetirement(entry: PooledConnection): () => void {
+    if (entry.idleTimer !== null) clearTimeout(entry.idleTimer)
+    entry.idleTimer = null
+    const { connection, key } = entry
+    let open!: (gone: Promise<void> | undefined) => void
+    const gate = new Promise<void>((resolve) => {
+      open = resolve
     })
+    this.#retiring.set(key, gate)
+    const forget = (): void => {
+      if (this.#retiring.get(key) === gate) this.#retiring.delete(key)
+    }
+
+    return () => {
+      try {
+        connection.dispose()
+      } finally {
+        const gone = connection.retirement
+        open(gone ?? undefined)
+        if (gone) void gone.then(forget)
+        else forget()
+      }
+    }
   }
 
   /** The host's factory, held back while the key's previous server is still going. */
@@ -161,13 +178,13 @@ export class LspConnectionPool {
     entry: PooledConnection,
     createTransport: LspConnectionOptions['createTransport'],
   ): LspConnectionOptions['createTransport'] {
-    return () => {
+    return (signal) => {
       const retiring = this.#retiring.get(entry.key)
-      if (!retiring) return createTransport()
+      if (!retiring) return createTransport(signal)
 
       return retiring.then(() => {
         if (this.#entries.get(entry.key) !== entry) throw new Error('LSP connection was closed')
-        return createTransport()
+        return createTransport(signal)
       })
     }
   }
@@ -178,6 +195,7 @@ export class LspConnectionPool {
       connected: false,
       connection: null as unknown as LspConnection,
       createdAt: now(),
+      disposal: null,
       idleTimer: null,
       initializationContract: initializationContract(options),
       key,
@@ -192,7 +210,7 @@ export class LspConnectionPool {
     entry.connection = new LspConnection(
       {
         ...options,
-        createTransport: this.#gatedFactory(entry, () => options.createTransport()),
+        createTransport: this.#gatedFactory(entry, (signal) => options.createTransport(signal)),
         notificationHandlers: this.#dispatchers(entry, notificationMethods),
         serverRequestHandlers: requestDispatchers(entry, options.serverRequestHandlers ?? {}),
       },
@@ -261,6 +279,9 @@ export class LspConnectionPool {
       },
       onStatusChange: (status) => {
         entry.status = status
+        // A connection that gave up leaves the pool before anyone hears so: a borrower that retries
+        // gets a new one. `onUnavailable`, which follows, disposes it.
+        if (status === 'error') this.#withdraw(entry)
         for (const lease of leasesOf(entry)) lease.callbacks.onStatusChange?.(status)
       },
       onError: (error) => {
@@ -304,22 +325,34 @@ export class LspConnectionPool {
     if (this.#entries.get(entry.key) !== entry) return
 
     this.#entries.delete(entry.key)
-    this.#disposeConnection(entry)
-    this.#emit(entry, 'closed', {
-      durationMs: Math.round(now() - entry.createdAt),
-      reachedReady: entry.readyAt !== null,
-    })
+    try {
+      this.#gateRetirement(entry)()
+    } finally {
+      this.#emit(entry, 'closed', {
+        durationMs: Math.round(now() - entry.createdAt),
+        reachedReady: entry.readyAt !== null,
+      })
+    }
   }
 
   #retire(entry: PooledConnection): void {
-    if (entry.idleTimer !== null) clearTimeout(entry.idleTimer)
-    entry.idleTimer = null
+    this.#withdraw(entry)
+    try {
+      entry.disposal?.()
+    } finally {
+      this.#emit(entry, 'retired', {
+        durationMs: Math.round(now() - entry.createdAt),
+        reachedReady: entry.readyAt !== null,
+      })
+    }
+  }
+
+  /** Takes the entry out of the pool and gates its key; disposing its connection comes after. */
+  #withdraw(entry: PooledConnection): void {
+    if (entry.disposal) return
+
     if (this.#entries.get(entry.key) === entry) this.#entries.delete(entry.key)
-    this.#disposeConnection(entry)
-    this.#emit(entry, 'retired', {
-      durationMs: Math.round(now() - entry.createdAt),
-      reachedReady: entry.readyAt !== null,
-    })
+    entry.disposal = this.#gateRetirement(entry)
   }
 
   #reportUndispatchable(entry: PooledConnection, lease: ConnectionLease): void {
