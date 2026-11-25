@@ -196,9 +196,6 @@ import {
   type EditorEditContribution,
   type EditorEditContributionContext,
   type EditorEditContributionProvider,
-  type EditorFeatureContribution,
-  type EditorFeatureContributionContext,
-  type EditorFeatureContributionProvider,
   type EditorGutterContribution,
   type EditorInjectedTextRowProviderContext,
   type EditorLanguageFeatureSelector,
@@ -288,7 +285,7 @@ const PLUGIN_GUTTER_PROJECTION_OWNER = 'editor.gutters.plugins'
 const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 
 type SyntaxScrollDirection = -1 | 0 | 1
-type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
+type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'view'
 type EditorContributionFailurePhase =
   | EditorViewContributionFailurePhase
   | 'factory'
@@ -386,10 +383,7 @@ export class Editor {
   private readonly languageFeatures = new EditorLanguageFeatureRegistry()
   private readonly rowDecorationSourceOwners = new Map<string, symbol>()
   private readonly rowDecorationSourcesByOwner = new Map<symbol, Set<string>>()
-  private readonly rowDecorationContributionOwners = new Map<
-    EditorDecorationContribution | EditorFeatureContribution,
-    symbol
-  >()
+  private readonly rowDecorationContributionOwners = new Map<EditorDecorationContribution, symbol>()
   /**
    * What the contribution being created, or the one whose context is registering, has registered.
    * A factory that fails part-way leaves no object to dispose, and a contribution whose dispose
@@ -401,14 +395,9 @@ export class Editor {
   private readonly capabilityContributions: EditorCapabilityContribution[] = []
   private readonly editContributions: EditorEditContribution[] = []
   private readonly decorationContributions: EditorDecorationContribution[] = []
-  private readonly editorFeatureContributions: EditorFeatureContribution[] = []
   private readonly viewContributionsByProvider = new Map<
     EditorViewContributionProvider,
     EditorViewContribution
-  >()
-  private readonly editorFeatureContributionsByProvider = new Map<
-    EditorFeatureContributionProvider,
-    EditorFeatureContribution
   >()
   private readonly commandContributionsByProvider = new Map<
     EditorCommandContributionProvider,
@@ -825,9 +814,6 @@ export class Editor {
     this.createInitialCapabilityContributions(this.pluginHost.getCapabilityContributionProviders())
     this.createInitialEditContributions(this.pluginHost.getEditContributionProviders())
     this.createInitialDecorationContributions(this.pluginHost.getDecorationContributionProviders())
-    this.createInitialEditorFeatureContributions(
-      this.pluginHost.getEditorFeatureContributionProviders(),
-    )
     this.keymap = new EditorHotkeys({
       target: this.el,
       hotkeys: options.hotkeys,
@@ -893,10 +879,6 @@ export class Editor {
         this.addDecorationContributionProvider(provider),
       onDecorationContributionProviderRemoved: (provider) =>
         this.removeDecorationContributionProvider(provider),
-      onEditorFeatureContributionProviderAdded: (provider) =>
-        this.addEditorFeatureContributionProvider(provider),
-      onEditorFeatureContributionProviderRemoved: (provider) =>
-        this.removeEditorFeatureContributionProvider(provider),
       onGutterContributionsChanged: () => this.syncGutterContributions(),
       onInjectedTextRowProvidersChanged: () => this.handleInjectedTextRowProvidersChanged(),
       onInlineReplacementProvidersChanged: () => this.handleInlineReplacementProvidersChanged(),
@@ -2663,7 +2645,6 @@ export class Editor {
     this.displayProjections.clear()
     this.inputSelection.dispose()
     this.viewContributions.dispose()
-    this.disposeEditorFeatureContributions()
     this.disposeDecorationContributions()
     this.disposeEditContributions()
     this.disposeCapabilityContributions()
@@ -3070,63 +3051,6 @@ export class Editor {
       this.clearContributionRowDecorationSources(contribution)
     }
     this.decorationContributionsByProvider.clear()
-  }
-
-  private createInitialEditorFeatureContributions(
-    providers: readonly EditorFeatureContributionProvider[],
-  ): void {
-    for (const provider of providers) this.addEditorFeatureContributionProvider(provider, false)
-  }
-
-  private addEditorFeatureContributionProvider(
-    provider: EditorFeatureContributionProvider,
-    notify = true,
-  ): void {
-    const owner = Symbol('editor.featureContribution')
-    const contribution = this.createEditorFeatureContribution(provider, owner)
-    if (!contribution) return
-
-    this.editorFeatureContributionsByProvider.set(provider, contribution)
-    this.rowDecorationContributionOwners.set(contribution, owner)
-    this.editorFeatureContributions.push(contribution)
-    if (notify) contribution.handleEditorChange?.(null)
-  }
-
-  private createEditorFeatureContribution(
-    provider: EditorFeatureContributionProvider,
-    owner: symbol,
-  ): EditorFeatureContribution | null {
-    const contribution = this.createContributionSafely('feature', () =>
-      provider.createContribution(
-        this.createEditorFeatureContributionContext(this.container, owner),
-      ),
-    )
-    if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
-
-    return contribution
-  }
-
-  private removeEditorFeatureContributionProvider(
-    provider: EditorFeatureContributionProvider,
-  ): void {
-    const contribution = this.editorFeatureContributionsByProvider.get(provider)
-    if (!contribution) return
-
-    this.editorFeatureContributionsByProvider.delete(provider)
-    removeArrayItem(this.editorFeatureContributions, contribution)
-    this.disposeContributionSafely(contribution, 'feature')
-    this.clearContributionRowDecorationSources(contribution)
-  }
-
-  private disposeEditorFeatureContributions(): void {
-    while (this.editorFeatureContributions.length > 0) {
-      const contribution = this.editorFeatureContributions.pop()
-      if (!contribution) continue
-
-      this.disposeContributionSafely(contribution, 'feature')
-      this.clearContributionRowDecorationSources(contribution)
-    }
-    this.editorFeatureContributionsByProvider.clear()
   }
 
   private logInitialPlugins(): void {
@@ -3602,9 +3526,7 @@ export class Editor {
     if (sources.size === 0) this.rowDecorationSourcesByOwner.delete(owner)
   }
 
-  private clearContributionRowDecorationSources(
-    contribution: EditorDecorationContribution | EditorFeatureContribution,
-  ): void {
+  private clearContributionRowDecorationSources(contribution: EditorDecorationContribution): void {
     const owner = this.rowDecorationContributionOwners.get(contribution)
     if (!owner) return
 
@@ -3902,49 +3824,6 @@ export class Editor {
       setRowDecorations: (sourceId, decorations) =>
         this.setSourceRowDecorations(sourceId, decorations, owner),
       clearRowDecorations: (sourceId) => this.clearSourceRowDecorations(sourceId, owner),
-    }
-  }
-
-  private createEditorFeatureContributionContext(
-    container: HTMLElement,
-    owner: symbol,
-  ): EditorFeatureContributionContext {
-    const claims = this.currentClaims()
-    return {
-      container,
-      scrollElement: this.el,
-      contentElement: this.view.contentElement,
-      highlightPrefix: this.highlightPrefix,
-      hasDocument: () => this.session !== null,
-      log: (event) => this.log(event),
-      materializeFullText: () => this.contributionTextSnapshot().materializeFullText(),
-      getTextSnapshot: () => (this.session ? this.contributionTextSnapshot() : null),
-      getCurrentDocumentSnapshot: () => this.currentDocumentSnapshot(),
-      getDocumentSyncPoint: () => this.currentDocumentEditChain().point,
-      changesSinceDocumentSyncPoint: (point, scope) =>
-        this.currentDocumentEditChain().changesSince(point, scope),
-      getSelections: () => this.inputSelection.resolveViewSelections(),
-      focusEditor: () => this.focus(),
-      setSelection: (anchor, head, timingName, options) =>
-        this.applyRequestedSelection(anchor, head, timingName, options),
-      setSelections: (selections, timingName, revealOffset) =>
-        this.applyRequestedSelections(selections, timingName, revealOffset),
-      applyEdits: (edits, timingName, selection, options) =>
-        this.inputSelection.applyFindEdits(edits, timingName, selection, options),
-      startSnippetSession: (stops) => this.inputSelection.startSnippetSession(stops),
-      setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
-      clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
-      setRowDecorations: (sourceId, decorations) =>
-        this.setSourceRowDecorations(sourceId, decorations, owner),
-      clearRowDecorations: (sourceId) => this.clearSourceRowDecorations(sourceId, owner),
-      registerCommand: (command, handler) =>
-        this.claimedBy(claims, () => this.registerCommandHandler(command, handler)),
-      registerFeature: (key, feature) =>
-        this.claimedBy(claims, () => this.registerFeature(key, feature)),
-      registerProvider: (token, selector, provider) =>
-        this.claimedBy(claims, () =>
-          this.registerLanguageFeatureProvider(token, selector, provider),
-        ),
     }
   }
 
@@ -4469,49 +4348,25 @@ export class Editor {
 
   private notifyEditorFeatureContributions(change: DocumentSessionChange | null): void {
     for (const contribution of Array.from(this.decorationContributions))
-      this.notifyContributionChange(contribution, change, 'decoration')
-
-    for (const contribution of Array.from(this.editorFeatureContributions))
-      this.notifyContributionChange(contribution, change, 'feature')
+      this.notifyDecorationContributionChange(contribution, change)
   }
 
-  private notifyContributionChange(
-    contribution: EditorDecorationContribution | EditorFeatureContribution,
+  private notifyDecorationContributionChange(
+    contribution: EditorDecorationContribution,
     change: DocumentSessionChange | null,
-    kind: 'decoration' | 'feature',
   ): void {
     try {
       contribution.handleEditorChange?.(change)
     } catch (error) {
-      this.removeFailedEditorContribution(contribution, kind, error)
+      this.logContributionFailure('decoration', 'update', error)
+      this.removeFailedDecorationContribution(contribution)
     }
-  }
-
-  private removeFailedEditorContribution(
-    contribution: EditorDecorationContribution | EditorFeatureContribution,
-    kind: 'decoration' | 'feature',
-    error: unknown,
-  ): void {
-    this.logContributionFailure(kind, 'update', error)
-    if (kind === 'decoration') {
-      this.removeFailedDecorationContribution(contribution as EditorDecorationContribution)
-      return
-    }
-
-    this.removeFailedFeatureContribution(contribution as EditorFeatureContribution)
   }
 
   private removeFailedDecorationContribution(contribution: EditorDecorationContribution): void {
     removeArrayItem(this.decorationContributions, contribution)
     deleteMapValue(this.decorationContributionsByProvider, contribution)
     this.disposeContributionSafely(contribution, 'decoration')
-    this.clearContributionRowDecorationSources(contribution)
-  }
-
-  private removeFailedFeatureContribution(contribution: EditorFeatureContribution): void {
-    removeArrayItem(this.editorFeatureContributions, contribution)
-    deleteMapValue(this.editorFeatureContributionsByProvider, contribution)
-    this.disposeContributionSafely(contribution, 'feature')
     this.clearContributionRowDecorationSources(contribution)
   }
 

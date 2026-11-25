@@ -1471,6 +1471,25 @@ export function clearRowTokenState(view: VirtualizedTextViewInternal): void {
   }
 }
 
+export function clearRowTokenStateForRows(
+  view: VirtualizedTextViewInternal,
+  rows: readonly MountedVirtualizedTextRow[],
+): void {
+  if (rows.length === 0) return
+  const run = () => {
+    for (const row of rows) {
+      view.tokenPainter.clearRow(row.tokenHighlightSlotId, row)
+      view.rowTokenSignatures.delete(row.tokenHighlightSlotId)
+    }
+  }
+  if (view.tokenPainter.kind === 'spans') {
+    preserveNativeSelectionAroundDomMutation(view, run)
+    refreshRangeHighlightsAfterTokenDomChange(view)
+  } else {
+    run()
+  }
+}
+
 function createHighlight(view: VirtualizedTextViewInternal): Highlight | null {
   return supportsCssHighlights(view.highlightRegistry) ? new Highlight() : null
 }

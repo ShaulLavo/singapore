@@ -742,13 +742,6 @@ export type EditorSelectionRange = {
   readonly affinity?: SelectionAffinity
 }
 
-type EditorFeatureDomContributionContext = {
-  readonly container: HTMLElement
-  readonly scrollElement: HTMLDivElement
-  readonly contentElement: HTMLDivElement
-  readonly highlightPrefix: string
-}
-
 /** Source reads and synchronization cursors identify the delivered publication during its callbacks. */
 type EditorDocumentContributionContext = {
   hasDocument(): boolean
@@ -762,22 +755,6 @@ type EditorDocumentContributionContext = {
     point: DocumentSyncPoint,
     scope: DocumentLogicalRevisionScope | null,
   ): DocumentChangesSinceSyncPoint | null
-}
-
-type EditorSelectionContributionContext = {
-  getSelections(): readonly EditorResolvedSelection[]
-  focusEditor(): void
-  setSelection(
-    anchor: number,
-    head: number,
-    timingName: string,
-    options?: EditorSetSelectionOptions,
-  ): void
-  setSelections(
-    selections: readonly EditorSelectionRange[],
-    timingName: string,
-    revealOffset?: number,
-  ): void
 }
 
 type EditorRangeHighlightContributionContext = {
@@ -845,15 +822,6 @@ export type EditorSnippetMirror = SnippetMirrorRange
 
 /** One tab stop as a snippet source hands it over: where the caret visits, and its copies. */
 export type EditorSnippetStop = SnippetSessionStop
-
-export type EditorFeatureContributionContext = EditorFeatureDomContributionContext &
-  EditorDocumentContributionContext &
-  EditorSelectionContributionContext &
-  EditorEditContributionContext &
-  EditorRangeHighlightContributionContext &
-  EditorRowDecorationContributionContext &
-  EditorCommandContributionContext &
-  EditorCapabilityContributionContext
 
 export type EditorCommandContribution = EditorDisposable
 
@@ -949,14 +917,6 @@ export type EditorDecorationContributionProvider = {
   createContribution(
     context: EditorDecorationContributionContext,
   ): EditorDecorationContribution | null
-}
-
-export type EditorFeatureContribution = EditorDisposable & {
-  handleEditorChange?(change: EditorContributionChange | null): void
-}
-
-export type EditorFeatureContributionProvider = {
-  createContribution(context: EditorFeatureContributionContext): EditorFeatureContribution | null
 }
 
 export type EditorGutterWidthContext = {
@@ -1119,7 +1079,6 @@ export type EditorInternalViewContributionContext = EditorViewContributionContex
 }
 
 export type EditorInternalPluginContext = EditorPluginContext & {
-  registerEditorFeatureContribution(provider: EditorFeatureContributionProvider): EditorDisposable
   /** Installs a plugin this one uses, once per editor however many use it, until the last lets go. */
   usePlugin(plugin: EditorPlugin): EditorDisposable
 }
@@ -1168,8 +1127,6 @@ export type EditorPluginHostEvents = {
   onCapabilityContributionProviderRemoved?(provider: EditorCapabilityContributionProvider): void
   onEditContributionProviderAdded?(provider: EditorEditContributionProvider): void
   onEditContributionProviderRemoved?(provider: EditorEditContributionProvider): void
-  onEditorFeatureContributionProviderAdded?(provider: EditorFeatureContributionProvider): void
-  onEditorFeatureContributionProviderRemoved?(provider: EditorFeatureContributionProvider): void
   onGutterContributionsChanged?(): void
   onInjectedTextRowProvidersChanged?(): void
 }
@@ -1376,7 +1333,6 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly capabilityContributions: EditorCapabilityContributionProvider[] = []
   private readonly editContributions: EditorEditContributionProvider[] = []
   private readonly decorationContributions: EditorDecorationContributionProvider[] = []
-  private readonly editorFeatureContributions: EditorFeatureContributionProvider[] = []
   private readonly gutterContributions: EditorGutterContribution[] = []
   private readonly injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
   private readonly inlineReplacementProviders: EditorInlineReplacementSource[] = []
@@ -1525,18 +1481,6 @@ export class EditorPluginHost implements EditorDisposable {
     return contributions
   }
 
-  public createEditorFeatureContributions(
-    context: EditorFeatureContributionContext,
-  ): EditorFeatureContribution[] {
-    const contributions: EditorFeatureContribution[] = []
-    for (const provider of this.editorFeatureContributions) {
-      const contribution = provider.createContribution(context)
-      if (contribution) contributions.push(contribution)
-    }
-
-    return contributions
-  }
-
   public getGutterContributions(): readonly EditorGutterContribution[] {
     return [...this.gutterContributions]
   }
@@ -1582,10 +1526,6 @@ export class EditorPluginHost implements EditorDisposable {
     return this.decorationContributions
   }
 
-  public getEditorFeatureContributionProviders(): readonly EditorFeatureContributionProvider[] {
-    return this.editorFeatureContributions
-  }
-
   public getActivePluginNames(): readonly string[] {
     const names: string[] = []
     for (const [plugin, state] of this.installedPlugins) {
@@ -1626,7 +1566,6 @@ export class EditorPluginHost implements EditorDisposable {
     this.capabilityContributions.length = 0
     this.editContributions.length = 0
     this.decorationContributions.length = 0
-    this.editorFeatureContributions.length = 0
     this.gutterContributions.length = 0
     for (const disposable of this.injectedTextRowProviderInvalidationDisposables.values()) {
       disposable.dispose()
@@ -1874,8 +1813,6 @@ export class EditorPluginHost implements EditorDisposable {
         this.ownRegistration(owner, () => this.registerEditContribution(provider)),
       registerDecorationContribution: (provider) =>
         this.ownRegistration(owner, () => this.registerDecorationContribution(provider)),
-      registerEditorFeatureContribution: (provider) =>
-        this.ownRegistration(owner, () => this.registerEditorFeatureContribution(provider)),
       registerGutterContribution: (contribution) =>
         this.ownRegistration(owner, () => this.registerGutterContribution(contribution)),
       registerInjectedTextRowProvider: (provider) =>
@@ -2055,30 +1992,6 @@ export class EditorPluginHost implements EditorDisposable {
 
     this.decorationContributions.splice(index, 1)
     this.events.onDecorationContributionProviderRemoved?.(provider)
-  }
-
-  private registerEditorFeatureContribution(
-    provider: EditorFeatureContributionProvider,
-  ): EditorDisposable {
-    this.editorFeatureContributions.push(provider)
-    const disposable = disposableOnce(() => this.unregisterEditorFeatureContribution(provider))
-
-    try {
-      this.events.onEditorFeatureContributionProviderAdded?.(provider)
-    } catch (error) {
-      disposable.dispose()
-      throw error
-    }
-
-    return disposable
-  }
-
-  private unregisterEditorFeatureContribution(provider: EditorFeatureContributionProvider): void {
-    const index = this.editorFeatureContributions.indexOf(provider)
-    if (index === -1) return
-
-    this.editorFeatureContributions.splice(index, 1)
-    this.events.onEditorFeatureContributionProviderRemoved?.(provider)
   }
 
   private registerGutterContribution(contribution: EditorGutterContribution): EditorDisposable {

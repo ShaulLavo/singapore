@@ -8,10 +8,9 @@ import {
 } from './mergeConflicts'
 import type {
   EditorContributionChange,
-  EditorFeatureContribution,
-  EditorFeatureContributionContext,
+  EditorDecorationContributionContext,
+  EditorEditContributionContext,
   EditorInjectedTextRow,
-  EditorInternalPluginContext,
   EditorMinimapDecoration,
   EditorMinimapFeature,
   EditorPlugin,
@@ -52,7 +51,7 @@ export type EditorMergeConflictPluginOptions = {
 
 type MergeConflictHost = {
   getTextSnapshot(): TextReadSnapshot | null
-  getDocumentSyncPoint(): DocumentSyncPoint
+  getDocumentSyncPoint(): DocumentSyncPoint | null
   changesSinceDocumentSyncPoint(
     point: DocumentSyncPoint,
     scope: null,
@@ -120,19 +119,99 @@ export function createMergeConflictPlugin(
     name: EDITOR_MERGE_CONFLICT_FEATURE_ID,
     activate(context) {
       // Per activation: one plugin object in two editors must not share a controller.
-      let controller: EditorMergeConflictController | null = null
-      const internalContext = context as EditorInternalPluginContext
+      const host = createMergeConflictHost()
+      const controller = new EditorMergeConflictController(host)
+      const feature: EditorMergeConflictFeature = {
+        getConflicts: () => controller.getConflicts(),
+        resolveConflict: (index, resolution) => controller.resolveConflict(index, resolution),
+        resolveAllConflicts: (resolution) => controller.resolveAllConflicts(resolution),
+        revealConflict: (index) => controller.revealConflict(index),
+        navigateConflict: (direction) => controller.navigateConflict(direction),
+      }
       const disposables: EditorDisposable[] = [
-        internalContext.registerEditorFeatureContribution({
-          createContribution(contributionContext) {
-            controller = new EditorMergeConflictController(featureHost(contributionContext))
-            return createMergeConflictFeatureContribution(contributionContext, controller, options)
+        context.registerEditContribution({
+          createContribution(editContext) {
+            host.setEditContext(editContext)
+            return {
+              dispose() {
+                host.setEditContext(null)
+              },
+            }
+          },
+        }),
+        context.registerDecorationContribution({
+          createContribution(decorationContext) {
+            host.setDecorationContext(decorationContext)
+            return {
+              handleEditorChange: (change) => controller.handleEditorChange(change),
+              dispose() {
+                controller.dispose()
+                host.setDecorationContext(null)
+              },
+            }
+          },
+        }),
+        context.registerCapabilityContribution({
+          createContribution(capabilityContext) {
+            return capabilityContext.registerFeature(EDITOR_MERGE_CONFLICT_FEATURE, feature)
+          },
+        }),
+        context.registerCommandContribution({
+          createContribution(commandContext) {
+            const commandDisposables: EditorDisposable[] = [
+              commandContext.registerCommand('merge-conflict.accept.current', () =>
+                controller.resolveConflictAtSelection('ours'),
+              ),
+              commandContext.registerCommand('merge-conflict.accept.incoming', () =>
+                controller.resolveConflictAtSelection('theirs'),
+              ),
+              commandContext.registerCommand('merge-conflict.accept.both', () =>
+                controller.resolveConflictAtSelection('both'),
+              ),
+              commandContext.registerCommand('merge-conflict.accept.selection', () =>
+                controller.resolveSelectedSide(),
+              ),
+              commandContext.registerCommand('merge-conflict.accept.all-current', () =>
+                controller.resolveAllConflicts('ours'),
+              ),
+              commandContext.registerCommand('merge-conflict.accept.all-incoming', () =>
+                controller.resolveAllConflicts('theirs'),
+              ),
+              commandContext.registerCommand('merge-conflict.accept.all-both', () =>
+                controller.resolveAllConflicts('both'),
+              ),
+              commandContext.registerCommand('merge-conflict.next', () =>
+                controller.navigateConflict('next'),
+              ),
+              commandContext.registerCommand('merge-conflict.previous', () =>
+                controller.navigateConflict('previous'),
+              ),
+              commandContext.registerCommand('merge-conflict.compare', () => {
+                const conflict = options.compare ? controller.conflictAtSelection() : null
+                if (!conflict) return false
+                options.compare?.(conflict)
+                return true
+              }),
+            ]
+            return {
+              dispose() {
+                for (const disposable of commandDisposables) disposable.dispose()
+              },
+            }
           },
         }),
         context.registerViewContribution({
-          createContribution(contributionContext) {
-            if (!controller) return null
-            return new MergeConflictViewContribution(contributionContext, controller, options)
+          createContribution(viewContext) {
+            host.setViewContext(viewContext)
+            const view = new MergeConflictViewContribution(viewContext, controller, options)
+            return {
+              inputs: view.inputs,
+              update: (snapshot, kind, change) => view.update(snapshot, kind, change),
+              dispose() {
+                view.dispose()
+                host.setViewContext(null)
+              },
+            }
           },
         }),
       ]
@@ -141,9 +220,8 @@ export function createMergeConflictPlugin(
       disposables.push(
         context.registerInjectedTextRowProvider({
           getInjectedTextRows: (rowContext) =>
-            controller ? lensRows(controller.conflictsForSource(rowContext.textSnapshot)) : [],
-          onDidChangeInjectedTextRows: (listener) =>
-            controller ? controller.subscribe(listener) : { dispose() {} },
+            lensRows(controller.conflictsForSource(rowContext.textSnapshot)),
+          onDidChangeInjectedTextRows: (listener) => controller.subscribe(listener),
         }),
       )
       return disposables
@@ -472,75 +550,43 @@ class MergeConflictViewContribution implements EditorViewContribution {
   }
 }
 
-function createMergeConflictFeatureContribution(
-  context: EditorFeatureContributionContext,
-  controller: EditorMergeConflictController,
-  options: EditorMergeConflictPluginOptions,
-): EditorFeatureContribution {
-  const feature: EditorMergeConflictFeature = {
-    getConflicts: () => controller.getConflicts(),
-    resolveConflict: (index, resolution) => controller.resolveConflict(index, resolution),
-    resolveAllConflicts: (resolution) => controller.resolveAllConflicts(resolution),
-    revealConflict: (index) => controller.revealConflict(index),
-    navigateConflict: (direction) => controller.navigateConflict(direction),
-  }
-  const disposables: EditorDisposable[] = [
-    context.registerFeature(EDITOR_MERGE_CONFLICT_FEATURE, feature),
-    context.registerCommand('merge-conflict.accept.current', () =>
-      controller.resolveConflictAtSelection('ours'),
-    ),
-    context.registerCommand('merge-conflict.accept.incoming', () =>
-      controller.resolveConflictAtSelection('theirs'),
-    ),
-    context.registerCommand('merge-conflict.accept.both', () =>
-      controller.resolveConflictAtSelection('both'),
-    ),
-    context.registerCommand('merge-conflict.accept.selection', () =>
-      controller.resolveSelectedSide(),
-    ),
-    context.registerCommand('merge-conflict.accept.all-current', () =>
-      controller.resolveAllConflicts('ours'),
-    ),
-    context.registerCommand('merge-conflict.accept.all-incoming', () =>
-      controller.resolveAllConflicts('theirs'),
-    ),
-    context.registerCommand('merge-conflict.accept.all-both', () =>
-      controller.resolveAllConflicts('both'),
-    ),
-    context.registerCommand('merge-conflict.next', () => controller.navigateConflict('next')),
-    context.registerCommand('merge-conflict.previous', () =>
-      controller.navigateConflict('previous'),
-    ),
-    context.registerCommand('merge-conflict.compare', () => {
-      const conflict = options.compare ? controller.conflictAtSelection() : null
-      if (!conflict) return false
-      options.compare?.(conflict)
-      return true
-    }),
-  ]
-
-  return {
-    handleEditorChange: (change) => controller.handleEditorChange(change),
-    dispose() {
-      for (const disposable of disposables) disposable.dispose()
-      controller.dispose()
-    },
-  }
+type MutableMergeConflictHost = MergeConflictHost & {
+  setEditContext(context: EditorEditContributionContext | null): void
+  setDecorationContext(context: EditorDecorationContributionContext | null): void
+  setViewContext(context: EditorViewContributionContext | null): void
 }
 
-function featureHost(context: EditorFeatureContributionContext): MergeConflictHost {
+function createMergeConflictHost(): MutableMergeConflictHost {
+  let editContext: EditorEditContributionContext | null = null
+  let decorationContext: EditorDecorationContributionContext | null = null
+  let viewContext: EditorViewContributionContext | null = null
   return {
-    getTextSnapshot: () => context.getTextSnapshot(),
-    getDocumentSyncPoint: () => context.getDocumentSyncPoint(),
+    setEditContext(context) {
+      editContext = context
+    },
+    setDecorationContext(context) {
+      decorationContext = context
+    },
+    setViewContext(context) {
+      viewContext = context
+    },
+    getTextSnapshot: () =>
+      decorationContext?.getTextSnapshot() ?? editContext?.getTextSnapshot() ?? null,
+    getDocumentSyncPoint: () =>
+      decorationContext?.getDocumentSyncPoint() ?? editContext?.getDocumentSyncPoint() ?? null,
     changesSinceDocumentSyncPoint: (point, scope) =>
-      context.changesSinceDocumentSyncPoint(point, scope),
-    focusEditor: () => context.focusEditor(),
-    getSelections: () => context.getSelections(),
+      decorationContext?.changesSinceDocumentSyncPoint(point, scope) ??
+      editContext?.changesSinceDocumentSyncPoint(point, scope) ??
+      null,
+    focusEditor: () => (viewContext ?? editContext)?.focusEditor(),
+    getSelections: () => editContext?.getSelections() ?? [],
     setSelection: (anchor, head, timingName, options) =>
-      context.setSelection(anchor, head, timingName, options),
-    applyEdits: (edits, timingName, selection) => context.applyEdits(edits, timingName, selection),
-    setRowDecorations: (sourceId, decorations) => context.setRowDecorations(sourceId, decorations),
-    clearRowDecorations: (sourceId) => context.clearRowDecorations(sourceId),
+      viewContext?.setSelection(anchor, head, timingName, options),
+    applyEdits: (edits, timingName, selection) =>
+      editContext?.applyEdits(edits, timingName, selection) ?? false,
+    setRowDecorations: (sourceId, decorations) =>
+      decorationContext?.setRowDecorations(sourceId, decorations),
+    clearRowDecorations: (sourceId) => decorationContext?.clearRowDecorations(sourceId),
   }
 }
 

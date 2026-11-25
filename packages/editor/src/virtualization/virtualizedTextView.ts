@@ -31,7 +31,11 @@ import { type AtomicRanges, atomicRangesForInlineMap } from '../atomicRanges'
 import { glyphAdvancesFor, type GlyphAdvances } from './glyphAdvances'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
 import type { TextOffsetRange } from '../textRanges'
-import { normalizeTabSize, type InjectedTextRow } from '../displayTransforms'
+import {
+  normalizeTabSize,
+  type InlineReplacement,
+  type InjectedTextRow,
+} from '../displayTransforms'
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
 import { firstBatchChangeEndingAtOrAfter, type TextEditBatch } from '../textEditBatch'
 import type { EditorTheme } from '../theme'
@@ -84,6 +88,7 @@ import {
   clampStoredSelection,
   clearRangeHighlight,
   clearRowTokenState,
+  clearRowTokenStateForRows,
   clearSelection,
   clearSelectionHighlight,
   cancelDeferredCaret,
@@ -966,12 +971,16 @@ export class VirtualizedTextView {
   private refreshInlineReveal(): void {
     const view = this.view
     const base = view.inlineMapBase
+    const previous = view.model.inlineMap
     const next = base ? revealInlineMap(base, selectionOffsetRanges(view)) : null
-    if (view.model.inlineMap === next) return
+    if (previous === next) return
 
+    const changedBufferRows = changedInlineBufferRows(previous, next)
     view.model.inlineMap = next
-    clearRowTokenState(view)
+    if (changedBufferRows.size === 0) return
+
     refreshDisplayProjection(view, horizontalViewportColumns(view))
+    clearRowTokenStateForRows(view, mountedRowsInvalidatedByInlineReveal(view, changedBufferRows))
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
   }
@@ -3615,4 +3624,81 @@ function dirtyTokenProjectionStartRow(current: number | null, row: number): numb
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+function changedInlineBufferRows(
+  previous: InlineMap | null,
+  next: InlineMap | null,
+): ReadonlySet<number> {
+  const changed = new Set<number>()
+  const previousRows = previous?.rowReplacements
+  const nextRows = next?.rowReplacements
+  if (previousRows === nextRows) return changed
+  if (previousRows) {
+    for (const [row, prevList] of previousRows) {
+      if (!sameInlineReplacements(prevList, nextRows?.get(row))) changed.add(row)
+    }
+  }
+  if (nextRows) {
+    for (const [row, nextList] of nextRows) {
+      if (previousRows?.has(row)) continue
+      if (nextList.length > 0) changed.add(row)
+    }
+  }
+  return changed
+}
+
+function sameInlineReplacements(
+  left: readonly InlineReplacement[] | undefined,
+  right: readonly InlineReplacement[] | undefined,
+): boolean {
+  if (left === right) return true
+  const leftLength = left?.length ?? 0
+  const rightLength = right?.length ?? 0
+  if (leftLength !== rightLength) return false
+  for (let index = 0; index < leftLength; index += 1) {
+    const a = left![index]!
+    const b = right![index]!
+    if (
+      a.id !== b.id ||
+      a.startColumn !== b.startColumn ||
+      a.endColumn !== b.endColumn ||
+      a.text !== b.text ||
+      a.insertion !== b.insertion ||
+      a.kind !== b.kind ||
+      a.className !== b.className ||
+      a.cursorStops !== b.cursorStops ||
+      a.wrap !== b.wrap ||
+      a.render !== b.render ||
+      a.key !== b.key ||
+      a.metadata !== b.metadata
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function mountedRowsInvalidatedByInlineReveal(
+  view: VirtualizedTextViewInternal,
+  changedBufferRows: ReadonlySet<number>,
+): readonly MountedVirtualizedTextRow[] {
+  const invalidated: MountedVirtualizedTextRow[] = []
+  for (const row of view.rowElements.values()) {
+    if (changedBufferRows.has(row.bufferRow)) {
+      invalidated.push(row)
+      continue
+    }
+    const metrics = view.model.projection.getRowMetrics(row.index)
+    if (
+      !metrics ||
+      metrics.source !== row.source ||
+      metrics.bufferRow !== row.bufferRow ||
+      metrics.startOffset !== row.startOffset ||
+      metrics.endOffset !== row.endOffset
+    ) {
+      invalidated.push(row)
+    }
+  }
+  return invalidated
 }
