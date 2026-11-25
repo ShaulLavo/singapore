@@ -7,6 +7,7 @@ import {
 import {
   createEditorDocumentAnalysis,
   retainedSyntaxCanWarm,
+  setRetainedSyntaxDisplayDemand,
   type EditorDocumentAnalysis,
 } from '../src/editor/documentAnalysis'
 import { EditorSyntaxController } from '../src/editor/syntaxController'
@@ -5285,6 +5286,202 @@ describe('viewport syntax readiness state machine (#169)', () => {
           view2.dispose()
           analysis2.dispose()
         }
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('prevents an older un-published lease result from repopulating the shared cache after bypassCache eviction', async () => {
+      const buffer = createEditorTextBuffer('# Heading\n'.repeat(30))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'delayed-contributor-no-resurrect-after-bypass',
+      })
+      const oldBracket = {
+        index: 10,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      let calls = 0
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        calls += 1
+        return answerFor(range, {
+          brackets: calls === 1 ? [oldBracket] : [],
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex, calls]),
+          },
+        })
+      })
+      const provider = structuralProvider(query)
+      const leaseA = analysis.borrowStructural({
+        languageId: 'markdown',
+        includeHighlights: true,
+        includeCaptures: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      const leaseB = analysis.borrowStructural({
+        languageId: 'markdown',
+        includeHighlights: true,
+        includeCaptures: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      try {
+        await leaseA.refreshBase()
+        const snapshot = buffer.getTextSnapshot()
+        // Lease B has a frame elsewhere so shared cache is not pinned; it queries [0, 20)
+        // without publishing its contributor yet.
+        leaseB.setDisplayDemand({
+          kind: 'frame',
+          snapshot,
+          ranges: [{ startIndex: 200, endIndex: 220 }],
+        })
+        const range = { startIndex: 0, endIndex: 20 }
+        const oldResult = await leaseB.queryRange(range)
+        expect(oldResult.brackets).toEqual([oldBracket])
+
+        // Lease A bypasses cache for [0, 20) and gets a newer result without the bracket.
+        leaseA.setDisplayDemand({ kind: 'frame', snapshot, ranges: [range] })
+        const freshResult = await leaseA.queryRange(range, { bypassCache: true })
+        expect(freshResult.brackets).toEqual([])
+
+        // Lease A moves away so the newer slot is evicted from shared cache.
+        leaseA.setDisplayDemand({
+          kind: 'frame',
+          snapshot,
+          ranges: [{ startIndex: 100, endIndex: 120 }],
+        })
+        expect(leaseA.read(range).kind).toBe('pending')
+        // Lease B now publishes its older contributor; it must NOT repopulate the evicted slot.
+        setRetainedSyntaxDisplayDemand(leaseB, { kind: 'frame', snapshot, ranges: [range] }, [
+          { range, result: oldResult },
+        ])
+
+        const nextRead = leaseA.read(range)
+        expect(nextRead.kind).toBe('pending')
+        const reloaded = await leaseA.queryRange(range)
+        expect(reloaded.brackets).toEqual([])
+        expect(calls).toBe(3)
+      } finally {
+        leaseB.dispose()
+        leaseA.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('compacts evicted off-screen prefetch paint when host tokens are installed with setTokens', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(1000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'host-tokens-prefetch-compaction',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          tokens: [
+            { start: range.startIndex, end: range.startIndex + 2, style: { color: 'blue' } },
+          ],
+        }),
+      )
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 20,
+      })
+      try {
+        const hostTokens = EditorTokenStore.fromTokens([
+          { start: 1990, end: 1995, style: { color: 'host-gold' } },
+        ])
+        view.syntax.setTokens(hostTokens)
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        for (let i = 0; i < 40; i += 1) {
+          const startIndex = 100 + i * 40
+          view.syntax.prefetchVisibleRange(
+            1,
+            { startIndex, endIndex: startIndex + 20 },
+            { delayMs: 0 },
+          )
+          await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(i + 2))
+          await settle()
+          view.syntax.setDisplayDemand({
+            kind: 'frame',
+            snapshot: buffer.getTextSnapshot(),
+            ranges: [{ startIndex: 0, endIndex: 20 }],
+          })
+        }
+
+        const tokens = view.syntax.tokens.toTokens()
+        // Only the settled viewport token at 0 and the preserved host token at 1990 remain.
+        expect(tokens).toEqual([
+          { start: 0, end: 2, style: { color: 'blue' } },
+          { start: 1990, end: 1995, style: { color: 'host-gold' } },
+        ])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('clears previous-parse complete range slots on same-text degraded base retry', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'same-text-retry-clears-complete-ranges',
+      })
+      let baseAttempt = 0
+      const bracket1 = {
+        index: 1,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const bracket2 = {
+        index: 2,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          brackets: baseAttempt === 1 ? [bracket1] : [bracket2],
+        }),
+      )
+      const provider = structuralProvider(query, {
+        analyze: async () => {
+          baseAttempt += 1
+          return baseAttempt === 1
+            ? {
+                ...createEmptySyntaxResult(),
+                degraded: {
+                  kind: 'optional-phase-failed',
+                  phase: 'parse',
+                  message: 'transient degraded base',
+                },
+              }
+            : createEmptySyntaxResult()
+        },
+      })
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(baseAttempt).toBe(1)
+        expect(view.syntax.brackets).toEqual([bracket1])
+
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.brackets).toEqual([bracket2]))
+        expect(baseAttempt).toBe(2)
+        expect(query).toHaveBeenCalledTimes(2)
+        expect(view.syntax.status).toBe('ready')
       } finally {
         view.dispose()
         analysis.dispose()

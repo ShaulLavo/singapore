@@ -788,7 +788,10 @@ type RetainedRangeContributor = {
   readonly range: EditorSyntaxRange
   readonly result: EditorSyntaxResult
 }
-type ReadyRange = RetainedRangeContributor & { readonly point: DocumentSyncPoint }
+type ReadyRange = RetainedRangeContributor & {
+  readonly point: DocumentSyncPoint
+  readonly generation: number
+}
 type PendingRangeQuery = {
   readonly snapshot: DocumentTextSnapshot
   readonly point: DocumentSyncPoint
@@ -855,12 +858,15 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       readonly snapshot: DocumentTextSnapshot
       readonly point: DocumentSyncPoint
       readonly generation: number
+      readonly epoch: number
     }
   >()
   private ranges = new Map<string, ReadyRange>()
   private queries = new Map<string, PendingRangeQuery>()
   /** Identifies each range query, so its release timer belongs to it alone. */
   private nextQueryId = 0
+  /** Monotonic counter bumped on bypassCache replacements to prevent older evicted results from re-entering `ranges`. */
+  private bypassEpoch = 0
   private rangePoint: DocumentSyncPoint | null = null
   private stoppedWarmGeneration: number | null = null
   private static readonly MAX_INCREMENTAL_STEPS = 16
@@ -1047,13 +1053,18 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       !isTerminalIncompleteSyntaxResult(contributor.result) &&
       origin?.snapshot === snapshot &&
       origin.point === this.buffer.getDocumentSyncPoint() &&
-      origin.generation === this.generation
+      origin.generation === this.generation &&
+      origin.epoch === this.bypassEpoch
     ) {
-      if (existing && existing.point === origin.point) {
+      if (
+        existing &&
+        existing.point === origin.point &&
+        existing.generation === origin.generation
+      ) {
         protectedSlots.add(existing)
         return
       }
-      cached = { ...contributor, point: origin.point }
+      cached = { ...contributor, point: origin.point, generation: origin.generation }
       this.ranges.set(key, cached)
     }
     if (cached) protectedSlots.add(cached)
@@ -1090,6 +1101,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     if (
       exact &&
       exact.point === this.queuedPoint &&
+      exact.generation === this.generation &&
       !isTerminalIncompleteSyntaxResult(exact.result) &&
       exact.result.projection.analysis?.kind !== 'partial'
     ) {
@@ -1097,7 +1109,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
     let best: ReadyRange | undefined
     for (const candidate of this.ranges.values()) {
-      if (candidate.point !== this.queuedPoint) continue
+      if (candidate.point !== this.queuedPoint || candidate.generation !== this.generation) continue
       if (isTerminalIncompleteSyntaxResult(candidate.result)) continue
       if (!rangeContains(candidate.range, range)) continue
       if (!best) {
@@ -1330,6 +1342,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     }
     this.cancelOrphanedQueries()
     let queried = false
+    const startEpoch = this.bypassEpoch
     const cancellation = new AbortController()
     const pending: PendingRangeQuery = {
       snapshot: this.buffer.getTextSnapshot(),
@@ -1363,12 +1376,19 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
           syntaxResultCoversRange(result, range) &&
           this.isCurrentPendingRange(key, pending)
         ) {
+          if (pending.bypassCache) this.bypassEpoch += 1
+          const epoch = pending.bypassCache ? this.bypassEpoch : startEpoch
           this.resultOrigins.set(result, {
             snapshot: pending.snapshot,
             point,
             generation: this.generation,
+            epoch,
           })
-          if (pending.admission === 'cache' && !isTerminalIncompleteSyntaxResult(result)) {
+          if (
+            pending.admission === 'cache' &&
+            !isTerminalIncompleteSyntaxResult(result) &&
+            epoch === this.bypassEpoch
+          ) {
             const cacheKey = rangeKey(range)
             const previous = this.ranges.get(cacheKey)
             if (previous && previous.result !== result) {
@@ -1381,7 +1401,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
                 }
               }
             }
-            this.ranges.set(cacheKey, { point, range, result })
+            this.ranges.set(cacheKey, { point, generation: this.generation, range, result })
           }
         }
         this.retention.changed()
@@ -1446,6 +1466,14 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       query.point === this.buffer.getDocumentSyncPoint() &&
       query.snapshot === this.buffer.getTextSnapshot()
     )
+  }
+
+  override refresh(): void {
+    this.ranges.clear()
+    this.previousRanges = null
+    this.incrementalSteps = []
+    for (const query of this.queries.values()) query.admission = 'return-only'
+    super.refresh()
   }
 
   protected override runtimeResultChanged(): void {
@@ -1513,9 +1541,11 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
               snapshot: state.snapshot,
               point: read.revision.point,
               generation,
+              epoch: this.bypassEpoch,
             })
             this.ranges.set(rangeKey(promoted.range), {
               point: read.revision.point,
+              generation,
               range: promoted.range,
               result: promoted.result,
             })

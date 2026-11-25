@@ -418,6 +418,10 @@ export class EditorSyntaxController {
     readonly store: EditorTokenStore
     readonly snapshot: DocumentTextSnapshot
   } | null = null
+  #externalBaseTokens: {
+    readonly store: EditorTokenStore
+    readonly snapshot: DocumentTextSnapshot
+  } | null = null
   #projectedRangeTokens: EditorTokenStore | null = null
   #awaitingProjectedEditTokens = false
   #copyOwner: 'none' | 'range' | 'external' = 'none'
@@ -631,6 +635,16 @@ export class EditorSyntaxController {
         const tokens = compactSyntaxRangeTokens(this.#currentTokens, tokenRanges)
         this.#currentTokens = tokens
         this.#rangeTokenOwner = { store: tokens, snapshot: demand.snapshot }
+      } else if (!this.#highlighterSession) {
+        const removedEntries = oldCache.filter((entry) => !retained.has(entry))
+        const evictedRanges = this.#tokenCoverage(removedEntries)
+        if (evictedRanges.length > 0) {
+          const fallback =
+            this.#externalBaseTokens?.snapshot === demand.snapshot
+              ? this.#externalBaseTokens.store
+              : EditorTokenStore.empty()
+          this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, evictedRanges)
+        }
       }
       if (!this.#highlighterSession && this.#copyOwner === 'range') {
         this.#compactRangeCopyStore(nextCache, this.#currentTokens, rangeOwned)
@@ -896,10 +910,18 @@ export class EditorSyntaxController {
     this.#currentTokens = tokens
     if (current) {
       this.#copyOwner = owner
+      if (owner === 'external') {
+        const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+        this.#externalBaseTokens = snapshot ? { store: tokens, snapshot } : null
+      } else {
+        this.#externalBaseTokens = null
+      }
       if (owner !== 'range') this.rangeCopyOwner = null
       this.#acceptedCopyTokens = copyTokens
       this.#acceptedTokensDocumentVersion = this.options.getDocumentVersion()
       this.#acceptedTokensTextVersion = this.options.getTextVersion()
+    } else if (tokens !== previousTokens) {
+      this.#externalBaseTokens = null
     }
     if (this.#preparedInitialTokensInstalled) {
       this.#preparedInitialTokensInstalled = false
@@ -3459,8 +3481,16 @@ export class EditorSyntaxController {
 
       if (!this.#highlighterSession) {
         const baseTokens =
-          evictedPrefetches.length > 0 && canOwnRanges
-            ? compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(keptEntries))
+          evictedPrefetches.length > 0
+            ? canOwnRanges
+              ? compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(keptEntries))
+              : mergeTokensOnStrips(
+                  this.#currentTokens,
+                  this.#externalBaseTokens?.snapshot === snapshot
+                    ? this.#externalBaseTokens.store
+                    : EditorTokenStore.empty(),
+                  this.#tokenCoverage(evictedPrefetches),
+                )
             : this.#currentTokens
         const nextTokens = mergeTokensOnStrips(baseTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
