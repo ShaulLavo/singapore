@@ -1,6 +1,8 @@
 import {
   LspServerExitedError,
+  createStdioLspTransport,
   type LspManagedTransport,
+  type LspStdio,
   type LspTransportHandler,
 } from '@singapore-editor/lsp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -275,6 +277,69 @@ describe('LspConnectionPool', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(FakeTransport.created).toHaveLength(2)
+  })
+
+  it('waits for a server whose factory had not returned when its connection closed', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    let starts = 0
+    let attach!: (transport: LspManagedTransport) => void
+    const options = connectionOptions({
+      createTransport: () => {
+        starts += 1
+        if (starts > 1) return new StoppingTransport()
+        return new Promise<LspManagedTransport>((resolve) => {
+          attach = resolve
+        })
+      },
+    })
+    provider.acquire(options, callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+
+    provider.acquire(options, callbacks())
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(starts).toBe(1)
+
+    const late = new StoppingTransport()
+    attach(late)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(late.closed).toBe(true)
+    expect(starts).toBe(1)
+
+    late.confirmGone()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(starts).toBe(2)
+  })
+
+  it('holds back a replacement that the old server asks for while it is being stopped', async () => {
+    vi.useFakeTimers()
+    const provider = pool.provider(KEY)
+    const servers: LspStdio[] = []
+    let replacement: LspConnectionLease | null = null
+    const options: LspConnectionOptions = connectionOptions({
+      timeoutMs: 600_000,
+      createTransport: () => {
+        const server = createStdioLspTransport({
+          stop: () => {
+            replacement ??= provider.acquire(options, callbacks())
+          },
+        })
+        servers.push(server)
+        return server.transport
+      },
+    })
+    provider.acquire(options, callbacks()).release()
+    vi.advanceTimersByTime(60_000)
+    expect(replacement).not.toBeNull()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(servers).toHaveLength(1)
+
+    servers[0]!.exited()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(servers).toHaveLength(2)
   })
 
   it('starts a key at once when no server of it is still going', async () => {
