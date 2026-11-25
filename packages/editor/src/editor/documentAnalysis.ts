@@ -1497,6 +1497,10 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     if (state.kind !== 'ready') return
 
     const previous = this.lastBase
+    const samePointReplacement =
+      previous !== null &&
+      previous.read.revision.point === read.revision.point &&
+      previous.parseId !== generation
     const invalidation = state.result.projection.invalidation
     const isComplete = (result: EditorSyntaxResult): boolean =>
       result.projection.analysis?.kind !== 'partial' && !isTerminalIncompleteSyntaxResult(result)
@@ -1564,6 +1568,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       }
     }
     this.previousRanges = null
+    if (samePointReplacement) this.produced.fire()
   }
 
   override changed(read: DocumentRead): void {

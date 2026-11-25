@@ -38,7 +38,10 @@ import type { EditorSyntaxLanguageId, FoldRange } from '../syntax/session'
 import type { EditorTheme } from '../theme'
 import { editorThemesEqual } from '../theme'
 import { EditorTokenStore, toEditorTokenStore } from '../syntax/tokenStore'
+import { createTextEditBatch } from '../textEditBatch'
+import type { TextEdit } from '../tokens'
 import { foldRangeKey } from './folds'
+import { projectTokensThroughEdit, projectTokensThroughEdits } from './tokenProjection'
 import type { EditorSyntaxStatus } from './types'
 import { LatestAsyncRequest } from './latestAsyncRequest'
 import { syntaxRefreshDelay, SYNTAX_REFRESH_MAX_DELAY_MS } from './editorUtils'
@@ -422,6 +425,7 @@ export class EditorSyntaxController {
     readonly store: EditorTokenStore
     readonly snapshot: DocumentTextSnapshot
   } | null = null
+  #pendingUnownedStrips: readonly EditorSyntaxRange[] = []
   #projectedRangeTokens: EditorTokenStore | null = null
   #awaitingProjectedEditTokens = false
   #copyOwner: 'none' | 'range' | 'external' = 'none'
@@ -910,6 +914,7 @@ export class EditorSyntaxController {
     this.#currentTokens = tokens
     if (current) {
       this.#copyOwner = owner
+      this.#pendingUnownedStrips = []
       if (owner === 'external') {
         const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
         this.#externalBaseTokens = snapshot ? { store: tokens, snapshot } : null
@@ -920,8 +925,6 @@ export class EditorSyntaxController {
       this.#acceptedCopyTokens = copyTokens
       this.#acceptedTokensDocumentVersion = this.options.getDocumentVersion()
       this.#acceptedTokensTextVersion = this.options.getTextVersion()
-    } else if (tokens !== previousTokens) {
-      this.#externalBaseTokens = null
     }
     if (this.#preparedInitialTokensInstalled) {
       this.#preparedInitialTokensInstalled = false
@@ -1197,6 +1200,8 @@ export class EditorSyntaxController {
     this.#lastInitialHighlightTerminalStatus = 'plain'
     this.#currentBrackets = []
     this.#currentInjections = []
+    this.#externalBaseTokens = null
+    this.#pendingUnownedStrips = []
     this.#clearSyntaxRangeCache()
     this.#copyOwner = 'none'
     this.#resetSyntaxContentVersion()
@@ -1472,6 +1477,44 @@ export class EditorSyntaxController {
       !this.#highlighterSession &&
       (this.#rangeTokenOwner?.store === this.#currentTokens ||
         (this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens))
+    if (!this.#highlighterSession && !hadRangeOwnedPaint) {
+      const priorStrips = mergeSyntaxRanges(
+        this.#tokenCoverage(this.#rangeEntries).concat(this.#pendingUnownedStrips),
+      )
+      this.#pendingUnownedStrips =
+        priorStrips.length > 0
+          ? projectRangesThroughEdits(priorStrips, change.edits, change.textSnapshot.length)
+          : []
+      if (this.#externalBaseTokens) {
+        if (change.edits.length === 1) {
+          this.#externalBaseTokens = {
+            store: projectTokensThroughEdit(
+              this.#externalBaseTokens.store,
+              change.edits[0]!,
+              this.#externalBaseTokens.snapshot,
+            ),
+            snapshot: change.textSnapshot,
+          }
+        } else if (change.edits.length > 1) {
+          this.#externalBaseTokens = {
+            store: projectTokensThroughEdits(
+              this.#externalBaseTokens.store,
+              createTextEditBatch(
+                this.#externalBaseTokens.snapshot,
+                change.textSnapshot,
+                change.edits,
+              ),
+            ),
+            snapshot: change.textSnapshot,
+          }
+        } else {
+          this.#externalBaseTokens = null
+        }
+      }
+    } else {
+      this.#pendingUnownedStrips = []
+      this.#externalBaseTokens = null
+    }
     this.#rangeEntries = []
     this.#rangeScopeOwners = []
     this.rangeCopyOwner = null
@@ -1497,6 +1540,10 @@ export class EditorSyntaxController {
     if (!this.syntaxSession?.queryRange) return
     if (!this.options.getSession()) return
     if (!this.#canQueryCurrentSyntaxRange()) {
+      if (!this.#isParseIdCurrent()) {
+        this.#resetForProducedStructuralSyntax(documentVersion)
+        return
+      }
       // If range capability was disabled after an earlier range-mode parse settled, scrolling to an
       // uncached or unavailable viewport must transition cleanly to full-document publication
       // instead of stranding the editor in `loading` or stale range degradation.
@@ -1645,27 +1692,35 @@ export class EditorSyntaxController {
     if (!retained) return
     this.#unsubscribeProducedSyntax = retained.onDidProduceSyntax(() => {
       if (this.retainedSyntax !== retained || this.disposed) return
-      const hadRangeOwnedPaint =
-        !this.#highlighterSession &&
-        (this.#rangeTokenOwner?.store === this.#currentTokens ||
-          (this.#projectedRangeTokens !== null &&
-            this.#projectedRangeTokens === this.#currentTokens))
-      this.#parseGeneration += 1
-      this.rangeRequests.cancel()
-      this.#prefetchRangeRequests.cancel()
-      this.#warmRangeRequests.cancel()
-      this.#pendingVisibleRange = null
-      this.#pendingPrefetch = null
-      this.pendingWarm = null
-      this.#clearSyntaxRangeCache()
-      if (hadRangeOwnedPaint) this.#projectedRangeTokens = this.#currentTokens
-      this.#parseState = {
-        kind: 'loading',
-        contentVersion: this.#syntaxContentVersion,
-        parseGeneration: this.#parseGeneration,
-      }
-      this.#refreshStructuralSyntax(this.options.getDocumentVersion(), null, { delayMs: 0 }, false)
+      this.#resetForProducedStructuralSyntax(this.options.getDocumentVersion())
     })
+  }
+
+  #resetForProducedStructuralSyntax(documentVersion: number): void {
+    const hadRangeOwnedPaint =
+      !this.#highlighterSession &&
+      (this.#rangeTokenOwner?.store === this.#currentTokens ||
+        (this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens))
+    if (!this.#highlighterSession && !hadRangeOwnedPaint) {
+      this.#pendingUnownedStrips = mergeSyntaxRanges(
+        this.#tokenCoverage(this.#rangeEntries).concat(this.#pendingUnownedStrips),
+      )
+    }
+    this.#parseGeneration += 1
+    this.rangeRequests.cancel()
+    this.#prefetchRangeRequests.cancel()
+    this.#warmRangeRequests.cancel()
+    this.#pendingVisibleRange = null
+    this.#pendingPrefetch = null
+    this.pendingWarm = null
+    this.#clearSyntaxRangeCache()
+    if (hadRangeOwnedPaint) this.#projectedRangeTokens = this.#currentTokens
+    this.#parseState = {
+      kind: 'loading',
+      contentVersion: this.#syntaxContentVersion,
+      parseGeneration: this.#parseGeneration,
+    }
+    this.#refreshStructuralSyntax(documentVersion, null, { delayMs: 0 }, false)
   }
 
   #observeProducedHighlighterTokens(): void {
@@ -2625,6 +2680,9 @@ export class EditorSyntaxController {
     if (!this.#isRequestCurrent(guard)) return false
     if (loadResult.contentVersion !== this.#syntaxContentVersion) return false
     if (loadResult.parseGeneration !== this.#parseGeneration) return false
+    if (!loadResult.updatesDocument && loadResult.range !== null && !this.#isParseIdCurrent()) {
+      return false
+    }
 
     this.#applyingRenderData = true
     try {
@@ -4069,12 +4127,19 @@ export class EditorSyntaxController {
     return this.syntaxSession?.canQueryRange?.() ?? true
   }
 
+  #isParseIdCurrent(): boolean {
+    if (!this.retainedSyntax || this.#parseState.kind !== 'parsed') return true
+    if (this.#parseState.parseId === null) return true
+    return this.retainedSyntax.currentParseId() === this.#parseState.parseId
+  }
+
   #canQueryCurrentSyntaxRange(): boolean {
     return (
       this.#canProviderQuerySyntaxRange() &&
       this.#parseState.kind === 'parsed' &&
       this.#parseState.contentVersion === this.#syntaxContentVersion &&
-      this.#parseState.parseGeneration === this.#parseGeneration
+      this.#parseState.parseGeneration === this.#parseGeneration &&
+      this.#isParseIdCurrent()
     )
   }
 
@@ -4120,7 +4185,7 @@ export class EditorSyntaxController {
     this.#rangeScopeOwners = []
     this.#rangeEntries = promotedEntries
 
-    if (!this.#highlighterSession && mode === 'range' && promotedEntries.length > 0) {
+    if (!this.#highlighterSession && mode === 'range') {
       const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
       const ownsProjectedPaint =
         this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens
@@ -4129,22 +4194,51 @@ export class EditorSyntaxController {
         (this.#rangeTokenOwner?.store === this.#currentTokens ||
           ownsProjectedPaint ||
           this.#currentTokens.length === 0)
-      let nextTokens = canOwnRanges ? EditorTokenStore.empty() : this.#currentTokens
-      for (const entry of promotedEntries) {
-        nextTokens = mergeTokensOnStrips(nextTokens, entry.tokens, entry.tokenOwnedRanges)
-      }
-      this.#currentTokens = nextTokens
-      this.#rangeTokenOwner = canOwnRanges && snapshot ? { store: nextTokens, snapshot } : null
-      if (canOwnRanges) {
-        this.#projectedRangeTokens = null
-        this.#awaitingProjectedEditTokens = false
-      }
-      if (this.#copyOwner !== 'external') {
-        const nextCopyTokens = this.#rebuildRangeCopyTokens(promotedEntries, nextTokens)
-        this.#rangeCopyTokens = nextCopyTokens
-        this.#copyOwner = 'range'
-        const primary = this.#primaryCopyContributor(promotedEntries)
-        this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+      if (promotedEntries.length > 0) {
+        let nextTokens = canOwnRanges ? EditorTokenStore.empty() : this.#currentTokens
+        if (!canOwnRanges && this.#pendingUnownedStrips.length > 0) {
+          const staleStrips = subtractSyntaxRanges(
+            this.#pendingUnownedStrips,
+            this.#tokenCoverage(promotedEntries),
+          )
+          if (staleStrips.length > 0) {
+            const fallback =
+              this.#externalBaseTokens?.snapshot === snapshot
+                ? this.#externalBaseTokens.store
+                : EditorTokenStore.empty()
+            nextTokens = mergeTokensOnStrips(nextTokens, fallback, staleStrips)
+          }
+        }
+        this.#pendingUnownedStrips = []
+        for (const entry of promotedEntries) {
+          nextTokens = mergeTokensOnStrips(nextTokens, entry.tokens, entry.tokenOwnedRanges)
+        }
+        this.#currentTokens = nextTokens
+        this.#rangeTokenOwner = canOwnRanges && snapshot ? { store: nextTokens, snapshot } : null
+        if (canOwnRanges) {
+          this.#projectedRangeTokens = null
+          this.#awaitingProjectedEditTokens = false
+        }
+        if (this.#copyOwner !== 'external') {
+          const nextCopyTokens = this.#rebuildRangeCopyTokens(promotedEntries, nextTokens)
+          this.#rangeCopyTokens = nextCopyTokens
+          this.#copyOwner = 'range'
+          const primary = this.#primaryCopyContributor(promotedEntries)
+          this.rangeCopyOwner = primary ? { store: nextCopyTokens, contributor: primary } : null
+        }
+      } else if (!canOwnRanges && this.#pendingUnownedStrips.length > 0) {
+        const fallback =
+          this.#externalBaseTokens?.snapshot === snapshot
+            ? this.#externalBaseTokens.store
+            : EditorTokenStore.empty()
+        this.#currentTokens = mergeTokensOnStrips(
+          this.#currentTokens,
+          fallback,
+          this.#pendingUnownedStrips,
+        )
+        this.#pendingUnownedStrips = []
+      } else {
+        this.#pendingUnownedStrips = []
       }
     }
   }
@@ -4833,3 +4927,46 @@ const isUncachedSyntaxWarmRange = (
 
 const boundedIndex = (index: number, documentLength: number): number =>
   Math.max(0, Math.min(index, Math.max(0, documentLength - 1)))
+
+const projectRangesThroughEdits = (
+  ranges: readonly EditorSyntaxRange[],
+  edits: readonly TextEdit[],
+  afterLength: number,
+): readonly EditorSyntaxRange[] => {
+  if (ranges.length === 0 || afterLength <= 0) return []
+  let current = ranges
+  if (edits.length > 0) {
+    const ordered =
+      edits.length === 1
+        ? edits
+        : edits.toSorted((left, right) => right.from - left.from || right.to - left.to)
+    for (const edit of ordered) {
+      const delta = edit.text.length - (edit.to - edit.from)
+      const next: EditorSyntaxRange[] = []
+      for (const range of current) {
+        if (range.endIndex <= edit.from) {
+          next.push(range)
+        } else if (range.startIndex >= edit.to) {
+          next.push({
+            startIndex: range.startIndex + delta,
+            endIndex: range.endIndex + delta,
+          })
+        } else {
+          const startIndex = range.startIndex <= edit.from ? range.startIndex : edit.from
+          const endIndex =
+            range.endIndex >= edit.to ? range.endIndex + delta : edit.from + edit.text.length
+          if (endIndex > startIndex) next.push({ startIndex, endIndex })
+        }
+      }
+      current = next
+      if (current.length === 0) return []
+    }
+  }
+  const clamped: EditorSyntaxRange[] = []
+  for (const range of current) {
+    const startIndex = Math.max(0, Math.min(range.startIndex, afterLength))
+    const endIndex = Math.max(startIndex, Math.min(range.endIndex, afterLength))
+    if (endIndex > startIndex) clamped.push({ startIndex, endIndex })
+  }
+  return mergeSyntaxRanges(clamped)
+}

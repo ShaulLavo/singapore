@@ -5487,5 +5487,163 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('invalidates sibling view range cache on same-text retry instead of mixing old and new parse brackets', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'sibling-view-same-text-retry',
+      })
+      let baseAttempt = 0
+      const staleBracket = {
+        index: 30,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          brackets: baseAttempt === 1 ? [staleBracket] : [],
+        }),
+      )
+      const provider = structuralProvider(query, {
+        analyze: async () => {
+          baseAttempt += 1
+          return baseAttempt === 1
+            ? {
+                ...createEmptySyntaxResult(),
+                degraded: {
+                  kind: 'optional-phase-failed',
+                  phase: 'parse',
+                  message: 'transient degraded base',
+                },
+              }
+            : createEmptySyntaxResult()
+        },
+      })
+      const viewA = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      const viewB = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      try {
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        viewB.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewA.syntax.status).toBe('ready')
+          expect(viewB.syntax.status).toBe('ready')
+        })
+        expect(viewA.syntax.brackets).toEqual([staleBracket])
+        expect(viewB.syntax.brackets).toEqual([staleBracket])
+
+        // View A retries on the same text and gets a healthy parse with no brackets.
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(baseAttempt).toBe(2)
+          expect(viewA.syntax.brackets).toEqual([])
+        })
+
+        // Scroll View B to [20, 60) — it must settle against the new parse with no stale bracket at 30.
+        viewB.setRange({ startIndex: 20, endIndex: 60 })
+        viewB.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewB.syntax.status).toBe('ready')
+          expect(viewB.syntax.brackets).toEqual([])
+        })
+      } finally {
+        viewB.dispose()
+        viewA.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('compacts host-shared off-screen prefetch paint across edits when tiles leave demand', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(150))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'host-tokens-prefetch-across-edits',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          tokens: [
+            { start: range.startIndex, end: range.startIndex + 2, style: { color: 'blue' } },
+          ],
+        }),
+      )
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const viewport: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      let demandRanges: readonly EditorSyntaxRange[] = [viewport]
+      let syntax!: EditorSyntaxController
+      const publishDemand = () => {
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      }
+      syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'host-tokens-prefetch-across-edits',
+        getCurrentSessionDocumentId: () => 'host-tokens-prefetch-across-edits',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => viewport,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'host-tokens-prefetch-across-edits',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        const hostTokens = EditorTokenStore.fromTokens([
+          { start: 190, end: 195, style: { color: 'host-gold' } },
+        ])
+        syntax.setTokens(hostTokens)
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        for (const [index, tileStart] of [30, 60, 90].entries()) {
+          const tile: EditorSyntaxRange = { startIndex: tileStart, endIndex: tileStart + 20 }
+          demandRanges = [viewport, tile]
+          publishDemand()
+          syntax.prefetchVisibleRange(1, tile, { delayMs: 0 })
+          await vi.waitFor(() =>
+            expect(syntax.tokens.toTokens().some((t) => t.start === tileStart)).toBe(true),
+          )
+
+          const previousSnapshot = buffer.getTextSnapshot()
+          const edit: TextEdit = { from: 150 + index, to: 150 + index, text: 'x' }
+          const change = session.applyEdits([edit])
+          syntax.acceptChange(change)
+          syntax.setTokens(projectTokensThroughEdit(syntax.tokens, edit, previousSnapshot), false)
+          demandRanges = [viewport]
+          publishDemand()
+          syntax.refresh(1, change, { delayMs: 0 })
+          await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        }
+
+        expect(syntax.tokens.toTokens()).toEqual([
+          { start: 0, end: 2, style: { color: 'blue' } },
+          { start: 193, end: 198, style: { color: 'host-gold' } },
+        ])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
