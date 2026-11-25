@@ -174,10 +174,6 @@ export class EditorPlainSyntax implements EditorSyntaxPipeline {
     return false
   }
 
-  claimUndebouncedRefresh(): boolean {
-    return false
-  }
-
   get copyTokens(): EditorTokenStore {
     if (
       this.#acceptedTokensDocumentVersion !== this.options.getDocumentVersion() ||

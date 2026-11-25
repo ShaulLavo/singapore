@@ -258,6 +258,8 @@ const bootstrapDocuments = new Map<
   }
 >()
 const latestSnapshotVersions = new Map<string, number>()
+const activeDocumentRequestIds = new Set<number>()
+const supersededRequestIds = new Set<number>()
 const viewportFirstSessions = new Set<string>()
 const sourceReader = new DocumentWorkerReader()
 const injectedMarkdown = new WeakMap<
@@ -803,8 +805,13 @@ const markdownSelection = (
 const parseDocument = async (
   request: TreeSitterParseRequest,
   source: TreeSitterPieceTableInput,
+  requestId: number,
 ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> =>
-  runCancellableRequest(request, (context) => parseRequestedDocument(request, source, context))
+  runCancellableRequest(
+    request,
+    (context) => parseRequestedDocument(request, source, context),
+    requestId,
+  )
 
 const parseRequestedDocument = async (
   request: TreeSitterParseRequest,
@@ -1006,145 +1013,160 @@ const parseFullDocument = async (
 const editDocument = async (
   request: TreeSitterEditRequest,
   source: TreeSitterPieceTableInput,
+  requestId: number,
 ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> =>
-  runCancellableRequest(request, async (context) => {
-    const cached = cachedDocumentForVersion(
-      request.runtimeSessionId,
-      request.languageId,
-      request.previousSnapshotVersion,
-    )
-    if (cached?.readOnly) {
-      assertNotCancelled(context)
-      dropCachedDocument(request.runtimeSessionId, cached)
-      return parseRequestedDocument({ ...request, type: 'parse', readOnly: false }, source, context)
-    }
-    if (request.languageId === 'markdown') return parseMarkdownDocument(request, source, context)
-    if (
-      request.languageId === 'mdx' &&
-      (markdownDocuments.get(request.runtimeSessionId)?.snapshotVersion ?? 0) >
-        request.snapshotVersion
-    )
-      return undefined
-    const runtime = await runAsyncWorkerPhase('load runtime', () =>
-      ensureRuntime(request.languageId),
-    )
-    if (!cached) return undefined
+  runCancellableRequest(
+    request,
+    async (context) => {
+      const cached = cachedDocumentForVersion(
+        request.runtimeSessionId,
+        request.languageId,
+        request.previousSnapshotVersion,
+      )
+      if (cached?.readOnly) {
+        assertNotCancelled(context)
+        dropCachedDocument(request.runtimeSessionId, cached)
+        return parseRequestedDocument(
+          { ...request, type: 'parse', readOnly: false },
+          source,
+          context,
+        )
+      }
+      if (request.languageId === 'markdown') return parseMarkdownDocument(request, source, context)
+      if (
+        request.languageId === 'mdx' &&
+        (markdownDocuments.get(request.runtimeSessionId)?.snapshotVersion ?? 0) >
+          request.snapshotVersion
+      )
+        return undefined
+      const runtime = await runAsyncWorkerPhase('load runtime', () =>
+        ensureRuntime(request.languageId),
+      )
+      if (!cached) return undefined
 
-    const editStart = nowMs()
-    const oldRootLayer = rootLayerForDocument(cached)
-    const reusableTree = runWorkerPhase('prepare reusable tree', () =>
-      editReusableTree(oldRootLayer.tree, request.inputEdits),
-    )
-    const editMs = nowMs() - editStart
-    const parseStart = nowMs()
-    let ownsReusableTree = true
-    let rootTree: Tree | null = null
-    let builtDocument: ParsedDocument | null = null
-    let cachedNewDocument = false
-    let parsedDocument: ParsedDocument
-    let changedRanges: readonly TreeSitterSyntaxRange[]
-    let invalidation: TreeSitterParseInvalidation
-    let parseMs: number
-    try {
-      rootTree = stagesSlowEdit(request)
-        ? parseEditOrStage(request, runtime, source, { reusableTree, oldDocument: cached }, context)
-        : runWorkerPhase('parse root', () =>
-            measurePhase(context, 'parseRoot', () =>
-              parseSource(runtime.parser, source, reusableTree, context),
-            ),
-          )
-      if (!rootTree) {
-        ownsReusableTree = false
+      const editStart = nowMs()
+      const oldRootLayer = rootLayerForDocument(cached)
+      const reusableTree = runWorkerPhase('prepare reusable tree', () =>
+        editReusableTree(oldRootLayer.tree, request.inputEdits),
+      )
+      const editMs = nowMs() - editStart
+      const parseStart = nowMs()
+      let ownsReusableTree = true
+      let rootTree: Tree | null = null
+      let builtDocument: ParsedDocument | null = null
+      let cachedNewDocument = false
+      let parsedDocument: ParsedDocument
+      let changedRanges: readonly TreeSitterSyntaxRange[]
+      let invalidation: TreeSitterParseInvalidation
+      let parseMs: number
+      try {
+        rootTree = stagesSlowEdit(request)
+          ? parseEditOrStage(
+              request,
+              runtime,
+              source,
+              { reusableTree, oldDocument: cached },
+              context,
+            )
+          : runWorkerPhase('parse root', () =>
+              measurePhase(context, 'parseRoot', () =>
+                parseSource(runtime.parser, source, reusableTree, context),
+              ),
+            )
+        if (!rootTree) {
+          ownsReusableTree = false
+          return {
+            ...parseAckResult(request, [], phaseTimings(context)),
+            analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
+            statistics: editStatistics(context),
+          }
+        }
+        const edited = await parseEditedDocument(
+          request,
+          runtime,
+          source,
+          {
+            rootLayer: rootLayerForTree(runtime, rootTree),
+            reusableTree,
+            oldDocument: cached,
+            inputEdits: request.inputEdits,
+          },
+          context,
+        )
+        builtDocument = edited.parsedDocument
+        changedRanges = edited.changedRanges
+        invalidation = edited.invalidation
+        parseMs = nowMs() - parseStart
+        assertNotCancelled(context)
+        assertRuntimeSessionActive(request.runtimeSessionId)
+        replaceCachedDocument(request.runtimeSessionId, builtDocument)
+        cachedNewDocument = true
+        parsedDocument = builtDocument
+      } catch (error) {
+        if (!cachedNewDocument) {
+          if (builtDocument) disposeCachedSnapshot(builtDocument)
+          else rootTree?.delete()
+        }
+        throw error
+      } finally {
+        if (ownsReusableTree) reusableTree.delete()
+      }
+      if (request.resultMode === 'parseOnly') {
         return {
-          ...parseAckResult(request, [], phaseTimings(context)),
-          analysis: { kind: 'partial', coveredRange: { startIndex: 0, endIndex: 0 } },
+          ...parseAckResult(
+            request,
+            changedRanges,
+            phaseTimings(context).concat([
+              { name: 'treeSitter.edit', durationMs: editMs },
+              { name: 'treeSitter.parse', durationMs: parseMs },
+            ]),
+            parsedDocument.degraded,
+            parsedDocument.missingLanguages,
+            invalidation,
+          ),
           statistics: editStatistics(context),
         }
       }
-      const edited = await parseEditedDocument(
-        request,
-        runtime,
-        source,
-        {
-          rootLayer: rootLayerForTree(runtime, rootTree),
-          reusableTree,
-          oldDocument: cached,
-          inputEdits: request.inputEdits,
-        },
-        context,
-      )
-      builtDocument = edited.parsedDocument
-      changedRanges = edited.changedRanges
-      invalidation = edited.invalidation
-      parseMs = nowMs() - parseStart
-      assertNotCancelled(context)
-      assertRuntimeSessionActive(request.runtimeSessionId)
-      replaceCachedDocument(request.runtimeSessionId, builtDocument)
-      cachedNewDocument = true
-      parsedDocument = builtDocument
-    } catch (error) {
-      if (!cachedNewDocument) {
-        if (builtDocument) disposeCachedSnapshot(builtDocument)
-        else rootTree?.delete()
-      }
-      throw error
-    } finally {
-      if (ownsReusableTree) reusableTree.delete()
-    }
-    if (request.resultMode === 'parseOnly') {
-      return {
-        ...parseAckResult(
-          request,
-          changedRanges,
-          phaseTimings(context).concat([
-            { name: 'treeSitter.edit', durationMs: editMs },
-            { name: 'treeSitter.parse', durationMs: parseMs },
-          ]),
-          parsedDocument.degraded,
-          parsedDocument.missingLanguages,
-          invalidation,
+
+      const queryStart = nowMs()
+      const result = await runAsyncWorkerPhase('flatten', () =>
+        flattenDocument(
+          parsedDocument,
+          context,
+          request.includeHighlights,
+          request.includeCaptures ?? true,
         ),
-        statistics: editStatistics(context),
+      )
+      assertNotCancelled(context)
+      const queryMs = nowMs() - queryStart
+
+      return {
+        documentId: request.documentId,
+        snapshotVersion: request.snapshotVersion,
+        languageId: request.languageId,
+        statistics: {
+          ...resultStatistics(parsedDocument, result, context),
+          ...editStatistics(context),
+        },
+        missingLanguages: parsedDocument.missingLanguages,
+        captures: result.captures,
+        folds: result.folds,
+        brackets: result.brackets,
+        errors: result.errors,
+        injections: result.injections,
+        degraded: result.degraded,
+        tokens: result.tokens,
+        tokensPacked: result.tokensPacked,
+        records: result.records,
+        timings: phaseTimings(context).concat([
+          { name: 'treeSitter.edit', durationMs: editMs },
+          { name: 'treeSitter.parse', durationMs: parseMs },
+          { name: 'treeSitter.query', durationMs: queryMs },
+        ]),
       }
-    }
-
-    const queryStart = nowMs()
-    const result = await runAsyncWorkerPhase('flatten', () =>
-      flattenDocument(
-        parsedDocument,
-        context,
-        request.includeHighlights,
-        request.includeCaptures ?? true,
-      ),
-    )
-    assertNotCancelled(context)
-    const queryMs = nowMs() - queryStart
-
-    return {
-      documentId: request.documentId,
-      snapshotVersion: request.snapshotVersion,
-      languageId: request.languageId,
-      statistics: {
-        ...resultStatistics(parsedDocument, result, context),
-        ...editStatistics(context),
-      },
-      missingLanguages: parsedDocument.missingLanguages,
-      captures: result.captures,
-      folds: result.folds,
-      brackets: result.brackets,
-      errors: result.errors,
-      injections: result.injections,
-      degraded: result.degraded,
-      tokens: result.tokens,
-      tokensPacked: result.tokensPacked,
-      records: result.records,
-      timings: phaseTimings(context).concat([
-        { name: 'treeSitter.edit', durationMs: editMs },
-        { name: 'treeSitter.parse', durationMs: parseMs },
-        { name: 'treeSitter.query', durationMs: queryMs },
-      ]),
-    }
-  })
+    },
+    requestId,
+  )
 
 type EditedRoot = {
   readonly rootLayer: ParsedLayer
@@ -1435,12 +1457,14 @@ const runCancellableRequest = async <
   run: (
     context: CancellationContext,
   ) => Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined>,
+  requestId?: number,
 ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> => {
   const context: CancellationContext = {
     ...createCancellationContext(request.cancellationBuffer, PARSE_BUDGET_MS),
     yieldParsing: viewportFirstSessions.has(request.runtimeSessionId),
     isStale: () =>
       disposedRuntimeSessions.has(request.runtimeSessionId) ||
+      (requestId !== undefined && supersededRequestIds.has(requestId)) ||
       latestSnapshotVersions.get(request.runtimeSessionId) !== request.snapshotVersion,
   }
 
@@ -4864,6 +4888,8 @@ const disposeCachedSnapshotsMatchingLanguage = (
 const disposeAll = (): void => {
   for (const runtimeSessionId of bootstrapDocuments.keys()) disposeBootstrap(runtimeSessionId)
   latestSnapshotVersions.clear()
+  activeDocumentRequestIds.clear()
+  supersededRequestIds.clear()
   viewportFirstSessions.clear()
   for (const cache of documentCaches.values()) {
     for (const snapshot of cache.snapshots) disposeCachedSnapshot(snapshot)
@@ -5050,8 +5076,8 @@ const handleRequest = async (
     return undefined
   }
 
-  if (payload.type === 'parse') return parseDocument(payload, source!)
-  if (payload.type === 'edit') return editDocument(payload, source!)
+  if (payload.type === 'parse') return parseDocument(payload, source!, request.id)
+  if (payload.type === 'edit') return editDocument(payload, source!, request.id)
   if (payload.type === 'queryRange') return queryDocumentRange(payload)
   if (payload.type === 'selection') return selectDocument(payload)
   if (payload.type === 'reviewBatch') return queryReviewBatch(payload)
@@ -5082,6 +5108,12 @@ const executeRequest = async (
     markRuntimeSessionDisposed(payload.runtimeSessionId)
     return Promise.resolve(undefined)
   }
+  if (payload.type === 'supersedeDocument') {
+    if (activeDocumentRequestIds.has(payload.requestId)) {
+      supersededRequestIds.add(payload.requestId)
+    }
+    return Promise.resolve(undefined)
+  }
   if (payload.type === 'disposeDocument') {
     markRuntimeSessionDisposed(payload.runtimeSessionId)
     const released = awaitRuntimeTasks(payload.runtimeSessionId).then(() =>
@@ -5096,15 +5128,18 @@ const executeRequest = async (
   }
 
   const runtimeSessionId = runtimeSessionIdForRequest(payload)
-  if (payload.type === 'parse' || payload.type === 'edit')
-    latestSnapshotVersions.set(
-      payload.runtimeSessionId,
-      Math.max(latestSnapshotVersions.get(payload.runtimeSessionId) ?? 0, payload.snapshotVersion),
-    )
   const source =
     payload.type === 'parse' || payload.type === 'edit' || payload.type === 'projectMergeUnits'
       ? resolveRequestSource(payload)
       : undefined
+  const isDocumentRequest = payload.type === 'parse' || payload.type === 'edit'
+  if (isDocumentRequest) {
+    activeDocumentRequestIds.add(request.id)
+    latestSnapshotVersions.set(
+      payload.runtimeSessionId,
+      Math.max(latestSnapshotVersions.get(payload.runtimeSessionId) ?? 0, payload.snapshotVersion),
+    )
+  }
   const markdown =
     'languageId' in payload && (payload.languageId === 'markdown' || payload.languageId === 'mdx')
   const task =
@@ -5112,7 +5147,13 @@ const executeRequest = async (
     runtimeSessionId
       ? awaitRuntimeTasks(runtimeSessionId).then(() => handleRequest(request, source))
       : handleRequest(request, source)
-  const completed = task.finally(() => source?.dispose())
+  const completed = task.finally(() => {
+    if (isDocumentRequest) {
+      activeDocumentRequestIds.delete(request.id)
+      supersededRequestIds.delete(request.id)
+    }
+    source?.dispose()
+  })
   trackWorkerTask(completed)
   if (runtimeSessionId) trackRuntimeTask(runtimeSessionId, completed)
   return completed

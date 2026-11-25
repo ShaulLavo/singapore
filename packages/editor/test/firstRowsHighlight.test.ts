@@ -83,6 +83,81 @@ describe('the first highlight of a document', () => {
 
     expect(fixture.asked).toEqual([VISIBLE])
   })
+
+  it('replaces a stuck first-rows query when explicit refresh passes replacePending: true', async () => {
+    const rows = { startIndex: 0, endIndex: 540 }
+    const fixture = controller(rows)
+
+    fixture.syntax.refresh(1, null, { delayMs: 0 })
+    await vi.waitFor(() => expect(fixture.asked).toEqual([rows]))
+
+    // Explicit replacement starts a fresh first-rows query instead of rejoining the stuck one.
+    fixture.syntax.refresh(1, null, { delayMs: 0, replacePending: true })
+    await vi.waitFor(() => expect(fixture.asked).toEqual([rows, rows]))
+
+    fixture.answer(1, colored(2))
+    await vi.waitFor(() => expect(fixture.asked).toEqual([rows, rows, VISIBLE]))
+    fixture.answer(2, { ...colored(3), folds: [fold()] })
+    await vi.waitFor(() => expect(fixture.syntax.status).toBe('ready'))
+  })
+
+  it('preserves queued first-rows tokens when a budget-cancelled final reply arrives before the paint gate drains', async () => {
+    const rafCallbacks: FrameRequestCallback[] = []
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    })
+    try {
+      const rows = { startIndex: 0, endIndex: 540 }
+      const fixture = controller(rows)
+      // Trigger an edit while first highlight is still pending to arm the keystroke paint gate.
+      const change = fixture.session.applyEdits([{ from: 0, to: 0, text: ' ' }])
+      fixture.syntax.acceptChange(change)
+      fixture.syntax.refresh(1, change)
+      await vi.waitFor(() => expect(fixture.asked).toEqual([rows]))
+
+      // Answer firstRows with valid tokens, then answer the full visible range with a
+      // budget-cancelled outcome BEFORE the paint gate drains.
+      fixture.answer(0, colored(2))
+      await vi.waitFor(() => expect(fixture.asked).toEqual([rows, VISIBLE]))
+      const cancelledBase = createEmptySyntaxResult({ requestedRanges: [VISIBLE] })
+      fixture.answer(1, {
+        ...cancelledBase,
+        projection: {
+          ...cancelledBase.projection,
+          analysis: {
+            kind: 'cancelled',
+            reason: 'budget',
+            coveredRange: { startIndex: 0, endIndex: 0 },
+            elapsedMs: 10,
+            budgetMs: 8,
+          },
+        },
+      })
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(fixture.adopted).toEqual([])
+
+      // Drain the paint gate via visibilitychange: firstRows paint must run before the final
+      // cancellation so provisional tokens are preserved instead of overwritten.
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.waitFor(() => expect(fixture.adopted).toContain(2))
+      expect(fixture.syntax.tokens.length).toBe(2)
+    } finally {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      })
+      vi.restoreAllMocks()
+    }
+  })
 })
 
 function colored(tokens: number): EditorSyntaxResult {
@@ -158,6 +233,7 @@ function controller(mountedRows: EditorSyntaxRange) {
   })
   return {
     syntax,
+    session,
     asked,
     adopted,
     folds,

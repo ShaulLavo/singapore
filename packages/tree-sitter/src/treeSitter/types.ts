@@ -356,6 +356,17 @@ type TreeSitterCloseRuntimeSessionRequest = {
   readonly runtimeSessionId: string
 }
 
+/**
+ * Marks a specific in-flight `parse` or `edit` request superseded ahead of a gated replacement so
+ * a sliced parse running without shared memory stops on its next yield without advancing
+ * `latestSnapshotVersions` before the replacement actually posts.
+ */
+type TreeSitterSupersedeDocumentRequest = {
+  readonly type: 'supersedeDocument'
+  readonly runtimeSessionId: string
+  readonly requestId: number
+}
+
 type TreeSitterRuntimeBarrierRequest = {
   readonly type: 'runtimeBarrier'
   readonly runtimeSessionId: string
@@ -387,6 +398,7 @@ export type TreeSitterWorkerRequestPayload =
   | TreeSitterReviewBatchRequest
   | TreeSitterDisposeDocumentRequest
   | TreeSitterCloseRuntimeSessionRequest
+  | TreeSitterSupersedeDocumentRequest
   | TreeSitterRuntimeBarrierRequest
   | TreeSitterIdleFenceRequest
   | TreeSitterDisposeRequest

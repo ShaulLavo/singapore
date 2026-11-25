@@ -4601,7 +4601,7 @@
         {
           "kind": "unknown",
           "name": "createEditorHighlighterOperation",
-          "source": "packages/editor/src/editor/operationDefinitions.ts",
+          "source": "packages/editor/src/editor/syntaxOperations.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -4619,7 +4619,7 @@
         {
           "kind": "unknown",
           "name": "createEditorStructuralOperation",
-          "source": "packages/editor/src/editor/operationDefinitions.ts",
+          "source": "packages/editor/src/editor/syntaxOperations.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -5856,184 +5856,184 @@
           "kind": "type",
           "name": "DocumentContributionSource",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentOperationContext",
           "source": "packages/editor/src/editor/operationDefinitions.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentOperationRuntime",
           "source": "packages/editor/src/editor/operationDefinitions.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentProjectionConnection",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentProjectionEndpoint",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentProjectionReceipt",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentProjectionUpdate",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentRead",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentRevision",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentSourceConnection",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentSourceEndpoint",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentWorkerIdentity",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentWorkerPoint",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentWorkerRead",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentWorkerReadReference",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentWorkerSourceCommand",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "DocumentWorkerSourceResult",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "HighlighterOperationContext",
           "source": "packages/editor/src/editor/operationDefinitions.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "PreparedDocumentWorkerRead",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "type",
           "name": "StructuralOperationContext",
           "source": "packages/editor/src/editor/operationDefinitions.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "unknown",
           "name": "acquireEditorDocumentAnalysis",
           "source": "packages/editor/src/editor/documentAnalysis.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "unknown",
           "name": "createEditorSnapshotBuffer",
           "source": "packages/editor/src/documentSession.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "unknown",
           "name": "defineDocumentOperation",
           "source": "packages/editor/src/editor/operationDefinitions.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "unknown",
           "name": "defineHighlighterOperation",
-          "source": "packages/editor/src/editor/operationDefinitions.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "source": "packages/editor/src/editor/syntaxOperations.ts",
+          "via": "packages/editor/src/document/workerEntry.ts"
         },
         {
           "kind": "unknown",
           "name": "defineStructuralOperation",
-          "source": "packages/editor/src/editor/operationDefinitions.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "source": "packages/editor/src/editor/syntaxOperations.ts",
+          "via": "packages/editor/src/document/workerEntry.ts"
         },
         {
           "kind": "unknown",
           "name": "DocumentDelivery",
           "source": "packages/editor/src/editor/documentDelivery.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "unknown",
           "name": "waitForDocumentWork",
           "source": "packages/editor/src/editor/documentWork.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "value",
           "name": "decodeDocumentWorkerReply",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "value",
           "name": "documentWorkerPointsEqual",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         },
         {
           "kind": "value",
           "name": "DocumentWorkerReader",
           "source": "packages/editor/src/document/workerReader.ts",
-          "via": "packages/editor/src/document/workerReader.ts"
+          "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
         }
       ],
-      "source": "packages/editor/src/document/workerReader.ts",
+      "source": "packages/editor/src/document/workerEntry.ts",
       "specifier": "./internal/document-worker"
     },
     {

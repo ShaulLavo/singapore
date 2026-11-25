@@ -10,11 +10,10 @@ import {
 import { resetEditorInstanceCount } from '../src/public/testing'
 
 /**
- * Rapid input defers syntax and feature work behind a debounce. A sustained
- * typing run never leaves that gap, so the deferral has to carry a ceiling or
- * the editor stops re-tokenizing entirely until the user pauses. These assert
- * the wiring, not the scheduler primitive — see secondaryWorkScheduler.test.ts
- * for the primitive.
+ * Rapid input defers synchronous text-derived feature/decoration work behind a bounded debounce,
+ * while syntax refreshes dispatch immediately via single-flight coalescing without waiting on the
+ * typing debounce. These assert the wiring, not the scheduler primitive — see
+ * secondaryWorkScheduler.test.ts for the primitive.
  */
 describe('rapid input secondary work', () => {
   let container: HTMLElement
@@ -38,7 +37,7 @@ describe('rapid input secondary work', () => {
     vi.restoreAllMocks()
   })
 
-  it('bounds how long a typing burst can defer syntax and feature work', () => {
+  it('bounds how long a typing burst can defer feature work without debouncing syntax', () => {
     const root = document.querySelector('.editor-virtualized') as HTMLElement
     root.dispatchEvent(
       new InputEvent('beforeinput', {
@@ -51,18 +50,16 @@ describe('rapid input secondary work', () => {
 
     const deferred = new Map(scheduled.map((options) => [options.key, options]))
 
-    // Whatever a keystroke defers, it defers under a ceiling: a sustained run
-    // never leaves the debounce gap, so an uncapped key would never run at all.
-    expect([...deferred.keys()]).toEqual(
-      expect.arrayContaining(['editor.syntaxRefresh', 'editor.featureContributions']),
-    )
-    expect(deferred.size).toBeGreaterThanOrEqual(2)
-    for (const options of deferred.values()) {
-      expect(options.delayMs).toBeGreaterThan(0)
-      expect(options.maxDelayMs).toBeGreaterThan(options.delayMs!)
-    }
+    // Syntax refreshes bypass the typing debounce via single-flight coalescing; text-derived
+    // feature contributions stay debounced under a ceiling so a sustained run still flushes.
+    expect([...deferred.keys()]).not.toContain('editor.syntaxRefresh')
+    expect([...deferred.keys()]).toContain('editor.featureContributions')
+    const features = deferred.get('editor.featureContributions')!
+    expect(features.delayMs).toBeGreaterThan(0)
+    expect(features.maxDelayMs).toBeGreaterThan(features.delayMs!)
   })
-  it('keeps a pending parse current when the user selects text after typing', () => {
+
+  it('keeps feature debounce current across a selection change and invalidates it on another edit', () => {
     editor.getInputElement().dispatchEvent(
       new InputEvent('beforeinput', {
         bubbles: true,
@@ -71,10 +68,10 @@ describe('rapid input secondary work', () => {
         inputType: 'insertText',
       }),
     )
-    const syntax = scheduled.find((work) => work.key === 'editor.syntaxRefresh')!
-    expect(syntax.isCurrent?.(syntax.version!)).toBe(true)
+    const features = scheduled.find((work) => work.key === 'editor.featureContributions')!
+    expect(features.isCurrent?.(features.version!)).toBe(true)
     editor.setSelection(0, 2)
-    expect(syntax.isCurrent?.(syntax.version!)).toBe(true)
+    expect(features.isCurrent?.(features.version!)).toBe(true)
     editor.getInputElement().dispatchEvent(
       new InputEvent('beforeinput', {
         bubbles: true,
@@ -83,15 +80,15 @@ describe('rapid input secondary work', () => {
         inputType: 'insertText',
       }),
     )
-    expect(syntax.isCurrent?.(syntax.version!)).toBe(false)
+    expect(features.isCurrent?.(features.version!)).toBe(false)
   })
 })
 
 /**
- * The debounce protects colors that are already on screen. A key typed while the document's
- * first highlight is still loading has none to protect, so its syntax request goes out at once.
+ * Edits dispatch syntax immediately via 0 ms single-flight coalescing both before and after the
+ * first highlight lands, while preserving the separate feature/decoration debounce.
  */
-describe('typing before the first highlight', () => {
+describe('single-flight syntax refresh during typing', () => {
   let container: HTMLElement
   let editor: Editor
   let scheduled: EditorSecondaryWorkOptions[]
@@ -145,10 +142,8 @@ describe('typing before the first highlight', () => {
     editor.setText('abc', { languageId: 'fixture' })
   }
 
-  it('requests syntax for the typed text without the typing debounce', async () => {
+  it('requests syntax for typed text immediately without scheduling editor.syntaxRefresh', async () => {
     const analysed: number[] = []
-    // Answers only by being superseded: the first highlight stays pending, as it does while a
-    // grammar downloads.
     open((read, signal) => {
       analysed.push(read.text.length)
       return new Promise((_resolve, reject) =>
@@ -159,42 +154,278 @@ describe('typing before the first highlight', () => {
 
     type('x')
 
-    // The scheduler is stubbed, so deferred work never runs: only an immediate request gets here.
     expect(scheduled.map((work) => work.key)).not.toContain('editor.syntaxRefresh')
     expect(scheduled.map((work) => work.key)).toContain('editor.featureContributions')
     await vi.waitFor(() => expect(analysed).toEqual([3, 4]))
     expect(editor.getState().initialHighlightStatus).toBe('loading')
   })
 
-  it('skips the debounce for the first key only, so a burst does not ask once per key', async () => {
+  it('coalesces same-turn and in-flight key bursts into bounded single-flight parses', async () => {
     const analysed: number[] = []
-    open((read, signal) => {
+    const resolvers: Array<() => void> = []
+    open((read) => {
       analysed.push(read.text.length)
-      return new Promise((_resolve, reject) =>
-        signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
-      )
+      return new Promise((resolve) => {
+        resolvers.push(() => resolve(createEmptySyntaxResult()))
+      })
     })
     await vi.waitFor(() => expect(analysed).toEqual([3]))
+    resolvers.shift()!()
+    await vi.waitFor(() => expect(editor.getState().initialHighlightStatus).not.toBe('loading'))
 
+    // Same-turn burst coalesces into a single flight reading all 3 typed characters.
     type('x')
     type('y')
     type('z')
-
-    // The first key asks at once, and by the time that request runs it reads all three keys. The
-    // two after it go to the debounce, which coalesces them into one request; the scheduler is
-    // stubbed here, so that one never runs and nothing more is analysed.
-    expect(scheduled.filter((work) => work.key === 'editor.syntaxRefresh')).toHaveLength(2)
+    expect(scheduled.map((work) => work.key)).not.toContain('editor.syntaxRefresh')
     await vi.waitFor(() => expect(analysed).toEqual([3, 6]))
-    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Typing multiple keys while that flight is in progress coalesces into at most one trailing flight.
+    type('1')
+    type('2')
+    type('3')
+    await new Promise((resolve) => setTimeout(resolve, 10))
     expect(analysed).toEqual([3, 6])
+
+    resolvers.shift()!()
+    await vi.waitFor(() => expect(analysed).toEqual([3, 6, 9]))
+    resolvers.shift()!()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(analysed).toEqual([3, 6, 9])
   })
 
-  it('debounces again once the first highlight has landed', async () => {
-    open(async () => createEmptySyntaxResult())
+  it('continues dispatching syntax without typing debounce once the first highlight has landed', async () => {
+    const analysed: number[] = []
+    open(async (read) => {
+      analysed.push(read.text.length)
+      return createEmptySyntaxResult()
+    })
     await vi.waitFor(() => expect(editor.getState().initialHighlightStatus).not.toBe('loading'))
 
     type('x')
 
-    expect(scheduled.map((work) => work.key)).toContain('editor.syntaxRefresh')
+    expect(scheduled.map((work) => work.key)).not.toContain('editor.syntaxRefresh')
+    await vi.waitFor(() => expect(analysed).toEqual([3, 4]))
+  })
+})
+
+describe('feature debounce preservation during 0 ms syntax publication', () => {
+  let container: HTMLElement
+  let editor: Editor
+
+  beforeEach(() => {
+    resetEditorInstanceCount()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+  })
+
+  afterEach(() => {
+    editor.dispose()
+    container.remove()
+    vi.useRealTimers()
+  })
+
+  const type = (data: string) =>
+    editor.getInputElement().dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data,
+        inputType: 'insertText',
+      }),
+    )
+
+  it('does not invoke feature/decoration contributions on syntax publish while feature debounce is armed, and recovers after paste or setText', async () => {
+    let featureUpdates = 0
+    const pendingResolvers: Array<() => void> = []
+    const result = createEmptySyntaxResult()
+    const session: EditorSyntaxRuntime = {
+      foldingSupport: 'unsupported',
+      analyze: () =>
+        new Promise((resolve) => {
+          pendingResolvers.push(() => resolve(result))
+        }),
+      getResult: () => result,
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    editor = new Editor(container, {
+      plugins: [
+        {
+          activate: (context) => [
+            context.registerSyntaxProvider({
+              operation: createEditorStructuralOperation(() => session),
+            }),
+            context.registerDecorationContribution({
+              createContribution: () => ({
+                handleEditorChange: () => {
+                  featureUpdates += 1
+                },
+                dispose: () => undefined,
+              }),
+            }),
+          ],
+        },
+      ],
+    })
+
+    editor.setText('abc', { languageId: 'fixture' })
+    await vi.waitFor(() => expect(pendingResolvers.length).toBeGreaterThan(0))
+    pendingResolvers.shift()!()
+    await vi.waitFor(() => expect(editor.getState().initialHighlightStatus).not.toBe('loading'))
+
+    // Typing arms the 150 ms feature debounce while syntax resolves immediately.
+    featureUpdates = 0
+    type('x')
+    await vi.waitFor(() => expect(pendingResolvers.length).toBeGreaterThan(0))
+    pendingResolvers.shift()!()
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+    // Syntax published, but feature contribution stays suppressed while the 150 ms debounce is armed.
+    expect(featureUpdates).toBe(0)
+
+    // Switching documents before the typing timer fires must cancel/invalidate the stale timer so
+    // syntax-driven feature notifications are not suppressed on the next document.
+    editor.setText('def', { languageId: 'fixture' })
+    featureUpdates = 0
+    await vi.waitFor(() => expect(pendingResolvers.length).toBeGreaterThan(0))
+    while (pendingResolvers.length > 0) pendingResolvers.shift()!()
+    await vi.waitFor(() => expect(featureUpdates).toBeGreaterThan(0))
+  })
+
+  it('bypasses the keystroke paint gate when document is hidden and drains on visibilitychange', async () => {
+    const rafCallbacks: FrameRequestCallback[] = []
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    const resolvers: Array<() => void> = []
+    const result = createEmptySyntaxResult()
+    const session: EditorSyntaxRuntime = {
+      foldingSupport: 'unsupported',
+      analyze: () =>
+        new Promise((resolve) => {
+          resolvers.push(() => resolve(result))
+        }),
+      getResult: () => result,
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    editor = new Editor(container, {
+      plugins: [
+        {
+          activate: (context) =>
+            context.registerSyntaxProvider({
+              operation: createEditorStructuralOperation(() => session),
+            }),
+        },
+      ],
+    })
+
+    editor.setText('abc', { languageId: 'fixture' })
+    await vi.waitFor(() => expect(resolvers.length).toBeGreaterThan(0))
+    resolvers.shift()!()
+    await vi.waitFor(() => expect(editor.getState().initialHighlightStatus).not.toBe('loading'))
+
+    // While visible with an un-fired rAF, an edit reply waits on the paint gate until
+    // visibilityState transitions to hidden (or rAF fires).
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    })
+    rafCallbacks.length = 0
+    type('x')
+    await vi.waitFor(() => expect(resolvers.length).toBeGreaterThan(0))
+    resolvers.shift()!()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(editor.getState().syntaxStatus).toBe('loading')
+
+    // Tab becomes hidden while rAF is paused: visibilitychange drains pending edit apply.
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+
+    // Subsequent edit while already hidden bypasses the paint gate completely.
+    rafCallbacks.length = 0
+    type('y')
+    await vi.waitFor(() => expect(resolvers.length).toBeGreaterThan(0))
+    resolvers.shift()!()
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+    expect(rafCallbacks).toHaveLength(0)
+
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('preserves a pending debounced typing edit notification across selection moves', async () => {
+    vi.useFakeTimers()
+    const kinds: Array<string | null> = []
+    editor = new Editor(container, {
+      defaultText: 'abc',
+      plugins: [
+        {
+          activate: (context) =>
+            context.registerDecorationContribution({
+              createContribution: () => ({
+                handleEditorChange: (change) => {
+                  kinds.push(change?.kind ?? null)
+                },
+                dispose: () => undefined,
+              }),
+            }),
+        },
+      ],
+    })
+    kinds.length = 0
+
+    type('x')
+    editor.setSelection(0, 2)
+    expect(kinds).toEqual(['selection'])
+
+    await vi.advanceTimersByTimeAsync(200)
+    expect(kinds).toEqual(['selection', 'edit'])
+  })
+
+  it('schedules indentation fallback folds when grammar folding transitions from pending to unsupported with empty folds', async () => {
+    let support: 'pending' | 'unsupported' = 'pending'
+    let resolveAnalyze!: (value: ReturnType<typeof createEmptySyntaxResult>) => void
+    const session: EditorSyntaxRuntime = {
+      get foldingSupport() {
+        return support
+      },
+      analyze: () =>
+        new Promise((resolve) => {
+          resolveAnalyze = resolve
+        }),
+      getResult: () => createEmptySyntaxResult(),
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    editor = new Editor(container, {
+      folding: true,
+      plugins: [
+        {
+          activate: (context) =>
+            context.registerSyntaxProvider({
+              operation: createEditorStructuralOperation(() => session),
+            }),
+        },
+      ],
+    })
+    editor.setText('function f() {\n  const a = 1\n  const b = 2\n}\n', { languageId: 'fixture' })
+    await vi.waitFor(() => expect(resolveAnalyze).toBeDefined())
+
+    support = 'unsupported'
+    resolveAnalyze(createEmptySyntaxResult())
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+    await vi.waitFor(() => expect(editor.fold(0)).toBe(true))
   })
 })

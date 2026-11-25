@@ -294,6 +294,195 @@ browserTest(
   },
 )
 
+browserTest(
+  'highlights typed keywords without typing-debounce delay and settles rapid bursts on the simple Editor API',
+  async () => {
+    const host = document.createElement('div')
+    host.style.width = '720px'
+    host.style.height = '400px'
+    document.body.appendChild(host)
+    const editor = new Editor(host, {
+      plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],
+    })
+    const type = (data: string) =>
+      editor.getInputElement().dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data,
+          inputType: 'insertText',
+        }),
+      )
+    try {
+      editor.setText('debugge\nconst x = 1;\n', { languageId: 'typescript' })
+      await expect.poll(() => editor.getState().syntaxStatus, { timeout: 20_000 }).toBe('ready')
+      editor.setSelection(7, 7)
+
+      // Completing `debugger` via a real beforeinput event must re-highlight promptly without
+      // waiting behind the old 150 ms rapid-input debounce.
+      const startedAt = performance.now()
+      type('r')
+      await expect
+        .poll(
+          () => {
+            const tokens = editor['tokens'].toTokens() as readonly {
+              readonly start: number
+              readonly end: number
+              readonly style: { readonly color?: string }
+            }[]
+            const kw = tokens.find((token) => token.start === 0 && token.end === 8)
+            return kw?.style.color ?? null
+          },
+          { interval: 5, timeout: 10_000 },
+        )
+        .toContain('keyword')
+      const elapsedMs = performance.now() - startedAt
+      expect(elapsedMs).toBeLessThan(2000)
+      await expect.poll(() => editor.getState().syntaxStatus, { timeout: 10_000 }).toBe('ready')
+
+      // Rapid burst via beforeinput settles cleanly with accurate final tokens.
+      editor.setSelection(8, 8)
+      for (const ch of ';\nreturn 42;') type(ch)
+      await expect.poll(() => editor.getState().syntaxStatus, { timeout: 10_000 }).toBe('ready')
+      await expect
+        .poll(
+          () => {
+            const snapshot = editor.getTextSnapshot()
+            const text = snapshot.readRange(0, snapshot.length)
+            const retIndex = text.indexOf('return')
+            const tokens = editor['tokens'].toTokens() as readonly {
+              readonly start: number
+              readonly end: number
+              readonly style: { readonly color?: string }
+            }[]
+            const ret = tokens.find(
+              (token) => token.start === retIndex && token.end === retIndex + 6,
+            )
+            return ret?.style.color ?? null
+          },
+          { interval: 10, timeout: 10_000 },
+        )
+        .toContain('keyword')
+    } finally {
+      editor.dispose()
+      host.remove()
+    }
+  },
+  30_000,
+)
+
+browserTest(
+  'aborting a queued replacement parse does not invalidate the prior parsed snapshot in the worker',
+  async () => {
+    const { document, backend } = rangeDocument('queued-abort.ts', 'const answer = 1;\n')
+    const initial = await document.run()
+    expect(initial.projection.analysis?.kind).not.toBe('cancelled')
+
+    const worker = (backend as unknown as { worker: Worker | null }).worker
+    expect(worker).not.toBeNull()
+
+    const origPostMessage = worker!.postMessage.bind(worker!)
+    const origOnMessage = worker!.onmessage
+    expect(origOnMessage).not.toBeNull()
+
+    let heldRequestId: number | null = null
+    let heldSnapshotVersion: number | null = null
+    let heldRuntimeSessionId: string | null = null
+    const postedDocumentRequestIds: number[] = []
+    const supersededRequestIds: number[] = []
+    let heldAck: MessageEvent | null = null
+    let resolveAckHeld!: () => void
+    const ackHeld = new Promise<void>((resolve) => {
+      resolveAckHeld = resolve
+    })
+    let resolveSupersedePosted!: () => void
+    const supersedePosted = new Promise<void>((resolve) => {
+      resolveSupersedePosted = resolve
+    })
+
+    worker!.postMessage = ((message: unknown, ...rest: unknown[]) => {
+      const payload = (
+        message as {
+          id?: number
+          payload?: {
+            type?: string
+            requestId?: number
+            snapshotVersion?: number
+            runtimeSessionId?: string
+          }
+        }
+      )?.payload
+      const id = (message as { id?: number })?.id
+      if ((payload?.type === 'parse' || payload?.type === 'edit') && typeof id === 'number') {
+        postedDocumentRequestIds.push(id)
+        if (heldRequestId === null) {
+          heldRequestId = id
+          heldSnapshotVersion = payload.snapshotVersion ?? null
+          heldRuntimeSessionId = payload.runtimeSessionId ?? null
+        }
+      } else if (payload?.type === 'supersedeDocument' && typeof payload.requestId === 'number') {
+        supersededRequestIds.push(payload.requestId)
+        resolveSupersedePosted()
+      }
+      return (origPostMessage as (...args: unknown[]) => void)(message, ...rest)
+    }) as Worker['postMessage']
+
+    worker!.onmessage = (event: MessageEvent) => {
+      const id = (event.data as { id?: number } | null)?.id
+      if (heldRequestId !== null && id === heldRequestId && heldAck === null) {
+        heldAck = event
+        resolveAckHeld()
+        return
+      }
+      origOnMessage!.call(worker!, event)
+    }
+
+    try {
+      // Start an edit parse and hold its real worker acknowledgement at the client boundary.
+      const v2Promise = document.edit([{ from: 15, to: 16, text: '2' }])
+      await ackHeld
+
+      // Queue v3 behind v2's held acknowledgement, wait for request-scoped supersedeDocument,
+      // then abort v3 before v2's acknowledgement is released.
+      const abortV3 = new AbortController()
+      const v3Promise = document.edit([{ from: 15, to: 16, text: '3' }], abortV3.signal)
+      await supersedePosted
+      expect(postedDocumentRequestIds).toHaveLength(1)
+      expect(supersededRequestIds).toEqual([heldRequestId])
+
+      abortV3.abort()
+      await expect(v3Promise).rejects.toMatchObject({ name: 'AbortError' })
+
+      // Release v2's acknowledgement and verify v2's parsed snapshot remains queryable in the worker.
+      origOnMessage!.call(worker!, heldAck!)
+      const v2Result = await v2Promise
+      expect(v2Result.projection.analysis?.kind).not.toBe('cancelled')
+
+      await backend.awaitIdleFence()
+      expect(postedDocumentRequestIds).toHaveLength(1)
+      expect(heldSnapshotVersion).not.toBeNull()
+      expect(heldRuntimeSessionId).not.toBeNull()
+
+      const ranged = await backend.queryRange({
+        documentId: 'queued-abort.ts',
+        runtimeSessionId: heldRuntimeSessionId!,
+        snapshotVersion: heldSnapshotVersion!,
+        languageId: 'typescript',
+        includeHighlights: true,
+        includeCaptures: false,
+        range: { startIndex: 0, endIndex: 17 },
+      })
+      expect(ranged).toBeDefined()
+      expect(ranged!.analysis?.kind).not.toBe('cancelled')
+      const tokenCount = ranged!.tokens?.length ?? ranged!.tokensPacked?.starts.length ?? 0
+      expect(tokenCount).toBeGreaterThan(0)
+    } finally {
+      worker!.postMessage = origPostMessage as Worker['postMessage']
+      worker!.onmessage = origOnMessage
+    }
+  },
+)
+
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()))
 }

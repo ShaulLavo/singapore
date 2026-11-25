@@ -54,13 +54,13 @@ export function createTreeDocument(
   const owned = created[0]
   if (!lease || !owned)
     throw new TypeError('The fixture must bind one private runtime to its canonical owner')
-  const run = () => {
+  const run = (signal?: AbortSignal) => {
     const owner = analysis.contributions.pin()
     if (!owner) throw new TypeError('The live fixture must issue its current revision')
     const read = owned.source.read(owner.revision)
     owner.dispose()
     if (!read) throw new TypeError('The issued canonical read must remain available')
-    return owned.runtime.analyze(read)
+    return owned.runtime.analyze(read, signal)
   }
   const dispose = () => {
     lease.dispose()
@@ -74,9 +74,9 @@ export function createTreeDocument(
     analysis,
     runtime: owned.runtime,
     run,
-    edit: (edits: readonly TextEdit[]) => {
+    edit: (edits: readonly TextEdit[], signal?: AbortSignal) => {
       view.applyEdits(edits)
-      return run()
+      return run(signal)
     },
     dispose,
   }
