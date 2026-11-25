@@ -41,12 +41,13 @@ jobs:
           fi
 
       - name: Create Release Pull Request or Publish to npm
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
-          # changesets/action runs these without a shell, so `&&` must live in package scripts.
-          version: bun run version:packages
-          publish: bun run release:publish
-          createGithubReleases: true
+          # The action runs these without a shell, so `&&` lives in package scripts. It sets
+          # CHANGESETS_OUTPUT; `changeset git-tag` writes the new tags there for the action to
+          # push and turn into GitHub releases.
+          version-script: bun run version:packages
+          publish-script: bun run release:publish
+          create-github-releases: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: 'true'
