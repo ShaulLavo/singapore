@@ -1,8 +1,5 @@
-import type {
-  LspLineStarts,
-  LspTextSnapshot,
-  LspWebSocketTransportOptions,
-} from '@singapore-editor/lsp'
+import type { LspLineStarts, LspTextSnapshot } from '@singapore-editor/lsp'
+import type { LspWebSocketFactoryOptions } from './lspConnection'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type {
@@ -23,7 +20,7 @@ export type LanguageServerResolvedOptions = {
   readonly initializationOptions: unknown
   readonly timeoutMs: number
   readonly webSocketRoute: string | URL
-  readonly webSocketTransportOptions?: LspWebSocketTransportOptions
+  readonly webSocketTransportOptions?: LspWebSocketFactoryOptions
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onDidNavigateDiagnostic?: (

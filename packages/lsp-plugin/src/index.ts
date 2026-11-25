@@ -45,6 +45,7 @@ export {
   type LspConnectionProvider,
   type LspReconnectOptions,
   type LspConnectionTransportFactory,
+  type LspWebSocketFactoryOptions,
 } from './lspConnection'
 export {
   LanguageServerDocumentSyncController,

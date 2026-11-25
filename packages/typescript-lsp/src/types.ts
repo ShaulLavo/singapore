@@ -1,7 +1,7 @@
 import type { TypeScriptLspWorkspace, TypeScriptLspSourceFile } from './workspace'
 export type { TypeScriptLspSourceFile } from './workspace'
 import type { EditorDisposable, EditorPlugin } from '@singapore-editor/core/extensions'
-import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapore-editor/lsp'
+import type { LspWorkerLike } from '@singapore-editor/lsp'
 import type {
   LanguageServerConnectionContext,
   LspConnectionProvider,
@@ -16,6 +16,7 @@ import type {
   LanguageServerReferencesResult,
   LanguageServerSemanticTokensOptions,
   LanguageServerStatus,
+  LspWebSocketFactoryOptions,
   OnApplyWorkspaceEdit,
 } from '@singapore-editor/lsp-plugin'
 import type ts from 'typescript-api'
@@ -81,7 +82,7 @@ export type TypeScriptLspPluginOptions = {
   onConnectionCreated?(context: LanguageServerConnectionContext): EditorDisposable | void
   readonly workerFactory?: () => LspWorkerLike
   readonly webSocketRoute?: string | URL
-  readonly webSocketTransportOptions?: LspWebSocketTransportOptions
+  readonly webSocketTransportOptions?: LspWebSocketFactoryOptions
   readonly onStatusChange?: (status: TypeScriptLspStatus) => void
   readonly onDiagnostics?: (summary: TypeScriptLspDiagnosticSummary) => void
   readonly onOpenDefinition?: (

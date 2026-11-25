@@ -11,13 +11,16 @@ import type {
   LspClient,
   LspNotificationHandler,
   LspServerRequestHandler,
-  LspWebSocketTransportOptions,
 } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LanguageServerConnectionContext } from './connectionContext'
 import type { LanguageServerDocumentSyncController } from './documentSyncController'
-import type { LspConnectionProvider, LspReconnectOptions } from './lspConnection'
+import type {
+  LspConnectionProvider,
+  LspReconnectOptions,
+  LspWebSocketFactoryOptions,
+} from './lspConnection'
 import type { ParsedWorkspaceEdit } from './workspaceEdit'
 import type { WorkspaceTextDocumentProvenance } from './workspaceTextEdits'
 export type { LanguageServerConnectionContext } from './connectionContext'
@@ -222,7 +225,7 @@ export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   /** Which documents reach the server, and under what language id. */
   readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly webSocketRoute: string | URL
-  readonly webSocketTransportOptions?: LspWebSocketTransportOptions
+  readonly webSocketTransportOptions?: LspWebSocketFactoryOptions
   /**
    * Borrows the connection rather than owning one per view, so a file switch that rebuilds the view
    * does not also rebuild the websocket and re-run `initialize`. The route and options above still
@@ -273,7 +276,7 @@ export type LanguageServerLaneOptions = LanguageServerLaneHostOptions & {
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
   readonly webSocketRoute: string | URL
-  readonly webSocketTransportOptions?: LspWebSocketTransportOptions
+  readonly webSocketTransportOptions?: LspWebSocketFactoryOptions
   readonly connectionProvider?: LspConnectionProvider
   /** Reconnects after the server goes away on its own; off unless given. */
   readonly reconnect?: LspReconnectOptions

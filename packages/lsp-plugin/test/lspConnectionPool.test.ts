@@ -498,7 +498,9 @@ describe('LspConnectionPool', () => {
       throw new Error('worker would not stop')
     })
     pool.provider('first').acquire(
-      connectionOptions({ createTransport: createWorkerLspTransportFactory(() => failingWorker) }),
+      connectionOptions({
+        createTransport: createWorkerLspTransportFactory(() => failingWorker),
+      }),
       {
         ...callbacks(),
         onError: () => {

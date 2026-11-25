@@ -36,6 +36,9 @@ export type LspConnectionTransportFactory = (
   signal: AbortSignal,
 ) => LspManagedTransport | Promise<LspManagedTransport>
 
+/** WebSocket options for a connection's factory. The signal is the connection's own. */
+export type LspWebSocketFactoryOptions = Omit<LspWebSocketTransportOptions, 'signal'>
+
 export type LspConnectionOptions = {
   readonly rootUri: lsp.DocumentUri | null
   readonly initializationOptions: unknown
@@ -143,7 +146,8 @@ export class LspConnection {
   /**
    * The connection's state, retirement included, is final before any host code runs: a stop hook,
    * `close()`, the factory's abort listener, a status callback. One that re-enters finds the
-   * retirement already recorded. A host call that throws goes to `onError`, and the rest still run.
+   * retirement already recorded. A host call that throws goes to `onError`, and the rest still run;
+   * an `onError` that throws is rethrown once they have.
    */
   public dispose(): void {
     if (this.disposed) return
@@ -161,11 +165,15 @@ export class LspConnection {
     this.removeTransportCloseListener = null
     if (gone) this.retire(gone)
 
-    this.callHost(() => removeCloseListener?.())
-    this.callHost(() => this.client.disconnect())
-    this.callHost(() => transport?.close())
-    this.callHost(() => start?.controller.abort(new Error('LSP connection was closed')))
-    this.callHost(() => this.setStatus('idle'))
+    runEach(
+      [
+        () => removeCloseListener?.(),
+        () => this.client.disconnect(),
+        () => transport?.close(),
+        () => start?.controller.abort(new Error('LSP connection was closed')),
+        () => this.setStatus('idle'),
+      ].map((call) => () => this.callHost(call)),
+    )
   }
 
   private callHost(call: () => void): void {
@@ -395,7 +403,7 @@ export class LspConnection {
 
 export function createWebSocketLspTransportFactory(
   route: string | URL,
-  options?: Omit<LspWebSocketTransportOptions, 'signal'>,
+  options?: LspWebSocketFactoryOptions,
 ): LspConnectionTransportFactory {
   return (signal) =>
     createWebSocketLspTransport(route, {
@@ -425,6 +433,19 @@ function settled(gone: Promise<void> | undefined): Promise<void> | null {
 }
 
 const ignore = (): void => undefined
+
+/** Runs every step, even after one throws, then throws the first failure. For teardown. */
+export function runEach(steps: readonly (() => void)[]): void {
+  let failure: { readonly error: unknown } | null = null
+  for (const step of steps) {
+    try {
+      step()
+    } catch (error) {
+      failure ??= { error }
+    }
+  }
+  if (failure) throw failure.error
+}
 
 /** A factory call. `arrived` settles with its transport, or with null when the call failed. */
 type InFlightStart = {

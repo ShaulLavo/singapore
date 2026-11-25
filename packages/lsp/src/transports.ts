@@ -101,6 +101,7 @@ export const createWebSocketLspTransport = (
 
   const socket = new WebSocketCtor(url, mutableProtocols(options.protocols))
   const transport = new WebSocketLspTransport(socket)
+  if (options.signal?.aborted) return Promise.reject(closeForAbort(transport, options.signal))
   if (socket.readyState === WEB_SOCKET_OPEN) return Promise.resolve(transport)
 
   return waitForWebSocketOpen(socket, transport, options.signal)
@@ -310,8 +311,7 @@ const waitForWebSocketOpen = (
     }
     const handleAbort = (): void => {
       cleanup()
-      transport.close()
-      reject(signal?.reason)
+      if (signal) reject(closeForAbort(transport, signal))
     }
     const handleOpen = (): void => {
       cleanup()
@@ -330,7 +330,19 @@ const waitForWebSocketOpen = (
     socket.addEventListener('error', handleError)
     socket.addEventListener('close', handleClose)
     signal?.addEventListener('abort', handleAbort)
+    // The socket's own listener calls may have aborted it before that listener was in place.
+    if (signal?.aborted) handleAbort()
   })
+
+/** Closes a cancelled handshake's socket; the abort reason, or what closing threw instead. */
+const closeForAbort = (transport: LspManagedTransport, signal: AbortSignal): unknown => {
+  try {
+    transport.close()
+  } catch (error) {
+    return error
+  }
+  return signal.reason
+}
 
 const messageEventData = (event: Event): string | null => {
   const data = (event as MessageEvent).data
