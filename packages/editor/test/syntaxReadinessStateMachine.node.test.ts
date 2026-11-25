@@ -4890,5 +4890,187 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('bypasses stale same-range and containing cache entries on return scroll and explicit refresh for Markdown records', async () => {
+      const buffer = createEditorTextBuffer('# Heading\n'.repeat(30))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'authoritative-records-fresh-bypass',
+      })
+      const supersededBracket = {
+        index: 96,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      let firstHundredCalls = 0
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        const base = answerFor(range)
+        const isFirstHundred = range.startIndex === 0 && range.endIndex === 100
+        if (isFirstHundred) firstHundredCalls += 1
+        return {
+          ...base,
+          brackets: isFirstHundred && firstHundredCalls === 1 ? [supersededBracket] : [],
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([
+              range.startIndex,
+              range.endIndex,
+              isFirstHundred ? firstHundredCalls : 1,
+            ]),
+          },
+        }
+      })
+      let latestRecords: EditorSyntaxResult['records'] = undefined
+      const getLatestRecords = () => latestRecords
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 100 }
+      let demandRanges: readonly EditorSyntaxRange[] = [{ startIndex: 0, endIndex: 100 }]
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'authoritative-records-fresh-bypass',
+        getCurrentSessionDocumentId: () => 'authoritative-records-fresh-bypass',
+        getLanguageId: () => 'markdown',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        setSyntaxCaptures: (_captures, records) => {
+          latestRecords = records
+        },
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const publishDemand = () => {
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: session.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      }
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'authoritative-records-fresh-bypass',
+          languageId: 'markdown',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.brackets).toEqual([supersededBracket])
+
+        // Scroll to [80, 140) without bracket 96 while retaining [0, 100).
+        currentRange = { startIndex: 80, endIndex: 140 }
+        demandRanges = [
+          { startIndex: 0, endIndex: 100 },
+          { startIndex: 80, endIndex: 140 },
+        ]
+        publishDemand()
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(getLatestRecords()?.data).toEqual(new Uint32Array([80, 140, 1])),
+        )
+        expect(syntax.brackets).toEqual([])
+
+        // Part A: scroll back to [0, 100) — must bypass stale same-range cache and query provider.
+        currentRange = { startIndex: 0, endIndex: 100 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(getLatestRecords()?.data).toEqual(new Uint32Array([0, 100, 2])),
+        )
+        expect(syntax.status).toBe('ready')
+        expect(firstHundredCalls).toBe(2)
+        expect(syntax.brackets).toEqual([])
+
+        // Part B: supersede [0, 100) again, then explicitly refresh() on [0, 60).
+        currentRange = { startIndex: 80, endIndex: 140 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(getLatestRecords()?.data).toEqual(new Uint32Array([80, 140, 1])),
+        )
+
+        currentRange = { startIndex: 0, endIndex: 60 }
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(getLatestRecords()?.data).toEqual(new Uint32Array([0, 60, 1])),
+        )
+        expect(syntax.status).toBe('ready')
+        expect(query.mock.calls.some(([r]) => r.startIndex === 0 && r.endIndex === 60)).toBe(true)
+        expect(syntax.brackets).toEqual([])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('admits usable provisional paint and copy tokens from a terminal partial covering part of the request', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'terminal-partial-subrange-paint',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 60 && range.endIndex === 120) {
+          const covered = { startIndex: 60, endIndex: 80 }
+          return {
+            ...answerFor(covered, {
+              tokens: [{ start: 60, end: 64, style: { color: 'keyword' } }],
+            }),
+            projection: {
+              ...answerFor(covered).projection,
+              analysis: {
+                kind: 'partial',
+                coveredRange: covered,
+                background: {
+                  kind: 'cancelled',
+                  reason: 'budget',
+                  coveredRange: covered,
+                  elapsedMs: 50,
+                  budgetMs: 50,
+                },
+              },
+            },
+          }
+        }
+        return answerFor(range)
+      })
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 40,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        view.setRange({ startIndex: 60, endIndex: 120 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.syntax.renderDataReady).toBe(true)
+
+        const paintedAt60 = view.syntax.tokens
+          .toTokens()
+          .some((t) => t.start === 60 && t.end === 64)
+        const copyAt60 = view.syntax.copyTokens
+          .toTokens()
+          .some((t) => t.start === 60 && t.end === 64)
+        expect(paintedAt60).toBe(true)
+        expect(copyAt60).toBe(true)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

@@ -453,7 +453,7 @@ export class EditorSyntaxController {
     readonly contentVersion: number
     readonly parseGeneration: number
     readonly range: EditorSyntaxRange
-    readonly exact: boolean
+    readonly bypassCache: boolean
   } | null = null
   #pendingPrefetch: PendingSyntaxPrefetch | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
@@ -1501,7 +1501,7 @@ export class EditorSyntaxController {
       return
     }
 
-    const exact = this.#needsAuthoritativeRecordsQuery(range)
+    const bypassCache = this.#needsAuthoritativeRecordsQuery(range)
     const queryRange = this.#nextRequiredVisibleRange(range)
     if (!queryRange) return
 
@@ -1511,8 +1511,8 @@ export class EditorSyntaxController {
       pending?.documentVersion === documentVersion &&
       pending.contentVersion === this.#syntaxContentVersion &&
       pending.parseGeneration === this.#parseGeneration &&
-      (exact
-        ? pending.exact && sameSyntaxRange(queryRange, pending.range)
+      (bypassCache
+        ? pending.bypassCache && sameSyntaxRange(queryRange, pending.range)
         : queryRange.endIndex <= queryRange.startIndex
           ? sameSyntaxRange(queryRange, pending.range)
           : syntaxRangeCoverage(queryRange, [pending.range]) === 'full')
@@ -1525,7 +1525,7 @@ export class EditorSyntaxController {
       contentVersion: this.#syntaxContentVersion,
       parseGeneration: this.#parseGeneration,
       range: queryRange,
-      exact,
+      bypassCache,
     }
 
     this.#scheduleSyntaxRangeRequest(
@@ -1534,7 +1534,7 @@ export class EditorSyntaxController {
       queryRange,
       options,
       'visible',
-      exact,
+      bypassCache,
     )
   }
 
@@ -1941,7 +1941,7 @@ export class EditorSyntaxController {
     range: EditorSyntaxRange,
     options: EditorSyntaxRefreshOptions,
     kind: 'visible' | 'prefetch',
-    exact = false,
+    bypassCache = false,
   ): void {
     const guard = this.#captureRequestGuard(documentVersion)
     request.schedule({
@@ -1952,7 +1952,7 @@ export class EditorSyntaxController {
           contentVersion: guard.contentVersion,
           parseGeneration: guard.parseGeneration,
           signal,
-          exact,
+          bypassCache,
         }),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.range.apply', (result, startedAt) => {
@@ -2385,13 +2385,15 @@ export class EditorSyntaxController {
         }
       }
       try {
-        const exact = this.#entriesNeedAuthoritativeRecordsQuery(queryTarget, promotedEntries)
+        const bypassCache =
+          this.#entriesNeedAuthoritativeRecordsQuery(queryTarget, promotedEntries) ||
+          this.#entriesNeedAuthoritativeRecordsQuery(queryTarget, this.#rangeEntries)
         const loaded = await this.loadSyntaxRangeResult(queryTarget, 'visible', {
           contentVersion: guard.contentVersion,
           parseGeneration: guard.parseGeneration,
           updatesDocument: true,
           signal,
-          exact,
+          bypassCache,
         })
         if (!this.#canProviderQuerySyntaxRange()) {
           return {
@@ -2535,7 +2537,7 @@ export class EditorSyntaxController {
       readonly parseGeneration?: number
       readonly updatesDocument?: boolean
       readonly signal?: AbortSignal
-      readonly exact?: boolean
+      readonly bypassCache?: boolean
     } = {},
   ): Promise<EditorSyntaxLoadResult> {
     const contentVersion = options.contentVersion ?? this.#syntaxContentVersion
@@ -2570,7 +2572,7 @@ export class EditorSyntaxController {
     // it. Requests for shown rows and background tiles are cancelled once nobody waits for them.
     const signal = source === 'prefetch' ? undefined : options.signal
     const result = this.retainedSyntax
-      ? this.retainedSyntax.queryRange(range, { signal, exact: options.exact })
+      ? this.retainedSyntax.queryRange(range, { signal, bypassCache: options.bypassCache })
       : this.syntaxSession.queryRange(range)
     return result.then((answer) => ({
       contentVersion,
@@ -2722,13 +2724,33 @@ export class EditorSyntaxController {
       return true
     }
 
+    const partial = analysis?.kind === 'partial'
+    const terminalPartial = isTerminalIncompleteSyntaxResult(result)
+    const coveredPartialRange =
+      partial && loadResult.range !== null
+        ? loadResult.range.endIndex <= loadResult.range.startIndex
+          ? sameSyntaxRange(analysis.coveredRange, loadResult.range)
+            ? loadResult.range
+            : null
+          : (intersectSyntaxRanges([loadResult.range], [analysis.coveredRange])[0] ?? null)
+        : null
+
     if (!loadResult.promotedOnly && !syntaxResultCoversRange(result, loadResult.range)) {
-      if (loadResult.range && !isOptional && !isFirstRows) {
-        this.#handleRequiredRangeFailure(loadResult.range, guard, {
-          preserveProvisionalPaint: false,
-        })
+      if (terminalPartial && partial && loadResult.range !== null && !isOptional && !isFirstRows) {
+        if (!coveredPartialRange) {
+          this.#handleRequiredRangeFailure(loadResult.range, guard, {
+            preserveProvisionalPaint: true,
+          })
+          return true
+        }
+      } else {
+        if (loadResult.range && !isOptional && !isFirstRows) {
+          this.#handleRequiredRangeFailure(loadResult.range, guard, {
+            preserveProvisionalPaint: false,
+          })
+        }
+        return false
       }
-      return false
     }
 
     if (editorPerformanceDiagnosticsEnabled()) {
@@ -2768,12 +2790,12 @@ export class EditorSyntaxController {
       return false
     }
 
-    const partial = analysis?.kind === 'partial'
-    const terminalPartial = isTerminalIncompleteSyntaxResult(result)
+    const admitRange =
+      terminalPartial && partial && coveredPartialRange ? coveredPartialRange : loadResult.range
 
     // Admit range entry according to strict disjoint ownership & copy-eligibility rules.
     const admitted = this.#admitRangeEntry(
-      loadResult.range,
+      admitRange,
       result,
       loadResult.source === 'full' ? 'visible' : loadResult.source,
       isFirstRows,
@@ -3365,7 +3387,8 @@ export class EditorSyntaxController {
           nextEntries.length === 1 &&
           canOwnRanges &&
           this.#currentTokens.length === 0 &&
-          sameSyntaxRanges(claimable, [range])
+          sameSyntaxRanges(claimable, [range]) &&
+          (!partial || sameSyntaxRange(result.projection.analysis!.coveredRange, range))
             ? incomingTokens
             : mergeTokensOnStrips(this.#currentTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
