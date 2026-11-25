@@ -364,3 +364,53 @@ it('preserves native browser selection across async token arrival in spans mode'
   expect(sel.isCollapsed).toBe(false)
   expect(sel.toString()).toBe('E')
 })
+
+it('captures overlapping token colors in document snapshots matching live spans precedence', async () => {
+  const host = document.createElement('div')
+  host.id = `overlap-live-${cleanups.length}`
+  host.style.cssText = 'width:480px;position:relative'
+  document.body.append(host)
+  const target = document.createElement('div')
+  target.id = `overlap-snap-${cleanups.length}`
+  target.style.cssText = 'width:480px;position:relative'
+  document.body.append(target)
+  const editor = new Editor(host, {
+    plugins: [createPaintSnapshotPlugin()],
+    scrollMode: 'content',
+    tokenPainting: 'spans',
+    cursorLineHighlight: { rowBackground: false, gutterNumber: false, gutterBackground: false },
+    lineHeight: 24,
+    fontSize: 16,
+    theme: {
+      type: 'dark',
+      foregroundColor: '#ffffff',
+      backgroundColor: '#000000',
+      caretColor: 'transparent',
+    },
+  })
+  let restored: ReturnType<typeof mountPaintSnapshot> = null
+  cleanups.push(() => {
+    restored?.dispose()
+    editor.dispose()
+    host.remove()
+    target.remove()
+  })
+
+  editor.setText('abcde')
+  editor.setTokens([
+    { start: 0, end: 5, style: { color: 'rgb(255, 0, 0)' } },
+    { start: 1, end: 4, style: { color: 'rgb(0, 255, 0)' } },
+    { start: 2, end: 3, style: { color: 'rgb(255, 0, 0)' } },
+  ])
+
+  const live = await pixels(host.id)
+  const snapshot = editor.captureSnapshot({ scope: 'document' })
+  expect(snapshot.status, JSON.stringify(snapshot)).toBe('ready')
+  assert(snapshot.status === 'ready')
+  const decoded = decodePaintSnapshot(snapshot.paint)
+  assert(decoded)
+  restored = mountPaintSnapshot(target, decoded, { width: 480 })
+  expect(restored).toBeTruthy()
+  const replayed = await pixels(target.id)
+  expect(Array.from(replayed.data)).toEqual(Array.from(live.data))
+})

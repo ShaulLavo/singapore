@@ -1469,6 +1469,26 @@ function estimatedRowWidth(
   return estimatedDisplayCells(text, tabSize) * cellWidth
 }
 
+export function createDomRangeForChunkLocalRange(
+  document: Document,
+  chunk: VirtualizedTextChunk,
+  localStart: number,
+  localEnd: number,
+): Range | null {
+  const startLocal = clampChunkLocal(chunk, localStart)
+  const endLocal = clampChunkLocal(chunk, localEnd)
+  if (endLocal <= startLocal) return null
+  const startBoundary = domBoundaryForChunkLocalOffset(chunk, startLocal)
+  const endBoundary = domBoundaryForChunkLocalOffset(chunk, endLocal, 'before')
+  if (!startBoundary || !endBoundary) return null
+  const start = normalizedRangeBoundary(startBoundary, 'start')
+  const end = normalizedRangeBoundary(endBoundary, 'end')
+  const range = document.createRange()
+  range.setStart(start.node, start.offset)
+  range.setEnd(end.node, end.offset)
+  return range
+}
+
 export function createDomRangeForChunkRange(
   document: Document,
   row: MountedVirtualizedTextRow,
@@ -1579,8 +1599,10 @@ export function localOffsetFromDomBoundary(
   if (textPart) return textPart.localStart + clamp(offset, 0, textPart.node.length)
   if (!isHtmlElement(node)) return null
   if (!row.element.contains(node) && node !== row.element) return null
-  if (node === row.element && offset <= 0) return 0
-  if (node === row.element && offset >= node.childNodes.length) return row.text.length
+  const mountedStart = row.chunks[0]?.localStart ?? 0
+  const mountedEnd = row.chunks.at(-1)?.localEnd ?? row.text.length
+  if (node === row.element && offset <= 0) return mountedStart
+  if (node === row.element && offset >= node.childNodes.length) return mountedEnd
 
   const chunk = chunkForElement(row, node)
   if (chunk && offset <= 0) return chunk.localStart
@@ -1592,7 +1614,7 @@ export function localOffsetFromDomBoundary(
     const trailing = lastPartInElement(row, node)
     if (trailing) return trailing.localEnd
   }
-  return row.text.length
+  return mountedEnd
 }
 
 function domBoundariesForGeometryIndex(

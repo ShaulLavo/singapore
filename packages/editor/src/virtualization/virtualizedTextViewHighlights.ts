@@ -22,6 +22,7 @@ import { SHARED_TOKEN_HIGHLIGHT_PREFIX } from './sharedTokenHighlights'
 import {
   createRowTokenPainter,
   normalizeTokenPainting,
+  resolveChunkLocalIntervals,
   resolveTokenPainterKind,
   supportsCssHighlights,
 } from './rowTokenPainter'
@@ -50,6 +51,7 @@ import {
 import { renderHiddenCharacters } from './virtualizedTextViewHiddenCharacters'
 import { clearSelectionLayer, renderSelectionLayer } from './virtualizedTextViewSelectionLayer'
 import {
+  createDomRangeForChunkLocalRange,
   createDomRangeForChunkRange,
   domBoundaryForRowLocalOffset,
   localOffsetFromDomBoundary,
@@ -148,18 +150,34 @@ export function adoptTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
   const projectionStatus = tokenProjectionLiveRangeStatus(view.tokens, tokens)
   if (projectionStatus === true && !view.sameLineTokenEdit) {
     installTokens(view, tokens)
-    if (!view.tokenPainter.hasPaintedState() && tokens.length > 0) renderTokenHighlights(view)
+    if (
+      needsPainterReconcileForTokens(view) ||
+      (!view.tokenPainter.hasPaintedState() && tokens.length > 0)
+    ) {
+      renderTokenHighlights(view)
+    }
     return
   }
 
   if (canKeepLiveTokenRanges(view, tokens, projectionStatus)) {
     installTokens(view, tokens)
+    if (needsPainterReconcileForTokens(view)) {
+      view.sameLineTokenEdit = null
+      view.tokenProjectionDirtyStartRow = null
+      renderTokenHighlights(view)
+      return
+    }
     reconcileTokenHighlightsAfterSameLineEdit(view)
     return
   }
 
   if (view.tokens === tokens) {
-    if (!view.tokenPainter.hasPaintedState() && tokens.length > 0) renderTokenHighlights(view)
+    if (
+      needsPainterReconcileForTokens(view) ||
+      (!view.tokenPainter.hasPaintedState() && tokens.length > 0)
+    ) {
+      renderTokenHighlights(view)
+    }
     return
   }
 
@@ -183,7 +201,7 @@ function adoptChangedTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
   const pendingEdit = takeSameLineTokenEdit(view)
   const dirtyStartRow = view.tokenProjectionDirtyStartRow
   installTokens(view, tokens)
-  if (pendingEdit) {
+  if (pendingEdit && !needsPainterReconcileForTokens(view)) {
     reconcileTokenHighlightsFromRow(
       view,
       dirtyTokenProjectionStartRow(dirtyStartRow, pendingEdit.rowIndex),
@@ -194,6 +212,25 @@ function adoptChangedTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
 
   view.tokenProjectionDirtyStartRow = null
   renderTokenHighlights(view)
+}
+
+function needsPainterReconcileForTokens(view: VirtualizedTextViewInternal): boolean {
+  if (view.provisional) return false
+  if (view.tokenPainting === 'css-highlight') return view.tokenPainter.kind !== 'css-highlight'
+  if (view.tokenPainting === 'spans') return view.tokenPainter.kind !== 'spans'
+  if (!supportsCssHighlights(view.highlightRegistry)) return view.tokenPainter.kind !== 'spans'
+  if (view.scrollMode === 'virtualized') return view.tokenPainter.kind !== 'css-highlight'
+
+  const mountedRows = getMountedRows(view)
+  const desired = resolveTokenPainterKind(
+    view.tokenPainting,
+    view.highlightRegistry,
+    view.scrollMode,
+    view.tokenPainter.kind,
+    mountedRows.length,
+    tokenSegmentCount(tokenSegmentsForRows(view, mountedRows)),
+  )
+  return desired !== view.tokenPainter.kind
 }
 
 // A palette only changes by growing or being replaced, so its identity says when groups are stale.
@@ -528,7 +565,7 @@ export function setTokenPaintingMode(
   if (view.tokenPainting === next) return false
 
   view.tokenPainting = next
-  if (view.provisional) return true
+  if (view.provisional || view.sameLineTokenEdit) return true
 
   const mountedRows = getMountedRows(view)
   const desired = resolveTokenPainterKind(
@@ -1099,9 +1136,35 @@ export function documentPaintTokenRanges(
     return []
   const segments = new Map<number, TokenRowSegment[]>()
   appendTokenSegmentsForMountedRow(view, segments, row, null)
+  const rowSegments = segments.get(row.tokenHighlightSlotId) ?? []
+  if (view.tokenPainter.kind === 'spans') {
+    const byChunk = new Map<VirtualizedTextChunk, TokenRowSegment[]>()
+    for (const segment of rowSegments) {
+      const existing = byChunk.get(segment.chunk)
+      if (existing) existing.push(segment)
+      else byChunk.set(segment.chunk, [segment])
+    }
+    const resolved: { readonly style: EditorTokenStyle; readonly range: AbstractRange }[] = []
+    for (const chunk of row.chunks) {
+      const chunkSegments = byChunk.get(chunk)
+      if (!chunkSegments) continue
+      for (const interval of resolveChunkLocalIntervals(row, chunk, chunkSegments)) {
+        const range = createDomRangeForChunkLocalRange(
+          row.element.ownerDocument,
+          chunk,
+          interval.start,
+          interval.end,
+        )
+        if (!range) continue
+        resolved.push({ style: interval.style, range })
+      }
+    }
+    return resolved
+  }
+
   const styles = new Map<string, EditorTokenStyle>()
   const ranges = new Map<string, AbstractRange[]>()
-  for (const segment of segments.get(row.tokenHighlightSlotId) ?? []) {
+  for (const segment of rowSegments) {
     const range = tokenRangeForChunk(
       row.element.ownerDocument,
       row,

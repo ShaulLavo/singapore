@@ -909,7 +909,7 @@ function groupSegmentsByChunk(
   return byChunk
 }
 
-function resolveChunkLocalIntervals(
+export function resolveChunkLocalIntervals(
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   segments: readonly TokenRowSegment[],

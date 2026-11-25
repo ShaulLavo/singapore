@@ -549,4 +549,104 @@ describe('RowTokenPainter seam & spans painter', () => {
     expect(view.scrollElement.dataset.editorTokenPainting).toBe('spans')
     expect(view.scrollElement.querySelectorAll('span.editor-token')).toHaveLength(1)
   })
+
+  it('preserves trailing row-element selections on horizontally scrolled chunked lines', () => {
+    const { registry } = createMockRegistry()
+    const view = createView({
+      highlightRegistry: registry,
+      tokenPainting: 'spans',
+      longLineChunkThreshold: 100,
+      longLineChunkSize: 60,
+    })
+    // Long line scrolled horizontally so only a middle chunk window is mounted.
+    const text = Array.from({ length: 2000 }, (_, i) => String(i % 10)).join('')
+    view.setText(text)
+    view.setScrollMetrics(0, 100, 120, 600)
+
+    const row = view.getState().mountedRows[0]!
+    expect(row.textRenderMode).toBe('chunked')
+    const lastChunk = row.chunks.at(-1)!
+    expect(lastChunk.localEnd).toBeLessThan(text.length)
+    const lastPart = lastChunk.parts.at(-1)!
+    expect(lastPart.kind).toBe('text')
+    if (lastPart.kind !== 'text') return
+
+    const selection = window.getSelection()!
+    selection.setBaseAndExtent(
+      lastPart.node,
+      lastPart.node.length - 3,
+      row.element,
+      row.element.childNodes.length,
+    )
+    const expectedText = selection.toString()
+    expect(expectedText).toHaveLength(3)
+
+    view.setTokens([{ start: 0, end: text.length, style: { color: '#ff0000' } }])
+    expect(selection.toString()).toBe(expectedText)
+    selection.removeAllRanges()
+  })
+
+  it('reconciles painter switches across edits (auto threshold crossing and explicit pending edit)', () => {
+    const { registry } = createMockRegistry()
+    // 1. Auto threshold crossing (> 2,000 segments) during an edit in a static view.
+    const staticView = createView({
+      highlightRegistry: registry,
+      scrollMode: 'static',
+      tokenPainting: 'auto',
+    })
+    const line = 'a '.repeat(25)
+    const lines = Array.from({ length: 100 }, () => line)
+    const initialText = lines.join('\n')
+    staticView.setText(initialText)
+    staticView.setScrollMetrics(0, 2000, 800)
+
+    const buildTokens = (text: string, perLine: number) => {
+      const tokens: { start: number; end: number; style: { color: string } }[] = []
+      let offset = 0
+      for (const rowText of text.split('\n')) {
+        for (let i = 0; i < perLine; i += 1) {
+          tokens.push({
+            start: offset + i * 2,
+            end: offset + i * 2 + 1,
+            style: { color: i % 2 === 0 ? '#ff0000' : '#0000ff' },
+          })
+        }
+        offset += rowText.length + 1
+      }
+      return tokens
+    }
+
+    staticView.setTokens(buildTokens(initialText, 10)) // 1,000 segments < 2,000
+    expect(staticView.getActiveTokenPainting()).toBe('css-highlight')
+
+    const editedText = `X${initialText.slice(1)}`
+    staticView.applyEdit({ from: 0, to: 1, text: 'X' }, editedText)
+    staticView.setTokens(buildTokens(editedText, 25)) // 2,500 segments >= 2,000
+    expect(staticView.getActiveTokenPainting()).toBe('spans')
+    expect(staticView.scrollElement.querySelectorAll('span.editor-token').length).toBeGreaterThan(
+      2000,
+    )
+
+    // 2. Explicit setTokenPainting while sameLineTokenEdit is pending repaints unchanged rows too.
+    const editView = createView({ highlightRegistry: registry, tokenPainting: 'css-highlight' })
+    editView.setText('row0\nrow1')
+    editView.setScrollMetrics(0, 100, 400)
+    editView.setTokens([
+      { start: 0, end: 4, style: { color: '#ff0000' } },
+      { start: 5, end: 9, style: { color: '#0000ff' } },
+    ])
+    expect(editView.getActiveTokenPainting()).toBe('css-highlight')
+
+    editView.applyEdit({ from: 5, to: 5, text: 'X' }, 'row0\nXrow1')
+    editView.setTokenPainting('spans')
+    // Outgoing painter remains active until tokens arrive; then both rows repaint under spans.
+    editView.setTokens([
+      { start: 0, end: 4, style: { color: '#ff0000' } },
+      { start: 5, end: 10, style: { color: '#0000ff' } },
+    ])
+    expect(editView.getActiveTokenPainting()).toBe('spans')
+    const rows = editView.getState().mountedRows
+    expect(rows[0]!.element.querySelectorAll('span.editor-token')).toHaveLength(1)
+    expect(rows[1]!.element.querySelectorAll('span.editor-token')).toHaveLength(1)
+  })
 })
