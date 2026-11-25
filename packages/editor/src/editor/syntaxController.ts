@@ -382,8 +382,11 @@ export class EditorSyntaxController {
   #rangeEntries: readonly CachedSyntaxRangeEntry[] = []
   #carriedEntries: CarriedRangeCache | null = null
   #unavailableRanges: readonly EditorSyntaxRange[] = []
+  #unavailableClearsScopeRanges: readonly EditorSyntaxRange[] = []
   #unavailableEmptyRange: EditorSyntaxRange | null = null
+  #unavailableEmptyClearsScope = false
   #unavailableRecordsRange: EditorSyntaxRange | null = null
+  #observingPreparedStructural = false
   readonly #syntaxRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
     key: 'editor.syntax.document',
     taskClass: 'background-derived',
@@ -598,11 +601,15 @@ export class EditorSyntaxController {
     this.#unavailableRanges = this.#unavailableRanges.filter((range) =>
       syntaxRangeListsIntersect([range], shown),
     )
+    this.#unavailableClearsScopeRanges = this.#unavailableClearsScopeRanges.filter((range) =>
+      syntaxRangeListsIntersect([range], shown),
+    )
     if (
       this.#unavailableEmptyRange &&
       (!visible || !sameSyntaxRange(this.#unavailableEmptyRange, visible))
     ) {
       this.#unavailableEmptyRange = null
+      this.#unavailableEmptyClearsScope = false
     }
     if (
       this.#unavailableRecordsRange &&
@@ -1037,14 +1044,15 @@ export class EditorSyntaxController {
     if (!prepared) return
 
     const guard = this.#captureRequestGuard()
-    if (prepared.structural?.readyResult) {
-      this.#applyPreparedStructuralResult(
-        prepared.structural,
-        prepared.structural.readyResult,
-        guard,
-      )
+    const readyStructural = prepared.structural?.readyResult ?? null
+    if (prepared.structural && readyStructural) {
+      this.#applyPreparedStructuralResult(prepared.structural, readyStructural, guard)
       this.#adoptReadyPrefetch(prefetchRange, guard)
-    } else if (!prepared.structural) {
+    } else if (prepared.structural) {
+      if (!this.#observingPreparedStructural) {
+        this.#observePreparedStructural(prepared.structural, guard)
+      }
+    } else {
       this.#adoptReadyStructuralAnalysis(prefetchRange, guard)
     }
     if (prepared.highlighter?.readyResult) {
@@ -1356,7 +1364,9 @@ export class EditorSyntaxController {
         this.retainedSyntax?.hasDegradedOrFailedBase() === true)
     if (explicitRetry) {
       this.#unavailableRanges = []
+      this.#unavailableClearsScopeRanges = []
       this.#unavailableEmptyRange = null
+      this.#unavailableEmptyClearsScope = false
       this.#unavailableRecordsRange = null
       this.#pruneDegradedAndPartialRangeEntries()
       this.retainedSyntax?.clearDegradedOrPartialRanges()
@@ -1406,7 +1416,9 @@ export class EditorSyntaxController {
     this.#pendingInitialHighlightThemeTerminal = null
     this.#publishedScope = null
     this.#unavailableRanges = []
+    this.#unavailableClearsScopeRanges = []
     this.#unavailableEmptyRange = null
+    this.#unavailableEmptyClearsScope = false
     this.#unavailableRecordsRange = null
     // Immediately clear stale pre-edit brackets and injections while reanalysis is in flight.
     this.#currentBrackets = []
@@ -1479,9 +1491,15 @@ export class EditorSyntaxController {
 
     // If all missing parts of `range` are already terminally unavailable, reconcile & settle.
     if (!this.#needsAuthoritativeRecordsQuery(range) && this.#rangeCoveredBySettled(range)) {
+      const clearsScope =
+        range.endIndex <= range.startIndex
+          ? this.#unavailableEmptyClearsScope &&
+            this.#unavailableEmptyRange !== null &&
+            sameSyntaxRange(this.#unavailableEmptyRange, range)
+          : syntaxRangeListsIntersect(this.#unavailableClearsScopeRanges, [range])
       this.#reconcileViewportScope(range, {
         configurationGeneration,
-        preserveProvisionalPaint: true,
+        preserveProvisionalPaint: !clearsScope,
       })
       return
     }
@@ -1704,16 +1722,24 @@ export class EditorSyntaxController {
     }
   }
 
+  #observePreparedStructural(
+    structural: EditorPreparedStructuralBorrow,
+    guard: RequestGuard,
+  ): void {
+    this.#observingPreparedStructural = true
+    void structural.result.then(
+      (result) => this.#applyPreparedStructuralResult(structural, result, guard),
+      () => this.#recoverPreparedStructural(structural, guard),
+    )
+  }
+
   #observePreparedResults(prepared: EditorPreparedDocumentPayload | null): void {
     if (!prepared) return
 
     const guard = this.#captureRequestGuard()
     const structural = prepared.structural
     if (structural && !structural.readyResult) {
-      void structural.result.then(
-        (result) => this.#applyPreparedStructuralResult(structural, result, guard),
-        () => this.#recoverPreparedStructural(structural, guard),
-      )
+      this.#observePreparedStructural(structural, guard)
     }
     const highlighter = prepared.highlighter
     if (!highlighter || highlighter.readyResult) return
@@ -1881,6 +1907,7 @@ export class EditorSyntaxController {
     else this.syntaxSession?.dispose()
     this.#preparedSyntaxDisposer = null
     this.#preparedStructuralContentVersion = null
+    this.#observingPreparedStructural = false
     this.syntaxSession = null
     this.retainedSyntax = null
     this.#syntaxSessionIncludesCaptures = false
@@ -3054,8 +3081,17 @@ export class EditorSyntaxController {
 
     for (const gap of gaps) {
       this.#unavailableRanges = appendCachedSyntaxRange(this.#unavailableRanges, gap)
+      if (!options.preserveProvisionalPaint) {
+        this.#unavailableClearsScopeRanges = appendCachedSyntaxRange(
+          this.#unavailableClearsScopeRanges,
+          gap,
+        )
+      }
     }
-    if (emptyGap) this.#unavailableEmptyRange = requestRange
+    if (emptyGap) {
+      this.#unavailableEmptyRange = requestRange
+      if (!options.preserveProvisionalPaint) this.#unavailableEmptyClearsScope = true
+    }
     const visibleRange = this.options.getVisibleSyntaxRange()
     if (recordsGap && visibleRange) this.#unavailableRecordsRange = visibleRange
 
@@ -3230,9 +3266,14 @@ export class EditorSyntaxController {
       if (isEmptyRange) {
         if (this.#unavailableEmptyRange && sameSyntaxRange(this.#unavailableEmptyRange, range)) {
           this.#unavailableEmptyRange = null
+          this.#unavailableEmptyClearsScope = false
         }
       } else {
         this.#unavailableRanges = subtractSyntaxRange(this.#unavailableRanges, range)
+        this.#unavailableClearsScopeRanges = subtractSyntaxRange(
+          this.#unavailableClearsScopeRanges,
+          range,
+        )
       }
       if (
         this.#unavailableRecordsRange &&
@@ -3367,6 +3408,20 @@ export class EditorSyntaxController {
       const entry = makeEntry(claimable, tokensOnly ? [] : claimable)
       const nextEntries = keptEntries.concat(entry)
       this.#rangeEntries = nextEntries
+      if (!tokensOnly) {
+        if (isEmptyRange) {
+          if (this.#unavailableEmptyRange && sameSyntaxRange(this.#unavailableEmptyRange, range)) {
+            this.#unavailableEmptyRange = null
+            this.#unavailableEmptyClearsScope = false
+          }
+        } else {
+          this.#unavailableRanges = subtractSyntaxRanges(this.#unavailableRanges, claimable)
+          this.#unavailableClearsScopeRanges = subtractSyntaxRanges(
+            this.#unavailableClearsScopeRanges,
+            claimable,
+          )
+        }
+      }
 
       if (!this.#highlighterSession) {
         const baseTokens =
@@ -3958,7 +4013,9 @@ export class EditorSyntaxController {
 
     this.#publishedScope = null
     this.#unavailableRanges = []
+    this.#unavailableClearsScopeRanges = []
     this.#unavailableEmptyRange = null
+    this.#unavailableEmptyClearsScope = false
     this.#unavailableRecordsRange = null
     this.#rangeScopeOwners = []
     this.#rangeEntries = promotedEntries
@@ -4132,7 +4189,9 @@ export class EditorSyntaxController {
     this.#rangeEntries = []
     this.#carriedEntries = null
     this.#unavailableRanges = []
+    this.#unavailableClearsScopeRanges = []
     this.#unavailableEmptyRange = null
+    this.#unavailableEmptyClearsScope = false
     this.#unavailableRecordsRange = null
   }
 

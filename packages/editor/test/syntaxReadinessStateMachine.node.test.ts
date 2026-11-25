@@ -3932,5 +3932,189 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears stale folds and captures when returning to a range-unavailable viewport after visiting a ready range', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'return-to-unavailable-clears-scope',
+      })
+      const foldAtStart: FoldRange = {
+        startIndex: 1,
+        endIndex: 19,
+        startLine: 0,
+        endLine: 9,
+        type: 'block',
+      }
+      const captureAtStart: EditorSyntaxCapture = {
+        startIndex: 1,
+        endIndex: 19,
+        captureName: 'function',
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 30 && range.endIndex === 60) {
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            degraded: { kind: 'range-unavailable', message: 'unavailable-30-60' },
+          }
+        }
+        if (range.startIndex === 0 && range.endIndex === 30) {
+          return answerFor(range, {
+            folds: [foldAtStart],
+            captures: [captureAtStart],
+          })
+        }
+        return answerFor(range)
+      })
+      const view = createView(
+        buffer,
+        analysis,
+        structuralProvider(query),
+        { startIndex: 0, endIndex: 30 },
+        { needsCaptures: true },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.folds()).toEqual([foldAtStart])
+        expect(view.captures()).toEqual([captureAtStart])
+
+        // Move to [20, 60) -> [30, 60) returns range-unavailable -> clears folds & captures.
+        view.setRange({ startIndex: 20, endIndex: 60 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('degraded'))
+        expect(view.folds()).toEqual([])
+        expect(view.captures()).toEqual([])
+
+        // Prefetch [20, 40), visit ready [0, 40) (re-installing [1, 19) fold & capture) without dropping
+        // the [40, 60) unavailable marker, then return to [20, 60) via the settled-unavailable path.
+        view.syntax.prefetchVisibleRange(1, { startIndex: 20, endIndex: 40 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(3))
+        await settle()
+
+        view.syntax.refreshVisibleRange(1, { delayMs: 0, range: { startIndex: 0, endIndex: 40 } })
+        expect(view.folds()).toEqual([foldAtStart])
+        expect(view.captures()).toEqual([captureAtStart])
+
+        view.syntax.refreshVisibleRange(1, { delayMs: 0, range: { startIndex: 20, endIndex: 60 } })
+        expect(view.syntax.status).toBe('degraded')
+        expect(view.syntax.renderDataReady).toBe(true)
+        expect(view.folds()).toEqual([])
+        expect(view.captures()).toEqual([])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('observes prepared structural result when range capability returns between startDocument and adoptPreparedReadyResults', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(120))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prepared-range-returns-during-attach',
+      })
+      let allowRange = false
+      let resolveRange: ((result: EditorSyntaxResult) => void) | null = null
+      const range0: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const query = vi.fn(
+        async (_range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+          new Promise<EditorSyntaxResult>((resolve) => {
+            resolveRange = resolve
+          }),
+      )
+      const provider = structuralProvider(query, { canQueryRange: () => allowRange })
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeCaptures: false,
+        includeHighlights: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      await retained.refreshBase()
+
+      // Mirror preparedDocument.ts borrowStructural: live readyResult getter + async refresh -> queryRange.
+      const resultPromise = retained
+        .refresh(buffer.getTextSnapshot())
+        .then(() => retained.queryRange(range0))
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'prepared-range-returns-during-attach',
+        getCurrentSessionDocumentId: () => 'prepared-range-returns-during-attach',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => range0,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const structuralBorrow = {
+        family: 'structural' as const,
+        runtimeSessionId: retained.runtimeSessionId,
+        provider,
+        configurationTag: [],
+        session: retained,
+        range: range0,
+        configuration: {
+          includeCaptures: false,
+          includeHighlights: true,
+          syntaxMode: 'range' as const,
+        },
+        result: resultPromise,
+        get readyResult(): EditorSyntaxResult | null {
+          const state = retained.read(range0)
+          return state.kind === 'ready' ? state.result : null
+        },
+        dispose: () => retained.dispose(),
+      }
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: structuralBorrow,
+      }
+      try {
+        // Attach while canQueryRange() is false -> live readyResult returns base (non-null),
+        // so startDocument skips observing resultPromise.
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-range-returns-during-attach',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntax.stagePreparedReadyTokens(prepared)
+
+        // Flip canQueryRange() to true before adoption -> live readyResult is now null!
+        allowRange = true
+        expect(prepared.structural.readyResult).toBeNull()
+        syntax.adoptPreparedReadyResults(prepared)
+        syntax.refresh(1, null, { delayMs: 0 })
+
+        await vi.waitFor(() => expect(resolveRange).not.toBeNull())
+        resolveRange!(answerFor(range0, { brackets: [{ index: 2, char: '{', depth: 1 }] }))
+
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.renderDataReady).toBe(true)
+        expect(syntax.brackets.map((b) => b.index)).toEqual([2])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
