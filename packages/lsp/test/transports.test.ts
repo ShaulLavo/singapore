@@ -165,6 +165,38 @@ describe('WebSocket LSP transport', () => {
     expect(received).toEqual(['{"result":true}'])
   })
 
+  it('closes a socket that has not opened when its signal is aborted', async () => {
+    FakeWebSocket.instances.length = 0
+    const controller = new AbortController()
+    const promise = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: FakeWebSocket,
+      signal: controller.signal,
+    })
+    const socket = FakeWebSocket.instances[0]!
+    const reason = new Error('connection closed')
+
+    controller.abort(reason)
+
+    await expect(promise).rejects.toBe(reason)
+    expect(socket.readyState).toBe(3)
+    for (const type of ['open', 'error', 'close', 'message']) {
+      expect(socket.listenerCount(type)).toBe(0)
+    }
+  })
+
+  it('opens no socket for a signal that is already aborted', async () => {
+    FakeWebSocket.instances.length = 0
+    const reason = new Error('connection closed')
+
+    await expect(
+      createWebSocketLspTransport('ws://localhost:3000', {
+        WebSocketCtor: FakeWebSocket,
+        signal: AbortSignal.abort(reason),
+      }),
+    ).rejects.toBe(reason)
+    expect(FakeWebSocket.instances).toHaveLength(0)
+  })
+
   it('removes listeners and closes the socket', async () => {
     FakeWebSocket.instances.length = 0
     const promise = createWebSocketLspTransport('ws://localhost:3000', {

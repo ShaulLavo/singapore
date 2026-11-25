@@ -158,7 +158,8 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   /** See LanguageServerPluginOptions.serverRequestHandlers. */
   readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
-  createTransport(): ReturnType<LspConnectionTransportFactory>
+  /** See LspConnectionTransportFactory: honour `signal`, or a closed connection can block its key. */
+  readonly createTransport: LspConnectionTransportFactory
   /**
    * Calls `createTransport` again after the server goes away on its own, so a factory that starts
    * a server process restarts it. Off unless given.

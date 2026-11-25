@@ -107,7 +107,10 @@ class ConnectingSocket implements LspWebSocketLike {
 }
 
 /** A server process behind a stdio transport, recorded in `servers` when started. */
-function stdioOptions(servers: LspStdio[], stop: () => void = () => undefined): LspConnectionOptions {
+function stdioOptions(
+  servers: LspStdio[],
+  stop: () => void = () => undefined,
+): LspConnectionOptions {
   return connectionOptions({
     timeoutMs: 600_000,
     createTransport: () => {
@@ -467,12 +470,12 @@ describe('LspConnectionPool', () => {
     const failingWorker = worker(() => {
       throw stopFailure
     })
-    pool
-      .provider('first')
-      .acquire(
-        connectionOptions({ createTransport: createWorkerLspTransportFactory(() => failingWorker) }),
-        failing,
-      )
+    pool.provider('first').acquire(
+      connectionOptions({
+        createTransport: createWorkerLspTransportFactory(() => failingWorker),
+      }),
+      failing,
+    )
     pool.provider('second').acquire(
       connectionOptions({
         createTransport: createWorkerLspTransportFactory(() =>
