@@ -6393,5 +6393,182 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('does not let an older document-refresh degraded reply overwrite a newer ready viewport', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(3000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'older-degraded-reply-does-not-overwrite-newer-ready',
+      })
+      let resolveInitial: ((result: EditorSyntaxResult) => void) | null = null
+      const bracket105 = {
+        index: 105,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const query = vi.fn((range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return Promise.resolve(answerFor(range))
+        }
+        if (range.startIndex === 0 && range.endIndex === 5000) {
+          return new Promise((resolve) => {
+            resolveInitial = resolve
+          })
+        }
+        if (range.startIndex === 100 && range.endIndex === 4900) {
+          return Promise.resolve(answerFor(range, { brackets: [bracket105] }))
+        }
+        return Promise.resolve(answerFor(range))
+      })
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 5000 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'older-degraded-reply-does-not-overwrite-newer-ready',
+        getCurrentSessionDocumentId: () => 'older-degraded-reply-does-not-overwrite-newer-ready',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getMountedSyntaxRange: () => ({ startIndex: 0, endIndex: 20 }),
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'older-degraded-reply-does-not-overwrite-newer-ready',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveInitial).not.toBeNull())
+
+        // Scroll to [100, 4900) and settle ready with bracket at 105.
+        currentRange = { startIndex: 100, endIndex: 4900 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(syntax.brackets).toEqual([bracket105])
+
+        // Resolve the older initial [0, 5000) query with full coverage and request-failed degradation.
+        resolveInitial!(
+          answerFor(
+            { startIndex: 0, endIndex: 5000 },
+            {
+              brackets: [],
+              degraded: { kind: 'request-failed', message: 'older degraded reply' },
+            },
+          ),
+        )
+        await settle()
+        expect(syntax.status).toBe('ready')
+        expect(syntax.brackets).toEqual([bracket105])
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('clears invalidated projected paint from controller and renderer on range-unavailable when no cache entry survives the edit', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'range-unavailable-clears-invalidated-projected-paint',
+      })
+      let parseVersion = 0
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (parseVersion >= 2) {
+          return {
+            ...answerFor(range),
+            degraded: { kind: 'range-unavailable', message: 'viewport unavailable after edit' },
+          }
+        }
+        return answerFor(range, {
+          tokens: [{ start: 5, end: 7, style: { color: 'blue' } }],
+        })
+      })
+      const provider = structuralProvider(query, {
+        analyze: async () => {
+          parseVersion += 1
+          const base = createEmptySyntaxResult({ snapshot: { version: parseVersion } })
+          if (parseVersion === 1) return base
+          return {
+            ...base,
+            projection: {
+              ...base.projection,
+              invalidation: {
+                baseSnapshotVersion: 1,
+                snapshotVersion: 2,
+                ranges: [{ startIndex: 0, endIndex: 20 }],
+              },
+            },
+          }
+        },
+      })
+      let lastAdopted = EditorTokenStore.empty()
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const viewport: EditorSyntaxRange = { startIndex: 0, endIndex: 20 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'range-unavailable-clears-invalidated-projected-paint',
+        getCurrentSessionDocumentId: () => 'range-unavailable-clears-invalidated-projected-paint',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => viewport,
+        adoptTokens: (tokens) => {
+          lastAdopted = tokens
+        },
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'range-unavailable-clears-invalidated-projected-paint',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(lastAdopted.toTokens().map((t) => t.start)).toEqual([5])
+
+        const previousSnapshot = buffer.getTextSnapshot()
+        const edit: TextEdit = { from: 0, to: 1, text: 'b' }
+        const change = session.applyEdits([edit])
+        syntax.acceptChange(change)
+        syntax.setTokens(projectTokensThroughEdit(syntax.tokens, edit, previousSnapshot), false)
+        syntax.refresh(1, change, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+
+        expect(syntax.tokens.length).toBe(0)
+        expect(lastAdopted.length).toBe(0)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

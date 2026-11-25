@@ -251,6 +251,7 @@ type EditorSyntaxLoadResult = {
   readonly firstRows?: boolean
   readonly promotedEntries?: readonly CachedSyntaxRangeEntry[]
   readonly promotedOnly?: boolean
+  readonly visibleSequence?: number
   readonly rangeFailure?: {
     readonly range: EditorSyntaxRange
     readonly error: unknown
@@ -457,6 +458,7 @@ export class EditorSyntaxController {
   #currentBrackets: readonly BracketInfo[] = []
   #currentInjections: readonly EditorSyntaxInjection[] = []
   #syntaxContentVersion = 0
+  #visibleRangeSequence = 0
   #pendingVisibleRange: {
     readonly documentVersion: number
     readonly contentVersion: number
@@ -1563,7 +1565,10 @@ export class EditorSyntaxController {
 
     // Cache hit check (promotes copy eligibility for warmed/prefetched ranges when scrolled onto,
     // and honors terminal authoritative records failure when multi-strip coverage is unavailable).
-    if (this.#repaintCachedVisibleSyntaxRange(range, configurationGeneration)) return
+    if (this.#repaintCachedVisibleSyntaxRange(range, configurationGeneration)) {
+      this.#visibleRangeSequence += 1
+      return
+    }
 
     // If all missing parts of `range` are already terminally unavailable, reconcile & settle.
     if (!this.#needsAuthoritativeRecordsQuery(range) && this.#rangeCoveredBySettled(range)) {
@@ -1590,6 +1595,7 @@ export class EditorSyntaxController {
       return
     }
 
+    this.#visibleRangeSequence += 1
     this.#pendingVisibleRange = {
       documentVersion,
       contentVersion: this.#syntaxContentVersion,
@@ -2399,6 +2405,7 @@ export class EditorSyntaxController {
       ) {
         const uncovered =
           firstUncoveredSyntaxRange(visibleRange, promotedCompleteCoverage) ?? visibleRange
+        const visibleSequence = this.#visibleRangeSequence
         try {
           const loaded = await this.loadSyntaxRangeResult(uncovered, 'visible', {
             contentVersion: guard.contentVersion,
@@ -2424,6 +2431,7 @@ export class EditorSyntaxController {
             parseId: base.parseId,
             baseResult: base.result,
             promotedEntries,
+            visibleSequence,
           }
         } catch (error) {
           if (error instanceof DOMException && error.name === 'AbortError') throw error
@@ -2437,6 +2445,7 @@ export class EditorSyntaxController {
             source: 'visible',
             updatesDocument: true,
             promotedEntries,
+            visibleSequence,
             rangeFailure: { range: uncovered, error, change },
           }
         }
@@ -2462,6 +2471,7 @@ export class EditorSyntaxController {
           promotedEntries,
         }
       }
+      const visibleSequence = this.#visibleRangeSequence
       try {
         const bypassCache =
           this.#entriesNeedAuthoritativeRecordsQuery(queryTarget, promotedEntries) ||
@@ -2491,6 +2501,7 @@ export class EditorSyntaxController {
           parseId: base.parseId,
           baseResult: base.result,
           promotedEntries,
+          visibleSequence,
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw error
@@ -2504,6 +2515,7 @@ export class EditorSyntaxController {
           source: 'visible',
           updatesDocument: true,
           promotedEntries,
+          visibleSequence,
           rangeFailure: { range: queryTarget, error, change },
         }
       }
@@ -2771,6 +2783,18 @@ export class EditorSyntaxController {
       return false
     }
 
+    // Ignore superseded document-refresh range replies once a newer visible range request
+    // or cached viewport settlement has taken over on this parse.
+    if (
+      loadResult.updatesDocument &&
+      loadResult.range !== null &&
+      !isFirstRows &&
+      loadResult.visibleSequence !== undefined &&
+      loadResult.visibleSequence !== this.#visibleRangeSequence
+    ) {
+      return false
+    }
+
     // Route range-phase rejections from document refreshes through the gap gate so a late
     // rejection cannot downgrade a viewport already settled by prefetch or another range answer.
     if (loadResult.rangeFailure) {
@@ -2803,6 +2827,14 @@ export class EditorSyntaxController {
         })
       }
       return true
+    }
+
+    // Never allow a late degraded range reply to overwrite already-settled complete coverage.
+    if (loadResult.range !== null && !isOptional && !isFirstRows && result.degraded !== null) {
+      const { gaps, emptyGap, recordsGap } = this.#stillRequiredGaps(loadResult.range, guard)
+      if (gaps.length === 0 && !emptyGap && !recordsGap) {
+        return false
+      }
     }
 
     const partial = analysis?.kind === 'partial'
@@ -3202,6 +3234,28 @@ export class EditorSyntaxController {
     if (emptyGap) {
       this.#unavailableEmptyRange = requestRange
       if (!options.preserveProvisionalPaint) this.#unavailableEmptyClearsScope = true
+    }
+    if (!options.preserveProvisionalPaint && !this.#highlighterSession && gaps.length > 0) {
+      const snapshot = this.options.getSession()?.getTextSnapshot() ?? null
+      const ownsProjectedPaint =
+        this.#projectedRangeTokens !== null && this.#projectedRangeTokens === this.#currentTokens
+      const fallback =
+        snapshot !== null && this.#externalBaseTokens?.snapshot === snapshot
+          ? this.#externalBaseTokens.store
+          : EditorTokenStore.empty()
+      const nextTokens =
+        ownsProjectedPaint && this.#rangeEntries.length === 0
+          ? EditorTokenStore.empty()
+          : mergeTokensOnStrips(this.#currentTokens, fallback, gaps)
+      if (nextTokens !== this.#currentTokens) {
+        this.#currentTokens = nextTokens
+        if (ownsProjectedPaint || this.#rangeTokenOwner !== null) {
+          this.#rangeTokenOwner = snapshot ? { store: nextTokens, snapshot } : null
+          this.#projectedRangeTokens = null
+          this.#awaitingProjectedEditTokens = false
+        }
+        this.options.adoptTokens(nextTokens)
+      }
     }
     const visibleRange = this.options.getVisibleSyntaxRange()
     if (recordsGap && visibleRange) {
