@@ -3201,5 +3201,417 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('preserves range token compaction across background parse completion after a partial viewport', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(300))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'bg-completion-compaction',
+      })
+      let producedListener:
+        | ((
+            read: Parameters<ReturnType<typeof createEmptySyntaxRuntime>['analyze']>[0],
+            result: EditorSyntaxResult,
+          ) => void)
+        | null = null
+      let lastRead: Parameters<ReturnType<typeof createEmptySyntaxRuntime>['analyze']>[0] | null =
+        null
+      let completed = false
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (!completed) {
+          return {
+            ...answerFor(range),
+            projection: {
+              ...answerFor(range).projection,
+              analysis: {
+                kind: 'partial',
+                coveredRange: range,
+              },
+            },
+          }
+        }
+        return answerFor(range)
+      })
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async (read) => {
+            lastRead = read
+            return completed
+              ? createEmptySyntaxResult()
+              : {
+                  ...createEmptySyntaxResult(),
+                  projection: {
+                    ...createEmptySyntaxResult().projection,
+                    analysis: {
+                      kind: 'partial',
+                      coveredRange: { startIndex: 0, endIndex: 20 },
+                    },
+                  },
+                }
+          },
+          canQueryRange: () => true,
+          queryRange: query,
+          subscribeResults: (listener) => {
+            producedListener = listener
+            return () => {
+              producedListener = null
+            }
+          },
+        })),
+      }
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.tokens.length).toBe(1))
+        expect(producedListener).not.toBeNull()
+        expect(lastRead).not.toBeNull()
+
+        // Publish background completion and scroll through 5 disjoint viewports.
+        completed = true
+        producedListener!(lastRead!, createEmptySyntaxResult())
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        for (let index = 1; index <= 5; index += 1) {
+          const startIndex = index * 40
+          view.setRange({ startIndex, endIndex: startIndex + 20 })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+          await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        }
+        expect(view.syntax.tokens.length).toBe(1)
+        expect(view.syntax.copyTokens.length).toBe(1)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('compacts syntax-owned copy tokens across scrolls after an edit with pre-existing host paint', async () => {
+      const buffer = createEditorTextBuffer('x\n'.repeat(300))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'host-paint-copy-compaction',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange) => answerFor(range))
+      const view = createView(buffer, analysis, structuralProvider(query), {
+        startIndex: 0,
+        endIndex: 20,
+      })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        // Install a host token outside the viewport, then edit inside the viewport.
+        view.syntax.setTokens(
+          EditorTokenStore.fromTokens([{ start: 500, end: 505, style: { color: 'host' } }]),
+        )
+        const change = typeText(view, buffer, { from: 5, to: 5, text: '!' })
+        view.syntax.refresh(1, change, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        for (let index = 1; index <= 5; index += 1) {
+          const startIndex = index * 40
+          view.setRange({ startIndex, endIndex: startIndex + 20 })
+          view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+          await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        }
+        // Host token survives in painted store, while syntax-owned copy store stays compacted to 1 token.
+        expect(view.syntax.copyTokens.length).toBe(1)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('ignores a late off-screen prefetch after the controller transitions to full-document mode', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(3000))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'late-prefetch-after-full-fallback',
+      })
+      let allowRange = true
+      let resolveViewport: ((result: EditorSyntaxResult) => void) | null = null
+      let resolvePrefetch: ((result: EditorSyntaxResult) => void) | null = null
+      const getResolvePrefetch = () => resolvePrefetch
+      const baseTokens = EditorTokenStore.fromTokens([
+        { start: 0, end: 4, style: { color: 'base' } },
+      ])
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return answerFor(range, {
+            tokens: EditorTokenStore.fromTokens([{ start: 0, end: 2, style: { color: 'first' } }]),
+          })
+        }
+        if (range.startIndex === 0 && range.endIndex === 5000) {
+          return new Promise<EditorSyntaxResult>((resolve) => {
+            resolveViewport = resolve
+          })
+        }
+        return new Promise<EditorSyntaxResult>((resolve) => {
+          resolvePrefetch = resolve
+        })
+      })
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async () => ({
+            ...createEmptySyntaxResult(),
+            tokens: baseTokens,
+          }),
+          canQueryRange: () => allowRange,
+          queryRange: query,
+        })),
+      }
+      const view = createView(
+        buffer,
+        analysis,
+        provider,
+        { startIndex: 0, endIndex: 5000 },
+        { mountedRange: () => ({ startIndex: 0, endIndex: 20 }) },
+      )
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveViewport).not.toBeNull())
+
+        // Start a prefetch while firstRows has accepted the document in range mode, wait until
+        // the prefetch query is actually in flight, then disable range queries and resolve both!
+        view.syntax.prefetchVisibleRange(1, { startIndex: 5100, endIndex: 5200 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(getResolvePrefetch()).not.toBeNull())
+        allowRange = false
+        resolveViewport!(answerFor({ startIndex: 0, endIndex: 5000 }))
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.tokens.toTokens()).toEqual([
+          { start: 0, end: 4, style: { color: 'base' } },
+        ])
+
+        getResolvePrefetch()!(
+          answerFor(
+            { startIndex: 5100, endIndex: 5200 },
+            {
+              tokens: EditorTokenStore.fromTokens([
+                { start: 5100, end: 5104, style: { color: 'prefetch' } },
+              ]),
+            },
+          ),
+        )
+        await settle()
+        expect(view.syntax.tokens.toTokens()).toEqual([
+          { start: 0, end: 4, style: { color: 'base' } },
+        ])
+        expect(view.syntax.copyTokens.toTokens()).toEqual([
+          { start: 0, end: 4, style: { color: 'base' } },
+        ])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('uses the retained base result instead of a prepared viewport slice when range queries are disabled before adoption', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(600))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'prepared-disable-range-before-adopt',
+      })
+      let allowRange = true
+      const baseResult: EditorSyntaxResult = {
+        ...createEmptySyntaxResult(),
+        brackets: [{ index: 500, char: '{', depth: 1 }],
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange) =>
+        answerFor(range, { brackets: [{ index: 2, char: '(', depth: 1 }] }),
+      )
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async () => baseResult,
+          canQueryRange: () => allowRange,
+          queryRange: query,
+        })),
+      }
+      const retained = analysis.borrowStructural({
+        languageId: 'typescript',
+        includeCaptures: false,
+        includeHighlights: true,
+        syntaxMode: 'range',
+        provider,
+        configurationTag: [],
+      })!
+      await retained.refreshBase()
+      const preparedSlice = await retained.queryRange({ startIndex: 0, endIndex: 20 })
+
+      // Disable range queries BEFORE adoption!
+      allowRange = false
+      const session = createEditorBufferSession(buffer)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 500, endIndex: 520 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'prepared-disable-range-before-adopt',
+        getCurrentSessionDocumentId: () => 'prepared-disable-range-before-adopt',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      const prepared = {
+        lineStarts: [0],
+        tabSize: 2,
+        fallbackFoldIndex: null,
+        highlighter: null,
+        structural: {
+          family: 'structural' as const,
+          runtimeSessionId: retained.runtimeSessionId,
+          provider,
+          configurationTag: [],
+          session: retained,
+          range: { startIndex: 0, endIndex: 20 },
+          configuration: {
+            includeCaptures: false,
+            includeHighlights: true,
+            syntaxMode: 'range' as const,
+          },
+          result: Promise.resolve(preparedSlice),
+          readyResult: preparedSlice,
+          dispose: () => retained.dispose(),
+        },
+      }
+      try {
+        syntax.startDocument(
+          {
+            analysis,
+            documentId: 'prepared-disable-range-before-adopt',
+            languageId: 'typescript',
+            snapshot: session.getSnapshot(),
+            textSnapshot: session.getTextSnapshot(),
+          },
+          prepared,
+        )
+        syntax.adoptPreparedReadyResults(prepared)
+        expect(syntax.status).toBe('ready')
+        expect(syntax.brackets.map((b) => b.index)).toEqual([500])
+        currentRange = { startIndex: 500, endIndex: 520 }
+        expect(syntax.status).toBe('ready')
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('transitions to full-document mode when scrolling to an uncached viewport after range queries are disabled', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'disable-range-after-settle-scroll',
+      })
+      let allowRange = true
+      const query = vi.fn(async (range: EditorSyntaxRange) => answerFor(range))
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: async () => ({
+            ...createEmptySyntaxResult(),
+            brackets: [{ index: 70, char: '{', depth: 1 }],
+          }),
+          canQueryRange: () => allowRange,
+          queryRange: query,
+        })),
+      }
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        allowRange = false
+        view.setRange({ startIndex: 60, endIndex: 80 })
+        view.syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.renderDataReady).toBe(true)
+        expect(view.syntax.brackets.map((b) => b.index)).toEqual([70])
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('preserves fresh host paint installed while an incremental narrow-invalidation edit parse is held', async () => {
+      const buffer = createEditorTextBuffer('a'.repeat(200))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'promotion-preserves-host-paint',
+      })
+      let snapshotVersion = 0
+      let resolveSecondBase: ((result: EditorSyntaxResult) => void) | null = null
+      const baseAnalyze = vi.fn(async (read: { readonly text: { readonly length: number } }) => {
+        const previousVersion = snapshotVersion
+        snapshotVersion += 1
+        const base = createEmptySyntaxResult({
+          snapshot: {
+            documentId: 'promotion-preserves-host-paint',
+            length: read.text.length,
+            version: snapshotVersion,
+          },
+        })
+        if (previousVersion === 0) return base
+        return new Promise<EditorSyntaxResult>((resolve) => {
+          resolveSecondBase = resolve
+        }).then(() => ({
+          ...base,
+          projection: {
+            ...base.projection,
+            invalidation: {
+              baseSnapshotVersion: previousVersion,
+              snapshotVersion,
+              ranges: [{ startIndex: 95, endIndex: 110 }],
+            },
+          },
+        }))
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange) => answerFor(range))
+      const provider: EditorSyntaxProvider = {
+        operation: createEditorStructuralOperation(() => ({
+          ...createEmptySyntaxRuntime(),
+          foldingSupport: 'supported' as const,
+          analyze: baseAnalyze,
+          canQueryRange: () => true,
+          queryRange: query,
+        })),
+      }
+      const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 20 })
+      try {
+        view.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+        const change = typeText(view, buffer, { from: 100, to: 100, text: 'Z' })
+        view.syntax.refresh(1, change, { delayMs: 0 })
+        await vi.waitFor(() => expect(resolveSecondBase).not.toBeNull())
+
+        // Install a fresh host token outside [0, 20) while the narrow-invalidation edit parse is held.
+        const hostToken = { start: 150, end: 155, style: { color: 'host-fresh' } }
+        view.syntax.setTokens(EditorTokenStore.fromTokens([hostToken]))
+        resolveSecondBase!(createEmptySyntaxResult())
+
+        await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+        expect(view.syntax.tokens.toTokens()).toContainEqual(hostToken)
+        expect(view.syntax.copyTokens.toTokens()).toContainEqual(hostToken)
+      } finally {
+        view.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })
