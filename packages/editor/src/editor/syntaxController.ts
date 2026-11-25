@@ -4359,10 +4359,12 @@ export class EditorSyntaxController {
       snapshot !== null &&
       this.#rangeTokenOwner?.store === this.#currentTokens &&
       this.#rangeTokenOwner.snapshot === snapshot
+    let adoptedUpdatedTokens = false
     if (rangeOwned) {
       const tokens = compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(kept))
       this.#currentTokens = tokens
       this.#rangeTokenOwner = { store: tokens, snapshot }
+      adoptedUpdatedTokens = true
     } else if (!this.#highlighterSession) {
       const removed = previousEntries.filter((entry) => !keptSet.has(entry))
       const evictedRanges = this.#tokenCoverage(removed)
@@ -4372,11 +4374,14 @@ export class EditorSyntaxController {
             ? this.#externalBaseTokens.store
             : EditorTokenStore.empty()
         this.#currentTokens = mergeTokensOnStrips(this.#currentTokens, fallback, evictedRanges)
-        this.options.adoptTokens(this.#currentTokens)
+        adoptedUpdatedTokens = true
       }
     }
     if (!this.#highlighterSession && this.#copyOwner === 'range') {
       this.#compactRangeCopyStore(kept, this.#currentTokens, rangeOwned)
+    }
+    if (adoptedUpdatedTokens) {
+      this.options.adoptTokens(this.#currentTokens)
     }
   }
 

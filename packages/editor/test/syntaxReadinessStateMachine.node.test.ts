@@ -5896,5 +5896,159 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('recovers a stationary sibling view from error to ready after a subsequent successful same-text retry', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'sibling-view-recover-after-error-retry',
+      })
+      let baseAttempt = 0
+      const bracket10 = {
+        index: 10,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const bracket12 = {
+        index: 12,
+        char: '(',
+        kind: 'open' as const,
+        pairId: 'paren' as const,
+        depth: 0,
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> =>
+        answerFor(range, {
+          brackets: baseAttempt === 1 ? [bracket10] : [bracket12],
+        }),
+      )
+      const provider = structuralProvider(query, {
+        analyze: async () => {
+          baseAttempt += 1
+          if (baseAttempt === 1) {
+            return {
+              ...createEmptySyntaxResult(),
+              degraded: {
+                kind: 'optional-phase-failed',
+                phase: 'parse',
+                message: 'initial degraded base',
+              },
+            }
+          }
+          if (baseAttempt === 2) {
+            throw new Error('first-retry-failed')
+          }
+          return createEmptySyntaxResult()
+        },
+      })
+      const viewA = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      const viewB = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 40 })
+      try {
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        viewB.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewA.syntax.status).toBe('ready')
+          expect(viewB.syntax.status).toBe('ready')
+        })
+        expect(viewA.syntax.brackets).toEqual([bracket10])
+        expect(viewB.syntax.brackets).toEqual([bracket10])
+
+        // First retry throws: both views enter error.
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewA.syntax.status).toBe('error')
+          expect(viewB.syntax.status).toBe('error')
+        })
+
+        // Second retry succeeds: both views recover to ready with bracket 12.
+        viewA.syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => {
+          expect(viewA.syntax.status).toBe('ready')
+          expect(viewB.syntax.status).toBe('ready')
+        })
+        expect(baseAttempt).toBe(3)
+        expect(viewA.syntax.brackets).toEqual([bracket12])
+        expect(viewB.syntax.brackets).toEqual([bracket12])
+      } finally {
+        viewB.dispose()
+        viewA.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('adopts compacted tokens into the renderer when explicit refresh prunes range-owned degraded paint', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'range-owned-degraded-prune-adopts-renderer',
+      })
+      let attempt = 0
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        attempt += 1
+        if (attempt === 1) {
+          return answerFor(range, {
+            degraded: {
+              kind: 'optional-phase-failed',
+              phase: 'folds',
+              message: 'degraded viewport',
+            },
+            tokens: [{ start: 0, end: 2, style: { color: 'blue' } }],
+          })
+        }
+        return {
+          ...answerFor(range),
+          degraded: { kind: 'range-unavailable', message: 'unavailable on retry' },
+        }
+      })
+      let lastAdopted = EditorTokenStore.empty()
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      const viewport: EditorSyntaxRange = { startIndex: 0, endIndex: 40 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'range-owned-degraded-prune-adopts-renderer',
+        getCurrentSessionDocumentId: () => 'range-owned-degraded-prune-adopts-renderer',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => viewport,
+        adoptTokens: (tokens) => {
+          lastAdopted = tokens
+        },
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'range-owned-degraded-prune-adopts-renderer',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+        expect(lastAdopted.toTokens()).toEqual([{ start: 0, end: 2, style: { color: 'blue' } }])
+
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(attempt).toBe(2))
+        await vi.waitFor(() => expect(syntax.status).toBe('degraded'))
+        expect(syntax.tokens.length).toBe(0)
+        expect(syntax.copyTokens.length).toBe(0)
+        expect(lastAdopted.length).toBe(0)
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

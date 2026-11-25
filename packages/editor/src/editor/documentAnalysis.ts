@@ -879,6 +879,10 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     readonly snapshot: DocumentTextSnapshot
     readonly result: EditorSyntaxResult
   } | null = null
+  private lastPublished: {
+    readonly point: DocumentSyncPoint
+    readonly generation: number
+  } | null = null
   private previousRanges: {
     readonly parseId: number
     readonly read: DocumentRead
@@ -1226,6 +1230,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
   override dispose(): void {
     this.stoppedWarmGeneration = null
     this.lastBase = null
+    this.lastPublished = null
     this.previousRanges = null
     this.incrementalSteps = []
     this.displayed.clear()
@@ -1492,20 +1497,23 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     state: EditorAnalysisRead<EditorSyntaxResult>,
   ): void {
     const previous = this.lastBase
+    const previousPublished = this.lastPublished
     const samePointReplacement =
-      previous !== null &&
-      previous.read.revision.point === read.revision.point &&
-      previous.parseId !== generation
+      previousPublished !== null &&
+      previousPublished.point === read.revision.point &&
+      previousPublished.generation !== generation
     if (state.kind === 'failed') {
       this.previousRanges = null
       this.incrementalSteps = []
+      this.lastBase = null
+      this.lastPublished = { point: read.revision.point, generation }
       if (samePointReplacement) {
-        this.lastBase = null
         this.produced.fire('base-published')
       }
       return
     }
     if (state.kind !== 'ready') return
+    this.lastPublished = { point: read.revision.point, generation }
 
     const invalidation = state.result.projection.invalidation
     const isComplete = (result: EditorSyntaxResult): boolean =>
