@@ -311,4 +311,132 @@ describe('shared EditorWorkScheduler per Editor', () => {
     await vi.waitFor(() => expect(analyzedLengths.length).toBeGreaterThan(afterFirstEdit))
     expect(editorB.getState().syntaxStatus).toBe('ready')
   })
+
+  it('handles synchronous view detach inside a scheduler scheduled callback without crashing shared analysis', async () => {
+    const buffer = createEditorTextBuffer('const x = 1\n')
+    const result = createEmptySyntaxResult()
+    const runtime: EditorSyntaxRuntime = {
+      foldingSupport: 'unsupported',
+      analyze: async () => result,
+      getResult: () => result,
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    const syntaxPlugin = {
+      activate: (context: {
+        registerSyntaxProvider: (provider: {
+          operation: ReturnType<typeof createEditorStructuralOperation>
+        }) => { dispose(): void }
+      }) =>
+        context.registerSyntaxProvider({
+          operation: createEditorStructuralOperation(() => runtime),
+        }),
+    }
+
+    let detachFirst = false
+    let editorA!: Editor
+    const schedulerA = new EditorWorkScheduler({
+      onEvent: (event) => {
+        if (detachFirst && event.type === 'scheduled') {
+          detachFirst = false
+          editorA.dispose()
+        }
+      },
+    })
+    const schedulerB = new EditorWorkScheduler()
+
+    editorA = mountEditor({ workScheduler: schedulerA, plugins: [syntaxPlugin] })
+    const editorB = mountEditor({ workScheduler: schedulerB, plugins: [syntaxPlugin] })
+
+    editorA.attachSession(createEditorBufferSession(buffer), {
+      documentId: 'reentrant-doc',
+      languageId: 'fixture',
+    })
+    editorB.attachSession(createEditorBufferSession(buffer), {
+      documentId: 'reentrant-doc',
+      languageId: 'fixture',
+    })
+    await vi.waitFor(() => expect(editorB.getState().syntaxStatus).toBe('ready'))
+
+    // Detach editorA synchronously from schedulerA's `scheduled` event during an edit.
+    detachFirst = true
+    editorB.edit([{ from: 0, to: 0, text: '// trigger\n' }])
+
+    await vi.waitFor(() => expect(editorB.getState().syntaxStatus).toBe('ready'))
+    schedulerA.dispose()
+    schedulerB.dispose()
+  })
+
+  it('cancels an in-flight shared analysis task on an injected scheduler when the last sibling detaches', async () => {
+    const buffer = createEditorTextBuffer('const neverSettles = 1\n')
+    let runtimeSessionId = ''
+    const eventsA: EditorWorkEvent[] = []
+    const schedulerA = new EditorWorkScheduler({
+      onEvent: (event) => eventsA.push(event),
+    })
+    const schedulerB = new EditorWorkScheduler()
+
+    const result = createEmptySyntaxResult()
+    const runtime: EditorSyntaxRuntime = {
+      foldingSupport: 'unsupported',
+      analyze: (_read, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        }),
+      getResult: () => result,
+      getTokens: () => [],
+      getSnapshotVersion: () => 0,
+      dispose: () => undefined,
+    }
+    const syntaxPlugin = {
+      activate: (context: {
+        registerSyntaxProvider: (provider: {
+          operation: ReturnType<typeof createEditorStructuralOperation>
+        }) => { dispose(): void }
+      }) =>
+        context.registerSyntaxProvider({
+          operation: createEditorStructuralOperation((ctx) => {
+            runtimeSessionId = ctx.runtimeSessionId
+            return runtime
+          }),
+        }),
+    }
+
+    const editorA = mountEditor({ workScheduler: schedulerA, plugins: [syntaxPlugin] })
+    const editorB = mountEditor({ workScheduler: schedulerB, plugins: [syntaxPlugin] })
+
+    editorA.attachSession(createEditorBufferSession(buffer), {
+      documentId: 'inflight-doc',
+      languageId: 'fixture',
+    })
+    editorB.attachSession(createEditorBufferSession(buffer), {
+      documentId: 'inflight-doc',
+      languageId: 'fixture',
+    })
+
+    // Wait until analysis has actually started on schedulerA.
+    await vi.waitFor(() =>
+      expect(
+        eventsA.some((event) => event.key === runtimeSessionId && event.type === 'started'),
+      ).toBe(true),
+    )
+
+    // Detach editorA first, then editorB (the final view). Final disposal must cancel the still-
+    // running analysis task on schedulerA so it cannot leak on the host-injected scheduler.
+    editorA.dispose()
+    editorB.dispose()
+
+    expect(
+      eventsA.some(
+        (event) =>
+          event.key === runtimeSessionId &&
+          event.type === 'cancelled' &&
+          (event.reason === 'scope-released' || event.reason === 'disposed'),
+      ),
+    ).toBe(true)
+
+    schedulerA.dispose()
+    schedulerB.dispose()
+  })
 })

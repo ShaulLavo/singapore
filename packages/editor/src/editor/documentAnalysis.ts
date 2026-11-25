@@ -1727,7 +1727,7 @@ type DelegatedDocumentTask = {
   readonly options: EditorScheduleWorkOptions<unknown>
   readonly scheduledAt: number
   scheduler: EditorWorkScheduler
-  handle: EditorScheduledWorkHandle
+  handle: EditorScheduledWorkHandle | null
   started: boolean
   cancelled: boolean
 }
@@ -1757,30 +1757,46 @@ class DelegatingDocumentWorkScheduler implements EditorWorkSchedulerLike {
 
     for (const task of [...this.#active.values()]) {
       if (task.scheduler !== scheduler) continue
-      if (task.cancelled || !task.handle.isActive()) {
+      if (task.cancelled) {
+        this.#active.delete(task.key)
+        continue
+      }
+      if (task.handle !== null && !task.handle.isActive()) {
         this.#active.delete(task.key)
         continue
       }
       if (task.started) {
-        this.#active.delete(task.key)
+        // Keep tracking in-flight tasks so final disposal still cancels them on the scheduler
+        // that started them (important when the departing view borrowed a host scheduler).
         continue
       }
       // Cancel on the departing scheduler without firing the caller's cancel callback, then
       // re-schedule onto a surviving scheduler so sibling views never lose pending analysis work.
-      task.handle.cancel()
+      if (task.handle !== null) {
+        task.handle.cancel()
+      } else {
+        // `removeScheduler` may be re-entered synchronously from `scheduler`'s `scheduled` event
+        // before `schedule()` has returned `handle`; cancel directly by key on `scheduler`.
+        scheduler.cancel(task.key, 'migrated')
+      }
+      if (this.#disposed || task.cancelled || this.#active.get(task.key) !== task) continue
       const next = this.#targetScheduler()
       const elapsed = Math.max(0, (globalThis.performance?.now() ?? Date.now()) - task.scheduledAt)
       const originalDelay =
         task.options.delayMs && task.options.delayMs > 0 ? task.options.delayMs : 0
       const remainingDelay = originalDelay > 0 ? Math.max(0, originalDelay - elapsed) : 0
       task.scheduler = next
-      task.handle = this.#scheduleOnTarget(next, task, {
+      task.handle = null
+      const migratedHandle = this.#scheduleOnTarget(next, task, {
         ...task.options,
         delayMs: remainingDelay,
         defer: remainingDelay === 0 ? (task.options.defer ?? true) : task.options.defer,
       })
-      if (!task.handle.isActive() && this.#active.get(task.key) === task) {
-        this.#active.delete(task.key)
+      if (task.scheduler === next) {
+        task.handle = migratedHandle
+        if (!migratedHandle.isActive() && this.#active.get(task.key) === task) {
+          this.#active.delete(task.key)
+        }
       }
     }
   }
@@ -1799,7 +1815,11 @@ class DelegatingDocumentWorkScheduler implements EditorWorkSchedulerLike {
     }
 
     const existing = this.#active.get(options.key)
-    if (existing && options.replace === false && existing.handle.isActive()) {
+    if (
+      existing &&
+      options.replace === false &&
+      (existing.handle?.isActive() ?? !existing.cancelled)
+    ) {
       return this.#proxyHandle(existing)
     }
     if (options.replace !== false && existing) {
@@ -1812,14 +1832,17 @@ class DelegatingDocumentWorkScheduler implements EditorWorkSchedulerLike {
       options: options as EditorScheduleWorkOptions<unknown>,
       scheduledAt: globalThis.performance?.now() ?? Date.now(),
       scheduler: target,
-      handle: null as unknown as EditorScheduledWorkHandle,
+      handle: null,
       started: false,
       cancelled: false,
     }
     this.#active.set(options.key, task)
-    task.handle = this.#scheduleOnTarget(target, task, task.options)
-    if (!task.handle.isActive() && this.#active.get(options.key) === task) {
-      this.#active.delete(options.key)
+    const handle = this.#scheduleOnTarget(target, task, task.options)
+    if (task.scheduler === target) {
+      task.handle = handle
+      if (!handle.isActive() && this.#active.get(options.key) === task) {
+        this.#active.delete(options.key)
+      }
     }
     return this.#proxyHandle(task)
   }
@@ -1877,22 +1900,30 @@ class DelegatingDocumentWorkScheduler implements EditorWorkSchedulerLike {
   }
 
   #proxyHandle(task: DelegatedDocumentTask): EditorScheduledWorkHandle {
+    let fallbackSignal: AbortSignal | null = null
     return {
       key: task.key,
       get token() {
-        return task.handle.token
+        return task.handle?.token ?? -1
       },
       get signal() {
-        return task.handle.signal
+        if (task.handle) return task.handle.signal
+        if (!fallbackSignal) {
+          const controller = new AbortController()
+          if (task.cancelled) controller.abort('cancelled')
+          fallbackSignal = controller.signal
+        }
+        return fallbackSignal
       },
       cancel: () => {
         if (task.cancelled) return
         task.cancelled = true
         if (this.#active.get(task.key) === task) this.#active.delete(task.key)
-        task.handle.cancel()
+        if (task.handle) task.handle.cancel()
+        else task.scheduler.cancel(task.key, 'handle-cancelled')
       },
       isActive: () =>
-        !task.cancelled && this.#active.get(task.key) === task && task.handle.isActive(),
+        !task.cancelled && this.#active.get(task.key) === task && (task.handle?.isActive() ?? true),
     }
   }
 }

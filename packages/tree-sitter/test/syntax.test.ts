@@ -403,6 +403,82 @@ describe('Tree-sitter syntax capture conversion', () => {
     }
   })
 
+  it('tracks loader identity on the shared global registration so distinct module copies do not collide', async () => {
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    const makeLoader = (wasmUrl: string) => async () => ({
+      wasmUrl,
+      highlightQuerySource: '(identifier) @variable',
+    })
+    const hostA = new EditorPluginHost([
+      createTreeSitterLanguagePlugin([{ id: 'dual-copy', load: makeLoader('/copy-a.wasm') }], {
+        name: 'dual-copy-a',
+      }),
+    ])
+    const hostB = new EditorPluginHost([
+      createTreeSitterLanguagePlugin([{ id: 'dual-copy', load: makeLoader('/copy-b.wasm') }], {
+        name: 'dual-copy-b',
+      }),
+    ])
+
+    try {
+      const registration = state[key] as {
+        readonly loaderIdentityIds: WeakMap<object, number>
+        readonly nextLoaderIdentityId: number
+        readonly provider: {
+          resolveTreeSitterLanguage(id: string): Promise<{ readonly wasmUrl: string } | null>
+        }
+      }
+      expect(registration.loaderIdentityIds).toBeInstanceOf(WeakMap)
+      expect(registration.nextLoaderIdentityId).toBe(2)
+      await expect(
+        registration.provider.resolveTreeSitterLanguage('dual-copy'),
+      ).resolves.toMatchObject({ wasmUrl: '/copy-b.wasm' })
+    } finally {
+      hostB.dispose()
+      hostA.dispose()
+      await flushDefaultTreeSitterProvider()
+    }
+  })
+
+  it('preserves idle disposal when a remount during the grace window throws during activation', async () => {
+    vi.useFakeTimers()
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    await flushDefaultTreeSitterProvider()
+
+    try {
+      const plugin = createTreeSitterLanguagePlugin([testLanguage('sql', ['.sql'])], {
+        name: 'sql-remount-fail',
+      })
+      const firstHost = new EditorPluginHost([plugin])
+      const registration = state[key] as {
+        readonly owner: TreeSitterWorkerOwner
+      }
+      firstHost.dispose()
+
+      // Remount during the idle grace window with a failing context.
+      vi.advanceTimersByTime(1_000)
+      const failingContext = {
+        registerSyntaxProvider: () => {
+          throw new Error('syntax registration failed')
+        },
+        registerSelectionRangeProvider: () => ({ dispose: () => undefined }),
+      } as unknown as Parameters<NonNullable<typeof plugin.activate>>[0]
+      expect(() => plugin.activate(failingContext)).toThrow('syntax registration failed')
+
+      // Idle disposal must still fire and clean up the global registration & worker owner.
+      vi.advanceTimersByTime(5_000)
+      expect(state[key]).toBeUndefined()
+      expect(registration.owner.inspect().lifecycle).toBe('disposed')
+    } finally {
+      await flushDefaultTreeSitterProvider()
+      vi.useRealTimers()
+    }
+  })
+
   it('converts non-empty captures to editor tokens', () => {
     const tokens = treeSitterCapturesToEditorTokens([
       { startIndex: 0, endIndex: 5, captureName: 'keyword.declaration' },

@@ -117,6 +117,8 @@ type TreeSitterProviderRegistration = {
   readonly provider: TreeSitterSyntaxProvider
   readonly contextReferences: WeakMap<EditorPluginContext, TreeSitterContextReference>
   readonly languageReferences: Map<string, TreeSitterLanguageReference>
+  readonly loaderIdentityIds: WeakMap<() => Promise<TreeSitterLanguageAssets>, number>
+  nextLoaderIdentityId: number
   activeContexts: number
   idleDisposeTimer: ReturnType<typeof setTimeout> | null
   disposed: boolean
@@ -141,9 +143,6 @@ const DEFAULT_TREE_SITTER_PROVIDER_KEY = Symbol.for(
  * terminates the worker and releases its WASM heap once no mounted editors retain it.
  */
 const DEFAULT_PROVIDER_IDLE_GRACE_MS = 5_000
-
-const loaderIdentityIds = new WeakMap<() => Promise<TreeSitterLanguageAssets>, number>()
-let nextLoaderIdentityId = 0
 
 export const createTreeSitterSyntaxProvider = (
   options: TreeSitterSyntaxProviderOptions = {},
@@ -224,6 +223,7 @@ export const createTreeSitterLanguagePlugin = (
       return disposables
     } catch (error) {
       for (const disposable of disposables.toReversed()) disposable.dispose()
+      scheduleIdleDisposeIfUnused(registration)
       throw error
     }
   },
@@ -265,6 +265,8 @@ const defaultProviderRegistration = (): TreeSitterProviderRegistration => {
     provider: createTreeSitterSyntaxProvider({ workerOwner: owner }),
     contextReferences: new WeakMap<EditorPluginContext, TreeSitterContextReference>(),
     languageReferences: new Map<string, TreeSitterLanguageReference>(),
+    loaderIdentityIds: new WeakMap<() => Promise<TreeSitterLanguageAssets>, number>(),
+    nextLoaderIdentityId: 0,
     activeContexts: 0,
     idleDisposeTimer: null,
     disposed: false,
@@ -277,13 +279,15 @@ const retainSyntaxProvider = (
   context: EditorPluginContext,
   registration: TreeSitterProviderRegistration,
 ): EditorDisposable => {
-  cancelIdleDispose(registration)
   const existing = registration.contextReferences.get(context)
   if (existing) {
+    cancelIdleDispose(registration)
     existing.references += 1
   } else {
+    const contributions = contributeToEditor(context, registration.provider)
+    cancelIdleDispose(registration)
     registration.contextReferences.set(context, {
-      contributions: contributeToEditor(context, registration.provider),
+      contributions,
       references: 1,
     })
     registration.activeContexts += 1
@@ -303,26 +307,32 @@ const contributeToEditor = (
   context: EditorPluginContext,
   provider: TreeSitterSyntaxProvider,
 ): readonly EditorDisposable[] => {
-  return [
-    context.registerSyntaxProvider(provider),
-    context.registerSelectionRangeProvider((selection) =>
+  const syntaxRegistration = context.registerSyntaxProvider(provider)
+  try {
+    const selectionRegistration = context.registerSelectionRangeProvider((selection) =>
       treeSitterSelectionRanges(selection.folds),
-    ),
-  ]
+    )
+    return [syntaxRegistration, selectionRegistration]
+  } catch (error) {
+    syntaxRegistration.dispose()
+    throw error
+  }
 }
 
 const retainLanguage = (
   registration: TreeSitterProviderRegistration,
   contribution: TreeSitterLanguageContribution,
 ): EditorDisposable => {
-  cancelIdleDispose(registration)
-  const key = languageRegistrationKey(contribution)
+  const key = languageRegistrationKey(registration, contribution)
   const existing = registration.languageReferences.get(key)
   if (existing) {
+    cancelIdleDispose(registration)
     existing.references += 1
   } else {
+    const disposable = registration.provider.registerLanguage(contribution, { replace: true })
+    cancelIdleDispose(registration)
     registration.languageReferences.set(key, {
-      disposable: registration.provider.registerLanguage(contribution, { replace: true }),
+      disposable,
       references: 1,
     })
   }
@@ -412,7 +422,10 @@ const disposeDefaultProviderRegistration = (
   return registration.owner.dispose()
 }
 
-const languageRegistrationKey = (contribution: TreeSitterLanguageContribution): string =>
+const languageRegistrationKey = (
+  registration: TreeSitterProviderRegistration,
+  contribution: TreeSitterLanguageContribution,
+): string =>
   JSON.stringify({
     aliases: sortedItems(contribution.aliases),
     assets: inlineAssetSignature(contribution),
@@ -420,10 +433,11 @@ const languageRegistrationKey = (contribution: TreeSitterLanguageContribution): 
     filenames: sortedItems(contribution.filenames),
     id: contribution.id,
     injectionDependencies: sortedItems(contribution.injectionDependencies),
-    loader: lazyLoaderSignature(contribution),
+    loader: lazyLoaderSignature(registration, contribution),
   })
 
 const lazyLoaderSignature = (
+  registration: TreeSitterProviderRegistration,
   contribution: TreeSitterLanguageContribution,
 ):
   | { readonly kind: 'cacheKey'; readonly key: string }
@@ -435,10 +449,10 @@ const lazyLoaderSignature = (
     return { kind: 'cacheKey', key: contribution.cacheKey }
   }
 
-  let id = loaderIdentityIds.get(contribution.load)
+  let id = registration.loaderIdentityIds.get(contribution.load)
   if (id === undefined) {
-    id = ++nextLoaderIdentityId
-    loaderIdentityIds.set(contribution.load, id)
+    id = ++registration.nextLoaderIdentityId
+    registration.loaderIdentityIds.set(contribution.load, id)
   }
   return { kind: 'fn', id }
 }
