@@ -362,6 +362,10 @@ test('styled row rewraps with updated glyph widths after switching fonts while i
     editor.setRowDecorations(new Map([[0, { className: 'styled-switch-row' }]]))
     await frames()
     const baseGlyphsBefore = glyphAdvancesFor(baseScroll)
+    const styledRowBefore = host.querySelector<HTMLElement>(
+      '[data-editor-virtual-row].styled-switch-row',
+    )!
+    const fallbackAdvanceW = glyphAdvancesFor(styledRowBefore)!.advance(87)
     const fallbackSegments = host.querySelectorAll('[data-editor-virtual-row]').length
     expect(fallbackSegments).toBeGreaterThan(5)
 
@@ -371,7 +375,14 @@ test('styled row rewraps with updated glyph widths after switching fonts while i
     await frames()
     document.fonts.add(preloaded)
     sheet.textContent = ruleA
+    await frames()
 
+    const styledRowAfter = host.querySelector<HTMLElement>(
+      '[data-editor-virtual-row].styled-switch-row',
+    )!
+    await expect
+      .poll(() => glyphAdvancesFor(styledRowAfter)!.advance(87))
+      .toBeLessThan(fallbackAdvanceW - 1)
     await expect
       .poll(() => host.querySelectorAll('[data-editor-virtual-row]').length)
       .toBeLessThan(fallbackSegments)
