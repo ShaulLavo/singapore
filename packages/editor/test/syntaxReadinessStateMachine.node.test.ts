@@ -4478,5 +4478,177 @@ describe('viewport syntax readiness state machine (#169)', () => {
         analysis.dispose()
       }
     })
+
+    it('clears stale captures and records when an authoritative Markdown records query throws', async () => {
+      const buffer = createEditorTextBuffer('# heading\n'.repeat(40))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'md-records-rejection-clears-captures',
+      })
+      const captureAtStart: EditorSyntaxCapture = {
+        startIndex: 0,
+        endIndex: 10,
+        captureName: 'heading',
+      }
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 20 && range.endIndex === 60) {
+          throw new Error('authoritative-records-failed')
+        }
+        return answerFor(range, {
+          captures: range.startIndex === 0 ? [captureAtStart] : [],
+          records: {
+            languageId: 'markdown',
+            data: new Uint32Array([range.startIndex, range.endIndex]),
+          },
+        })
+      })
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 0, endIndex: 40 }
+      let demandRanges: readonly EditorSyntaxRange[] = [
+        { startIndex: 0, endIndex: 40 },
+        { startIndex: 40, endIndex: 100 },
+      ]
+      let captures: readonly EditorSyntaxCapture[] = []
+      let records: EditorSyntaxResult['records'] = undefined
+      const getRecords = () => records
+      let syntax!: EditorSyntaxController
+      const publishDemand = () =>
+        syntax.setDisplayDemand({
+          kind: 'frame',
+          snapshot: buffer.getTextSnapshot(),
+          ranges: demandRanges,
+        })
+      syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'md-records-rejection-clears-captures',
+        getCurrentSessionDocumentId: () => 'md-records-rejection-clears-captures',
+        getLanguageId: () => 'markdown',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => publishDemand(),
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        setSyntaxCaptures: (nextCaptures, nextRecords) => {
+          captures = nextCaptures
+          records = nextRecords
+        },
+        needsSyntaxCaptures: () => true,
+        notifyViewUpdate: publishDemand,
+        notifyChange: () => undefined,
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'md-records-rejection-clears-captures',
+          languageId: 'markdown',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        publishDemand()
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+        expect(captures).toEqual([captureAtStart])
+        expect(getRecords()?.data).toEqual(new Uint32Array([0, 40]))
+
+        syntax.prefetchVisibleRange(1, { startIndex: 40, endIndex: 100 }, { delayMs: 0 })
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2))
+        await settle()
+
+        currentRange = { startIndex: 20, endIndex: 60 }
+        demandRanges = [{ startIndex: 20, endIndex: 60 }]
+        publishDemand()
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('error'))
+        expect(syntax.renderDataReady).toBe(true)
+        expect(captures).toEqual([])
+        expect(getRecords()).toBeUndefined()
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
+
+    it('advances past a non-terminal partial strip to query the remaining gap instead of looping', async () => {
+      const buffer = createEditorTextBuffer('a\n'.repeat(100))
+      const analysis = createEditorDocumentAnalysis({
+        buffer,
+        documentId: 'provisional-strip-no-loop',
+      })
+      const query = vi.fn(async (range: EditorSyntaxRange): Promise<EditorSyntaxResult> => {
+        if (range.startIndex === 0 && range.endIndex === 20) {
+          return {
+            ...answerFor(range),
+            projection: {
+              ...answerFor(range).projection,
+              analysis: { kind: 'partial', coveredRange: range },
+            },
+          }
+        }
+        return answerFor(range)
+      })
+      let changeCount = 0
+      const session = createEditorBufferSession(buffer)
+      const provider = structuralProvider(query)
+      const pluginHost = new EditorPluginHost([
+        { activate: (context) => context.registerSyntaxProvider(provider) },
+      ])
+      let currentRange: EditorSyntaxRange = { startIndex: 20, endIndex: 40 }
+      const syntax = new EditorSyntaxController({
+        pluginHost,
+        getSession: () => session,
+        getDocumentId: () => 'provisional-strip-no-loop',
+        getCurrentSessionDocumentId: () => 'provisional-strip-no-loop',
+        getLanguageId: () => 'typescript',
+        getDocumentVersion: () => 1,
+        getTextVersion: () => 0,
+        getVisibleSyntaxRange: () => currentRange,
+        adoptTokens: () => undefined,
+        setSyntaxFolds: () => undefined,
+        clearSyntaxFolds: () => undefined,
+        notifyViewUpdate: () => undefined,
+        notifyChange: () => {
+          changeCount += 1
+        },
+        notifyThemeChanged: () => undefined,
+      })
+      try {
+        syntax.startDocument({
+          analysis,
+          documentId: 'provisional-strip-no-loop',
+          languageId: 'typescript',
+          snapshot: session.getSnapshot(),
+          textSnapshot: session.getTextSnapshot(),
+        })
+        syntax.refresh(1, null, { delayMs: 0 })
+        await vi.waitFor(() => expect(syntax.status).toBe('ready'))
+
+        changeCount = 0
+        currentRange = { startIndex: 0, endIndex: 60 }
+        syntax.refreshVisibleRange(1, { delayMs: 0 })
+        await vi.waitFor(() =>
+          expect(query.mock.calls.some(([r]) => r.startIndex === 40 && r.endIndex === 60)).toBe(
+            true,
+          ),
+        )
+        await settle(80)
+
+        // Both [0, 20) and [40, 60) were queried once; no refresh loop!
+        expect(query).toHaveBeenCalledTimes(3)
+        expect(changeCount).toBeLessThanOrEqual(4)
+        expect(syntax.status).toBe('loading')
+      } finally {
+        syntax.dispose()
+        pluginHost.dispose()
+        analysis.dispose()
+      }
+    })
   })
 })

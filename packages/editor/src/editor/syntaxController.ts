@@ -3910,14 +3910,35 @@ export class EditorSyntaxController {
       if (this.#unavailableEmptyRange && sameSyntaxRange(this.#unavailableEmptyRange, range)) {
         return null
       }
-      if (parsePartial && this.#hasAnyEmptyEntry(range)) return null
+      if (
+        (parsePartial ||
+          this.#rangeEntries.some(
+            (entry) =>
+              entry.tokensOnly &&
+              entry.result.projection.analysis?.kind === 'partial' &&
+              sameSyntaxRange(entry.range, range),
+          )) &&
+        this.#hasAnyEmptyEntry(range)
+      ) {
+        return null
+      }
       return range
     }
 
     const covered = parsePartial
       ? mergeSyntaxRanges(this.#tokenCoverage().concat(this.#unavailableRanges))
-      : this.#settledCoverage()
+      : mergeSyntaxRanges(this.#settledCoverage().concat(this.#provisionalPartialCoverage()))
     return firstUncoveredSyntaxRange(range, covered)
+  }
+
+  #provisionalPartialCoverage(): readonly EditorSyntaxRange[] {
+    const ranges: EditorSyntaxRange[] = []
+    for (const entry of this.#rangeEntries) {
+      if (entry.tokensOnly && entry.result.projection.analysis?.kind === 'partial') {
+        for (const owned of entry.tokenOwnedRanges) ranges.push(owned)
+      }
+    }
+    return mergeSyntaxRanges(ranges)
   }
 
   #completeScopeCoverage(
@@ -4273,9 +4294,11 @@ export class EditorSyntaxController {
       parseGeneration: guard.parseGeneration,
     }
     this.#publishedScope = null
+    this.#rangeScopeOwners = []
     this.#currentBrackets = []
     this.#currentInjections = []
     this.options.clearSyntaxFolds()
+    this.options.setSyntaxCaptures?.([], undefined)
     this.options.notifyViewUpdate()
     if (!this.#highlighterSession) this.#commitInitialHighlightError(guard.configurationGeneration)
     if (
