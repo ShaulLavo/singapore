@@ -94,6 +94,22 @@ class FakeTransport implements LspManagedTransport {
   }
 }
 
+/** A transport its server can take away, the way a process exit or a dropped socket does. */
+class DroppableTransport extends FakeTransport {
+  private readonly closeHandlers = new Set<(error?: unknown) => void>()
+
+  public override onDidClose(handler?: (error?: unknown) => void): () => void {
+    if (!handler) return () => undefined
+
+    this.closeHandlers.add(handler)
+    return () => this.closeHandlers.delete(handler)
+  }
+
+  public drop(error: unknown): void {
+    for (const handler of Array.from(this.closeHandlers)) handler(error)
+  }
+}
+
 class FakeWebSocket implements LspWebSocketLike {
   public static readonly instances: FakeWebSocket[] = []
   public readonly sent: string[] = []
@@ -206,6 +222,47 @@ describe('createLanguageServerAdapterPlugin', () => {
       computed.mockRestore()
       contribution.dispose()
     }
+  })
+
+  it('makes a new transport after a loss when given reconnect, and re-opens the document on it', async () => {
+    const transports: DroppableTransport[] = []
+    const { features, provider } = activatePlugin(
+      createLanguageServerAdapterPlugin({
+        name: 'test.reconnect',
+        createTransport: () => {
+          const transport = new DroppableTransport()
+          transports.push(transport)
+          return transport
+        },
+        reconnect: { delaysMs: [0] },
+      }),
+      { applyEdits: vi.fn() },
+    )
+    const contribution = provider.createContribution(
+      viewContributionContext(editorSnapshot(), { features }),
+    )
+    if (!contribution) throw new Error('missing contribution')
+    const first = transports[0]!
+    first.receive(initializeResponse(jsonMessage(first.sent[0])))
+    await vi.waitUntil(() => first.sent.some(hasMethod('textDocument/didOpen')), {
+      interval: 1,
+      timeout: 1000,
+    })
+
+    first.drop(new Error('server exited'))
+    await vi.waitUntil(() => transports.length === 2 && transports[1]!.sent.length > 0, {
+      interval: 1,
+      timeout: 1000,
+    })
+    const second = transports[1]!
+    second.receive(initializeResponse(jsonMessage(second.sent[0])))
+    await vi.waitUntil(() => second.sent.some(hasMethod('textDocument/didOpen')), {
+      interval: 1,
+      timeout: 1000,
+    })
+
+    expect(transports).toHaveLength(2)
+    contribution.dispose()
   })
 
   it('owns generic LSP document sync, diagnostics, and adapter naming', async () => {

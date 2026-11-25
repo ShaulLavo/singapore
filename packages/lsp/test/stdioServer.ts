@@ -16,11 +16,14 @@ export type JsonRpcMessage = {
 type ServerProcessOptions = Omit<LspStdioOptions, 'stop'> & {
   /** False leaves stdin unread, the way a hung server does. */
   readonly readsStdin?: boolean
+  /** What the host's stop hook does beyond being counted, such as failing. */
+  readonly onStop?: () => void | Promise<void>
 }
 
 /** A language server process as its host sees it: it reads stdin, writes stdout, and exits. */
 export class ServerProcess {
   public readonly transport: LspManagedTransport
+  public readonly gone: Promise<void>
   public readonly received: JsonRpcMessage[] = []
   public readonly stdinText: string[] = []
   public stops = 0
@@ -36,8 +39,10 @@ export class ServerProcess {
       ...options,
       stop: () => {
         this.stops += 1
+        return options.onStop?.()
       },
     })
+    this.gone = this.stdio.transport.gone ?? Promise.resolve()
     this.transport = this.stdio.transport
     this.reader = this.stdio.stdin.getReader()
     if (options.readsStdin !== false) void this.readStdin()

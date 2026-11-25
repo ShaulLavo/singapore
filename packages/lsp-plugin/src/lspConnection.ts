@@ -94,6 +94,8 @@ export class LspConnection {
   private reconnectAttempts = 0
   private readyAt: number | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  /** Settles when the server behind the last closed transport is gone. */
+  private retiring: Promise<void> | null = null
   /** Why the server said it is going, reported as the reason for the close that follows. */
   private exit: LspServerExitedParams | null = null
 
@@ -165,6 +167,8 @@ export class LspConnection {
   }
 
   private connectTransport(): void {
+    if (this.awaitsRetirement()) return
+
     try {
       const transport = this.options.createTransport()
       if (isTransportPromise(transport)) {
@@ -245,7 +249,22 @@ export class LspConnection {
     this.transport?.unsubscribe(this.forgetExitOnLaterMessage)
     this.client.disconnect()
     this.transport?.close()
+    this.retiring = this.transport?.gone ?? this.retiring
     this.transport = null
+  }
+
+  /** Whether a closed transport's server is still going away; the next transport waits for it. */
+  private awaitsRetirement(): boolean {
+    const retiring = this.retiring
+    if (!retiring) return false
+
+    this.retiring = null
+    void retiring.then(this.connectAfterRetirement, this.connectAfterRetirement)
+    return true
+  }
+
+  private readonly connectAfterRetirement = (): void => {
+    if (!this.disposed) this.connectTransport()
   }
 
   private giveUpOrReconnect(error: unknown): void {

@@ -160,6 +160,45 @@ describe('LSP frame decoding', () => {
     expect(() => decodeChunks([frame])).toThrow('needs exactly one decimal Content-Length')
   })
 
+  it.each([1, 2, 3])(
+    'accepts a header of exactly the limit whose terminator is cut after %i bytes',
+    (terminatorBytes) => {
+      const lengthLine = 'Content-Length: 2\r\nX-Padding: '
+      const header = `${lengthLine}${'.'.repeat(8192 - lengthLine.length)}`
+      const frame = encoder.encode(`${header}\r\n\r\n{}`)
+      const cut = 8192 + terminatorBytes
+
+      expect(decodeChunks([frame.slice(0, cut), frame.slice(cut)])).toEqual(['{}'])
+    },
+  )
+
+  it('rejects a header one byte over the limit however its terminator is cut', () => {
+    const lengthLine = 'Content-Length: 2\r\nX-Padding: '
+    const header = `${lengthLine}${'.'.repeat(8193 - lengthLine.length)}`
+    const frame = encoder.encode(`${header}\r\n\r\n{}`)
+
+    expect(() => decodeChunks([frame.slice(0, 8194), frame.slice(8194)])).toThrow('is too long')
+  })
+
+  it.each([
+    ['a header', 'inside a message header', 12],
+    ['a body', 'inside a message body', 30],
+  ])('reports a stream that ended inside %s', (_, problem, cut) => {
+    const decoder = new LspFrameDecoder()
+    const frame = encodeLspFrame('{"id":1,"result":"cut short"}')
+    decoder.push(encodeLspFrame('{"id":0}'), () => undefined)
+    decoder.push(frame.slice(0, cut), () => undefined)
+
+    expect(() => decoder.finish()).toThrow(problem)
+  })
+
+  it('ends cleanly between messages', () => {
+    const decoder = new LspFrameDecoder()
+    decoder.push(encodeLspFrame('{"id":1}'), () => undefined)
+
+    expect(() => decoder.finish()).not.toThrow()
+  })
+
   it('rejects output that is not a frame and quotes it', () => {
     const noise = encoder.encode(`Debugger listening on ws://127.0.0.1:9229\n${'.'.repeat(9000)}`)
 

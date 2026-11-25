@@ -51,6 +51,25 @@ describe('language server path helpers', () => {
     expect(fileUriToPath(uri)).toBe(path)
   })
 
+  it('keeps dot segments, which only the file tree can resolve once symlinks are involved', () => {
+    const path = '/work/link/../a.ts'
+
+    expect(fileUriToPath(pathToFileUri(path))).toBe(path)
+    expect(fileUriToPath('file:///work/./link/%2E%2E/a.ts')).toBe('/work/./link/../a.ts')
+    expect(sameFileUri('file:///work/link/../a.ts', 'file:///work/a.ts')).toBe(false)
+  })
+
+  it('reads the short local form and drops a query or fragment', () => {
+    expect(fileUriToPath('file:/work/a.ts')).toBe('/work/a.ts')
+    expect(fileUriToPath('FILE:///work/a.ts#L10')).toBe('/work/a.ts')
+    expect(fileUriToPath('file:///work/a.ts?version=2')).toBe('/work/a.ts')
+  })
+
+  it('has no path for a URI whose segment would decode to a separator', () => {
+    expect(fileUriToPath('file:///work/a%2Fb.ts')).toBeNull()
+    expect(fileUriToPath('file:///work/a%00b.ts')).toBeNull()
+  })
+
   it('has no local path for another host, another scheme or a broken escape', () => {
     expect(fileUriToPath('file://server/share/a.ts')).toBeNull()
     expect(fileUriToPath('untitled:Untitled-1')).toBeNull()

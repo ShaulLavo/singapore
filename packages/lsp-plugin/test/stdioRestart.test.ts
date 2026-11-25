@@ -24,7 +24,8 @@ class ServerProcess {
     },
   })
 
-  public constructor() {
+  /** A server that does not answer never finishes `initialize`. */
+  public constructor(private readonly answers = true) {
     this.transport = this.stdio.transport
     void this.serve(this.stdio.stdin.getReader())
   }
@@ -51,14 +52,14 @@ class ServerProcess {
 
   private accept(message: Message): void {
     this.received.push(message)
-    if (message.method !== 'initialize') return
+    if (message.method !== 'initialize' || !this.answers) return
 
     const result = { capabilities: { textDocumentSync: { openClose: true, change: 2 } } }
     this.stdio.stdout(encodeLspFrame(JSON.stringify({ jsonrpc: '2.0', id: message.id, result })))
   }
 }
 
-function harness(delaysMs: readonly number[]) {
+function harness(delaysMs: readonly number[], silentRuns = 0) {
   const processes: ServerProcess[] = []
   const losses: unknown[] = []
   const statuses: string[] = []
@@ -70,7 +71,7 @@ function harness(delaysMs: readonly number[]) {
       timeoutMs: 5000,
       reconnect: { delaysMs },
       createTransport: () => {
-        const process = new ServerProcess()
+        const process = new ServerProcess(processes.length >= silentRuns)
         processes.push(process)
         return process.transport
       },
@@ -150,6 +151,28 @@ describe('a language server process behind a stdio transport', () => {
     expect(h.processes).toHaveLength(2)
     expect(h.statuses.at(-1)).toBe('error')
     h.connection.dispose()
+  })
+
+  it('waits for a server that never initialized to be gone before starting its replacement', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = harness([0], 1)
+      h.connection.connect()
+
+      await vi.advanceTimersByTimeAsync(5000)
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(h.processes[0]!.stops).toBe(1)
+      expect(h.processes).toHaveLength(1)
+
+      h.processes[0]!.exit(new Error('killed'))
+      await until(() => h.statuses.at(-1) === 'ready')
+
+      expect(h.processes).toHaveLength(2)
+      expect(h.processes[1]!.stops).toBe(0)
+      h.connection.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('ends stdin and stops the process once when the connection is disposed', async () => {

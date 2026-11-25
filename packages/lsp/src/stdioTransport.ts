@@ -10,9 +10,10 @@ export type LspStdioOptions = {
   /**
    * Stops the server process. Called at most once, and only while the process may still be
    * running: on `close()`, when the server breaks the protocol or closes its stdin, and when a
-   * limit is exceeded.
+   * limit is exceeded. A throw or a rejection is kept and reported as the reason for the loss,
+   * unless something earlier already was.
    */
-  stop(): void
+  stop(): void | Promise<void>
   /** Largest message accepted from the server. Defaults to 64 MiB. */
   readonly maxMessageBytes?: number
   /** Most bytes allowed to wait for the server to read its stdin. Defaults to 32 MiB. */
@@ -27,8 +28,10 @@ export type LspStdio = {
   /** Takes bytes the server wrote to stdout, in order. Never throws. */
   stdout(bytes: Uint8Array): void
   /**
-   * The process ended and nothing of it is left running. Unless `close()` came first, this is what
-   * reports the loss, with the protocol failure that led to it or else `reason`.
+   * The process ended and nothing of it is left running. Always call it, also after `close()`:
+   * it settles `transport.gone`, which a connection waits for before starting a replacement.
+   * Unless `close()` came first it also reports the loss, with the failure that led to it or
+   * else `reason`.
    */
   exited(reason?: unknown): void
 }
@@ -49,25 +52,32 @@ export const createStdioLspTransport = (options: LspStdioOptions): LspStdio => {
 }
 
 /**
- * `stopping` is a process told to stop that has not ended yet: its output is ignored and messages
- * for it are dropped, and `failure` is why. `closed` is final.
+ * `stopping` is a process told to stop that has not ended yet: messages for it are dropped, and
+ * what it still writes is delivered unless its output is what failed. `closed` is final.
  */
 type StdioState = 'open' | 'stopping' | 'closed'
 
 class StdioLspTransport implements LspManagedTransport {
   public readonly stdin: ReadableStream<Uint8Array>
+  public readonly gone: Promise<void>
 
   private readonly handlers = new Set<LspTransportHandler>()
   private readonly closeHandlers = new Set<(error?: unknown) => void>()
-  private readonly decoder: LspFrameDecoder
+  /** Null once the output is no longer read: it broke the protocol, or the transport closed. */
+  private decoder: LspFrameDecoder | null
   private stdinController!: ReadableStreamDefaultController<Uint8Array>
   private state: StdioState = 'open'
+  /** Why the server was told to stop, or what went wrong telling it. Outranks its exit reason. */
   private failure: unknown = undefined
+  private resolveGone!: () => void
   private sentCount = 0
   private receivedCount = 0
 
   public constructor(private readonly options: LspStdioOptions) {
     this.decoder = new LspFrameDecoder(options.maxMessageBytes ?? DEFAULT_MAX_MESSAGE_BYTES)
+    this.gone = new Promise((resolve) => {
+      this.resolveGone = resolve
+    })
     this.stdin = new ReadableStream<Uint8Array>(
       {
         start: (controller) => {
@@ -118,23 +128,26 @@ class StdioLspTransport implements LspManagedTransport {
 
     const running = this.state === 'open'
     this.finish()
-    if (running) this.options.stop()
+    if (running) this.requestStop()
   }
 
   public receive(bytes: Uint8Array): void {
-    if (this.state !== 'open') return
+    if (!this.decoder) return
 
     try {
       this.decoder.push(bytes, this.deliver)
     } catch (error) {
+      this.decoder = null
       this.stopServer(error)
     }
   }
 
   public exited(reason?: unknown): void {
+    this.resolveGone()
     if (this.state === 'closed') return
 
-    const error = this.failure ?? reason ?? this.closedError('server exited')
+    const error =
+      this.failure ?? this.truncation(reason) ?? reason ?? this.closedError('server exited')
     const handlers = Array.from(this.closeHandlers)
     this.finish()
     for (const handler of handlers) handler(error)
@@ -142,25 +155,53 @@ class StdioLspTransport implements LspManagedTransport {
 
   /** A subscriber throws on a message it cannot parse, which is the server breaking the protocol. */
   private readonly deliver = (message: string): void => {
-    if (this.state !== 'open') return
+    if (!this.decoder) return
 
     this.receivedCount += 1
     for (const handler of this.handlers) handler(message)
   }
 
-  /** The one way a running server is told to go; `failure` outranks whatever its exit reports. */
+  /** The one way a running server is told to go. */
   private stopServer(failure?: unknown): void {
+    this.failure ??= failure
     if (this.state !== 'open') return
 
     this.state = 'stopping'
-    this.failure = failure
     this.endStdin()
-    this.options.stop()
+    this.requestStop()
+  }
+
+  private requestStop(): void {
+    try {
+      Promise.resolve(this.options.stop()).catch(this.stopFailed)
+    } catch (error) {
+      this.stopFailed(error)
+    }
+  }
+
+  private readonly stopFailed = (error: unknown): void => {
+    this.failure ??= error
+  }
+
+  /**
+   * A server that exited on its own partway through a message broke the protocol. One that was
+   * told to stop is expected to be cut off anywhere.
+   */
+  private truncation(reason: unknown): unknown {
+    if (this.state !== 'open') return undefined
+
+    try {
+      this.decoder?.finish(reason)
+      return undefined
+    } catch (error) {
+      return error
+    }
   }
 
   private finish(): void {
     const wasOpen = this.state === 'open'
     this.state = 'closed'
+    this.decoder = null
     this.handlers.clear()
     this.closeHandlers.clear()
     if (wasOpen) this.endStdin()

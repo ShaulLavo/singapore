@@ -155,6 +155,119 @@ describe('stdio LSP transport', () => {
     expect(closes).toEqual([exited])
   })
 
+  it('still delivers what a server wrote after closing its stdin, until it is gone', async () => {
+    const server = new ServerProcess({ readsStdin: false })
+    const closes = closesOf(server)
+    const received = messagesOf(server)
+    const exited = new Error('language server exited with code 0')
+
+    await server.closeStdin()
+    server.send({ id: 1, result: 'final answer' })
+    server.exit(exited)
+
+    expect(received).toEqual(['{"id":1,"result":"final answer"}'])
+    expect(server.stops).toBe(1)
+    expect(closes).toEqual([exited])
+  })
+
+  it.each([
+    ['a header', (frame: Uint8Array) => frame.slice(0, 10)],
+    ['a body', (frame: Uint8Array) => frame.slice(0, frame.length - 3)],
+  ])('reports output that ended inside %s as a protocol failure caused by the exit', (_, cut) => {
+    const server = new ServerProcess()
+    const closes = closesOf(server)
+    const received = messagesOf(server)
+    const exited = new Error('language server exited with code 1')
+
+    server.send({ id: 1 })
+    server.write(cut(encodeLspFrame('{"id":2,"result":"cut short"}')))
+    server.exit(exited)
+
+    expect(received).toEqual(['{"id":1}'])
+    expect(closes).toHaveLength(1)
+    expect(closes[0]).toBeInstanceOf(LspFramingError)
+    expect(closes[0]).toMatchObject({ cause: exited })
+    expect(server.stops).toBe(0)
+  })
+
+  it('contains a stop hook that throws and keeps the failure that asked for the stop', () => {
+    const server = new ServerProcess({
+      onStop: () => {
+        throw new Error('kill failed')
+      },
+    })
+    const closes = closesOf(server)
+
+    expect(() => server.write(encoder.encode('Content-Length: nope\r\n\r\n'))).not.toThrow()
+    server.exit(new Error('gone anyway'))
+
+    expect(server.stops).toBe(1)
+    expect(closes[0]).toBeInstanceOf(LspFramingError)
+  })
+
+  it('reports a stop hook that throws on a stdin hangup instead of failing the hangup', async () => {
+    const broken = new Error('kill failed')
+    const server = new ServerProcess({
+      readsStdin: false,
+      onStop: () => {
+        throw broken
+      },
+    })
+    const closes = closesOf(server)
+
+    await expect(server.closeStdin()).resolves.toBeUndefined()
+    server.exit(new Error('gone anyway'))
+
+    expect(closes).toEqual([broken])
+  })
+
+  it('reports a stop hook that rejects, with no rejection left unhandled', async () => {
+    const broken = new Error('kill rejected')
+    const server = new ServerProcess({
+      maxPendingStdinBytes: 16,
+      readsStdin: false,
+      onStop: () => Promise.reject(broken),
+    })
+    const closes = closesOf(server)
+
+    server.transport.send('{"method":"textDocument/didChange"}')
+    await Promise.resolve()
+    await Promise.resolve()
+    server.exit(new Error('gone anyway'))
+
+    expect(closes).toHaveLength(1)
+    expect(closes[0]).toMatchObject({ reason: 'server stopped reading its stdin' })
+  })
+
+  it('does not let a stop hook that throws escape close', () => {
+    const server = new ServerProcess({
+      onStop: () => {
+        throw new Error('kill failed')
+      },
+    })
+
+    expect(() => server.transport.close()).not.toThrow()
+    expect(server.stops).toBe(1)
+  })
+
+  it('says when the server is gone, whether or not the transport was closed first', async () => {
+    const closed = new ServerProcess()
+    const crashed = new ServerProcess()
+    let closedGone = false
+    void closed.gone.then(() => {
+      closedGone = true
+    })
+
+    closed.transport.close()
+    await Promise.resolve()
+    expect(closedGone).toBe(false)
+    closed.exit()
+    crashed.exit()
+
+    await expect(closed.gone).resolves.toBeUndefined()
+    await expect(crashed.gone).resolves.toBeUndefined()
+  })
+
   it('ends stdin and stops the server on close, then ignores what the server still does', async () => {
     const server = new ServerProcess()
     const closes = closesOf(server)

@@ -36,12 +36,26 @@ export function pathToFileUri(path: string): lsp.DocumentUri {
   return `file://${encodePathname(path)}`
 }
 
-/** The exact path of a local `file:` URI. Null for anything else, a file on another host included. */
+/** `file:` with an empty authority or none, then an absolute path; a query or fragment is dropped. */
+const LOCAL_FILE_URI = /^file:(?:\/\/)?(\/(?!\/)[^?#]*)/i
+
+/**
+ * The exact path of a local `file:` URI: segments are decoded and nothing else is touched, so
+ * `..` stays for the file tree to resolve through its symlinks. Null for anything else, including
+ * a file on another host and a segment that would decode to a separator.
+ */
 export function fileUriToPath(uri: string): string | null {
+  const encoded = LOCAL_FILE_URI.exec(uri)?.[1]
+  if (encoded === undefined) return null
+
+  const segments = encoded.split('/').map(decodeSegment)
+  return segments.includes(null) ? null : segments.join('/')
+}
+
+function decodeSegment(segment: string): string | null {
   try {
-    const url = new URL(uri)
-    if (url.protocol !== 'file:' || url.host !== '') return null
-    return decodeURIComponent(url.pathname)
+    const decoded = decodeURIComponent(segment)
+    return decoded.includes('/') || decoded.includes('\0') ? null : decoded
   } catch {
     return null
   }

@@ -9,8 +9,8 @@ const encoder = new TextEncoder()
 
 /** The bytes on the stream were not an LSP base-protocol frame, such as a server's stray log line. */
 export class LspFramingError extends Error {
-  public constructor(message: string) {
-    super(message)
+  public constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = 'LspFramingError'
   }
 }
@@ -52,6 +52,14 @@ export class LspFrameDecoder {
     }
   }
 
+  /** The stream is over. Throws when it stopped partway through a message, blaming `cause`. */
+  public finish(cause?: unknown): void {
+    const part = this.bodyLength === null ? 'header' : 'body'
+    if (this.bodyLength === null && this.end === this.start) return
+
+    throw new LspFramingError(`LSP stream ended inside a message ${part}`, { cause })
+  }
+
   private next(): string | null {
     this.bodyLength ??= this.readHeader()
     if (this.bodyLength === null) return null
@@ -73,12 +81,14 @@ export class LspFrameDecoder {
 
   private readHeader(): number | null {
     const terminator = this.findTerminator()
-    const headerBytes = (terminator === -1 ? this.end : terminator) - this.start
-    if (headerBytes > HEADER_LIMIT_BYTES) throw this.malformed('is too long')
     if (terminator === -1) {
-      this.scanned = headerBytes
+      this.scanned = this.end - this.start
+      // The last bytes may be the start of the terminator, which is not part of the header.
+      const headerAtLeast = this.scanned - (SEPARATOR_LENGTH - 1)
+      if (headerAtLeast > HEADER_LIMIT_BYTES) throw this.malformed('is too long')
       return null
     }
+    if (terminator - this.start > HEADER_LIMIT_BYTES) throw this.malformed('is too long')
 
     const length = contentLength(
       this.headerText.decode(this.buffer.subarray(this.start, terminator)),
