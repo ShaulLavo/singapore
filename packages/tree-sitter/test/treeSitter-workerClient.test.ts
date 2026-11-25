@@ -504,6 +504,74 @@ describe('tree-sitter worker client language registration cache', () => {
       'disposeDocument',
     ])
   })
+
+  it('serializes parse/edit posts per runtimeSessionId without SharedArrayBuffer and sends supersedeDocument', async () => {
+    FakeWorker.autoResolve = false
+    const originalSab = globalThis.SharedArrayBuffer
+    vi.stubGlobal('SharedArrayBuffer', undefined)
+    try {
+      const client = await loadWorkerClient()
+      const snapshot = createPieceTableSnapshot('const answer = 1;')
+      const abort1 = new AbortController()
+      const parse1 = client.parse(parsePayload(snapshot, 1), abort1.signal)
+      const worker = fakeWorkerAt(0)
+      worker.resolveRequest(requestOfType(worker, 'init'))
+      await flushMicrotasks()
+      await flushMicrotasks()
+      expect(parseRequests(worker)).toHaveLength(1)
+
+      // Abort parse1 on the client while the worker has not yet replied (no SAB available),
+      // then start parse2: client must send supersedeDocument and hold parse2 until parse1 acks.
+      abort1.abort()
+      await expect(parse1).rejects.toMatchObject({ name: 'AbortError' })
+
+      const parse2 = client.parse(parsePayload(snapshot, 2))
+      await flushMicrotasks()
+      expect(parseRequests(worker)).toHaveLength(1)
+      expect(worker.messages.map((m) => m.payload.type)).toContain('supersedeDocument')
+
+      // Once parse1's stale reply arrives from the worker, parse2 posts cleanly.
+      worker.resolveRequest(parseRequests(worker)[0]!, parseResult(1))
+      await flushMicrotasks()
+      expect(parseRequests(worker)).toHaveLength(2)
+
+      worker.resolveRequest(parseRequests(worker)[1]!, parseResult(2))
+      await expect(parse2).resolves.toMatchObject({ snapshotVersion: 2 })
+    } finally {
+      vi.stubGlobal('SharedArrayBuffer', originalSab)
+    }
+  })
+
+  it('releases the per-session worker gate if postMessage throws synchronously', async () => {
+    FakeWorker.autoResolve = false
+    const client = await loadWorkerClient()
+    const snapshot = createPieceTableSnapshot('const answer = 1;')
+    const parse1 = client.parse(parsePayload(snapshot, 1))
+    const worker = fakeWorkerAt(0)
+    worker.resolveRequest(requestOfType(worker, 'init'))
+    await flushMicrotasks()
+    worker.resolveRequest(parseRequests(worker)[0]!, parseResult(1))
+    await parse1
+
+    const originalPostMessage = worker.postMessage.bind(worker)
+    let shouldThrow = true
+    worker.postMessage = (message: Parameters<typeof worker.postMessage>[0]) => {
+      if (shouldThrow) {
+        shouldThrow = false
+        throw new Error('DataCloneError')
+      }
+      originalPostMessage(message)
+    }
+
+    await expect(client.parse(parsePayload(snapshot, 2))).rejects.toThrow('DataCloneError')
+
+    // Subsequent request on the same runtimeSessionId must not hang on a leaked gate.
+    const parse3 = client.parse(parsePayload(snapshot, 3))
+    await flushMicrotasks()
+    expect(parseRequests(worker)).toHaveLength(2)
+    worker.resolveRequest(parseRequests(worker)[1]!, parseResult(3))
+    await expect(parse3).resolves.toMatchObject({ snapshotVersion: 3 })
+  })
 })
 
 async function loadWorkerClient(): Promise<WorkerClient> {

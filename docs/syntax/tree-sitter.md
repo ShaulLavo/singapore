@@ -72,9 +72,7 @@ The session numbers its range requests. Each caller is answered with the range i
 5. Queries run for invalidated or visible ranges first.
 6. Query results are emitted as syntax decorations or structural ranges tagged with their base snapshot.
 
-The editor asks for the visible range as soon as an edit after a 250 ms pause is parsed; the
-following keys of a typing burst wait for the debounce. Refreshing after an edit does not ask
-again for a warmed or prefetched range beyond the shown rows.
+The editor dispatches syntax refreshes immediately (0 ms deferred single-flight) after each edit, coalescing edits that arrive while a parse is already in flight into one trailing request that runs as soon as the active flight settles. Applying an edit's syntax reply waits until after the keystroke's frame has painted so Chromium's CSS Highlight repaint does not extend keystroke-to-frame latency. Refreshing after an edit does not ask again for a warmed or prefetched range beyond the shown rows.
 
 An edit looks for injections only in the root's changed ranges and the edit itself, closed over the
 top-level root children they touch in both the old and new trees (including trailing EOF edits),
@@ -155,7 +153,7 @@ covered. Any remaining carried answers stand in visually until replaced by the n
 
 A document with no colors yet is asked for the rows on screen first, and for the visible range (those rows plus the text kept ready around them) right after. The first answer only puts tokens on screen. It does not settle the document's highlight: the status stays `loading`, no initial-paint event is sent, and folds, brackets and injected spans are left alone until the answer that covers the visible range arrives, as before. A request that a newer one supersedes while its rows are on their way does not go on to ask for the range around them. The extra request is skipped when the rows on screen are within 4,096 characters of the visible range.
 
-The first edit that arrives while a document has no colors yet skips the typing debounce, which exists to protect colors that are on screen. Only that one does: the edits after it are debounced and coalesced as usual, so a burst of keys before the first colors asks for syntax twice, not once per key.
+Edits dispatch syntax refreshes via 0 ms single-flight coalescing both before and after the first highlight lands: same-turn edits coalesce before posting to the worker, and edits arriving while a flight is active overwrite a single trailing slot instead of queueing one request per keystroke. Text-derived feature and decoration contributions remain debounced separately during rapid typing.
 
 The trim removes tokens only while the painted store is made of range answers alone. After an edit, a newer analysis, or tokens installed by a host, it removes none.
 

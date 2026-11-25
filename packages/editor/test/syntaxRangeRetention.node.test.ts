@@ -5,8 +5,10 @@ import {
 } from '../src/editor/syntaxOperations'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  commitPreparedDocumentTransaction,
   createEditorBufferSession,
   createEditorTextBuffer,
+  prepareDocumentTransaction,
   type EditorTextBuffer,
 } from '../src/documentSession'
 import {
@@ -31,15 +33,24 @@ import type { EditorHighlighterProvider } from '../src/syntax/highlighter'
 import type { TextEdit } from '../src/tokens'
 
 describe('syntax refresh after an edit', () => {
-  it('asks for the visible range first, at once after a pause and debounced within a burst', async () => {
+  it('dispatches the visible range immediately at 0 ms when idle and coalesces bursts behind an active flight', async () => {
     vi.useFakeTimers()
     const buffer = createEditorTextBuffer('x\n'.repeat(50_000))
     const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'edit-refresh' })
     const asked: string[] = []
+    const pendingParses: Array<() => void> = []
+    let holdAnalyze = false
     const provider = {
       operation: createEditorStructuralOperation(() => ({
         ...createEmptySyntaxRuntime(),
         foldingSupport: 'supported' as const,
+        analyze: async () => {
+          if (!holdAnalyze) return createEmptySyntaxResult()
+          await new Promise<void>((resolve) => {
+            pendingParses.push(resolve)
+          })
+          return createEmptySyntaxResult()
+        },
         queryRange: async (range: EditorSyntaxRange) => {
           asked.push(`${range.startIndex}-${range.endIndex}`)
           return createEmptySyntaxResult({ requestedRanges: [range] })
@@ -60,6 +71,7 @@ describe('syntax refresh after an edit', () => {
       await vi.advanceTimersByTimeAsync(200)
       expect(asked.at(-1)).toBe('60000-61000')
 
+      // Idle edits dispatch immediately at 0 ms (no artificial debounce gap).
       asked.length = 0
       edit('a')
       await vi.advanceTimersByTimeAsync(5)
@@ -68,13 +80,134 @@ describe('syntax refresh after an edit', () => {
       asked.length = 0
       edit('b')
       await vi.advanceTimersByTimeAsync(5)
-      expect(asked).toEqual([])
-      await vi.advanceTimersByTimeAsync(100)
       expect(asked[0]).toBe('0-512')
+
+      // While a flight is in progress, rapid edits coalesce into a single trailing flight.
+      asked.length = 0
+      holdAnalyze = true
+      edit('c')
+      await vi.advanceTimersByTimeAsync(5)
+      expect(pendingParses).toHaveLength(1)
+      expect(asked).toEqual([])
+
+      edit('d')
+      edit('e')
+      edit('f')
+      await vi.advanceTimersByTimeAsync(50)
+      expect(asked).toEqual([])
+
+      holdAnalyze = false
+      while (pendingParses.length > 0) pendingParses.shift()!()
+      await vi.advanceTimersByTimeAsync(10)
+      expect(asked).toEqual(['0-512'])
     } finally {
       view.dispose()
       analysis.dispose()
       vi.useRealTimers()
+    }
+  })
+
+  it('recovers readiness when a logical-only synchronize aborts an in-flight edit query', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(200))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'logical-sync-recovery' })
+    let holdFirstEditQuery = true
+    let rangeCalls = 0
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: async (range: EditorSyntaxRange, signal?: AbortSignal) => {
+          rangeCalls += 1
+          if (rangeCalls === 2 && holdFirstEditQuery) {
+            holdFirstEditQuery = false
+            await new Promise<void>((_resolve, reject) => {
+              signal?.addEventListener(
+                'abort',
+                () => reject(new DOMException('aborted by synchronize', 'AbortError')),
+                { once: true },
+              )
+            })
+          }
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            tokens: EditorTokenStore.fromTokens([
+              { start: range.startIndex, end: range.startIndex + 1, style: { color: 'green' } },
+            ]),
+          }
+        },
+      })),
+    } satisfies EditorSyntaxProvider
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 120 })
+    const session = createEditorBufferSession(buffer)
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+
+      // Start an edit whose range query stays in flight.
+      const editChange = session.applyEdits([{ from: 0, to: 0, text: 'a' }])
+      view.syntax.acceptChange(editChange)
+      view.syntax.refresh(1, editChange)
+      await vi.waitFor(() => expect(rangeCalls).toBe(2))
+      expect(view.syntax.status).toBe('loading')
+
+      // Commit a logical-only synchronize while the edit range query is pending; this advances
+      // the buffer sync point and aborts the retained pending query without changing text.
+      const firstChar = buffer.getTextSnapshot().readRange(0, 1)
+      const committed = commitPreparedDocumentTransaction(
+        { buffer, sourceView: null },
+        prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: firstChar }], 1, null),
+        { history: { kind: 'external-barrier', groupId: 'scope' } },
+      )
+      expect(committed.status).toBe('logical-only')
+      if (committed.status !== 'logical-only') throw new Error('expected logical-only commit')
+      view.syntax.acceptChange(committed.change)
+      view.syntax.refresh(1, committed.change)
+
+      // Controller must recover to `ready` on its own without requiring another edit or scroll.
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(rangeCalls).toBeGreaterThanOrEqual(3)
+    } finally {
+      view.dispose()
+      analysis.dispose()
+    }
+  })
+
+  it('starts a fresh range query instead of rejoining a stuck range query on explicit refresh', async () => {
+    const buffer = createEditorTextBuffer('x\n'.repeat(200))
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'explicit-replace-stuck' })
+    let rangeCalls = 0
+    const provider = {
+      operation: createEditorStructuralOperation(() => ({
+        ...createEmptySyntaxRuntime(),
+        foldingSupport: 'supported' as const,
+        queryRange: async (range: EditorSyntaxRange) => {
+          rangeCalls += 1
+          if (rangeCalls === 1) {
+            // Never resolves — simulates a stuck range query whose base parse is already ready.
+            return await new Promise<EditorSyntaxResult>(() => undefined)
+          }
+          return {
+            ...createEmptySyntaxResult({ requestedRanges: [range] }),
+            tokens: EditorTokenStore.fromTokens([
+              { start: range.startIndex, end: range.startIndex + 1, style: { color: 'blue' } },
+            ]),
+          }
+        },
+      })),
+    } satisfies EditorSyntaxProvider
+    const view = createView(buffer, analysis, provider, { startIndex: 0, endIndex: 120 })
+    try {
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(rangeCalls).toBe(1))
+      expect(view.syntax.status).toBe('loading')
+
+      // Explicit refresh with replacePending must bypass the stuck orphaned range query.
+      view.syntax.refresh(1, null, { delayMs: 0 })
+      await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
+      expect(rangeCalls).toBe(2)
+    } finally {
+      view.dispose()
+      analysis.dispose()
     }
   })
 })

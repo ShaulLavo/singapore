@@ -3,15 +3,6 @@ import type { EditorViewContributionUpdateKind } from '../plugins'
 import type { SelectionAffinity } from '../selections'
 import type { EditorSetSelectionOptions } from './selectionReveal'
 
-const SYNTAX_EDIT_DEBOUNCE_MS = 75
-
-// A sustained typist keeps keystrokes closer together than the debounce, which
-// would postpone re-tokenizing for as long as they keep typing and leave
-// highlighting visibly stale on shifted token positions. This ceiling forces a
-// refresh mid-burst; it is well above the debounce so ordinary typing pauses
-// still decide when the refresh happens.
-export const SYNTAX_REFRESH_MAX_DELAY_MS = 400
-
 export type SessionChangeOptions = {
   readonly syncDomSelection?: boolean
   readonly revealOffset?: number
@@ -20,11 +11,6 @@ export type SessionChangeOptions = {
   readonly revealBlock?: EditorSetSelectionOptions['revealBlock']
   /** The change is keyboard text input, which contributions keep instant. */
   readonly typing?: boolean
-}
-
-export function syntaxRefreshDelay(change: DocumentSessionChange | null): number {
-  if (!change || change.edits.length === 0) return 0
-  return SYNTAX_EDIT_DEBOUNCE_MS
 }
 
 export function viewContributionKindForChange(

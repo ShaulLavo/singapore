@@ -668,7 +668,7 @@ export class Editor {
         this.inlineReplacementProviders().some(
           (source) => source.trigger === 'syntax' || source.requiresSyntax,
         ),
-      notifyChange: (change) => this.notifyChange(change),
+      notifyChange: (change) => this.notifySyntaxChange(change),
       notifyViewUpdate: () => this.notifyViewContributions('tokens', null),
       onInitialPaint: (event) => {
         if (event.phase === 'highlight-settled') {
@@ -1691,6 +1691,8 @@ export class Editor {
   }
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {
+    const grammarDescribedChanged = folds.length > 0 && !this.grammarDescribedFolds
+    if (!grammarDescribedChanged && foldRangesEqual(this.syntaxFoldProjection(), folds)) return
     this.runInOperation(() => {
       if (folds.length > 0) this.grammarDescribedFolds = true
       this.setSyntaxFoldProjection(folds)
@@ -5183,6 +5185,15 @@ export class Editor {
     this.options.onChange?.(this.getState(), change)
   }
 
+  private notifySyntaxChange(change: DocumentSessionChange | null): void {
+    this.publishSyntaxDisplayDemand()
+    // Preserve the rapid-input feature/decoration debounce while syntax publishes at 0 ms.
+    if (!this.secondaryWork.has('editor.featureContributions')) {
+      this.notifyEditorFeatureContributions(change)
+    }
+    this.options.onChange?.(this.getState(), change)
+  }
+
   private notifyChangeWithTiming(change: DocumentSessionChange): void {
     this.publishSyntaxDisplayDemand()
     const notifyStart = nowMs()
@@ -5198,7 +5209,10 @@ export class Editor {
   ): void {
     // A new document: edit-triggered replacements are derived from its text at once, and the old
     // document's syntax-derived ones go.
-    if (!change) this.refreshInlineMap('drop')
+    if (!change) {
+      this.refreshInlineMap('drop')
+      this.secondaryWork.cancel('editor.featureContributions')
+    }
     this.syntax.refresh(documentVersion, change, options)
   }
 
@@ -5213,31 +5227,11 @@ export class Editor {
       return
     }
 
-    // The debounce keeps colors that are on screen from being recomputed on every key. Before the
-    // document's first highlight there are none, and waiting only adds the debounce to the time
-    // the text stays uncolored when a key arrives while the grammar is still loading. Only the
-    // first such key skips it: the ones after it in a burst are debounced and coalesced as usual.
-    if (this.syntax.claimUndebouncedRefresh()) {
-      measureEditorPerformance('editor.refreshSyntax', () =>
-        this.refreshSyntax(documentVersion, change, { delayMs: 0 }),
-      )
-      this.scheduleDeferredFeatureContributions(change, sessionChangeVersion, documentVersion)
-      return
-    }
-
-    this.secondaryWork.schedule({
-      key: 'editor.syntaxRefresh',
-      delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
-      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
-      version: sessionChangeVersion,
-      isCurrent: (version) =>
-        version === this.sessionChangeVersion && this.isCurrentSecondaryDocument(documentVersion),
-      run: traceEditorPerformanceTask('editor.secondary.syntax', () =>
-        measureEditorPerformance('editor.refreshSyntax', () =>
-          this.refreshSyntax(documentVersion, change, { delayMs: 0 }),
-        ),
-      ),
-    })
+    // Syntax refreshes immediately via deferred single-flight coalescing in EditorSyntaxController,
+    // while synchronous text-derived feature/decoration contributions stay debounced.
+    measureEditorPerformance('editor.refreshSyntax', () =>
+      this.refreshSyntax(documentVersion, change),
+    )
     this.scheduleDeferredFeatureContributions(change, sessionChangeVersion, documentVersion)
   }
 
@@ -5272,6 +5266,7 @@ export class Editor {
     measureEditorPerformance('editor.refreshSyntax', () =>
       this.refreshSyntax(documentVersion, change),
     )
+    this.secondaryWork.cancel('editor.featureContributions')
     measureEditorPerformance('editor.notifyEditorFeatureContributions', () =>
       this.notifyEditorFeatureContributions(change),
     )

@@ -11,6 +11,7 @@ export type EditorSecondaryWorkOptions = {
 
 type ScheduledSecondaryWork = {
   readonly token: number
+  isActive(): boolean
   cancel(): void
 }
 
@@ -52,7 +53,13 @@ export class EditorSecondaryWorkScheduler {
   }
 
   has(key: string): boolean {
-    return this.scheduled.has(key)
+    const scheduled = this.scheduled.get(key)
+    if (!scheduled) return false
+    if (!scheduled.isActive()) {
+      this.scheduled.delete(key)
+      return false
+    }
+    return true
   }
 
   dispose(): void {

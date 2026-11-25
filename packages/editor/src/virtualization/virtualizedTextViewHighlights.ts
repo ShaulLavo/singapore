@@ -154,7 +154,7 @@ export function adoptTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
   }
 
   view.tokenProjectionDirtyStartRow = null
-  if (view.tokens.equals(tokens)) {
+  if (view.sameLineTokenEdit && view.tokens.equals(tokens)) {
     view.sameLineTokenEdit = null
     installTokens(view, tokens)
     renderTokenHighlights(view)
@@ -183,8 +183,33 @@ function adoptChangedTokens(view: VirtualizedTextViewInternal, tokens: EditorTok
 
 // A palette only changes by growing or being replaced, so its identity says when groups are stale.
 function installTokens(view: VirtualizedTextViewInternal, tokens: EditorTokenStore): void {
-  if (view.tokens.styles !== tokens.styles) view.tokenPaletteDirty = true
+  if (!sameTokenStyles(view.tokens.styles, tokens.styles)) view.tokenPaletteDirty = true
   view.tokens = tokens
+}
+
+function sameTokenStyles(
+  left: readonly EditorTokenStyle[],
+  right: readonly EditorTokenStyle[],
+): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i += 1) {
+    const a = left[i]
+    const b = right[i]
+    if (a === b) continue
+    if (
+      !a ||
+      !b ||
+      a.color !== b.color ||
+      a.backgroundColor !== b.backgroundColor ||
+      a.fontStyle !== b.fontStyle ||
+      a.fontWeight !== b.fontWeight ||
+      a.textDecoration !== b.textDecoration
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 export function setSelection(

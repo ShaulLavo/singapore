@@ -294,6 +294,83 @@ browserTest(
   },
 )
 
+browserTest(
+  'highlights typed keywords without typing-debounce delay and settles rapid bursts on the simple Editor API',
+  async () => {
+    const host = document.createElement('div')
+    host.style.width = '720px'
+    host.style.height = '400px'
+    document.body.appendChild(host)
+    const editor = new Editor(host, {
+      plugins: [createTreeSitterLanguagePlugin(TREE_SITTER_LANGUAGE_CONTRIBUTIONS)],
+    })
+    const type = (data: string) =>
+      editor.getInputElement().dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data,
+          inputType: 'insertText',
+        }),
+      )
+    try {
+      editor.setText('debugge\nconst x = 1;\n', { languageId: 'typescript' })
+      await expect.poll(() => editor.getState().syntaxStatus, { timeout: 20_000 }).toBe('ready')
+      editor.setSelection(7, 7)
+
+      // Completing `debugger` via a real beforeinput event must re-highlight promptly without
+      // waiting behind the old 150 ms rapid-input debounce.
+      const startedAt = performance.now()
+      type('r')
+      await expect
+        .poll(
+          () => {
+            const tokens = editor['tokens'].toTokens() as readonly {
+              readonly start: number
+              readonly end: number
+              readonly style: { readonly color?: string }
+            }[]
+            const kw = tokens.find((token) => token.start === 0 && token.end === 8)
+            return kw?.style.color ?? null
+          },
+          { interval: 5, timeout: 10_000 },
+        )
+        .toContain('keyword')
+      const elapsedMs = performance.now() - startedAt
+      expect(elapsedMs).toBeLessThan(2000)
+      await expect.poll(() => editor.getState().syntaxStatus, { timeout: 10_000 }).toBe('ready')
+
+      // Rapid burst via beforeinput settles cleanly with accurate final tokens.
+      editor.setSelection(8, 8)
+      for (const ch of ';\nreturn 42;') type(ch)
+      await expect.poll(() => editor.getState().syntaxStatus, { timeout: 10_000 }).toBe('ready')
+      await expect
+        .poll(
+          () => {
+            const snapshot = editor.getTextSnapshot()
+            const text = snapshot.readRange(0, snapshot.length)
+            const retIndex = text.indexOf('return')
+            const tokens = editor['tokens'].toTokens() as readonly {
+              readonly start: number
+              readonly end: number
+              readonly style: { readonly color?: string }
+            }[]
+            const ret = tokens.find(
+              (token) => token.start === retIndex && token.end === retIndex + 6,
+            )
+            return ret?.style.color ?? null
+          },
+          { interval: 10, timeout: 10_000 },
+        )
+        .toContain('keyword')
+    } finally {
+      editor.dispose()
+      host.remove()
+    }
+  },
+  30_000,
+)
+
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()))
 }

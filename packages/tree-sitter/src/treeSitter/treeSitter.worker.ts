@@ -5129,6 +5129,13 @@ const executeRequest = async (
     markRuntimeSessionDisposed(payload.runtimeSessionId)
     return Promise.resolve(undefined)
   }
+  if (payload.type === 'supersedeDocument') {
+    latestSnapshotVersions.set(
+      payload.runtimeSessionId,
+      Math.max(latestSnapshotVersions.get(payload.runtimeSessionId) ?? 0, payload.snapshotVersion),
+    )
+    return Promise.resolve(undefined)
+  }
   if (payload.type === 'disposeDocument') {
     markRuntimeSessionDisposed(payload.runtimeSessionId)
     const released = awaitRuntimeTasks(payload.runtimeSessionId).then(() =>

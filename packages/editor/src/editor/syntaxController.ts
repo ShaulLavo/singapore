@@ -5,6 +5,7 @@ import {
   setRetainedSyntaxDisplayDemand,
 } from './documentAnalysis'
 import { installEditorSyntaxRuntime } from './syntaxRuntime'
+import { scheduleFrame, type ScheduledFrame } from './scheduleFrame'
 import type {
   EditorDocumentAnalysis,
   EditorRetainedSyntaxSession,
@@ -43,8 +44,7 @@ import type { TextEdit } from '../tokens'
 import { foldRangeKey } from './folds'
 import { projectTokensThroughEdit, projectTokensThroughEdits } from './tokenProjection'
 import type { EditorSyntaxStatus } from './types'
-import { LatestAsyncRequest } from './latestAsyncRequest'
-import { syntaxRefreshDelay, SYNTAX_REFRESH_MAX_DELAY_MS } from './editorUtils'
+import { LatestAsyncRequest, SingleFlightAsyncRequest } from './latestAsyncRequest'
 import {
   appendCachedSyntaxRange,
   compactSyntaxRangeTokens,
@@ -330,9 +330,9 @@ type PendingInitialHighlightThemeTerminal = {
 
 const BACKGROUND_SYNTAX_TILE_CHARS = 120_000
 
-// Quiet time after which an edit's colors are refreshed without the debounce. Typing keys come
-// closer together, so a typing burst refreshes once at its first key and then as debounced.
-const EDIT_PAUSE_MS = 250
+// Cap consecutive recoveries from external retained-layer AbortErrors (e.g. logical-only
+// synchronize) per (contentVersion, parseGeneration) so a permanently aborting runtime cannot spin.
+const MAX_EXTERNAL_ABORT_RECOVERIES = 4
 
 // Backoff before each retry of a failed highlight refresh. The last rung retries on a new
 // highlighter session; the failure after it is terminal.
@@ -374,7 +374,15 @@ export class EditorSyntaxController {
   #pendingInitialHighlightThemeTerminal: PendingInitialHighlightThemeTerminal | null = null
   #highlighterThemePending = false
   #lastInitialHighlightTerminalStatus: SettledHighlightStatus | null = 'plain'
-  #undebouncedRefreshClaimed = false
+  #externalAbortRecoveryCount = 0
+  #structuralPublishToken = 0
+  #pendingEditApply: {
+    readonly token: number
+    readonly guard: RequestGuard
+    readonly parseId: number | null
+    readonly run: () => void
+  } | null = null
+  #pendingKeystrokeFrame: { cancel(): void } | null = null
   private syntaxSession: EditorSyntaxSession | null = null
   #syntaxSessionIncludesCaptures = false
   #highlighterSession: EditorHighlighterSession | null = null
@@ -399,7 +407,7 @@ export class EditorSyntaxController {
   #unavailableRecordsRange: EditorSyntaxRange | null = null
   #unavailableRecordsClearsScope = false
   #observingPreparedStructural = false
-  readonly #syntaxRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
+  readonly #syntaxRequests = new SingleFlightAsyncRequest<EditorSyntaxLoadResult>({
     key: 'editor.syntax.document',
     taskClass: 'background-derived',
   })
@@ -415,7 +423,7 @@ export class EditorSyntaxController {
     key: 'editor.syntax.warmRange',
     taskClass: 'idle-cache',
   })
-  readonly #highlightRequests = new LatestAsyncRequest<EditorHighlightResult>({
+  readonly #highlightRequests = new SingleFlightAsyncRequest<EditorHighlightResult>({
     key: 'editor.syntax.highlight',
     taskClass: 'background-derived',
   })
@@ -474,7 +482,6 @@ export class EditorSyntaxController {
   #pendingPrefetch: PendingSyntaxPrefetch | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   #warmGeneration = 0
-  #lastStructuralEditRefreshAt = Number.NEGATIVE_INFINITY
 
   constructor(private readonly options: EditorSyntaxControllerOptions) {
     installSyntaxRangeProjector(projectResultThroughSteps)
@@ -845,17 +852,6 @@ export class EditorSyntaxController {
     return this.#lastInitialHighlightTerminalStatus === null
   }
 
-  /**
-   * True once per document, for the first edit that arrives while nothing is colored yet: that
-   * one skips the typing debounce. The edits after it are debounced and coalesced as usual, so
-   * a burst of keys before the first colors asks for syntax twice, not once per key.
-   */
-  claimUndebouncedRefresh(): boolean {
-    if (!this.awaitingFirstHighlight || this.#undebouncedRefreshClaimed) return false
-    this.#undebouncedRefreshClaimed = true
-    return true
-  }
-
   get copyTokens(): EditorTokenStore {
     if (
       this.#acceptedTokensDocumentVersion !== this.options.getDocumentVersion() ||
@@ -1068,7 +1064,7 @@ export class EditorSyntaxController {
         : 'plain'
     this.#lastInitialHighlightTerminalStatus =
       this.#initialHighlightState === 'plain' ? 'plain' : null
-    this.#undebouncedRefreshClaimed = false
+    this.#externalAbortRecoveryCount = 0
     if (this.#retainedHighlighter) {
       this.refreshHighlighterTheme(false)
     }
@@ -1199,6 +1195,7 @@ export class EditorSyntaxController {
   clearDocument(): void {
     this.#advanceInitialHighlightConfigurationGeneration()
     this.#parseGeneration += 1
+    this.#externalAbortRecoveryCount = 0
     this.#parseState = { kind: 'plain' }
     this.#lastFrameDemand = null
     this.#initialHighlightState = 'idle'
@@ -1227,6 +1224,7 @@ export class EditorSyntaxController {
   dispose(): void {
     this.disposed = true
     this.#parseGeneration += 1
+    this.#externalAbortRecoveryCount = 0
     this.#parseState = { kind: 'plain' }
     this.#lastFrameDemand = null
     this.analysis = null
@@ -1266,6 +1264,7 @@ export class EditorSyntaxController {
     if (resetInitialHighlight) this.#beginInitialHighlightReplacement('syntax')
 
     this.#parseGeneration += 1
+    this.#externalAbortRecoveryCount = 0
     this.#disposeSyntaxSession()
     this.#clearSyntaxRangeCache()
     this.#currentBrackets = []
@@ -1448,6 +1447,9 @@ export class EditorSyntaxController {
     this.stoppedWarm = null
     this.#syntaxContentVersion += 1
     this.#parseGeneration += 1
+    this.#externalAbortRecoveryCount = 0
+    this.#invalidatePendingEditApply()
+    this.#armKeystrokePaintGate()
     this.#lastFrameDemand = null
     this.#lastRangeTrim = null
     this.rangeRequests.cancel()
@@ -1738,6 +1740,7 @@ export class EditorSyntaxController {
       )
     }
     this.#parseGeneration += 1
+    this.#invalidatePendingEditApply()
     this.rangeRequests.cancel()
     this.#prefetchRangeRequests.cancel()
     this.#warmRangeRequests.cancel()
@@ -1929,6 +1932,7 @@ export class EditorSyntaxController {
     if (guard.parseGeneration !== this.#parseGeneration) return
 
     this.#parseGeneration += 1
+    this.#externalAbortRecoveryCount = 0
     this.#disposeSyntaxSession()
     const session = this.options.getSession()
     if (!session) return
@@ -2002,6 +2006,8 @@ export class EditorSyntaxController {
   }
 
   #disposeSyntaxSession(): void {
+    this.#invalidatePendingEditApply()
+    this.#clearKeystrokePaintGate()
     this.#unsubscribeProducedSyntax?.()
     this.#unsubscribeProducedSyntax = null
     this.stoppedWarm = null
@@ -2052,17 +2058,19 @@ export class EditorSyntaxController {
     bypassCache = false,
   ): void {
     const guard = this.#captureRequestGuard(documentVersion)
+    let requestSignal: AbortSignal | null = null
     request.schedule({
       delayMs: options.delayMs ?? 50,
       tags: syntaxWorkTags(documentVersion, guard.contentVersion, kind, range),
-      run: traceEditorPerformanceTask('editor.syntax.range.request', (signal: AbortSignal) =>
-        this.loadSyntaxRangeResult(range, kind, {
+      run: traceEditorPerformanceTask('editor.syntax.range.request', (signal: AbortSignal) => {
+        requestSignal = signal
+        return this.loadSyntaxRangeResult(range, kind, {
           contentVersion: guard.contentVersion,
           parseGeneration: guard.parseGeneration,
           signal,
           bypassCache,
-        }),
-      ),
+        })
+      }),
       apply: traceEditorPerformanceTask('editor.syntax.range.apply', (result, startedAt) => {
         if (!this.#isRequestCurrent(guard)) return
         if (
@@ -2087,6 +2095,20 @@ export class EditorSyntaxController {
         if (!this.#isRequestCurrent(guard)) return
         if (kind === 'prefetch') {
           this.#logOptionalSyntaxFailure(documentVersion, error, startedAt)
+          return
+        }
+        if (
+          error instanceof DOMException &&
+          error.name === 'AbortError' &&
+          !requestSignal?.aborted
+        ) {
+          if (!this.#publishedScopeCoversViewport() && this.#canRecoverExternalAbort(guard)) {
+            if (!this.#isParseIdCurrent()) {
+              this.#resetForProducedStructuralSyntax(guard.documentVersion)
+            } else {
+              this.refreshVisibleRange(guard.documentVersion, { delayMs: 0 })
+            }
+          }
           return
         }
         if (
@@ -2278,37 +2300,151 @@ export class EditorSyntaxController {
       parseGeneration: guard.parseGeneration,
     }
 
-    const delayMs = options.delayMs ?? this.#structuralRefreshDelay(change)
+    const delayMs = options.delayMs ?? 0
+    const isEdit = change !== null
+    const replacePending = forceRetry && this.#syntaxRequests.isInFlight()
+    const publishToken = this.#advanceStructuralPublishToken()
     this.#syntaxRequests.schedule({
       delayMs,
-      maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
+      defer: isEdit && delayMs === 0,
+      replaceInFlight: !isEdit,
       tags: syntaxWorkTags(documentVersion, guard.contentVersion, 'full'),
       run: traceEditorPerformanceTask('editor.syntax.structural.request', (signal: AbortSignal) =>
-        this.#loadSyntaxResult(guard, change, forceRetry, signal),
+        this.#loadSyntaxResult(guard, change, forceRetry, replacePending, publishToken, signal),
       ),
       apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) => {
         if (!this.#isRequestCurrent(guard)) return
-        this.#applySyntaxResult(result, guard, startedAt)
+        const parseId = result.updatesDocument ? (result.parseId ?? null) : null
+        this.#deliverStructuralOutcome(publishToken, guard, parseId, () => {
+          this.#applySyntaxResult(result, guard, startedAt)
+        })
       }),
       fail: traceEditorPerformanceTask('editor.syntax.structural.fail', (error, startedAt) => {
         if (!this.#isRequestCurrent(guard)) return
-        this.#recoverSyntaxError(change, error, startedAt, guard)
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          if (this.#canRecoverExternalAbort(guard)) {
+            this.#refreshStructuralSyntax(guard.documentVersion, null, { delayMs: 0 }, false)
+          }
+          return
+        }
+        this.#deliverStructuralOutcome(publishToken, guard, null, () => {
+          this.#recoverSyntaxError(change, error, startedAt, guard)
+        })
       }),
     })
   }
 
-  /**
-   * The worker reparses every edit as it arrives, so waiting only delays the colors. An edit after
-   * a pause is re-highlighted at once; the debounce spaces out the refreshes of typing, whose keys
-   * come closer together than the pause.
-   */
-  #structuralRefreshDelay(change: DocumentSessionChange | null): number {
-    const debounce = syntaxRefreshDelay(change)
-    if (debounce === 0) return 0
-    const now = nowMs()
-    const previous = this.#lastStructuralEditRefreshAt
-    this.#lastStructuralEditRefreshAt = now
-    return now - previous >= EDIT_PAUSE_MS ? 0 : debounce
+  #advanceStructuralPublishToken(): number {
+    this.#structuralPublishToken += 1
+    this.#pendingEditApply = null
+    return this.#structuralPublishToken
+  }
+
+  #invalidatePendingEditApply(): void {
+    this.#structuralPublishToken += 1
+    this.#pendingEditApply = null
+  }
+
+  #armKeystrokePaintGate(): void {
+    if (
+      typeof globalThis.requestAnimationFrame !== 'function' ||
+      typeof globalThis.MessageChannel !== 'function' ||
+      globalThis.document?.visibilityState === 'hidden'
+    ) {
+      this.#clearKeystrokePaintGate()
+      return
+    }
+    this.#clearKeystrokePaintGate()
+    let cancelled = false
+    let scheduledFrame: ScheduledFrame | null = null
+    let port1: MessagePort | null = null
+    const doc = globalThis.document
+    const cleanup = () => {
+      scheduledFrame?.cancel()
+      scheduledFrame = null
+      if (port1) {
+        port1.onmessage = null
+        port1.close()
+        port1 = null
+      }
+      doc?.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+    const finish = () => {
+      if (cancelled) return
+      cancelled = true
+      cleanup()
+      this.#pendingKeystrokeFrame = null
+      this.#drainPendingEditApply()
+    }
+    const onVisibilityChange = () => {
+      if (doc?.visibilityState === 'hidden') finish()
+    }
+    doc?.addEventListener('visibilitychange', onVisibilityChange)
+    scheduledFrame = scheduleFrame(() => {
+      scheduledFrame = null
+      if (cancelled) return
+      const channel = new globalThis.MessageChannel()
+      port1 = channel.port1
+      channel.port1.onmessage = () => finish()
+      channel.port2.postMessage(0)
+    })
+    this.#pendingKeystrokeFrame = {
+      cancel: () => {
+        if (cancelled) return
+        cancelled = true
+        cleanup()
+      },
+    }
+  }
+
+  #clearKeystrokePaintGate(): void {
+    this.#pendingKeystrokeFrame?.cancel()
+    this.#pendingKeystrokeFrame = null
+  }
+
+  #deliverStructuralOutcome(
+    token: number,
+    guard: RequestGuard,
+    parseId: number | null,
+    run: () => void,
+  ): void {
+    if (token !== this.#structuralPublishToken || !this.#isRequestCurrent(guard)) return
+    if (
+      parseId !== null &&
+      this.retainedSyntax &&
+      this.retainedSyntax.currentParseId() !== parseId
+    ) {
+      return
+    }
+    if (!this.#pendingKeystrokeFrame || globalThis.document?.visibilityState === 'hidden') {
+      run()
+      return
+    }
+    this.#pendingEditApply = { token, guard, parseId, run }
+  }
+
+  #drainPendingEditApply(): void {
+    const pending = this.#pendingEditApply
+    this.#pendingEditApply = null
+    if (!pending) return
+    if (pending.token !== this.#structuralPublishToken) return
+    if (!this.#isRequestCurrent(pending.guard)) return
+    if (
+      pending.parseId !== null &&
+      this.retainedSyntax &&
+      this.retainedSyntax.currentParseId() !== pending.parseId
+    ) {
+      return
+    }
+    pending.run()
+  }
+
+  #canRecoverExternalAbort(guard: RequestGuard): boolean {
+    if (!this.#isRequestCurrent(guard)) return false
+    if (!this.retainedSyntax || this.retainedSyntax.read().kind === 'failed') return false
+    if (this.#externalAbortRecoveryCount >= MAX_EXTERNAL_ABORT_RECOVERIES) return false
+    this.#externalAbortRecoveryCount += 1
+    return true
   }
 
   #refreshHighlightTokens(
@@ -2321,10 +2457,12 @@ export class EditorSyntaxController {
 
     if (change) this.#initialHighlightState = 'loading'
     const configurationGeneration = this.#initialHighlightConfigurationGeneration
-    const delayMs = options.delayMs ?? syntaxRefreshDelay(change)
+    const delayMs = options.delayMs ?? 0
+    const isEdit = change !== null
     this.#highlightRequests.schedule({
       delayMs,
-      maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
+      defer: isEdit && delayMs === 0,
+      replaceInFlight: !isEdit,
       tags: { version: documentVersion, configuration: 'highlight' },
       run: traceEditorPerformanceTask('editor.syntax.highlight.request', () =>
         this.#loadHighlightResult(),
@@ -2348,11 +2486,13 @@ export class EditorSyntaxController {
     guard: RequestGuard,
     change: DocumentSessionChange | null,
     forceRetry: boolean,
+    replacePending: boolean,
+    publishToken: number,
     signal: AbortSignal,
   ): Promise<EditorSyntaxLoadResult> {
     if (!this.syntaxSession) throw new Error('No syntax session')
     const base = this.retainedSyntax
-      ? await this.retainedSyntax.refreshBase({ forceRetry })
+      ? await this.retainedSyntax.refreshBase({ forceRetry, replacePending })
       : {
           parseId: null,
           snapshot: this.options.getSession()?.getTextSnapshot() ?? null,
@@ -2436,6 +2576,7 @@ export class EditorSyntaxController {
             parseGeneration: guard.parseGeneration,
             updatesDocument: true,
             signal,
+            replaceQuery: replacePending,
           })
           if (!this.#canProviderQuerySyntaxRange()) {
             return {
@@ -2475,10 +2616,16 @@ export class EditorSyntaxController {
         }
       }
 
-      await this.#paintFirstRows(guard, base.parseId, base.result, signal)
-      // A newer request took this one's place while the rows were on their way. The range
-      // around them is that request's to ask for, not a second one from here.
-      if (signal.aborted || !this.#isRequestCurrent(guard)) {
+      await this.#paintFirstRows(guard, base.parseId, base.result, publishToken, signal)
+      // A newer request took this one's place while the rows were on their way, or a logical-only
+      // synchronize replaced the retained base. The range around them is that request's to ask for.
+      if (
+        signal.aborted ||
+        !this.#isRequestCurrent(guard) ||
+        (base.parseId !== null &&
+          this.retainedSyntax &&
+          this.retainedSyntax.currentParseId() !== base.parseId)
+      ) {
         throw new DOMException('Syntax request was superseded', 'AbortError')
       }
       const queryTarget = this.options.getVisibleSyntaxRange()
@@ -2506,6 +2653,7 @@ export class EditorSyntaxController {
           updatesDocument: true,
           signal,
           bypassCache,
+          replaceQuery: replacePending,
         })
         if (!this.#canProviderQuerySyntaxRange()) {
           return {
@@ -2605,7 +2753,9 @@ export class EditorSyntaxController {
     guard: RequestGuard,
     parseId: number | null,
     baseResult: EditorSyntaxResult,
+    publishToken: number,
     signal: AbortSignal,
+    replaceQuery = false,
   ): Promise<void> {
     const range = this.#firstRowsRange()
     if (!range || signal.aborted || !this.#isRequestCurrent(guard)) return
@@ -2614,14 +2764,21 @@ export class EditorSyntaxController {
       contentVersion: guard.contentVersion,
       parseGeneration: guard.parseGeneration,
       updatesDocument: true,
-    }).catch(() => null)
+      signal,
+      replaceQuery,
+    }).catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      return null
+    })
     if (!firstRows || signal.aborted || !this.#isRequestCurrent(guard)) return
 
-    this.#applySyntaxResult(
-      { ...firstRows, parseId, baseResult, firstRows: true, suppressWarm: true },
-      guard,
-      nowMs(),
-    )
+    this.#deliverStructuralOutcome(publishToken, guard, parseId, () => {
+      this.#applySyntaxResult(
+        { ...firstRows, parseId, baseResult, firstRows: true, suppressWarm: true },
+        guard,
+        nowMs(),
+      )
+    })
   }
 
   #firstRowsRange(): EditorSyntaxRange | null {
@@ -2652,6 +2809,7 @@ export class EditorSyntaxController {
       readonly updatesDocument?: boolean
       readonly signal?: AbortSignal
       readonly bypassCache?: boolean
+      readonly replaceQuery?: boolean
     } = {},
   ): Promise<EditorSyntaxLoadResult> {
     const contentVersion = options.contentVersion ?? this.#syntaxContentVersion
@@ -2686,7 +2844,11 @@ export class EditorSyntaxController {
     // it. Requests for shown rows and background tiles are cancelled once nobody waits for them.
     const signal = source === 'prefetch' ? undefined : options.signal
     const result = this.retainedSyntax
-      ? this.retainedSyntax.queryRange(range, { signal, bypassCache: options.bypassCache })
+      ? this.retainedSyntax.queryRange(range, {
+          signal,
+          bypassCache: options.bypassCache,
+          replaceQuery: options.replaceQuery,
+        })
       : this.syntaxSession.queryRange(range)
     return result.then((answer) => ({
       contentVersion,
@@ -2720,7 +2882,17 @@ export class EditorSyntaxController {
     if (!loadResult.updatesDocument && loadResult.range !== null && !this.#isParseIdCurrent()) {
       return false
     }
+    if (
+      loadResult.updatesDocument &&
+      loadResult.parseId !== undefined &&
+      loadResult.parseId !== null &&
+      this.retainedSyntax &&
+      this.retainedSyntax.currentParseId() !== loadResult.parseId
+    ) {
+      return false
+    }
 
+    this.#externalAbortRecoveryCount = 0
     this.#applyingRenderData = true
     try {
       return this.#publishSyntaxResult(loadResult, guard, startedAt)

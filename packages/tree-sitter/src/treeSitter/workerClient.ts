@@ -43,6 +43,7 @@ type PendingRequest = {
   readonly payload: TreeSitterWorkerRequestPayload
   readonly resolve: (result: TreeSitterWorkerResult) => void
   readonly reject: (error: Error) => void
+  readonly onWorkerAck?: () => void
 }
 
 type SliceLanguageEntry = {
@@ -193,6 +194,14 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   private lastError: Error | null = null
   private initPromise: Promise<void> | null = null
   private readonly pendingRequests = new Map<number, PendingRequest>()
+  private readonly abortedWorkerAcks = new Map<
+    number,
+    { readonly runtimeSessionId: string | null; readonly resolve: () => void }
+  >()
+  private readonly activeDocumentAcks = new Map<
+    string,
+    { readonly promise: Promise<void>; readonly resolve: () => void }
+  >()
   private readonly clientTasks = new Set<Promise<unknown>>()
   private readonly runtimeTasks = new Map<string, Set<Promise<unknown>>>()
   private connection: DocumentSourceConnection | null = null
@@ -396,6 +405,17 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
     if (!handle || this.worker !== handle) return undefined
+    if (
+      this.activeDocumentAcks.has(payload.runtimeSessionId) &&
+      !(await this.awaitDocumentSlot(
+        handle,
+        payload.runtimeSessionId,
+        payload.snapshotVersion,
+        signal,
+      ))
+    ) {
+      return undefined
+    }
     const request: TreeSitterParseDocumentRequest = {
       type: 'parse',
       documentId: payload.documentId,
@@ -439,6 +459,17 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
     if (!handle || this.worker !== handle) return undefined
+    if (
+      this.activeDocumentAcks.has(payload.runtimeSessionId) &&
+      !(await this.awaitDocumentSlot(
+        handle,
+        payload.runtimeSessionId,
+        payload.snapshotVersion,
+        signal,
+      ))
+    ) {
+      return undefined
+    }
     const result = await this.postDocumentRequest(
       {
         type: 'edit',
@@ -612,6 +643,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
 
   public disposeDocument(runtimeSessionId: string): void {
     this.cancelRuntimeRequests(runtimeSessionId)
+    this.releaseRuntimeDocumentAcks(runtimeSessionId)
     this.announceClose(runtimeSessionId)
     const precedingTasks = [...(this.runtimeTasks.get(runtimeSessionId) ?? [])]
     const disposal = Promise.allSettled(precedingTasks).then(async () => {
@@ -722,12 +754,18 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     payload: TreeSitterWorkerRequestPayload,
     createIfMissing = true,
     signal?: AbortSignal,
+    onWorkerAck?: () => void,
   ): Promise<TreeSitterWorkerResult> {
     const handle = createIfMissing ? this.getWorker() : this.worker
-    if (!handle) return Promise.resolve(undefined)
+    if (!handle) {
+      onWorkerAck?.()
+      return Promise.resolve(undefined)
+    }
 
-    if (signal?.aborted)
+    if (signal?.aborted) {
+      onWorkerAck?.()
       return Promise.reject(new DOMException('Document source was released', 'AbortError'))
+    }
     const id = this.nextRequestId
     this.nextRequestId += 1
     const request: TreeSitterWorkerRequest = { id, payload }
@@ -737,6 +775,12 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
       const abort = () => {
         const pending = this.pendingRequests.get(id)
         if (pending?.cancellationFlag) Atomics.store(pending.cancellationFlag, 0, 1)
+        if (pending?.onWorkerAck) {
+          this.abortedWorkerAcks.set(id, {
+            runtimeSessionId: pending.runtimeSessionId,
+            resolve: pending.onWorkerAck,
+          })
+        }
         this.pendingRequests.delete(id)
         reject(new DOMException('Document source was released', 'AbortError'))
       }
@@ -748,6 +792,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
         payload,
         resolve,
         reject,
+        onWorkerAck,
       })
       signal?.addEventListener('abort', abort, { once: true })
       try {
@@ -755,19 +800,84 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
       } catch (error) {
         signal?.removeEventListener('abort', abort)
         this.pendingRequests.delete(id)
+        onWorkerAck?.()
         reject(workerRequestError(error))
       }
     })
+  }
+
+  private async awaitDocumentSlot(
+    handle: Worker,
+    runtimeSessionId: string,
+    snapshotVersion: number,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    let superseded = false
+    while (true) {
+      const prior = this.activeDocumentAcks.get(runtimeSessionId)
+      if (!prior) return this.worker === handle
+      if (!superseded) {
+        superseded = true
+        this.supersedeDocument(handle, runtimeSessionId, snapshotVersion)
+      }
+      await waitForDocumentWork(prior.promise, signal)
+      if (this.worker !== handle) return false
+    }
+  }
+
+  private supersedeDocument(
+    handle: Worker,
+    runtimeSessionId: string,
+    snapshotVersion: number,
+  ): void {
+    if (this.worker !== handle) return
+    try {
+      handle.postMessage({
+        id: this.nextRequestId++,
+        payload: { type: 'supersedeDocument', runtimeSessionId, snapshotVersion },
+      })
+    } catch {
+      // Transport errors surface when the gated document request itself is posted.
+    }
+  }
+
+  private releaseRuntimeDocumentAcks(runtimeSessionId: string): void {
+    const active = this.activeDocumentAcks.get(runtimeSessionId)
+    if (active) {
+      this.activeDocumentAcks.delete(runtimeSessionId)
+      active.resolve()
+    }
+    for (const [id, entry] of this.abortedWorkerAcks) {
+      if (entry.runtimeSessionId !== runtimeSessionId) continue
+      this.abortedWorkerAcks.delete(id)
+      entry.resolve()
+    }
   }
 
   private postDocumentRequest(
     payload: TreeSitterParseDocumentRequest | TreeSitterEditDocumentRequest,
     signal?: AbortSignal,
   ): Promise<TreeSitterWorkerResult> {
+    let resolveAck!: () => void
+    const ackPromise = new Promise<void>((resolve) => {
+      resolveAck = resolve
+    })
+    let settled = false
+    const finishAck = () => {
+      if (settled) return
+      settled = true
+      if (this.activeDocumentAcks.get(payload.runtimeSessionId) === entry) {
+        this.activeDocumentAcks.delete(payload.runtimeSessionId)
+      }
+      resolveAck()
+    }
+    const entry = { promise: ackPromise, resolve: finishAck }
+    this.activeDocumentAcks.set(payload.runtimeSessionId, entry)
     return this.postRequest(
       this.withCancellation(this.cancelPreviousDocumentRequests(payload.runtimeSessionId), payload),
       false,
       signal,
+      finishAck,
     )
   }
 
@@ -839,10 +949,18 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   private handleWorkerMessage(event: MessageEvent<TreeSitterWorkerResponse>): void {
     const response = event.data
     const pending = this.pendingRequests.get(response.id)
-    if (!pending) return
+    if (!pending) {
+      const aborted = this.abortedWorkerAcks.get(response.id)
+      if (aborted) {
+        this.abortedWorkerAcks.delete(response.id)
+        aborted.resolve()
+      }
+      return
+    }
 
     pending.cleanup()
     this.pendingRequests.delete(response.id)
+    pending.onWorkerAck?.()
     if (response.ok) {
       pending.resolve(response.result)
       return
@@ -866,9 +984,14 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   private rejectPendingRequests(error: Error): void {
     for (const request of this.pendingRequests.values()) {
       request.cleanup()
+      request.onWorkerAck?.()
       request.reject(error)
     }
     this.pendingRequests.clear()
+    for (const entry of this.abortedWorkerAcks.values()) entry.resolve()
+    this.abortedWorkerAcks.clear()
+    for (const entry of this.activeDocumentAcks.values()) entry.resolve()
+    this.activeDocumentAcks.clear()
   }
 
   private shouldRegisterLanguageWithWorker(language: TreeSitterLanguageDescriptor): boolean {

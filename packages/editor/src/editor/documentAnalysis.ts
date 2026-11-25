@@ -78,6 +78,7 @@ export type EditorAnalysisDisplayDemand =
 export type EditorAnalysisRangeInterest = {
   readonly signal?: AbortSignal
   readonly bypassCache?: boolean
+  readonly replaceQuery?: boolean
 }
 type AnalysisDisplayInspection = {
   readonly unmanagedLeases: number
@@ -152,7 +153,10 @@ export type EditorRetainedSyntaxSession = Omit<EditorSyntaxSession, 'queryRange'
   readonly runtimeSessionId: string
   onDidProduceSyntax(listener: () => void): () => void
   setDisplayDemand(demand: EditorAnalysisDisplayDemand): void
-  refreshBase(options?: { readonly forceRetry?: boolean }): Promise<EditorRetainedSyntaxBase>
+  refreshBase(options?: {
+    readonly forceRetry?: boolean
+    readonly replacePending?: boolean
+  }): Promise<EditorRetainedSyntaxBase>
   currentParseId(): number | null
   readBaseResult(): EditorSyntaxResult | null
   clearDegradedOrPartialRanges(): void
@@ -1185,6 +1189,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     range: EditorSyntaxRange,
     signal: AbortSignal,
     bypassCache = false,
+    replaceQuery = false,
   ): Promise<EditorSyntaxResult> {
     if (signal.aborted) return Promise.reject(cancelled())
     this.queryWaiters.set(signal, {
@@ -1197,7 +1202,7 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       this.retention.changed()
     }
     signal.addEventListener('abort', release, { once: true })
-    const pending = interruptible(this.range(range, signal, bypassCache), signal)
+    const pending = interruptible(this.range(range, signal, bypassCache, replaceQuery), signal)
     this.retention.changed()
     return pending.finally(() => {
       release()
@@ -1326,10 +1331,12 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     range: EditorSyntaxRange,
     signal?: AbortSignal,
     bypassCache = false,
+    replaceQuery = false,
   ): Promise<EditorSyntaxResult> {
     range = boundedRange(range, this.buffer.getTextSnapshot().length)
     if (!this.structuralSession.queryRange) return this.current()
-    if (!bypassCache) {
+    const skipCache = bypassCache || replaceQuery
+    if (!skipCache) {
       const state = this.readRange(range)
       if (state.kind === 'ready') return Promise.resolve(state.result)
     }
@@ -1337,20 +1344,30 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
     const revision = point.revision
     const generation =
       this.queuedPoint === this.buffer.getDocumentSyncPoint() ? this.generation : null
-    const key = `${revision}:${generation ?? 'publication'}:${rangeKey(range)}`
-    const existing = [...this.queries.values()].find((query) =>
-      this.compatibleQuery(query, point, range),
-    )
-    if (existing) {
-      if (bypassCache) existing.bypassCache = true
-      holdRangeQuery(existing, signal, this.releaseOrphanLater)
-      this.trimOptionalRanges()
-      return existing.promise
+    const baseKey = `${revision}:${generation ?? 'publication'}:${rangeKey(range)}`
+    if (!replaceQuery) {
+      const existing = [...this.queries.values()].find((query) =>
+        this.compatibleQuery(query, point, range),
+      )
+      if (existing) {
+        if (bypassCache) existing.bypassCache = true
+        holdRangeQuery(existing, signal, this.releaseOrphanLater)
+        this.trimOptionalRanges()
+        return existing.promise
+      }
+    } else {
+      for (const query of this.queries.values()) {
+        if (this.compatibleQuery(query, point, range) && rangeQueryIsOrphaned(query)) {
+          query.cancellation.abort(cancelled())
+        }
+      }
     }
     this.cancelOrphanedQueries()
     let queried = false
     const startEpoch = this.bypassEpoch
     const cancellation = new AbortController()
+    const id = this.nextQueryId++
+    const key = replaceQuery ? `${baseKey}:replace:${id}` : baseKey
     const pending: PendingRangeQuery = {
       snapshot: this.buffer.getTextSnapshot(),
       point,
@@ -1359,8 +1376,8 @@ export class StructuralEntry extends AnalysisEntry<EditorSyntaxResult> {
       holders: 0,
       pinned: false,
       release: null,
-      id: this.nextQueryId++,
-      bypassCache,
+      id,
+      bypassCache: skipCache,
       admission: 'cache',
       work: { kind: 'queued', generation },
       promise: interruptible(
@@ -1980,7 +1997,10 @@ function structuralLease(
   let failedBaseGeneration: number | null =
     entry.read().kind === 'failed' ? entry.analysisGeneration : null
   let awaitingBase = false
-  const refreshBase = async (options?: { readonly forceRetry?: boolean }) => {
+  const refreshBase = async (options?: {
+    readonly forceRetry?: boolean
+    readonly replacePending?: boolean
+  }) => {
     entry.synchronize()
     const currentRead = entry.read()
     const shouldRetryFailed =
@@ -1990,8 +2010,9 @@ function structuralLease(
       options?.forceRetry === true &&
       currentRead.kind === 'ready' &&
       (isTerminalIncompleteSyntaxResult(currentRead.result) || currentRead.result.degraded !== null)
+    const shouldReplacePending = options?.replacePending === true && currentRead.kind === 'pending'
     if (options?.forceRetry === true) entry.clearDegradedOrPartialRanges()
-    if (shouldRetryFailed || shouldForceRetryDegraded) entry.refresh()
+    if (shouldRetryFailed || shouldForceRetryDegraded || shouldReplacePending) entry.refresh()
     const generation = entry.analysisGeneration
     awaitingBase = true
     try {
@@ -2043,7 +2064,12 @@ function structuralLease(
       demand = range
       const waiter = leaseCancellation(lease.signal, entry.retention, interest.signal)
       return entry
-        .waitForRange(range, waiter.signal, interest.bypassCache === true)
+        .waitForRange(
+          range,
+          waiter.signal,
+          interest.bypassCache === true,
+          interest.replaceQuery === true,
+        )
         .finally(waiter.dispose)
     },
     getResult: () => {
