@@ -29,6 +29,8 @@
     "check:full-text": "bun scripts/check-full-text-boundary.mjs --self-test && bun scripts/check-full-text-boundary.mjs",
     "health:write": "bun scripts/architecture-health.mjs --write",
     "changeset": "changeset",
+    "version:packages": "changeset version && bun install --lockfile-only",
+    "release:publish": "bun run publish:packages -- --skip-build && changeset tag",
     "publish:packages": "bun scripts/publish-packages.ts",
     "publish:packages:dry-run": "bun scripts/publish-packages.ts --dry-run",
     "release:tarballs": "bun scripts/release-tarballs.ts",

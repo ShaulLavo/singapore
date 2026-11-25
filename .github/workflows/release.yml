@@ -43,8 +43,9 @@ jobs:
       - name: Create Release Pull Request or Publish to npm
         uses: changesets/action@v1
         with:
-          version: bunx changeset version && bun install --lockfile-only
-          publish: bun run publish:packages -- --skip-build && bunx changeset tag
+          # changesets/action runs these without a shell, so `&&` must live in package scripts.
+          version: bun run version:packages
+          publish: bun run release:publish
           createGithubReleases: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
