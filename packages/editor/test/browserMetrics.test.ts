@@ -237,4 +237,173 @@ describe('browser text metrics', () => {
 
     expect(measureWhitespaceDotGlyph(container)).toBe('·')
   })
+
+  it('measures at most once on mount with an explicit theme and reuses cache on a second mount', () => {
+    const firstLayouts = countLayoutsDuring(() => {
+      editor = new Editor(container, {
+        defaultText: 'const x = 1',
+        theme: { type: 'dark' },
+      })
+    })
+    expect(firstLayouts).toBe(1)
+
+    const secondHost = document.createElement('div')
+    document.body.appendChild(secondHost)
+    const mounted: Editor[] = []
+    try {
+      const secondLayouts = countLayoutsDuring(() => {
+        mounted.push(
+          new Editor(secondHost, {
+            defaultText: 'const y = 2',
+            theme: { type: 'dark' },
+          }),
+        )
+      })
+      expect(secondLayouts).toBe(0)
+    } finally {
+      for (const instance of mounted) instance.dispose()
+      secondHost.remove()
+    }
+  })
+
+  it('keeps the cache warm on the first ResizeObserver tick and scopes invalidation per font key', () => {
+    const observers: Array<{
+      readonly callback: ResizeObserverCallback
+      readonly targets: Set<Element>
+    }> = []
+    const originalResizeObserver = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class MockResizeObserver implements ResizeObserver {
+      private readonly entry: {
+        readonly callback: ResizeObserverCallback
+        readonly targets: Set<Element>
+      }
+      constructor(callback: ResizeObserverCallback) {
+        this.entry = { callback, targets: new Set() }
+        observers.push(this.entry)
+      }
+      observe(target: Element): void {
+        this.entry.targets.add(target)
+      }
+      unobserve(target: Element): void {
+        this.entry.targets.delete(target)
+      }
+      disconnect(): void {
+        this.entry.targets.clear()
+      }
+    } as typeof ResizeObserver
+
+    const secondHost = document.createElement('div')
+    container.style.fontSize = '13px'
+    secondHost.style.fontSize = '18px'
+    document.body.appendChild(secondHost)
+    let second: Editor | null = null
+    try {
+      editor = new Editor(container, { defaultText: 'first', fontSize: 13 })
+      second = new Editor(secondHost, { defaultText: 'second', fontSize: 18 })
+      const faceObserver = observers.find((candidate) =>
+        Array.from(candidate.targets).some((target) => target.getRootNode() instanceof ShadowRoot),
+      )!
+      expect(faceObserver).toBeDefined()
+      expect(faceObserver.targets.size).toBe(2)
+      const [probe1, probe2] = Array.from(faceObserver.targets)
+      const root1 = editorRootIn(container)
+      const root2 = editorRootIn(secondHost)
+
+      // Initial watched probe width = 12 chars * 8px = 96px, height = ROW_HEIGHT (24px).
+      const makeEntry = (target: Element, inlineSize: number, blockSize: number) =>
+        ({
+          target,
+          borderBoxSize: [{ inlineSize, blockSize }],
+          contentBoxSize: [{ inlineSize, blockSize }],
+          devicePixelContentBoxSize: [{ inlineSize, blockSize }],
+          contentRect: probeRect(inlineSize),
+        }) as unknown as ResizeObserverEntry
+
+      // Mutate stubbed advances after mount: if the first ResizeObserver tick wiped the cache,
+      // re-reading metrics would observe 12 instead of the cached 8.
+      advanceOf = () => 12
+      probeHeight = 30
+      faceObserver.callback(
+        [makeEntry(probe1!, 96, ROW_HEIGHT), makeEntry(probe2!, 96, ROW_HEIGHT)],
+        {} as ResizeObserver,
+      )
+      expect(measureBrowserTextMetrics(root1).characterWidth).toBe(8)
+      expect(measureBrowserTextMetrics(root2).characterWidth).toBe(8)
+      expect(measuredRowHeight(root1)).toBe(`${ROW_HEIGHT}px`)
+      expect(measuredRowHeight(root2)).toBe(`${ROW_HEIGHT}px`)
+
+      // Now simulate a late font load affecting only editor 2 (18px): its probe resizes.
+      faceObserver.callback([makeEntry(probe2!, 144, 30)], {} as ResizeObserver)
+      expect(measureBrowserTextMetrics(root2).characterWidth).toBe(12)
+      expect(measuredRowHeight(root2)).toBe('30px')
+      // Editor 1's 13px font key must stay cached and untouched.
+      expect(measureBrowserTextMetrics(root1).characterWidth).toBe(8)
+      expect(measuredRowHeight(root1)).toBe(`${ROW_HEIGHT}px`)
+    } finally {
+      second?.dispose()
+      secondHost.remove()
+      globalThis.ResizeObserver = originalResizeObserver
+    }
+  })
+
+  it('re-measures when an editor mounted while hidden becomes visible', () => {
+    const observers: Array<{
+      readonly callback: ResizeObserverCallback
+      readonly targets: Set<Element>
+    }> = []
+    const originalResizeObserver = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class MockResizeObserver implements ResizeObserver {
+      private readonly entry: {
+        readonly callback: ResizeObserverCallback
+        readonly targets: Set<Element>
+      }
+      constructor(callback: ResizeObserverCallback) {
+        this.entry = { callback, targets: new Set() }
+        observers.push(this.entry)
+      }
+      observe(target: Element): void {
+        this.entry.targets.add(target)
+      }
+      unobserve(target: Element): void {
+        this.entry.targets.delete(target)
+      }
+      disconnect(): void {
+        this.entry.targets.clear()
+      }
+    } as typeof ResizeObserver
+
+    try {
+      // Simulate a display:none container returning 0x0 geometry during mount.
+      advanceOf = () => 0
+      probeHeight = 0
+      editor = new Editor(container, { defaultText: 'hidden' })
+      const root = editorRootIn(container)
+      expect(measuredRowHeight(root)).toBe(`${ROW_HEIGHT}px`)
+
+      const faceObserver = observers.find((candidate) =>
+        Array.from(candidate.targets).some((target) => target.getRootNode() instanceof ShadowRoot),
+      )!
+      expect(faceObserver).toBeDefined()
+      const [probe] = Array.from(faceObserver.targets)
+      // Container becomes visible with a 30px line height and 10px character width.
+      advanceOf = () => 10
+      probeHeight = 30
+      faceObserver.callback(
+        [
+          {
+            target: probe!,
+            borderBoxSize: [{ inlineSize: 120, blockSize: 30 }],
+            contentBoxSize: [{ inlineSize: 120, blockSize: 30 }],
+            devicePixelContentBoxSize: [{ inlineSize: 120, blockSize: 30 }],
+            contentRect: probeRect(120),
+          } as unknown as ResizeObserverEntry,
+        ],
+        {} as ResizeObserver,
+      )
+      expect(measuredRowHeight(root)).toBe('30px')
+      expect(measureBrowserTextMetrics(root).characterWidth).toBe(10)
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+    }
+  })
 })

@@ -1,12 +1,14 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { Language, Parser, type Tree } from 'web-tree-sitter'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
+import { DocumentWorkerReader } from '@singapore-editor/core/internal/document-worker'
 import {
   toEditorTokenStore,
   type EditorSyntaxRange,
   type EditorSyntaxResult,
 } from '@singapore-editor/core/syntax'
 import { resolveTreeSitterLanguageContribution } from '../src'
+import { createTreeSitterInput } from '../src/treeSitter/source'
 import { __treeSitterWorkerInternalsForTests } from '../src/treeSitter/treeSitter.worker'
 import { TreeSitterWorkerClient } from '../src/treeSitter/workerClient'
 import { TreeSitterLanguageRegistry } from '../src/treeSitter/registry'
@@ -321,3 +323,119 @@ it('reads a token that is longer than many slices once, not once per slice', asy
     parser.delete()
   }
 }, 120_000)
+
+it('yields nested worker slices without hitting the 4 ms setTimeout clamp', async () => {
+  const { yieldWorker } = __treeSitterWorkerInternalsForTests
+  const started = performance.now()
+  for (let slice = 0; slice < 20; slice += 1) {
+    await yieldWorker()
+  }
+  const elapsedMs = performance.now() - started
+  // 20 nested setTimeout(0) calls clamp slices 6..20 to >=4 ms each (>=60 ms hard browser floor).
+  expect(elapsedMs).toBeLessThan(40)
+})
+
+it('preempts a long background range query when an urgent edit arrives on the same document', async () => {
+  vi.stubGlobal('SharedArrayBuffer', undefined)
+  const backend = worker()
+  const queryAnswers: (string | undefined)[] = []
+  const query = backend.queryRange.bind(backend)
+  backend.queryRange = async (payload, signal) => {
+    const result = await query(payload, signal)
+    queryAnswers.push(result?.analysis?.kind)
+    return result
+  }
+  const text = source(400)
+  const doc = open(backend, 'range-slices-edit-preempt', text)
+  await doc.run()
+  await doc.runtime.queryRange({ startIndex: text.length - 64, endIndex: text.length })
+  expect(doc.runtime.getResult().projection.analysis?.kind).toBe('full')
+  queryAnswers.length = 0
+
+  // Start a full-document background range query without an AbortSignal; only worker-side slice
+  // yielding lets the incoming edit supersede and cancel it before the whole query finishes.
+  const longQuery = doc.runtime.queryRange({ startIndex: 0, endIndex: text.length })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  const edited = await doc.edit([{ from: 0, to: 0, text: '/* urgent */ ' }])
+  await longQuery
+
+  expect(edited.projection.analysis?.kind).toBe('full')
+  expect(queryAnswers).toEqual(['cancelled'])
+}, 120_000)
+
+it('parses a non-markdown document once on open without scheduling an idle double-reparse', async () => {
+  const { disposeDocument, parseFullDocument, registerLanguages } =
+    __treeSitterWorkerInternalsForTests
+  const { descriptor, language } = await typescript()
+  const noInjections = { ...descriptor, injectionQuerySource: '' }
+  registerLanguages([noInjections])
+  const parser = new Parser()
+  parser.setLanguage(language)
+  let parseCalls = 0
+  const originalParse = parser.parse.bind(parser)
+  parser.parse = ((...args: Parameters<Parser['parse']>) => {
+    parseCalls += 1
+    return originalParse(...args)
+  }) as Parser['parse']
+
+  const runtime = {
+    descriptor: noInjections,
+    language,
+    parser,
+    highlightQuery: null,
+    foldQuery: null,
+    injectionQuery: null,
+    mergeUnitQuery: null,
+  } as Parameters<typeof parseFullDocument>[1]
+
+  const runtimeSessionId = 'single-parse-open-typescript'
+  const text = source(10)
+  const reader = new DocumentWorkerReader()
+  const identity = {
+    documentId: runtimeSessionId,
+    documentGeneration: 1,
+    endpointGeneration: 1,
+    registrationId: 1,
+  }
+  const point = { segment: runtimeSessionId, revision: 0, textVersion: 0 }
+  reader.apply({ kind: 'register', identity })
+  reader.apply({
+    kind: 'reset',
+    identity,
+    base: null,
+    target: point,
+    chunks: [text],
+    lineEnding: '\n',
+    byteOrderMark: '',
+    containsUnusualLineTerminators: false,
+  })
+  const input = createTreeSitterInput(reader.acquire({ identity, point })!)
+
+  try {
+    await parseFullDocument(
+      {
+        type: 'parse',
+        documentId: runtimeSessionId,
+        runtimeSessionId,
+        languageId: 'typescript',
+        snapshotVersion: 1,
+        readOnly: false,
+        includeHighlights: true,
+        generation: 1,
+        source: { identity, point, readId: runtimeSessionId },
+      },
+      runtime,
+      input,
+      context(),
+    )
+    // Wait long enough for any deferred setTimeout(0) idle reparse to have fired.
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(parseCalls).toBe(1)
+  } finally {
+    disposeDocument(runtimeSessionId)
+    input.dispose()
+    reader.dispose()
+    parser.delete()
+  }
+}, 60_000)

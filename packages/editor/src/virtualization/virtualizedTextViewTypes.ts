@@ -15,6 +15,7 @@ import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
 import type { MeasuredText } from '../textMeasurements'
 import type { WrapBreak } from './displayProjectionTypes'
 import type { EditorSizing } from '../editor/editorHeight'
+import type { EditorTheme } from '../theme'
 
 type CaretPositionResult = {
   readonly offsetNode: Node
@@ -100,6 +101,8 @@ export type VirtualizedTextViewOptions = {
   readonly hiddenCharacters?: HiddenCharactersMode
   readonly tabSize?: number
   readonly textMetrics?: BrowserTextMetrics
+  /** Applied before the initial font measurement so themed font rules measure once on mount. */
+  readonly theme?: EditorTheme | null
   /** Defaults to the textarea; EditContext is taken only where the engine has it. */
   readonly inputRoute?: EditorInputRoute
   /** The input's accessible name. Defaults to "Editor input". */

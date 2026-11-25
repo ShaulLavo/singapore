@@ -60,6 +60,21 @@ type LanguageRegistration =
       readonly generation: number | null
     }
 
+// Yields one macrotask through a posted message without hitting browsers' 4 ms nested timer clamp.
+const pendingMacrotaskYields: (() => void)[] = []
+let macrotaskYieldChannel: MessageChannel | null = null
+const yieldMacrotask = (): Promise<void> =>
+  new Promise((resolve) => {
+    if (!macrotaskYieldChannel) {
+      macrotaskYieldChannel = new MessageChannel()
+      macrotaskYieldChannel.port1.onmessage = () => pendingMacrotaskYields.shift()?.()
+      ;(macrotaskYieldChannel.port1 as { unref?: () => void }).unref?.()
+      ;(macrotaskYieldChannel.port2 as { unref?: () => void }).unref?.()
+    }
+    pendingMacrotaskYields.push(resolve)
+    macrotaskYieldChannel.port2.postMessage(null)
+  })
+
 export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
   private readonly documentId: string
   private runtimeSessionId: string
@@ -318,7 +333,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxRuntime {
     signal: AbortSignal,
   ): Promise<void> {
     // The visible response is delivered before the complete analysis enters the worker queue.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await yieldMacrotask()
     signal.throwIfAborted()
     const prepared = await this.source.prepareReader(this.backend.sourceEndpoint, read, signal)
     if (!prepared) return

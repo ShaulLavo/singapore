@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Node, Query, Range as TreeSitterRange, Tree } from 'web-tree-sitter'
 
 import {
@@ -1027,5 +1027,34 @@ describe('parse document reuse', () => {
     ).toBeNull()
     expect(deleted).toEqual([])
     disposeDocument(runtimeSessionId)
+  })
+
+  it('yields worker macrotasks via MessageChannel without using setTimeout(0)', async () => {
+    const { yieldWorker } = __treeSitterWorkerInternalsForTests
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const order: string[] = []
+    try {
+      const channel = new MessageChannel()
+      const interleaved = new Promise<void>((resolve) => {
+        channel.port1.onmessage = () => {
+          order.push('interleaved')
+          channel.port1.close()
+          channel.port2.close()
+          resolve()
+        }
+      })
+
+      const yielded = yieldWorker().then(() => order.push('yield-1'))
+      channel.port2.postMessage(null)
+      await Promise.all([yielded, interleaved])
+      expect(order).toEqual(['yield-1', 'interleaved'])
+
+      for (let i = 0; i < 20; i += 1) {
+        await yieldWorker()
+      }
+      expect(timeoutSpy).not.toHaveBeenCalled()
+    } finally {
+      timeoutSpy.mockRestore()
+    }
   })
 })

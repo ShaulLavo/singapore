@@ -2,6 +2,11 @@ import { expect, test } from 'vitest'
 import '../src/style.css'
 import { Editor } from '../src/editor/Editor'
 import type { EditorViewContributionContext, EditorViewSnapshot } from '../src/plugins'
+import { clearBrowserTextMetricsCache } from '../src/virtualization/browserMetrics'
+import { glyphAdvancesFor } from '../src/virtualization/glyphAdvances'
+
+const monoFontUrl = new URL('./fixtures/fonts/jetbrains-mono.woff2', import.meta.url).href
+const serifFontUrl = new URL('./fixtures/fonts/source-serif-4.woff2', import.meta.url).href
 
 const frames = () =>
   new Promise<void>((resolve) =>
@@ -157,5 +162,121 @@ test('disposing an editor cancels its pending overlay reservation', async () => 
     dispose()
     window.requestAnimationFrame = request
     window.cancelAnimationFrame = cancel
+  }
+})
+
+test('mounting a second editor does not wipe cached glyph advances or re-run forced probe layouts', async () => {
+  clearBrowserTextMetricsCache()
+  const first = mountEditor()
+  let second: ReturnType<typeof mountEditor> | null = null
+  const originalAppendChild = Node.prototype.appendChild
+  let measurementProbesAfterMount = 0
+  try {
+    await frames()
+    const cachedGlyphs = glyphAdvancesFor(first.scroll)
+    expect(cachedGlyphs).not.toBeNull()
+
+    // Count measurement probes (non-empty textContent, unlike the empty watched-probe shadow host).
+    Node.prototype.appendChild = function appendChild<T extends Node>(this: Node, node: T): T {
+      if (
+        node instanceof HTMLElement &&
+        node.classList.contains('editor-virtualized-metric-probe') &&
+        (node.textContent?.length ?? 0) > 0
+      ) {
+        measurementProbesAfterMount += 1
+      }
+      return originalAppendChild.call(this, node) as T
+    }
+
+    second = mountEditor()
+    await frames()
+
+    expect(measurementProbesAfterMount).toBe(0)
+    expect(glyphAdvancesFor(first.scroll)).toBe(cachedGlyphs)
+  } finally {
+    Node.prototype.appendChild = originalAppendChild
+    second?.dispose()
+    first.dispose()
+    clearBrowserTextMetricsCache()
+  }
+})
+
+test('late web font load invalidates only the affected font key and preserves other editors caches', async () => {
+  clearBrowserTextMetricsCache()
+  const family = 'Scoped Invalidation Mono'
+  const fallbackFamily = 'Scoped Invalidation Serif'
+  const fallback = new FontFace(fallbackFamily, `url(${serifFontUrl})`)
+  document.fonts.add(await fallback.load())
+  let loaded: FontFace | undefined
+
+  const first = mountEditor()
+  const secondHost = document.createElement('div')
+  secondHost.style.cssText = 'display:flex;width:640px;height:240px'
+  document.body.append(secondHost)
+  const second = new Editor(secondHost, {
+    fontFamily: `"${family}", "${fallbackFamily}"`,
+    fontSize: 14,
+  })
+  second.setText('WWWWWWWWWW')
+  const secondScroll = secondHost.querySelector<HTMLElement>('.editor-virtualized')!
+  try {
+    await frames()
+    const firstGlyphsBefore = glyphAdvancesFor(first.scroll)
+    const secondGlyphsBefore = glyphAdvancesFor(secondScroll)
+    expect(firstGlyphsBefore).not.toBeNull()
+    expect(secondGlyphsBefore).not.toBeNull()
+    const beforeAdvanceW = secondGlyphsBefore!.advance(87)
+
+    loaded = new FontFace(family, `url(${monoFontUrl})`)
+    document.fonts.add(await loaded.load())
+
+    await expect.poll(() => glyphAdvancesFor(secondScroll)).not.toBe(secondGlyphsBefore)
+    expect(glyphAdvancesFor(secondScroll)!.advance(87)).toBeLessThan(beforeAdvanceW - 1)
+    // Editor 1 uses a different font key, so its cached GlyphAdvances must stay intact.
+    expect(glyphAdvancesFor(first.scroll)).toBe(firstGlyphsBefore)
+  } finally {
+    second.dispose()
+    secondHost.remove()
+    first.dispose()
+    if (loaded) document.fonts.delete(loaded)
+    document.fonts.delete(fallback)
+    clearBrowserTextMetricsCache()
+  }
+})
+
+test('mounting an editor with a theme measures probes once and not again on the first frame', async () => {
+  clearBrowserTextMetricsCache()
+  const host = document.createElement('div')
+  host.style.cssText = 'display:flex;width:640px;height:240px;--editor-font-size:15px'
+  document.body.append(host)
+  const originalAppendChild = Node.prototype.appendChild
+  let measurementProbes = 0
+  Node.prototype.appendChild = function appendChild<T extends Node>(this: Node, node: T): T {
+    if (
+      node instanceof HTMLElement &&
+      node.classList.contains('editor-virtualized-metric-probe') &&
+      (node.textContent?.length ?? 0) > 0
+    ) {
+      measurementProbes += 1
+    }
+    return originalAppendChild.call(this, node) as T
+  }
+  let themed: Editor | null = null
+  try {
+    themed = new Editor(host, {
+      defaultText: 'const answer = 42',
+      lineHeight: 20,
+      theme: { type: 'dark' },
+    })
+    const afterMountProbes = measurementProbes
+    // One measurement batch (15 spans: m, space, watched, 2 dots, 10 monospace glyphs).
+    expect(afterMountProbes).toBe(15)
+    await frames()
+    expect(measurementProbes).toBe(afterMountProbes)
+  } finally {
+    Node.prototype.appendChild = originalAppendChild
+    themed?.dispose()
+    host.remove()
+    clearBrowserTextMetricsCache()
   }
 })
