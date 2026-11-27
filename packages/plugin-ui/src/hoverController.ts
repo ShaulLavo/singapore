@@ -17,7 +17,12 @@ import type {
   HoverRequest,
 } from './hoverParticipant'
 import { EDITOR_HOVER_PARTICIPANT } from './hoverToken'
-import { hoverTargetRangeInSource, sameOffsetRange, unionOffsetRange } from './offsetRange'
+import {
+  hoverTargetRangeInSource,
+  sameOffsetRange,
+  unionOffsetRange,
+  type OffsetRange,
+} from './offsetRange'
 import {
   createTooltipController,
   HOVER_ASYNC_DISPATCH_DELAY_MS,
@@ -39,6 +44,21 @@ export type HoverController = {
   hide(): void
   containsTarget(target: EventTarget | null): boolean
   dispose(): void
+}
+
+type PointerPoint = {
+  readonly clientX: number
+  readonly clientY: number
+}
+
+type CorridorSettleState = {
+  point: PointerPoint
+  readonly targetRange: OffsetRange | null
+}
+
+type HoverStartOptions = {
+  readonly focusOnShow: boolean
+  readonly immediate?: boolean
 }
 
 type ParticipantResult = {
@@ -80,11 +100,17 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   const element = context.scrollElement
   const ownerDocument = context.container.ownerDocument
   let operation: HoverOperation | null = null
+  let lastPointer: PointerPoint | null = null
+  let corridorSettle: CorridorSettleState | null = null
   let nextOperationId = 0
   let theme: EditorTheme | null = context.getSnapshot().theme ?? null
   let disposed = false
   const snippetTokens = context.getFeature(EDITOR_SNIPPET_TOKENS_FEATURE)
   const codeTokenizer = snippetTokens ? createTooltipCodeTokenizer(snippetTokens) : null
+
+  const clearCorridorSettle = (): void => {
+    corridorSettle = null
+  }
 
   const tooltip: TooltipController = createTooltipController({
     registerKeymapNode: (options) => context.registerKeymapNode(options),
@@ -95,10 +121,12 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     classNamespace: options.classNamespace,
     codeTokenizer,
     onDidHide: () => cancelOperation(),
+    onPointerEnter: () => clearCorridorSettle(),
     onRequestEditorFocus: () => context.focusEditor(),
   })
 
   const cancelOperation = (): void => {
+    clearCorridorSettle()
     const current = operation
     if (!current) return
     operation = null
@@ -136,8 +164,14 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     const rect = context.getRangeClientRect(range.start, range.end)
     if (!rect) return hide()
 
+    const pointerAnchor = sameOffsetRange(range, current.anchor.range)
+      ? rect
+      : (context.getRangeClientRect(current.anchor.range.start, current.anchor.range.end) ?? rect)
+
     tooltip.show({
       anchor: rect,
+      pointerAnchor,
+      pointer: current.anchor.source === 'pointer' ? (lastPointer ?? current.anchor.point) : null,
       hoverText: null,
       parts,
       theme,
@@ -191,7 +225,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     render(current)
   }
 
-  const start = (anchor: HoverAnchor, focusOnShow: boolean): boolean => {
+  const start = (anchor: HoverAnchor, startOptions: HoverStartOptions): boolean => {
     const snapshot = context.getSnapshot()
     const participants = context.getProviders(EDITOR_HOVER_PARTICIPANT, snapshot.languageId)
     if (participants.length === 0) return false
@@ -205,7 +239,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
       participants,
       results: new Map(),
       abort: new AbortController(),
-      focusOnShow,
+      focusOnShow: startOptions.focusOnShow,
       pendingAsync: 0,
       revealed: false,
       loading: false,
@@ -219,7 +253,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     // @justification Delays the loading row until the participants are observably slow; every
     // target change cancels it.
     current.loadingTimer = setTimeout(() => revealLoading(current), HOVER_LOADING_DELAY_MS)
-    if (focusOnShow) {
+    if (startOptions.focusOnShow || startOptions.immediate) {
       runAsync(current, request)
       reveal(current, request)
       return true
@@ -252,12 +286,62 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
       return
     }
 
-    start({ offset, range, source: 'pointer', point }, false)
+    start({ offset, range, source: 'pointer', point }, { focusOnShow: false })
+  }
+
+  const settleCorridor = (): void => {
+    const pending = corridorSettle
+    corridorSettle = null
+    if (!pending || disposed) return
+    if (tooltip.pointerRetention(pending.point.clientX, pending.point.clientY) === 'locked') return
+    if (!context.hasDocument()) return hide()
+
+    const offset = context.textOffsetFromPoint(pending.point.clientX, pending.point.clientY)
+    if (offset === null) return hide()
+
+    const snapshot = context.getSnapshot()
+    const range = hoverTargetRangeInSource(snapshot.textSnapshot, offset)
+    const current = operation
+    if (
+      current &&
+      current.snapshot.textVersion === snapshot.textVersion &&
+      sameOffsetRange(current.anchor.range, range)
+    ) {
+      return
+    }
+
+    start(
+      { offset, range, source: 'pointer', point: pending.point },
+      { focusOnShow: false, immediate: true },
+    )
+  }
+
+  const scheduleCorridorSettle = (point: PointerPoint): void => {
+    const offset = context.hasDocument()
+      ? context.textOffsetFromPoint(point.clientX, point.clientY)
+      : null
+    const targetRange =
+      offset === null ? null : hoverTargetRangeInSource(context.getSnapshot().textSnapshot, offset)
+    if (corridorSettle && sameNullableRange(corridorSettle.targetRange, targetRange)) {
+      corridorSettle.point = point
+      return
+    }
+
+    corridorSettle = { point, targetRange }
+    tooltip.scheduleHide(() => settleCorridor())
   }
 
   const handlePointerMove = (event: PointerEvent): void => {
     if (event.buttons !== 0) return hide()
-    if (tooltip.shouldKeepForPointer(event.clientX, event.clientY)) return tooltip.cancelHide()
+    const point: PointerPoint = { clientX: event.clientX, clientY: event.clientY }
+    lastPointer = point
+    const retention = tooltip.pointerRetention(event.clientX, event.clientY)
+    if (retention === 'locked') {
+      clearCorridorSettle()
+      return tooltip.cancelHide()
+    }
+    if (retention === 'corridor') return scheduleCorridorSettle(point)
+    clearCorridorSettle()
     if (!context.hasDocument()) return hide()
 
     const offset = context.textOffsetFromPoint(event.clientX, event.clientY)
@@ -266,10 +350,12 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
       return tooltip.scheduleHide()
     }
 
-    scheduleAt(offset, { clientX: event.clientX, clientY: event.clientY })
+    scheduleAt(offset, point)
   }
 
   const handlePointerLeave = (event: PointerEvent): void => {
+    clearCorridorSettle()
+    lastPointer = null
     if (tooltip.containsTarget(event.relatedTarget)) return tooltip.cancelHide()
     // A hover that has not painted yet has nothing to keep: the pointer is gone.
     if (operation && !operation.shown) cancelOperation()
@@ -302,7 +388,8 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     showAtOffset: (offset, showOptions = {}) => {
       if (disposed || !context.hasDocument()) return false
       const range = hoverTargetRangeInSource(context.getSnapshot().textSnapshot, offset)
-      return start({ offset, range, source: 'keyboard' }, showOptions.focus ?? false)
+      const focusOnShow = showOptions.focus ?? false
+      return start({ offset, range, source: 'keyboard' }, { focusOnShow })
     },
     hide,
     containsTarget: (target) => tooltip.containsTarget(target),
@@ -354,6 +441,11 @@ function clearTimers(operation: HoverOperation): void {
  * A scroll or relayout moves the text out from under the hover, and an edit may have changed what
  * it says. Both belong to the old frame, so the hover goes with them.
  */
+function sameNullableRange(left: OffsetRange | null, right: OffsetRange | null): boolean {
+  if (left === null || right === null) return left === right
+  return sameOffsetRange(left, right)
+}
+
 function shouldHideOnUpdate(kind: EditorViewContributionUpdateKind): boolean {
   if (anchoredSurfaceFollowsUpdate(kind)) return true
   return kind === 'content' || kind === 'document' || kind === 'clear'

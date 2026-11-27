@@ -27,6 +27,7 @@ export {
   type TooltipNoteLink,
   type TooltipOptions,
   type TooltipPart,
+  type TooltipPointerRetention,
   type TooltipShowOptions,
 } from './tooltip'
 export {

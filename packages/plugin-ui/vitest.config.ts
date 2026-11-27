@@ -27,6 +27,11 @@ export default defineConfig({
               noteActionKey: async ({ page }, key: string) => {
                 await page.keyboard.press(key)
               },
+              movePointer: async ({ page }, x: number, y: number, steps = 1) => {
+                const frame = page.locator('iframe[data-vitest="true"]')
+                const box = (await frame.count()) > 0 ? await frame.boundingBox() : null
+                await page.mouse.move((box?.x ?? 0) + x, (box?.y ?? 0) + y, { steps })
+              },
             },
           },
         },

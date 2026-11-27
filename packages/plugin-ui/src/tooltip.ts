@@ -21,6 +21,7 @@ const TOOLTIP_MIN_HEIGHT_PX = 32
 const TOOLTIP_MIN_MAX_HEIGHT_PX = 250
 const TOOLTIP_MAX_WIDTH_FRACTION = 0.66
 const TOOLTIP_POINTER_INTENT_TOLERANCE_PX = 4
+const TOOLTIP_CORRIDOR_MAX_SLOPE = 2
 const TOOLTIP_RESIZE_HANDLE_PX = 5
 const TOOLTIP_SCROLL_STEP_PX = 30
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -91,6 +92,10 @@ export type TooltipPart = {
 
 export type TooltipShowOptions = {
   readonly anchor: DOMRect
+  /** Optional tighter rect for pointer retention when the visual anchor spans wider than the hovered token. */
+  readonly pointerAnchor?: DOMRect
+  /** Pointer coordinate that opened the hover, so fast travel from the anchor starts inside the corridor. */
+  readonly pointer?: { readonly clientX: number; readonly clientY: number } | null
   /** A single Markdown body, for a surface with one thing to say. */
   readonly hoverText: string | null
   readonly parts?: readonly TooltipPart[]
@@ -99,6 +104,8 @@ export type TooltipShowOptions = {
   readonly focus?: boolean
   readonly preferredPlacement?: AnchoredSurfacePlacement
 }
+
+export type TooltipPointerRetention = 'none' | 'corridor' | 'locked'
 
 export type TooltipOptions = {
   readonly registerKeymapNode?: EditorViewContributionContext['registerKeymapNode']
@@ -109,6 +116,7 @@ export type TooltipOptions = {
   readonly classNamespace?: string
   readonly codeTokenizer?: TooltipCodeTokenizer | null
   onDidHide?(): void
+  onPointerEnter?(): void
   onRequestEditorFocus?(): void
 }
 
@@ -116,13 +124,30 @@ export type TooltipController = {
   show(options: TooltipShowOptions): void
   reanchor(anchor: DOMRect): void
   hide(): void
-  scheduleHide(): void
+  scheduleHide(onExpire?: () => void): void
   cancelHide(): void
   containsTarget(target: EventTarget | null): boolean
-  /** Keeps a sticky hover only while the pointer is inside it or is still moving closer to it. */
+  /**
+   * Classifies how strongly the tooltip should stay open for a pointer position:
+   * - `locked`: actively engaged (focused, selected, resizing, inside the tooltip, or on its anchor)
+   * - `corridor`: transiently traveling toward the tooltip or within its edge tolerance
+   * - `none`: moved away from the anchor and tooltip
+   */
+  pointerRetention(clientX: number, clientY: number): TooltipPointerRetention
+  /** Keeps a sticky hover only while the pointer is locked onto it or traveling into it. */
   shouldKeepForPointer(clientX: number, clientY: number): boolean
   dispose(): void
 }
+
+type PointerTravelState =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'tooltip' }
+  | {
+      readonly kind: 'anchor'
+      readonly originX: number
+      readonly originY: number
+      bestDistance: number | null
+    }
 
 export function createTooltipController(options: TooltipOptions): TooltipController {
   const { document, themeSource, reentryElement } = options
@@ -137,9 +162,10 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
   let resize: TooltipResizeState | null = null
   let disposed = false
   let anchorRect: DOMRect | null = null
+  let pointerAnchorRect: DOMRect | null = null
   let placement: AnchoredSurfacePlacement = 'top'
   let controls = false
-  let closestPointerDistance: number | null = null
+  let pointerTravel: PointerTravelState = { kind: 'idle' }
 
   const surface = createAnchoredSurface({
     element: tooltip,
@@ -173,9 +199,10 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     pointerDown = false
     keyboardFocusOwned = false
     resize = null
-    closestPointerDistance = null
+    pointerTravel = { kind: 'idle' }
     tooltip.hidden = true
     anchorRect = null
+    pointerAnchorRect = null
     surface.release()
     tooltip.replaceChildren()
     actionRows = new WeakMap()
@@ -183,7 +210,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     options.onDidHide?.()
   }
 
-  const scheduleHide = (): void => {
+  const scheduleHide = (onExpire?: () => void): void => {
     if (pointerDown || resize) return
     if (hideTimer) clearTimeout(hideTimer)
 
@@ -191,16 +218,23 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     // it schedules no editor work.
     hideTimer = setTimeout(() => {
       hideTimer = null
-      hide()
+      if (onExpire) onExpire()
+      else hide()
     }, TOOLTIP_HIDE_DELAY_MS)
   }
 
   const show = (showOptions: TooltipShowOptions): void => {
+    const wasHidden = tooltip.hidden !== false
     const focusState = tooltipFocusState(tooltip, document.activeElement)
     const scrollState = tooltipScrollState(tooltip)
-    const anchorChanged = !anchorRect || !sameRect(anchorRect, showOptions.anchor)
-    if (anchorChanged) closestPointerDistance = null
+    const nextPointerAnchor = showOptions.pointerAnchor ?? showOptions.anchor
+    const pointerAnchorChanged =
+      !pointerAnchorRect || !sameRect(pointerAnchorRect, nextPointerAnchor)
+    if (wasHidden || (pointerAnchorChanged && pointerTravel.kind !== 'tooltip')) {
+      pointerTravel = initialPointerTravel(nextPointerAnchor, showOptions.pointer)
+    }
     anchorRect = showOptions.anchor
+    pointerAnchorRect = nextPointerAnchor
     const parts = showOptions.parts ?? []
     controls = parts.some((part) => part.presentation === 'controls')
     tooltip.dataset.editorHoverPresentation = controls ? 'controls' : 'text'
@@ -215,7 +249,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
       tooltip.style.maxHeight = `${(document.defaultView?.innerHeight ?? 0) - TOOLTIP_VIEWPORT_MARGIN_PX * 2}px`
       tooltip.style.width = 'max-content'
       tooltip.style.height = 'auto'
-    } else applyTooltipDimensions(tooltip, reentryElement, tooltip.hidden !== false)
+    } else applyTooltipDimensions(tooltip, reentryElement, wasHidden)
     renderTooltip(tooltip, {
       actionRows,
       controls,
@@ -237,7 +271,8 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     if (tooltip.hidden) return
 
     anchorRect = nextAnchor
-    closestPointerDistance = null
+    pointerAnchorRect = nextAnchor
+    pointerTravel = { kind: 'idle' }
     surface.place(nextAnchor, placement)
   }
 
@@ -246,30 +281,78 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     return tooltip.contains(target)
   }
 
-  const shouldKeepForPointer = (clientX: number, clientY: number): boolean => {
-    if (tooltip.hidden || !anchorRect) return false
-    if (pointerDown || resize) return true
-    if (tooltip.contains(document.activeElement)) return true
-    if (selectionInsideTooltip(document, tooltip)) return true
-
-    const tooltipRect = tooltip.getBoundingClientRect()
-    const distance = pointToRectDistance(tooltipRect, clientX, clientY)
-    if (rectContainsPoint(tooltipRect, clientX, clientY)) {
-      closestPointerDistance = 0
-      return true
+  const retainOutsideTarget = (
+    tooltipRect: DOMRect,
+    distance: number,
+    clientX: number,
+    clientY: number,
+  ): TooltipPointerRetention => {
+    if (pointerTravel.kind === 'idle') return 'none'
+    if (pointerTravel.kind === 'tooltip') {
+      if (distance <= TOOLTIP_POINTER_INTENT_TOLERANCE_PX) return 'corridor'
+      pointerTravel = { kind: 'idle' }
+      return 'none'
     }
-    if (rectContainsPoint(anchorRect, clientX, clientY)) {
-      closestPointerDistance = distance
-      return true
-    }
-    if (closestPointerDistance === null) return false
-    if (distance > closestPointerDistance + TOOLTIP_POINTER_INTENT_TOLERANCE_PX) return false
 
-    closestPointerDistance = Math.min(closestPointerDistance, distance)
-    return true
+    const bestDistance =
+      pointerTravel.bestDistance ??
+      pointToRectDistance(tooltipRect, pointerTravel.originX, pointerTravel.originY)
+    if (distance > bestDistance + TOOLTIP_POINTER_INTENT_TOLERANCE_PX) {
+      pointerTravel = { kind: 'idle' }
+      return 'none'
+    }
+    if (
+      !isInsideApproachCorridor(
+        tooltipRect,
+        pointerTravel.originX,
+        pointerTravel.originY,
+        clientX,
+        clientY,
+      )
+    ) {
+      pointerTravel = { kind: 'idle' }
+      return 'none'
+    }
+
+    pointerTravel.bestDistance = Math.min(bestDistance, distance)
+    return 'corridor'
   }
 
-  const handleTooltipPointerEnter = (): void => cancelHide()
+  const pointerRetention = (clientX: number, clientY: number): TooltipPointerRetention => {
+    if (tooltip.hidden || !anchorRect) return 'none'
+    if (pointerDown || resize) return 'locked'
+    if (tooltip.contains(document.activeElement)) return 'locked'
+    if (selectionInsideTooltip(document, tooltip)) return 'locked'
+
+    const tooltipRect = tooltip.getBoundingClientRect()
+    if (rectContainsPoint(tooltipRect, clientX, clientY)) {
+      pointerTravel = { kind: 'tooltip' }
+      return 'locked'
+    }
+
+    const activeAnchor = pointerAnchorRect ?? anchorRect
+    const distance = pointToRectDistance(tooltipRect, clientX, clientY)
+    if (rectContainsPoint(activeAnchor, clientX, clientY)) {
+      pointerTravel = {
+        kind: 'anchor',
+        originX: clientX,
+        originY: clientY,
+        bestDistance: distance,
+      }
+      return 'locked'
+    }
+
+    return retainOutsideTarget(tooltipRect, distance, clientX, clientY)
+  }
+
+  const shouldKeepForPointer = (clientX: number, clientY: number): boolean =>
+    pointerRetention(clientX, clientY) !== 'none'
+
+  const handleTooltipPointerEnter = (): void => {
+    pointerTravel = { kind: 'tooltip' }
+    cancelHide()
+    options.onPointerEnter?.()
+  }
 
   const handleTooltipPointerLeave = (event: PointerEvent): void => {
     if (pointerDown || resize) return
@@ -358,6 +441,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     scheduleHide,
     cancelHide,
     containsTarget,
+    pointerRetention,
     shouldKeepForPointer,
     dispose,
   }
@@ -1044,6 +1128,121 @@ function pointToRectDistance(rect: DOMRect, clientX: number, clientY: number): n
   const horizontal = Math.max(rect.left - clientX, 0, clientX - rect.right)
   const vertical = Math.max(rect.top - clientY, 0, clientY - rect.bottom)
   return Math.hypot(horizontal, vertical)
+}
+
+function initialPointerTravel(
+  anchor: DOMRect,
+  pointer: { readonly clientX: number; readonly clientY: number } | null | undefined,
+): PointerTravelState {
+  if (!pointer || !rectContainsPoint(anchor, pointer.clientX, pointer.clientY)) {
+    return { kind: 'idle' }
+  }
+  return {
+    kind: 'anchor',
+    originX: pointer.clientX,
+    originY: pointer.clientY,
+    bestDistance: null,
+  }
+}
+
+type AxisCorridorInput = {
+  readonly originAxis: number
+  readonly originCross: number
+  readonly pointAxis: number
+  readonly pointCross: number
+  readonly edgeAxis: number
+  readonly edgeCrossMin: number
+  readonly edgeCrossMax: number
+  readonly direction: -1 | 1
+}
+
+function isInsideApproachCorridor(
+  tooltipRect: DOMRect,
+  originX: number,
+  originY: number,
+  clientX: number,
+  clientY: number,
+): boolean {
+  if (tooltipRect.bottom <= originY) {
+    return isInsideCorridorAlongAxis({
+      originAxis: originY,
+      originCross: originX,
+      pointAxis: clientY,
+      pointCross: clientX,
+      edgeAxis: tooltipRect.bottom,
+      edgeCrossMin: tooltipRect.left,
+      edgeCrossMax: tooltipRect.right,
+      direction: -1,
+    })
+  }
+  if (tooltipRect.top >= originY) {
+    return isInsideCorridorAlongAxis({
+      originAxis: originY,
+      originCross: originX,
+      pointAxis: clientY,
+      pointCross: clientX,
+      edgeAxis: tooltipRect.top,
+      edgeCrossMin: tooltipRect.left,
+      edgeCrossMax: tooltipRect.right,
+      direction: 1,
+    })
+  }
+  if (tooltipRect.right <= originX) {
+    return isInsideCorridorAlongAxis({
+      originAxis: originX,
+      originCross: originY,
+      pointAxis: clientX,
+      pointCross: clientY,
+      edgeAxis: tooltipRect.right,
+      edgeCrossMin: tooltipRect.top,
+      edgeCrossMax: tooltipRect.bottom,
+      direction: -1,
+    })
+  }
+  if (tooltipRect.left >= originX) {
+    return isInsideCorridorAlongAxis({
+      originAxis: originX,
+      originCross: originY,
+      pointAxis: clientX,
+      pointCross: clientY,
+      edgeAxis: tooltipRect.left,
+      edgeCrossMin: tooltipRect.top,
+      edgeCrossMax: tooltipRect.bottom,
+      direction: 1,
+    })
+  }
+  return false
+}
+
+function isInsideCorridorAlongAxis(input: AxisCorridorInput): boolean {
+  const totalGap = (input.edgeAxis - input.originAxis) * input.direction
+  const progress = (input.pointAxis - input.originAxis) * input.direction
+  if (progress < 0) return false
+  if (progress > totalGap + TOOLTIP_POINTER_INTENT_TOLERANCE_PX) return false
+
+  const ratio = totalGap > 0 ? Math.min(1, progress / totalGap) : 1
+  const maxHalfSpan = Math.max(
+    totalGap * TOOLTIP_CORRIDOR_MAX_SLOPE,
+    TOOLTIP_POINTER_INTENT_TOLERANCE_PX,
+  )
+  const closestEdgeCross = clamp(input.originCross, input.edgeCrossMin, input.edgeCrossMax)
+  const targetMin = Math.min(
+    closestEdgeCross,
+    Math.max(input.edgeCrossMin, input.originCross - maxHalfSpan),
+  )
+  const targetMax = Math.max(
+    closestEdgeCross,
+    Math.min(input.edgeCrossMax, input.originCross + maxHalfSpan),
+  )
+  const allowedMin =
+    input.originCross +
+    ratio * (targetMin - input.originCross) -
+    TOOLTIP_POINTER_INTENT_TOLERANCE_PX
+  const allowedMax =
+    input.originCross +
+    ratio * (targetMax - input.originCross) +
+    TOOLTIP_POINTER_INTENT_TOLERANCE_PX
+  return input.pointCross >= allowedMin && input.pointCross <= allowedMax
 }
 
 function rectContainsPoint(rect: DOMRect, clientX: number, clientY: number): boolean {

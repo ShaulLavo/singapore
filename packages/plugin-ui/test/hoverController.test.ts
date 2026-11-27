@@ -12,6 +12,7 @@ import {
   HOVER_ASYNC_DISPATCH_DELAY_MS,
   HOVER_LOADING_DELAY_MS,
   HOVER_REQUEST_DEBOUNCE_MS,
+  TOOLTIP_HIDE_DELAY_MS,
 } from '../src/tooltip'
 
 const TEXT = 'const value = 1'
@@ -151,7 +152,230 @@ describe('one hover per view', () => {
     expect((document.activeElement as HTMLElement | null)?.dataset.hoverPartIndex).toBe('0')
     harness.dispose()
   })
+
+  it('opens a new hover when moving horizontally to another token under a wide tooltip', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const alpha = beta + gamma',
+      tooltipRect: new DOMRect(12, 132, 400, 60),
+      tokens: [
+        { name: 'alpha', rect: new DOMRect(60, 200, 40, 18) },
+        { name: 'beta', rect: new DOMRect(130, 200, 40, 18) },
+      ],
+    })
+
+    harness.moveTo(80, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    harness.moveTo(150, 209)
+    expect(tooltip().hidden).toBe(true)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:beta'])
+    harness.dispose()
+  })
+
+  it('switches to another token inside a wider diagnostic anchor when moving horizontally', async () => {
+    vi.useFakeTimers()
+    const text = 'const alpha = beta + gamma'
+    const alphaStart = text.indexOf('alpha')
+    const betaEnd = text.indexOf('beta') + 'beta'.length
+    const harness = mountGeometry({
+      text,
+      tooltipRect: new DOMRect(12, 132, 400, 60),
+      tokens: [
+        { name: 'alpha', rect: new DOMRect(60, 200, 40, 18) },
+        { name: 'beta', rect: new DOMRect(130, 200, 40, 18) },
+      ],
+      wideDiagnostic: {
+        range: { start: alphaStart, end: betaEnd },
+        rect: new DOMRect(60, 200, 110, 18),
+      },
+    })
+
+    harness.moveTo(80, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    harness.moveTo(150, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:beta'])
+    harness.dispose()
+  })
+
+  it('opens a new hover when pausing on a token inside the corridor between anchor and tooltip', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const upper = 1\nconst alpha = beta',
+      tooltipRect: new DOMRect(12, 132, 400, 60),
+      tokens: [
+        { name: 'upper', rect: new DOMRect(60, 182, 40, 18) },
+        { name: 'alpha', rect: new DOMRect(60, 200, 40, 18) },
+      ],
+    })
+
+    harness.moveTo(80, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    // Move straight up into the 8px gap (bottom of line above) and stop on `upper`.
+    harness.moveTo(80, 196)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS - 1)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:upper'])
+    harness.dispose()
+  })
+
+  it('keeps the original tooltip open when crossing the gap into the tooltip', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const upper = 1\nconst alpha = beta',
+      tooltipRect: new DOMRect(12, 132, 400, 60),
+      tokens: [
+        { name: 'upper', rect: new DOMRect(60, 182, 40, 18) },
+        { name: 'alpha', rect: new DOMRect(60, 200, 40, 18) },
+      ],
+    })
+
+    harness.moveTo(80, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    harness.moveTo(80, 196)
+    expect(tooltip().hidden).toBe(false)
+
+    harness.enterTooltip()
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS + TOOLTIP_HIDE_DELAY_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:alpha'])
+    harness.dispose()
+  })
+
+  it('hides the tooltip if the pointer stops over empty space inside the corridor', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const alpha = beta',
+      tooltipRect: new DOMRect(12, 132, 400, 60),
+      tokens: [{ name: 'alpha', rect: new DOMRect(60, 200, 40, 18) }],
+    })
+
+    harness.moveTo(80, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    harness.moveTo(80, 196)
+    expect(tooltip().hidden).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(true)
+    harness.dispose()
+  })
 })
+
+type PositionedToken = {
+  readonly name: string
+  readonly rect: DOMRect
+}
+
+function mountGeometry(options: {
+  readonly text: string
+  readonly tooltipRect: DOMRect
+  readonly tokens: readonly PositionedToken[]
+  readonly wideDiagnostic?: {
+    readonly range: { readonly start: number; readonly end: number }
+    readonly rect: DOMRect
+  }
+}) {
+  const element = document.createElement('div')
+  element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+  document.body.append(element)
+  const ranges = options.tokens.map((token) => {
+    const start = options.text.indexOf(token.name)
+    if (start < 0) throw new Error(`missing token ${token.name}`)
+    return { ...token, start, end: start + token.name.length }
+  })
+  const snapshot = {
+    documentId: 'index.ts',
+    languageId: 'typescript',
+    textSnapshot: createStringTextSnapshot(options.text),
+    textVersion: 1,
+    tokens: [],
+    selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+  } as unknown as EditorViewSnapshot
+  const participant: EditorHoverParticipant = {
+    computeSync: (request) => {
+      const token = ranges.find(
+        (candidate) =>
+          request.anchor.offset >= candidate.start && request.anchor.offset < candidate.end,
+      )
+      if (!token) return []
+      const parts: HoverPart[] = [
+        part({ start: token.start, end: token.end }, `hover:${token.name}`),
+      ]
+      if (options.wideDiagnostic && token.name === 'alpha') {
+        parts.push({
+          ordinal: 2,
+          range: options.wideDiagnostic.range,
+          notes: [{ text: 'wide diagnostic' }],
+        })
+      }
+      return parts
+    },
+  }
+  const context = createTestViewContributionContext({
+    container: element,
+    scrollElement: element,
+    contentElement: element,
+    hasDocument: () => true,
+    getSnapshot: () => snapshot,
+    getProviders: (() => [participant]) as EditorViewContributionContext['getProviders'],
+    focusEditor: vi.fn(),
+    rowAtPoint: () => null,
+    markerAtPoint: () => null,
+    textOffsetFromPoint: (clientX, clientY) => {
+      const hit = ranges.find(
+        (token) =>
+          clientX >= token.rect.left &&
+          clientX <= token.rect.right &&
+          clientY >= token.rect.top &&
+          clientY <= token.rect.bottom,
+      )
+      return hit ? hit.start + 1 : null
+    },
+    getRangeClientRect: (start, end) => {
+      if (
+        options.wideDiagnostic &&
+        start === options.wideDiagnostic.range.start &&
+        end === options.wideDiagnostic.range.end
+      ) {
+        return options.wideDiagnostic.rect
+      }
+      const hit = ranges.find((token) => token.start === start && token.end === end)
+      return hit?.rect ?? null
+    },
+  })
+  const controller = createHoverController({ context, classNamespace: 'test' })
+  tooltip().getBoundingClientRect = () => options.tooltipRect
+  return {
+    controller,
+    moveTo: (clientX: number, clientY: number) => {
+      element.dispatchEvent(new PointerEvent('pointermove', { buttons: 0, clientX, clientY }))
+    },
+    enterTooltip: () => {
+      const popup = tooltip()
+      element.dispatchEvent(new PointerEvent('pointerleave', { relatedTarget: popup }))
+      popup.dispatchEvent(new PointerEvent('pointerenter'))
+    },
+    dispose: () => controller.dispose(),
+  }
+}
 
 function part(range: HoverPart['range'], markdown: string): HoverPart {
   return { ordinal: 1, range, markdown }
