@@ -841,13 +841,12 @@ it.each(['stale', 'cancelled'] as const)(
     const project = vi.spyOn(client, 'reviewBatch').mockImplementation((request) =>
       query({
         ...request,
-        queries: request.queries.map((item) =>
-          item.type === 'projectMergeUnits'
-            ? status === 'stale'
-              ? { ...item, baseSnapshotVersion: -1 }
-              : { ...item, cancellationBuffer }
-            : item,
-        ),
+        queries: request.queries.map((item) => {
+          if (item.type !== 'projectMergeUnits') return item
+          return status === 'stale'
+            ? { ...item, baseSnapshotVersion: -1 }
+            : { ...item, cancellationBuffer }
+        }),
       }),
     )
     expect(await syntax(projected, ranges, false, 'enclosing', base)).toBeNull()

@@ -550,9 +550,10 @@ it.each(['atomic', 'deferred', 'logical-only'] as const)(
     await first.source.prepareProjection(own.endpoint, target)
     await peer.source.prepareProjection(other.endpoint, target)
     expect(own.updates[1].changes?.logicalRevisionCount).toBe(4)
-    expect(other.updates[1].changes?.logicalRevisionCount).toBe(
-      mode === 'deferred' ? 2 : mode === 'logical-only' ? 0 : 1,
-    )
+    let expectedOtherCount = 1
+    if (mode === 'deferred') expectedOtherCount = 2
+    else if (mode === 'logical-only') expectedOtherCount = 0
+    expect(other.updates[1].changes?.logicalRevisionCount).toBe(expectedOtherCount)
     expect(own.updates[1].baseRead).toBe(base)
     expect(own.updates[1].read).toBe(target)
     if (mode === 'logical-only') {

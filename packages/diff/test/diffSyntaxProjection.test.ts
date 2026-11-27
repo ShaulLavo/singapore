@@ -106,7 +106,8 @@ function referenceProjection(
   let rowOffset = 0
 
   for (const row of rows) {
-    const sourceSide = side === 'stacked' ? (row.type === 'deletion' ? 'old' : 'new') : side
+    const stackedSide = row.type === 'deletion' ? 'old' : 'new'
+    const sourceSide = side === 'stacked' ? stackedSide : side
     const source = sources.find((candidate) => candidate.side === sourceSide)
     if (!source) {
       rowOffset += row.text.length + 1

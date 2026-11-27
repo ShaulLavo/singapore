@@ -135,12 +135,9 @@ export class PagedViewport {
 
   private wheel(event: WheelEvent) {
     const mode = event.deltaMode
-    const scale =
-      mode === WheelEvent.DOM_DELTA_LINE
-        ? ROW_HEIGHT
-        : mode === WheelEvent.DOM_DELTA_PAGE
-          ? this.#rows.clientHeight
-          : 1
+    let scale = 1
+    if (mode === WheelEvent.DOM_DELTA_LINE) scale = ROW_HEIGHT
+    else if (mode === WheelEvent.DOM_DELTA_PAGE) scale = this.#rows.clientHeight
     const displacement = this.#rows.scrollTop + event.deltaY * scale
     if (displacement >= 0 || !this.#window?.previous) return
     event.preventDefault()
@@ -270,15 +267,18 @@ export class PagedViewport {
         ? `Lines ${first.line + 1}–${last.line + 1}`
         : `Byte ${first?.start.byteOffset ?? window.next?.byteOffset ?? 0}`
     const size = this.source.stats.totals.byteLength
-    const state = window.atEnd
-      ? 'End of file'
-      : window.stop === 'budget'
-        ? 'Read limit reached. Continue to load more.'
-        : first?.continuesBefore || last?.continuesAfter
-          ? 'Continued line'
-          : size === undefined
-            ? 'Size unknown'
-            : `${size.toLocaleString()} bytes`
+    let state: string
+    if (window.atEnd) {
+      state = 'End of file'
+    } else if (window.stop === 'budget') {
+      state = 'Read limit reached. Continue to load more.'
+    } else if (first?.continuesBefore || last?.continuesAfter) {
+      state = 'Continued line'
+    } else if (size === undefined) {
+      state = 'Size unknown'
+    } else {
+      state = `${size.toLocaleString()} bytes`
+    }
     this.#status.textContent = `${place} · ${state}`
   }
 
@@ -345,11 +345,13 @@ function rowElement(fragment: PagedFragment, index: number) {
   row.style.minHeight = `${ROW_HEIGHT}px`
   if (fragment.line !== undefined) row.dataset.line = String(fragment.line + 1)
   const number = document.createElement('span')
-  number.textContent = fragment.continuesBefore
-    ? '↪'
-    : fragment.line === undefined
-      ? '·'
-      : String(fragment.line + 1)
+  if (fragment.continuesBefore) {
+    number.textContent = '↪'
+  } else if (fragment.line === undefined) {
+    number.textContent = '·'
+  } else {
+    number.textContent = String(fragment.line + 1)
+  }
   number.setAttribute('aria-hidden', 'true')
   number.style.cssText = 'display:inline-block;min-width:100px;color:#666;user-select:none'
   const text = document.createElement('span')

@@ -1516,12 +1516,12 @@ export class VirtualizedTextView {
     const bounds = contentReadingBounds(view.scrollElement)
     const height = Math.max(0, bounds.bottom - bounds.top) / pointViewport(view.scrollElement).scale
     const available = Math.max(0, height - view.metrics.rowHeight)
-    const alignment =
-      block === 'center' || block === 'center-if-outside'
-        ? available / 2
-        : block === 'end' || offset > snapshot.scrollTop
-          ? available
-          : 0
+    let alignment = 0
+    if (block === 'center' || block === 'center-if-outside') {
+      alignment = available / 2
+    } else if (block === 'end' || offset > snapshot.scrollTop) {
+      alignment = available
+    }
     const top =
       view.virtualizer.pagePositionForRowOffset(offset, height, alignment) +
       scrollElementPadding(view.scrollElement).top

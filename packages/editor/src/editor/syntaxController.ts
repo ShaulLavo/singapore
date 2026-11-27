@@ -802,11 +802,8 @@ export class EditorSyntaxController {
     const visible = this.options.getVisibleSyntaxRange()
     if (visible === null) return 'loading'
     if (visible.endIndex <= visible.startIndex) {
-      return sameSyntaxRange(visible, scope.range)
-        ? scope.degraded
-          ? 'degraded'
-          : 'ready'
-        : 'loading'
+      if (!sameSyntaxRange(visible, scope.range)) return 'loading'
+      return scope.degraded ? 'degraded' : 'ready'
     }
     if (syntaxRangeCoverage(visible, [scope.range]) !== 'full') return 'loading'
     return scope.degraded ? 'degraded' : 'ready'
@@ -978,11 +975,11 @@ export class EditorSyntaxController {
   stagePreparedReadyTokens(prepared: EditorPreparedDocumentPayload | null): EditorTokenStore {
     const highlighterResult = prepared?.highlighter?.readyResult
     const canRange = Boolean(this.syntaxSession?.queryRange && this.#canProviderQuerySyntaxRange())
-    const structuralResult = prepared?.structural?.readyResult
-      ? canRange
-        ? prepared.structural.readyResult
-        : (this.retainedSyntax?.readBaseResult() ?? prepared.structural.readyResult)
-      : undefined
+    const readyStructural = prepared?.structural?.readyResult
+    const structuralResult =
+      readyStructural && !canRange
+        ? (this.retainedSyntax?.readBaseResult() ?? readyStructural)
+        : readyStructural
     const structuralTokens = prepared?.highlighter ? undefined : structuralResult?.tokens
     const tokens = highlighterResult?.tokens ?? toEditorTokenStore(structuralTokens ?? [])
 
@@ -1646,14 +1643,15 @@ export class EditorSyntaxController {
       this.rangeRequests.isActive() &&
       pending?.documentVersion === documentVersion &&
       pending.contentVersion === this.#syntaxContentVersion &&
-      pending.parseGeneration === this.#parseGeneration &&
-      (bypassCache
-        ? pending.bypassCache && sameSyntaxRange(queryRange, pending.range)
-        : queryRange.endIndex <= queryRange.startIndex
-          ? sameSyntaxRange(queryRange, pending.range)
-          : syntaxRangeCoverage(queryRange, [pending.range]) === 'full')
+      pending.parseGeneration === this.#parseGeneration
     ) {
-      return
+      if (bypassCache) {
+        if (pending.bypassCache && sameSyntaxRange(queryRange, pending.range)) return
+      } else if (queryRange.endIndex <= queryRange.startIndex) {
+        if (sameSyntaxRange(queryRange, pending.range)) return
+      } else if (syntaxRangeCoverage(queryRange, [pending.range]) === 'full') {
+        return
+      }
     }
 
     this.#visibleRangeSequence += 1
@@ -3127,14 +3125,17 @@ export class EditorSyntaxController {
 
     const partial = analysis?.kind === 'partial'
     const terminalPartial = isTerminalIncompleteSyntaxResult(result)
-    const coveredPartialRange =
-      partial && loadResult.range !== null
-        ? loadResult.range.endIndex <= loadResult.range.startIndex
-          ? sameSyntaxRange(analysis.coveredRange, loadResult.range)
-            ? loadResult.range
-            : null
-          : (intersectSyntaxRanges([loadResult.range], [analysis.coveredRange])[0] ?? null)
-        : null
+    let coveredPartialRange: EditorSyntaxRange | null = null
+    if (partial && loadResult.range !== null) {
+      if (loadResult.range.endIndex <= loadResult.range.startIndex) {
+        coveredPartialRange = sameSyntaxRange(analysis.coveredRange, loadResult.range)
+          ? loadResult.range
+          : null
+      } else {
+        coveredPartialRange =
+          intersectSyntaxRanges([loadResult.range], [analysis.coveredRange])[0] ?? null
+      }
+    }
 
     if (!loadResult.promotedOnly && !syntaxResultCoversRange(result, loadResult.range)) {
       if (terminalPartial && partial && loadResult.range !== null && !isOptional && !isFirstRows) {
@@ -3578,15 +3579,17 @@ export class EditorSyntaxController {
             snapshot !== null && this.#externalBaseTokens?.snapshot === snapshot
               ? this.#externalBaseTokens.store
               : EditorTokenStore.empty()
-          const nextTokens =
-            (ownsProjectedPaint || rangeOwned) && this.#rangeEntries.length === 0
-              ? EditorTokenStore.empty()
-              : rangeOwned
-                ? compactSyntaxRangeTokens(
-                    this.#currentTokens,
-                    this.#tokenCoverage(this.#rangeEntries),
-                  )
-                : mergeTokensOnStrips(this.#currentTokens, fallback, gaps)
+          let nextTokens: EditorTokenStore
+          if ((ownsProjectedPaint || rangeOwned) && this.#rangeEntries.length === 0) {
+            nextTokens = EditorTokenStore.empty()
+          } else if (rangeOwned) {
+            nextTokens = compactSyntaxRangeTokens(
+              this.#currentTokens,
+              this.#tokenCoverage(this.#rangeEntries),
+            )
+          } else {
+            nextTokens = mergeTokensOnStrips(this.#currentTokens, fallback, gaps)
+          }
           if (nextTokens !== this.#currentTokens) {
             this.#currentTokens = nextTokens
             if (ownsProjectedPaint || this.#rangeTokenOwner !== null) {
@@ -3975,18 +3978,25 @@ export class EditorSyntaxController {
       }
 
       if (!this.#highlighterSession) {
-        const baseTokens =
-          evictedPrefetches.length > 0
-            ? canOwnRanges
-              ? compactSyntaxRangeTokens(this.#currentTokens, this.#tokenCoverage(keptEntries))
-              : mergeTokensOnStrips(
-                  this.#currentTokens,
-                  this.#externalBaseTokens?.snapshot === snapshot
-                    ? this.#externalBaseTokens.store
-                    : EditorTokenStore.empty(),
-                  this.#tokenCoverage(evictedPrefetches),
-                )
-            : this.#currentTokens
+        let baseTokens = this.#currentTokens
+        if (evictedPrefetches.length > 0) {
+          if (canOwnRanges) {
+            baseTokens = compactSyntaxRangeTokens(
+              this.#currentTokens,
+              this.#tokenCoverage(keptEntries),
+            )
+          } else {
+            const fallbackBase =
+              this.#externalBaseTokens?.snapshot === snapshot
+                ? this.#externalBaseTokens.store
+                : EditorTokenStore.empty()
+            baseTokens = mergeTokensOnStrips(
+              this.#currentTokens,
+              fallbackBase,
+              this.#tokenCoverage(evictedPrefetches),
+            )
+          }
+        }
         const nextTokens = mergeTokensOnStrips(baseTokens, incomingTokens, claimable)
         this.#currentTokens = nextTokens
         setRangeTokenOwner(nextTokens)

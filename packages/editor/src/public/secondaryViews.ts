@@ -58,7 +58,8 @@ export function createEditorSecondaryTextView(
   options: EditorSecondaryTextViewOptions,
 ): EditorSecondaryTextView {
   const { scroll, scrollMode, ...viewOptions } = options
-  const mode = scroll === undefined ? scrollMode : scroll ? 'virtualized' : 'static'
+  const scrollOverride = scroll ? 'virtualized' : 'static'
+  const mode = scroll === undefined ? scrollMode : scrollOverride
   const view = new VirtualizedTextView(container, {
     ...viewOptions,
     scrollMode: mode,

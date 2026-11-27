@@ -223,12 +223,8 @@ export async function main(args = process.argv.slice(2)) {
         fixtureSha256: hash,
         engines: {},
       }
-      const engines =
-        fixture.category === 'singapore-only'
-          ? ['singapore']
-          : index % 2
-            ? ['vscode', 'singapore']
-            : ['singapore', 'vscode']
+      const alternatingEngines = index % 2 ? ['vscode', 'singapore'] : ['singapore', 'vscode']
+      const engines = fixture.category === 'singapore-only' ? ['singapore'] : alternatingEngines
       for (const engine of engines) {
         row.engines[engine] = {}
         for (const mode of options.modes) {
