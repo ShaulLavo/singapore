@@ -21,7 +21,6 @@ const TOOLTIP_MIN_HEIGHT_PX = 32
 const TOOLTIP_MIN_MAX_HEIGHT_PX = 250
 const TOOLTIP_MAX_WIDTH_FRACTION = 0.66
 const TOOLTIP_POINTER_INTENT_TOLERANCE_PX = 4
-const TOOLTIP_CORRIDOR_MAX_SLOPE = 2
 const TOOLTIP_RESIZE_HANDLE_PX = 5
 const TOOLTIP_SCROLL_STEP_PX = 30
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -1221,26 +1220,13 @@ function isInsideCorridorAlongAxis(input: AxisCorridorInput): boolean {
   if (progress > totalGap + TOOLTIP_POINTER_INTENT_TOLERANCE_PX) return false
 
   const ratio = totalGap > 0 ? Math.min(1, progress / totalGap) : 1
-  const maxHalfSpan = Math.max(
-    totalGap * TOOLTIP_CORRIDOR_MAX_SLOPE,
-    TOOLTIP_POINTER_INTENT_TOLERANCE_PX,
-  )
-  const closestEdgeCross = clamp(input.originCross, input.edgeCrossMin, input.edgeCrossMax)
-  const targetMin = Math.min(
-    closestEdgeCross,
-    Math.max(input.edgeCrossMin, input.originCross - maxHalfSpan),
-  )
-  const targetMax = Math.max(
-    closestEdgeCross,
-    Math.min(input.edgeCrossMax, input.originCross + maxHalfSpan),
-  )
   const allowedMin =
     input.originCross +
-    ratio * (targetMin - input.originCross) -
+    ratio * (input.edgeCrossMin - input.originCross) -
     TOOLTIP_POINTER_INTENT_TOLERANCE_PX
   const allowedMax =
     input.originCross +
-    ratio * (targetMax - input.originCross) +
+    ratio * (input.edgeCrossMax - input.originCross) +
     TOOLTIP_POINTER_INTENT_TOLERANCE_PX
   return input.pointCross >= allowedMin && input.pointCross <= allowedMax
 }

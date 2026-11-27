@@ -258,19 +258,25 @@ describe('one hover per view', () => {
     harness.dispose()
   })
 
-  it('hides the tooltip if the pointer stops over empty space inside the corridor', async () => {
+  it('hides the tooltip if the pointer stops over trailing blank space even when caret hit-test clamps', async () => {
     vi.useFakeTimers()
     const harness = mountGeometry({
-      text: 'const alpha = beta',
+      text: 'let upper\nconst alpha = beta',
       tooltipRect: new DOMRect(12, 132, 400, 60),
-      tokens: [{ name: 'alpha', rect: new DOMRect(60, 200, 40, 18) }],
+      tokens: [
+        { name: 'upper', rect: new DOMRect(40, 182, 40, 18) },
+        { name: 'alpha', rect: new DOMRect(60, 200, 40, 18) },
+      ],
+      trailingRows: [{ top: 182, bottom: 200, textRight: 80, clampedOffset: 9 }],
     })
 
     harness.moveTo(80, 209)
     await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
     expect(partTexts()).toEqual(['hover:alpha'])
 
-    harness.moveTo(80, 196)
+    // Stop 6 px past the end of `let upper` in the corridor: caret hit-test clamps to `upper`,
+    // while rowAtPoint reports trailing blank space.
+    harness.moveTo(86, 196)
     expect(tooltip().hidden).toBe(false)
 
     await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
@@ -284,10 +290,18 @@ type PositionedToken = {
   readonly rect: DOMRect
 }
 
+type TrailingRow = {
+  readonly top: number
+  readonly bottom: number
+  readonly textRight: number
+  readonly clampedOffset: number
+}
+
 function mountGeometry(options: {
   readonly text: string
   readonly tooltipRect: DOMRect
   readonly tokens: readonly PositionedToken[]
+  readonly trailingRows?: readonly TrailingRow[]
   readonly wideDiagnostic?: {
     readonly range: { readonly start: number; readonly end: number }
     readonly rect: DOMRect
@@ -313,7 +327,7 @@ function mountGeometry(options: {
     computeSync: (request) => {
       const token = ranges.find(
         (candidate) =>
-          request.anchor.offset >= candidate.start && request.anchor.offset < candidate.end,
+          request.anchor.offset >= candidate.start && request.anchor.offset <= candidate.end,
       )
       if (!token) return []
       const parts: HoverPart[] = [
@@ -329,6 +343,18 @@ function mountGeometry(options: {
       return parts
     },
   }
+  const hitTokenAt = (clientX: number, clientY: number) =>
+    ranges.find(
+      (token) =>
+        clientX >= token.rect.left &&
+        clientX <= token.rect.right &&
+        clientY >= token.rect.top &&
+        clientY <= token.rect.bottom,
+    )
+  const hitTrailingAt = (clientX: number, clientY: number) =>
+    (options.trailingRows ?? []).find(
+      (row) => clientY >= row.top && clientY <= row.bottom && clientX > row.textRight,
+    )
   const context = createTestViewContributionContext({
     container: element,
     scrollElement: element,
@@ -337,17 +363,28 @@ function mountGeometry(options: {
     getSnapshot: () => snapshot,
     getProviders: (() => [participant]) as EditorViewContributionContext['getProviders'],
     focusEditor: vi.fn(),
-    rowAtPoint: () => null,
+    rowAtPoint: (clientX, clientY) => {
+      const hit = hitTokenAt(clientX, clientY)
+      if (hit) {
+        return {
+          bufferRow: 0,
+          displayRow: 0,
+          source: 'document',
+          region: 'text',
+          offset: hit.start + 1,
+        }
+      }
+      if (hitTrailingAt(clientX, clientY)) {
+        return { bufferRow: 0, displayRow: 0, source: 'document', region: 'trailing', offset: null }
+      }
+      return null
+    },
     markerAtPoint: () => null,
     textOffsetFromPoint: (clientX, clientY) => {
-      const hit = ranges.find(
-        (token) =>
-          clientX >= token.rect.left &&
-          clientX <= token.rect.right &&
-          clientY >= token.rect.top &&
-          clientY <= token.rect.bottom,
-      )
-      return hit ? hit.start + 1 : null
+      const hit = hitTokenAt(clientX, clientY)
+      if (hit) return hit.start + 1
+      const trailing = hitTrailingAt(clientX, clientY)
+      return trailing ? trailing.clampedOffset : null
     },
     getRangeClientRect: (start, end) => {
       if (
@@ -402,7 +439,6 @@ function mount(participants: readonly EditorHoverParticipant[]) {
     getSnapshot: () => snapshot,
     getProviders: (() => participants) as EditorViewContributionContext['getProviders'],
     focusEditor: vi.fn(),
-    rowAtPoint: () => null,
     markerAtPoint: () => null,
     textOffsetFromPoint: () => pointerOffset,
     getRangeClientRect: () => new DOMRect(10, 20, 40, 18),

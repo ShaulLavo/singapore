@@ -239,7 +239,7 @@ describe('tooltip pointer retention', () => {
     controller.dispose()
   })
 
-  it('drops retention on a shallow near-horizontal drift to another token under a wide tooltip', () => {
+  it('keeps a diagonal corridor toward a wide tooltip and drops points outside the wedge', () => {
     const controller = tooltipController()
     const element = document.querySelector<HTMLElement>('.editor-test-hover')!
     element.getBoundingClientRect = () => new DOMRect(12, 132, 600, 60)
@@ -247,7 +247,11 @@ describe('tooltip pointer retention', () => {
     controller.show({ ...showOptions(), anchor })
 
     expect(controller.pointerRetention(95, 209)).toBe('locked')
-    expect(controller.pointerRetention(160, 205)).toBe('none')
+    // Diagonal move (+46 px right, -12.5 px up) into the gap stays in the corridor toward the tooltip.
+    expect(controller.pointerRetention(141, 196.5)).toBe('corridor')
+    // Stepping outside the safe triangle toward a distant token drops retention immediately.
+    expect(controller.pointerRetention(95, 209)).toBe('locked')
+    expect(controller.pointerRetention(230, 205)).toBe('none')
     controller.dispose()
   })
 
@@ -274,7 +278,7 @@ describe('tooltip pointer retention', () => {
 
     expect(controller.pointerRetention(80, 209)).toBe('locked')
     expect(controller.pointerRetention(80, 196)).toBe('corridor')
-    expect(controller.pointerRetention(150, 198)).toBe('none')
+    expect(controller.pointerRetention(150, 204)).toBe('none')
     expect(controller.pointerRetention(80, 194)).toBe('none')
     controller.dispose()
   })

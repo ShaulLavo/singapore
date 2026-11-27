@@ -296,7 +296,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     if (tooltip.pointerRetention(pending.point.clientX, pending.point.clientY) === 'locked') return
     if (!context.hasDocument()) return hide()
 
-    const offset = context.textOffsetFromPoint(pending.point.clientX, pending.point.clientY)
+    const offset = hoverOffsetFromPoint(context, pending.point.clientX, pending.point.clientY)
     if (offset === null) return hide()
 
     const snapshot = context.getSnapshot()
@@ -318,7 +318,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
 
   const scheduleCorridorSettle = (point: PointerPoint): void => {
     const offset = context.hasDocument()
-      ? context.textOffsetFromPoint(point.clientX, point.clientY)
+      ? hoverOffsetFromPoint(context, point.clientX, point.clientY)
       : null
     const targetRange =
       offset === null ? null : hoverTargetRangeInSource(context.getSnapshot().textSnapshot, offset)
@@ -344,7 +344,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     clearCorridorSettle()
     if (!context.hasDocument()) return hide()
 
-    const offset = context.textOffsetFromPoint(event.clientX, event.clientY)
+    const offset = hoverOffsetFromPoint(context, event.clientX, event.clientY)
     if (offset === null) {
       cancelOperation()
       return tooltip.scheduleHide()
@@ -441,6 +441,16 @@ function clearTimers(operation: HoverOperation): void {
  * A scroll or relayout moves the text out from under the hover, and an edit may have changed what
  * it says. Both belong to the old frame, so the hover goes with them.
  */
+function hoverOffsetFromPoint(
+  context: EditorViewContributionContext,
+  clientX: number,
+  clientY: number,
+): number | null {
+  const hit = context.rowAtPoint(clientX, clientY)
+  if (!hit || hit.region !== 'text') return null
+  return hit.offset
+}
+
 function sameNullableRange(left: OffsetRange | null, right: OffsetRange | null): boolean {
   if (left === null || right === null) return left === right
   return sameOffsetRange(left, right)

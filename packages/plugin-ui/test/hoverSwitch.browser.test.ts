@@ -103,7 +103,65 @@ it('keeps the tooltip open when moving straight from Token A across the gap into
   expect(dialog.textContent).toContain('token:alphaToken')
 })
 
-async function mountEditor() {
+it('keeps the tooltip open along a wide diagonal path through the gap into the tooltip', async () => {
+  const harness = await mountEditor()
+  const alpha = harness.tokenRect('alphaToken')
+  const startX = centerX(alpha)
+  const startY = centerY(alpha)
+
+  await commands.movePointer(startX, startY)
+  await waitForHoverText('token:alphaToken')
+
+  const popupRect = hoverDialog().getBoundingClientRect()
+  expect(popupRect.bottom).toBeLessThanOrEqual(alpha.top)
+  expect(popupRect.right).toBeGreaterThan(startX + 80)
+
+  const gapY = (popupRect.bottom + alpha.top) / 2
+  // Move diagonally (+46 px right, up into the gap), then continue into the tooltip.
+  await commands.movePointer(startX + 46, gapY, 3)
+  expect(hoverDialog().hidden).toBe(false)
+  await commands.movePointer(startX + 64, popupRect.bottom - 10, 3)
+  await wait(HOVER_REQUEST_DEBOUNCE_MS + TOOLTIP_HIDE_DELAY_MS + 100)
+
+  const dialog = hoverDialog()
+  expect(dialog.hidden).toBe(false)
+  expect(dialog.textContent).toContain('token:alphaToken')
+})
+
+it('hides the tooltip instead of opening a token hover when pausing in trailing blank space in the corridor', async () => {
+  const text = [
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'let upperToken',
+    'const alphaToken = betaToken + gammaToken',
+    'const lowerToken = 456',
+  ].join('\n')
+  const harness = await mountEditor(text)
+  const alpha = harness.tokenRect('alphaToken')
+  const upper = harness.tokenRect('upperToken')
+
+  await commands.movePointer(centerX(alpha), centerY(alpha))
+  await waitForHoverText('token:alphaToken')
+
+  const popupRect = hoverDialog().getBoundingClientRect()
+  expect(popupRect.bottom).toBeLessThanOrEqual(alpha.top)
+  const gapY = (popupRect.bottom + alpha.top) / 2
+
+  // Stop 6 px past the end of `let upperToken` (trailing blank space inside the corridor).
+  await commands.movePointer(upper.right + 6, gapY, 3)
+  await vi.waitFor(
+    () => {
+      expect(hoverDialog().hidden).toBe(true)
+    },
+    { timeout: 3000, interval: 25 },
+  )
+})
+
+async function mountEditor(text = SAMPLE_TEXT) {
   const host = document.createElement('div')
   host.style.cssText = 'position:fixed;left:40px;top:40px;width:900px;height:500px'
   document.body.append(host)
@@ -145,14 +203,14 @@ async function mountEditor() {
   }
 
   const editor = new Editor(host, {
-    defaultText: SAMPLE_TEXT,
+    defaultText: text,
     theme: { type: 'dark' },
     folding: false,
     plugins: [testPlugin],
   })
   dispose = () => editor.dispose()
 
-  const alphaStart = SAMPLE_TEXT.indexOf('alphaToken')
+  const alphaStart = text.indexOf('alphaToken')
   await vi.waitFor(
     () => {
       expect(viewContext).not.toBeNull()
@@ -171,7 +229,7 @@ async function mountEditor() {
   return {
     tokenRect: (word: string): DOMRect => {
       if (!viewContext) throw new Error('missing view context')
-      const start = SAMPLE_TEXT.indexOf(word)
+      const start = text.indexOf(word)
       if (start < 0) throw new Error(`missing token ${word}`)
       const rect = viewContext.getRangeClientRect(start, start + word.length)
       if (!rect) throw new Error(`missing rect for ${word}`)
