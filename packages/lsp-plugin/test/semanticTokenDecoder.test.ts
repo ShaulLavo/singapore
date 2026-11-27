@@ -262,6 +262,12 @@ describe('decodeSemanticTokens', () => {
     const unknown = decodeSemanticTokens([0, 0, 5, 0, 2 ** 31], LEGEND, DOCUMENT)
     expect(unknown.spans[0]?.tokenModifiers).toBeUndefined()
     expect(unknown.drops.unknownModifierBits).toBe(1)
+
+    // Modifier integers above 32 bits must also count as unknown modifier bits rather than
+    // being silently ignored by 32-bit bitwise masking.
+    const overflow = decodeSemanticTokens([0, 0, 5, 0, 2 ** 32 + 1], LEGEND, DOCUMENT)
+    expect(overflow.spans[0]?.tokenModifiers).toEqual(['declaration'])
+    expect(overflow.drops.unknownModifierBits).toBe(1)
   })
 
   it('returns nothing for an empty response', () => {

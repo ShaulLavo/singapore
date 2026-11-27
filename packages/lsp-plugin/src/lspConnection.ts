@@ -37,7 +37,9 @@ export type LspConnectionTransportFactory = (
 ) => LspManagedTransport | Promise<LspManagedTransport>
 
 /** WebSocket options for a connection's factory. The signal is the connection's own. */
-export type LspWebSocketFactoryOptions = Omit<LspWebSocketTransportOptions, 'signal'>
+export type LspWebSocketFactoryOptions = Omit<LspWebSocketTransportOptions, 'signal'> & {
+  readonly signal?: never
+}
 
 export type LspConnectionOptions = {
   readonly rootUri: lsp.DocumentUri | null
@@ -125,9 +127,9 @@ export class LspConnection {
     this.client = this.createClient()
   }
 
-  /** Starts the connection. A no-op while it is connected or already on its way to being. */
+  /** Starts the connection. A no-op while disposed, connected, or already on its way to being. */
   public connect(): void {
-    if (this.transport || this.starting) return
+    if (this.disposed || this.transport || this.starting) return
 
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
@@ -364,9 +366,11 @@ export class LspConnection {
   private giveUpOrReconnect(error: unknown): void {
     if (this.scheduleReconnect(error)) return
 
-    this.setStatus('error')
-    this.callbacks.onUnavailable()
-    this.handleError(error)
+    runEach([
+      () => this.callHost(() => this.setStatus('error')),
+      () => this.callHost(() => this.callbacks.onUnavailable()),
+      () => this.handleError(error),
+    ])
   }
 
   private scheduleReconnect(error: unknown): boolean {

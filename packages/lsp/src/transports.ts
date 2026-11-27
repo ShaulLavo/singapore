@@ -100,11 +100,11 @@ export const createWebSocketLspTransport = (
   if (options.signal?.aborted) return Promise.reject(options.signal.reason)
 
   const socket = new WebSocketCtor(url, mutableProtocols(options.protocols))
-  const transport = new WebSocketLspTransport(socket)
-  if (options.signal?.aborted) return Promise.reject(closeForAbort(transport, options.signal))
-  if (socket.readyState === WEB_SOCKET_OPEN) return Promise.resolve(transport)
+  if (options.signal?.aborted) return Promise.reject(closeSocketForAbort(socket, options.signal))
+  if (socket.readyState === WEB_SOCKET_OPEN)
+    return Promise.resolve(new WebSocketLspTransport(socket))
 
-  return waitForWebSocketOpen(socket, transport, options.signal)
+  return waitForWebSocketOpen(socket, options.signal)
 }
 
 export const createWorkerLspTransport = (
@@ -159,8 +159,12 @@ class WebSocketLspTransport implements LspManagedTransport {
     if (this.closed) return
 
     this.closed = true
-    this.detachSocketListeners()
-    if (canCloseWebSocket(this.socket)) this.socket.close()
+    runEach([
+      () => this.detachSocketListeners(),
+      () => {
+        if (canCloseWebSocket(this.socket)) this.socket.close()
+      },
+    ])
   }
 
   private readonly handleMessage = (event: Event): void => {
@@ -178,20 +182,31 @@ class WebSocketLspTransport implements LspManagedTransport {
     if (this.closed) return
 
     this.closed = true
-    this.detachSocketListeners()
     const error = new LspTransportClosedError({
       ...closeEventDetails(event),
       receivedCount: this.receivedCount,
       sentCount: this.sentCount,
     })
-    for (const handler of this.closeHandlers) handler(error)
-    this.closeHandlers.clear()
+    const handlers = Array.from(this.closeHandlers)
+    try {
+      runEach(
+        [() => this.detachSocketListeners()].concat(
+          handlers.map((handler) => () => {
+            if (this.closeHandlers.has(handler)) handler(error)
+          }),
+        ),
+      )
+    } finally {
+      this.closeHandlers.clear()
+    }
   }
 
   private detachSocketListeners(): void {
     this.handlers.clear()
-    this.socket.removeEventListener('message', this.handleMessage)
-    this.socket.removeEventListener('close', this.handleClose)
+    runEach([
+      () => this.socket.removeEventListener('message', this.handleMessage),
+      () => this.socket.removeEventListener('close', this.handleClose),
+    ])
   }
 }
 
@@ -253,9 +268,13 @@ class WorkerLspTransport implements LspManagedTransport {
     this.closed = true
     this.handlers.clear()
     this.closeHandlers.clear()
-    this.worker.removeEventListener('message', this.handleMessage)
-    this.worker.removeEventListener('error', this.handleError)
-    if (this.terminateOnClose) this.worker.terminate?.()
+    runEach([
+      () => this.worker.removeEventListener('message', this.handleMessage),
+      () => this.worker.removeEventListener('error', this.handleError),
+      () => {
+        if (this.terminateOnClose) this.worker.terminate?.()
+      },
+    ])
   }
 
   private encodeMessage(message: string): unknown {
@@ -299,31 +318,71 @@ function workerError(event: Event): unknown {
 
 const waitForWebSocketOpen = (
   socket: LspWebSocketLike,
-  transport: LspManagedTransport,
   signal: AbortSignal | undefined,
 ): Promise<LspManagedTransport> =>
   new Promise((resolve, reject) => {
-    const cleanup = (): void => {
-      socket.removeEventListener('open', handleOpen)
-      socket.removeEventListener('error', handleError)
-      socket.removeEventListener('close', handleClose)
-      signal?.removeEventListener('abort', handleAbort)
-    }
+    let settled = false
+    const cleanup = (): { readonly error: unknown } | null =>
+      captureFirstError([
+        () => socket.removeEventListener('open', handleOpen),
+        () => socket.removeEventListener('error', handleError),
+        () => socket.removeEventListener('close', handleClose),
+        () => signal?.removeEventListener('abort', handleAbort),
+      ])
+    const closeSocket = (): { readonly error: unknown } | null =>
+      captureFirstError([
+        () => {
+          if (canCloseWebSocket(socket)) socket.close()
+        },
+      ])
     const handleAbort = (): void => {
-      cleanup()
-      if (signal) reject(closeForAbort(transport, signal))
+      if (settled) return
+      settled = true
+      const cleanupFailure = cleanup()
+      const abortReason = signal?.reason
+      const closeFailure = closeSocket()
+      reject(
+        closeFailure ? closeFailure.error : cleanupFailure ? cleanupFailure.error : abortReason,
+      )
     }
     const handleOpen = (): void => {
-      cleanup()
+      if (settled) return
+      settled = true
+      const cleanupFailure = cleanup()
+      if (cleanupFailure) {
+        closeSocket()
+        reject(cleanupFailure.error)
+        return
+      }
+      let transport: WebSocketLspTransport
+      try {
+        transport = new WebSocketLspTransport(socket)
+      } catch (error) {
+        closeSocket()
+        reject(error)
+        return
+      }
       resolve(transport)
     }
     const handleError = (): void => {
-      cleanup()
-      reject(new Error('WebSocket LSP transport failed to connect'))
+      if (settled) return
+      settled = true
+      const cleanupFailure = cleanup()
+      reject(
+        cleanupFailure
+          ? cleanupFailure.error
+          : new Error('WebSocket LSP transport failed to connect'),
+      )
     }
     const handleClose = (): void => {
-      cleanup()
-      reject(new Error('WebSocket LSP transport closed before opening'))
+      if (settled) return
+      settled = true
+      const cleanupFailure = cleanup()
+      reject(
+        cleanupFailure
+          ? cleanupFailure.error
+          : new Error('WebSocket LSP transport closed before opening'),
+      )
     }
 
     socket.addEventListener('open', handleOpen)
@@ -334,10 +393,29 @@ const waitForWebSocketOpen = (
     if (signal?.aborted) handleAbort()
   })
 
+/** Runs every step even after one throws, returning the first failure without throwing. */
+const captureFirstError = (steps: readonly (() => void)[]): { readonly error: unknown } | null => {
+  let failure: { readonly error: unknown } | null = null
+  for (const step of steps) {
+    try {
+      step()
+    } catch (error) {
+      failure ??= { error }
+    }
+  }
+  return failure
+}
+
+/** Runs every step even after one throws, then rethrows the first failure. */
+const runEach = (steps: readonly (() => void)[]): void => {
+  const failure = captureFirstError(steps)
+  if (failure) throw failure.error
+}
+
 /** Closes a cancelled handshake's socket; the abort reason, or what closing threw instead. */
-const closeForAbort = (transport: LspManagedTransport, signal: AbortSignal): unknown => {
+const closeSocketForAbort = (socket: LspWebSocketLike, signal: AbortSignal): unknown => {
   try {
-    transport.close()
+    if (canCloseWebSocket(socket)) socket.close()
   } catch (error) {
     return error
   }

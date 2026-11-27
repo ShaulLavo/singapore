@@ -54,7 +54,14 @@ export type SemanticTokenDecodeDocument = {
 }
 
 const TUPLE_LENGTH = 5
-const MODIFIER_BITS = 32
+const MAX_UINT32 = 0xffff_ffff
+
+type DecodedModifiers = {
+  readonly names: readonly string[]
+  readonly unknownBits: boolean
+}
+
+const EMPTY_MODIFIERS: DecodedModifiers = { names: [], unknownBits: false }
 
 /**
  * Turns an LSP semantic-tokens response into absolute spans with names on them.
@@ -94,6 +101,7 @@ export function decodeSemanticTokens(
   const tokenModifiers = legend.tokenModifiers
   const lineStarts = document.lineStarts
   const textLength = document.textLength
+  const modifierCache = new Map<number, DecodedModifiers>()
 
   let outOfLegendType = 0
   let zeroLength = 0
@@ -166,7 +174,7 @@ export function decodeSemanticTokens(
       continue
     }
 
-    const modifiers = decodeModifiers(modifierBitset, tokenModifiers)
+    const modifiers = decodeModifiers(modifierBitset, tokenModifiers, modifierCache)
     if (modifiers.unknownBits) unknownModifierBits += 1
 
     spans.push(
@@ -193,13 +201,19 @@ export function decodeSemanticTokens(
 function decodeModifiers(
   bitset: number,
   tokenModifiers: readonly string[],
-): { readonly names: readonly string[]; readonly unknownBits: boolean } {
-  if (bitset === 0) return { names: [], unknownBits: false }
+  cache: Map<number, DecodedModifiers>,
+): DecodedModifiers {
+  if (bitset === 0) return EMPTY_MODIFIERS
+  const cached = cache.get(bitset)
+  if (cached) return cached
 
   const names: string[] = []
-  let unknownBits = false
-  for (let bit = 0; bit < MODIFIER_BITS; bit += 1) {
-    if ((bitset & (1 << bit)) === 0) continue
+  let unknownBits = bitset > MAX_UINT32
+  let remaining = bitset >>> 0
+  while (remaining !== 0) {
+    const lowest = (remaining & -remaining) >>> 0
+    const bit = 31 - Math.clz32(lowest)
+    remaining = (remaining ^ lowest) >>> 0
 
     const name = tokenModifiers[bit]
     // Rule 3: a bit the legend does not name is ignored rather than fatal, and the span survives it
@@ -208,7 +222,9 @@ function decodeModifiers(
     else names.push(name)
   }
 
-  return { names, unknownBits }
+  const decoded: DecodedModifiers = { names, unknownBits }
+  cache.set(bitset, decoded)
+  return decoded
 }
 
 function isUnsignedInteger(value: number): boolean {
