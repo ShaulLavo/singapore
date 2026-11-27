@@ -30,22 +30,62 @@ describe('highlighting service without a worker', () => {
     expect(() => service.syntaxProvider()).toThrow(HighlightingError)
   })
 
-  test('populates imported theme cache via provider and clears cached state on dispose', async () => {
+  test('clears retained theme caches and ignores late theme refreshes after dispose', async () => {
+    const refreshGate = Promise.withResolvers<{
+      readonly name: string
+      readonly type: 'dark'
+      readonly colors: { readonly 'editor.background': string }
+    }>()
     let calls = 0
     const service = createHighlightingService({
-      resolveTheme: async (id) => {
+      resolveTheme: (id) => {
         calls += 1
-        return { name: id, type: 'dark', colors: { 'editor.background': '#111111' } }
+        if (calls === 1) {
+          return Promise.resolve({
+            name: id,
+            type: 'dark',
+            colors: { 'editor.background': '#111111' },
+          })
+        }
+        return refreshGate.promise
       },
     })
+    const listeners = new Set<() => void>()
     const provider = service.highlighterProvider({
       current: () => ({ format: 'vscode', id: 'custom-theme' }),
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
     })
     await provider.loadTheme?.().catch(() => undefined)
     expect(calls).toBe(1)
 
+    const documentThemes = Reflect.get(service, 'documentThemes') as Map<string, unknown>
+    const documentThemeContent = Reflect.get(service, 'documentThemeContent') as Map<
+      string,
+      unknown
+    >
+    const documentThemeRefreshes = Reflect.get(service, 'documentThemeRefreshes') as Map<
+      string,
+      unknown
+    >
+    expect(documentThemes.size).toBe(1)
+    expect(documentThemeContent.size).toBe(1)
+
     await service.dispose()
+    refreshGate.resolve({
+      name: 'custom-theme',
+      type: 'dark',
+      colors: { 'editor.background': '#222222' },
+    })
+    await Promise.resolve()
+
     expect(service.inspect().disposed).toBe(true)
+    expect(documentThemes.size).toBe(0)
+    expect(documentThemeContent.size).toBe(0)
+    expect(documentThemeRefreshes.size).toBe(0)
+    expect(Reflect.get(service, 'defaultTheme')).toBeNull()
   })
 })
 

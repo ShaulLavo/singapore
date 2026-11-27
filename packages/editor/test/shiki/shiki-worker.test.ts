@@ -16,7 +16,8 @@ import { unpackEditorTokens } from '../../src/syntax/packedTokens'
 
 const createShikiPrimitiveAsync = vi.hoisted(() => vi.fn())
 const createOnigurumaEngine = vi.hoisted(() => vi.fn(() => Promise.resolve('oniguruma')))
-const loadOnigWasm = vi.hoisted(() => vi.fn())
+const loadOnigWasmModule = vi.hoisted(() => vi.fn(() => Promise.resolve('wasm-module')))
+const instantiateOnigWasmModule = vi.hoisted(() => vi.fn(() => () => Promise.resolve({})))
 
 /** What a real shiki highlighter exposes for loading grammars and themes after construction. */
 function languageApi() {
@@ -36,7 +37,7 @@ function languageApi() {
 
 vi.mock('shiki/core', () => ({ createShikiPrimitiveAsync }))
 vi.mock('@shikijs/engine-oniguruma', () => ({ createOnigurumaEngine }))
-vi.mock('../../src/shiki/onigWasm', () => ({ loadOnigWasm }))
+vi.mock('../../src/shiki/onigWasm', () => ({ loadOnigWasmModule, instantiateOnigWasmModule }))
 
 describe('shiki worker', () => {
   afterEach(() => {
@@ -44,6 +45,9 @@ describe('shiki worker', () => {
     vi.restoreAllMocks()
     vi.resetModules()
     createShikiPrimitiveAsync.mockReset()
+    createOnigurumaEngine.mockClear()
+    loadOnigWasmModule.mockReset()
+    loadOnigWasmModule.mockResolvedValue('wasm-module')
 
     vi.unstubAllGlobals()
     scope = null
@@ -75,6 +79,43 @@ describe('shiki worker', () => {
       ok: false,
       error: 'load failed',
     } satisfies ShikiWorkerResponse)
+  })
+
+  it('recovers after a transient WASM fetch failure without calling createOnigurumaEngine on the failed attempt', async () => {
+    const postMessage =
+      vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
+    setupScope(postMessage)
+    loadOnigWasmModule
+      .mockRejectedValueOnce(new Error('Failed to fetch Oniguruma WASM (503)'))
+      .mockResolvedValueOnce('wasm-module')
+    createShikiPrimitiveAsync.mockImplementation(async (options: { engine: Promise<unknown> }) => {
+      await options.engine
+      return externalHighlighter(languageApi())
+    })
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = workerHandler()
+    onmessage(
+      new MessageEvent('message', {
+        data: themeRequest({ theme: 'github-dark' }),
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 1) !== undefined)
+    expect(responseWithId(postMessage, 1)).toEqual({
+      id: 1,
+      ok: false,
+      error: 'Failed to fetch Oniguruma WASM (503)',
+    } satisfies ShikiWorkerResponse)
+    expect(createOnigurumaEngine).not.toHaveBeenCalled()
+
+    onmessage(
+      new MessageEvent('message', {
+        data: { ...themeRequest({ theme: 'github-dark' }), id: 2 },
+      }),
+    )
+    await waitFor(() => responseWithId(postMessage, 2) !== undefined)
+    expect(responseWithId(postMessage, 2)).toMatchObject({ id: 2, ok: true })
+    expect(createOnigurumaEngine).toHaveBeenCalledOnce()
   })
 
   it('disposes cached highlighters on disposeAll', async () => {

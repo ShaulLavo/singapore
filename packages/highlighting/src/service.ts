@@ -521,17 +521,12 @@ class EditorHighlightingService implements HighlightingService {
   }
 
   private loadDefaultTheme(): Promise<HighlightTheme> {
-    if (this.defaultTheme) return this.defaultTheme
     // Import only the default theme so consumer bundlers do not emit every bundled Shiki theme.
-    const pending = import('@shikijs/themes/github-dark').then((module): HighlightTheme => ({
+    this.defaultTheme ??= import('@shikijs/themes/github-dark').then((module): HighlightTheme => ({
       format: 'vscode',
       definition: module.default as unknown as VscodeThemeRegistration,
     }))
-    this.defaultTheme = pending
-    void pending.catch(() => {
-      if (this.defaultTheme === pending) this.defaultTheme = null
-    })
-    return pending
+    return this.defaultTheme
   }
 
   private diffScope(theme: HighlightingThemeSource): string {

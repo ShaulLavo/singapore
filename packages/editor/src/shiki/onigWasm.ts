@@ -9,6 +9,8 @@ type NodeProcessLike = {
   getBuiltinModule?: (id: string) => unknown
 }
 
+let cachedModule: Promise<WebAssembly.Module> | null = null
+
 function nodeFsPromises(): NodeFsPromises | null {
   const proc = (globalThis as { readonly process?: NodeProcessLike }).process
   if (!proc?.versions?.node) return null
@@ -18,6 +20,8 @@ function nodeFsPromises(): NodeFsPromises | null {
 
 function isLocalPath(url: string): boolean {
   if (url.startsWith('file:')) return true
+  if (/^[a-zA-Z]:[\\/]/.test(url)) return true
+  if (url.startsWith('\\\\')) return true
   return !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url) && !url.startsWith('//')
 }
 
@@ -29,34 +33,9 @@ function resolveLocalTarget(url: string): string | URL {
 
 function canStreamWasm(url: string, contentType: string): boolean {
   if (url.startsWith('data:')) return false
-  if (typeof WebAssembly.instantiateStreaming !== 'function') return false
-  return /^application\/wasm(?:$|;|\s)/i.test(contentType.trim())
-}
-
-async function instantiateFromFetch(
-  url: string,
-  importObject?: WebAssembly.Imports,
-): Promise<WebAssembly.WebAssemblyInstantiatedSource> {
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Oniguruma WASM (${response.status}): ${url}`)
-  }
-  const contentType = response.headers.get('content-type') ?? ''
-  if (canStreamWasm(url, contentType)) {
-    return WebAssembly.instantiateStreaming(response, importObject)
-  }
-  return WebAssembly.instantiate(await response.arrayBuffer(), importObject)
-}
-
-/**
- * Loads and instantiates Oniguruma's WASM binary from the emitted `onig.wasm` asset.
- * Uses `WebAssembly.instantiateStreaming` in browsers when served with `application/wasm`,
- * falls back to `arrayBuffer()` otherwise, and reads directly from disk in Node/Bun.
- */
-export async function loadOnigWasm(
-  importObject?: WebAssembly.Imports,
-): Promise<WebAssembly.WebAssemblyInstantiatedSource> {
-  return loadOnigWasmFromUrl(onigWasmUrl, importObject)
+  if (typeof WebAssembly.compileStreaming !== 'function') return false
+  // The WebAssembly Web API rejects parameterized MIME headers like `application/wasm; charset=utf-8`.
+  return contentType.trim().toLowerCase() === 'application/wasm'
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -70,14 +49,46 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer
 }
 
-export async function loadOnigWasmFromUrl(
-  url: string,
-  importObject?: WebAssembly.Imports,
-): Promise<WebAssembly.WebAssemblyInstantiatedSource> {
+async function compileFromFetch(url: string): Promise<WebAssembly.Module> {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Oniguruma WASM (${response.status}): ${url}`)
+  }
+  const contentType = response.headers.get('content-type') ?? ''
+  if (canStreamWasm(url, contentType)) {
+    return WebAssembly.compileStreaming(response)
+  }
+  return WebAssembly.compile(await response.arrayBuffer())
+}
+
+/**
+ * Compiles Oniguruma's WASM module before `@shikijs/engine-oniguruma`'s `loadWasm` runs,
+ * so a transient fetch failure never permanently poisons Oniguruma's internal init promise.
+ */
+export function loadOnigWasmModule(): Promise<WebAssembly.Module> {
+  if (cachedModule) return cachedModule
+  const pending = compileOnigWasmFromUrl(onigWasmUrl)
+  cachedModule = pending
+  void pending.catch(() => {
+    if (cachedModule === pending) cachedModule = null
+  })
+  return pending
+}
+
+export async function compileOnigWasmFromUrl(url: string): Promise<WebAssembly.Module> {
   const fs = nodeFsPromises()
   if (fs && isLocalPath(url)) {
     const bytes = await fs.readFile(resolveLocalTarget(url))
-    return WebAssembly.instantiate(toArrayBuffer(bytes), importObject)
+    return WebAssembly.compile(toArrayBuffer(bytes))
   }
-  return instantiateFromFetch(url, importObject)
+  return compileFromFetch(url)
+}
+
+export function instantiateOnigWasmModule(
+  module: WebAssembly.Module,
+): (importObject?: WebAssembly.Imports) => Promise<WebAssembly.WebAssemblyInstantiatedSource> {
+  return async (importObject) => ({
+    instance: await WebAssembly.instantiate(module, importObject),
+    module,
+  })
 }

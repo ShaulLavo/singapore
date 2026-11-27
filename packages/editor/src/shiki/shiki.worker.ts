@@ -5,7 +5,7 @@ import {
   type ShikiPrimitive,
   type ThemeRegistrationAny,
 } from 'shiki/core'
-import { loadOnigWasm } from './onigWasm'
+import { instantiateOnigWasmModule, loadOnigWasmModule } from './onigWasm'
 import { createIncrementalTokenizer, type CreateIncrementalTokenizerResult } from './tokenizer'
 import { packTokenLines } from './editor-tokens'
 import type { EditorTheme } from '../theme'
@@ -570,7 +570,9 @@ const ensureSharedHighlighter = async (
     const generation = workerGeneration
     const created = (
       createShikiPrimitiveAsync({
-        engine: createOnigurumaEngine(loadOnigWasm),
+        engine: loadOnigWasmModule().then((module) =>
+          createOnigurumaEngine(instantiateOnigWasmModule(module)),
+        ),
         langs: uniqueLanguages as unknown as LanguageRegistration[],
         themes: uniqueThemes as unknown as ThemeRegistrationAny[],
       }) as Promise<ShikiPrimitive<string, string>>

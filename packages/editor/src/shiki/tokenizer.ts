@@ -363,30 +363,29 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       const tokenizedLine = lineState(line, result)
       previousState = tokenizedLine.endState
 
-      const inSharedSuffix = suffixLength > 0 && nextIndex >= nextTailStart
-      if (inSharedSuffix) {
-        const previousIndex = previousTailStart + (nextIndex - nextTailStart)
-        const previousLine = previousLines[previousIndex]
-        if (
-          previousLine &&
-          sameSource(previousLine, line) &&
-          tokenLinesEqual(tokenizedLine.tokens, previousLine.tokens) &&
-          this.statesEqual(tokenizedLine.endState, previousLine.endState)
-        ) {
-          const fromOffset = lineOffset(previousLines, prefixLength)
-          const oldEndOffset =
-            fromOffset + spanRawLength(previousLines, prefixLength, previousIndex)
-          const newEndOffset = fromOffset + spanRawLength(rebuiltMiddle, 0, rebuiltMiddle.length)
-          this.replaceLines(prefixLength, previousIndex, rebuiltMiddle)
+      const previousIndex =
+        suffixLength > 0 && nextIndex >= nextTailStart
+          ? previousTailStart + (nextIndex - nextTailStart)
+          : -1
+      const previousLine = previousIndex >= 0 ? previousLines[previousIndex] : undefined
+      if (
+        previousLine &&
+        sameSource(previousLine, line) &&
+        tokenLinesEqual(tokenizedLine.tokens, previousLine.tokens) &&
+        this.statesEqual(tokenizedLine.endState, previousLine.endState)
+      ) {
+        const fromOffset = lineOffset(previousLines, prefixLength)
+        const oldEndOffset = fromOffset + spanRawLength(previousLines, prefixLength, previousIndex)
+        const newEndOffset = fromOffset + spanRawLength(rebuiltMiddle, 0, rebuiltMiddle.length)
+        this.replaceLines(prefixLength, previousIndex, rebuiltMiddle)
 
-          return {
-            fromLine: prefixLength,
-            toLine: previousIndex,
-            lines: cloneSnapshot(rebuiltMiddle),
-            fromOffset,
-            oldEndOffset,
-            newEndOffset,
-          }
+        return {
+          fromLine: prefixLength,
+          toLine: previousIndex,
+          lines: cloneSnapshot(rebuiltMiddle),
+          fromOffset,
+          oldEndOffset,
+          newEndOffset,
         }
       }
 
