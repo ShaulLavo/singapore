@@ -128,6 +128,31 @@ it('keeps the tooltip open along a wide diagonal path through the gap into the t
   expect(dialog.textContent).toContain('token:alphaToken')
 })
 
+it('keeps the tooltip open during slow continuous movement through the gap exceeding the settle delay', async () => {
+  const harness = await mountEditor()
+  const alpha = harness.tokenRect('alphaToken')
+  const x = centerX(alpha)
+
+  await commands.movePointer(x, centerY(alpha))
+  await waitForHoverText('token:alphaToken')
+
+  const popupRect = hoverDialog().getBoundingClientRect()
+  expect(popupRect.bottom).toBeLessThanOrEqual(alpha.top)
+
+  // Move 1 px every 50 ms across the 8 px gap (~450 ms total > 300 ms settle delay) into the tooltip.
+  const startY = Math.floor(alpha.top) - 1
+  const endY = Math.floor(popupRect.bottom) - 4
+  for (let y = startY; y >= endY; y -= 1) {
+    await commands.movePointer(x, y)
+    await wait(50)
+  }
+
+  await wait(HOVER_REQUEST_DEBOUNCE_MS + 100)
+  const dialog = hoverDialog()
+  expect(dialog.hidden).toBe(false)
+  expect(dialog.textContent).toContain('token:alphaToken')
+})
+
 it('hides the tooltip instead of opening a token hover when pausing in trailing blank space in the corridor', async () => {
   const text = [
     '',

@@ -247,15 +247,17 @@ describe('tooltip pointer retention', () => {
     controller.show({ ...showOptions(), anchor })
 
     expect(controller.pointerRetention(95, 209)).toBe('locked')
-    // Diagonal move (+46 px right, -12.5 px up) into the gap stays in the corridor toward the tooltip.
-    expect(controller.pointerRetention(141, 196.5)).toBe('corridor')
+    // Diagonal move (+46 px right, -12.5 px up) into the gap approaches the tooltip.
+    expect(controller.pointerRetention(141, 196.5)).toBe('approaching')
+    // Lateral jitter at the same distance stays in the corridor without reporting new progress.
+    expect(controller.pointerRetention(143, 196.5)).toBe('corridor')
     // Stepping outside the safe triangle toward a distant token drops retention immediately.
     expect(controller.pointerRetention(95, 209)).toBe('locked')
     expect(controller.pointerRetention(230, 205)).toBe('none')
     controller.dispose()
   })
 
-  it('keeps a corridor when traveling straight or diagonally across the gap into the tooltip', () => {
+  it('keeps an approaching corridor when traveling straight or diagonally across the gap into the tooltip', () => {
     const controller = tooltipController()
     const element = document.querySelector<HTMLElement>('.editor-test-hover')!
     element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
@@ -263,8 +265,8 @@ describe('tooltip pointer retention', () => {
     controller.show({ ...showOptions(), anchor, pointer: { clientX: 80, clientY: 209 } })
 
     // First frame jumps straight from anchor into the 8px gap toward the tooltip.
-    expect(controller.pointerRetention(80, 196)).toBe('corridor')
-    expect(controller.pointerRetention(88, 193)).toBe('corridor')
+    expect(controller.pointerRetention(80, 196)).toBe('approaching')
+    expect(controller.pointerRetention(88, 193)).toBe('approaching')
     expect(controller.pointerRetention(92, 188)).toBe('locked')
     controller.dispose()
   })
@@ -277,7 +279,7 @@ describe('tooltip pointer retention', () => {
     controller.show({ ...showOptions(), anchor })
 
     expect(controller.pointerRetention(80, 209)).toBe('locked')
-    expect(controller.pointerRetention(80, 196)).toBe('corridor')
+    expect(controller.pointerRetention(80, 196)).toBe('approaching')
     expect(controller.pointerRetention(150, 204)).toBe('none')
     expect(controller.pointerRetention(80, 194)).toBe('none')
     controller.dispose()

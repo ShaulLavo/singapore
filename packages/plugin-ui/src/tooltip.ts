@@ -104,7 +104,7 @@ export type TooltipShowOptions = {
   readonly preferredPlacement?: AnchoredSurfacePlacement
 }
 
-export type TooltipPointerRetention = 'none' | 'corridor' | 'locked'
+export type TooltipPointerRetention = 'none' | 'corridor' | 'approaching' | 'locked'
 
 export type TooltipOptions = {
   readonly registerKeymapNode?: EditorViewContributionContext['registerKeymapNode']
@@ -129,7 +129,8 @@ export type TooltipController = {
   /**
    * Classifies how strongly the tooltip should stay open for a pointer position:
    * - `locked`: actively engaged (focused, selected, resizing, inside the tooltip, or on its anchor)
-   * - `corridor`: transiently traveling toward the tooltip or within its edge tolerance
+   * - `approaching`: actively getting closer to the tooltip inside its approach corridor
+   * - `corridor`: transiently inside the corridor or tooltip border grace without getting closer
    * - `none`: moved away from the anchor and tooltip
    */
   pointerRetention(clientX: number, clientY: number): TooltipPointerRetention
@@ -313,8 +314,9 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
       return 'none'
     }
 
+    const madeProgress = distance < bestDistance
     pointerTravel.bestDistance = Math.min(bestDistance, distance)
-    return 'corridor'
+    return madeProgress ? 'approaching' : 'corridor'
   }
 
   const pointerRetention = (clientX: number, clientY: number): TooltipPointerRetention => {

@@ -316,13 +316,17 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     )
   }
 
-  const scheduleCorridorSettle = (point: PointerPoint): void => {
+  const scheduleCorridorSettle = (point: PointerPoint, refreshDeadline: boolean): void => {
     const offset = context.hasDocument()
       ? hoverOffsetFromPoint(context, point.clientX, point.clientY)
       : null
     const targetRange =
       offset === null ? null : hoverTargetRangeInSource(context.getSnapshot().textSnapshot, offset)
-    if (corridorSettle && sameNullableRange(corridorSettle.targetRange, targetRange)) {
+    if (
+      !refreshDeadline &&
+      corridorSettle &&
+      sameNullableRange(corridorSettle.targetRange, targetRange)
+    ) {
       corridorSettle.point = point
       return
     }
@@ -340,7 +344,8 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
       clearCorridorSettle()
       return tooltip.cancelHide()
     }
-    if (retention === 'corridor') return scheduleCorridorSettle(point)
+    if (retention === 'approaching') return scheduleCorridorSettle(point, true)
+    if (retention === 'corridor') return scheduleCorridorSettle(point, false)
     clearCorridorSettle()
     if (!context.hasDocument()) return hide()
 

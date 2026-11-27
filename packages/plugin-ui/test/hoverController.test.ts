@@ -258,6 +258,60 @@ describe('one hover per view', () => {
     harness.dispose()
   })
 
+  it('keeps the original tooltip open during slow continuous movement toward it lasting longer than the settle delay', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const upper = 1\nconst alpha = beta',
+      tooltipRect: new DOMRect(12, 132, 400, 60),
+      tokens: [
+        { name: 'upper', rect: new DOMRect(60, 182, 40, 18) },
+        { name: 'alpha', rect: new DOMRect(60, 200, 40, 18) },
+      ],
+    })
+
+    harness.moveTo(80, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    // Move 1 px every 50 ms across the 8 px gap (400 ms total > 300 ms settle delay).
+    for (let y = 199; y >= 192; y -= 1) {
+      harness.moveTo(80, y)
+      await vi.advanceTimersByTimeAsync(50)
+    }
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    harness.enterTooltip()
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS + TOOLTIP_HIDE_DELAY_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:alpha'])
+    harness.dispose()
+  })
+
+  it('does not postpone corridor settle when wiggling sideways at constant distance over a token', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const upper = 1\nconst alpha = beta',
+      tooltipRect: new DOMRect(12, 132, 400, 60),
+      tokens: [
+        { name: 'upper', rect: new DOMRect(60, 182, 40, 18) },
+        { name: 'alpha', rect: new DOMRect(60, 200, 40, 18) },
+      ],
+    })
+
+    harness.moveTo(80, 209)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    harness.moveTo(80, 196)
+    await vi.advanceTimersByTimeAsync(150)
+    harness.moveTo(82, 196)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:upper'])
+    harness.dispose()
+  })
+
   it('hides the tooltip if the pointer stops over trailing blank space even when caret hit-test clamps', async () => {
     vi.useFakeTimers()
     const harness = mountGeometry({
