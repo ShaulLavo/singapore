@@ -460,10 +460,21 @@ it.each([5, 7])(
       expect(painted.data[offset + 2]).toBe(0)
     }
     expect(
-      ink(painted, (red, green, blue) => red > 180 && green > 180 && blue > 180),
+      ink(
+        cropHorizontal(painted, left, right),
+        (red, green, blue) => red > 180 && green > 180 && blue > 180,
+      ),
     ).toBeGreaterThan(15)
   },
 )
+
+function cropHorizontal(image: ImageData, left: number, right: number): ImageData {
+  const canvas = new OffscreenCanvas(image.width, image.height)
+  const context = canvas.getContext('2d')
+  assert(context)
+  context.putImageData(image, 0, 0)
+  return context.getImageData(left, 0, Math.max(1, right - left), image.height)
+}
 
 function nearRgb(
   red: number,
@@ -626,3 +637,72 @@ it('layers opaque selection above row backgrounds and behind search highlights, 
     20,
   )
 })
+
+it.for(['virtualized', 'content'] as const)(
+  'keeps opaque selection above row background and behind text in restored %s viewport snapshots',
+  async (scrollMode) => {
+    const originalHost = document.createElement('div')
+    originalHost.id = `provisional-selection-source-${scrollMode}`
+    originalHost.style.cssText = 'width:480px;height:80px;position:relative'
+    originalHost.style.setProperty('--editor-merge-current-header-background', '#442222')
+    document.body.append(originalHost)
+    const restoredHost = document.createElement('div')
+    restoredHost.id = `provisional-selection-restored-${scrollMode}`
+    restoredHost.style.cssText = 'width:480px;height:80px;position:relative'
+    document.body.append(restoredHost)
+    const options = {
+      cursorLineHighlight: { rowBackground: false, gutterNumber: false, gutterBackground: false },
+      fontSize: 24,
+      lineHeight: 32,
+      plugins: [createPaintSnapshotPlugin()],
+      scrollMode,
+      theme: {
+        type: 'dark' as const,
+        backgroundColor: '#000000',
+        foregroundColor: '#ffffff',
+        selectionColor: '#1f3b5c',
+      },
+    }
+    const original = new Editor(originalHost, options)
+    const restored = new Editor(restoredHost, { ...options, presentationReady: false })
+    try {
+      const source = 'MMMM NNNN'
+      original.setText(source)
+      original.setTokens([{ start: 0, end: 4, style: { color: '#ff0000' } }])
+      await expect
+        .poll(() => originalHost.querySelector<HTMLElement>('[data-editor-virtual-row="0"]'))
+        .not.toBeNull()
+      const originalRow = originalHost.querySelector<HTMLElement>('[data-editor-virtual-row="0"]')
+      assert(originalRow)
+      originalRow.classList.add('editor-merge-conflict-current-header')
+      original.focus()
+      original.setSelection(0, source.length)
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+
+      const saved = original.captureSnapshot()
+      assert(saved)
+      restored.setSnapshot(saved.paint, saved.documentKey)
+      expect(restored.getPresentationState()).toBe('provisional')
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+
+      const painted = await pixels(restoredHost.id)
+      // Row background stays visible outside the selection; selection paints above it.
+      expect(
+        ink(painted, (red, green, blue) => nearRgb(red, green, blue, [68, 34, 34])),
+      ).toBeGreaterThan(200)
+      expect(
+        ink(painted, (red, green, blue) => nearRgb(red, green, blue, [31, 59, 92])),
+      ).toBeGreaterThan(200)
+      // Saved syntax token and plain text spans paint above the opaque selection.
+      expect(redInk(painted)).toBeGreaterThan(20)
+      expect(
+        ink(painted, (red, green, blue) => red > 180 && green > 180 && blue > 180),
+      ).toBeGreaterThan(20)
+    } finally {
+      restored.dispose()
+      original.dispose()
+      restoredHost.remove()
+      originalHost.remove()
+    }
+  },
+)
