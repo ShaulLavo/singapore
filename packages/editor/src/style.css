@@ -195,6 +195,13 @@
 
 .editor-virtualized[data-editor-scroll-mode='content'] .editor-virtualized-row {
   contain: style size;
+  /* Content mode drops layout/paint containment, so `isolation: isolate` keeps
+     the row a local stacking context (even with `rowPositioning: 'top'` and no
+     transform) while leaving `z-index: auto`. That confines
+     `.editor-virtualized-selection-layer` (`z-index: -1`) above the row
+     background and behind its text. Virtualized/static rows already form a
+     stacking context via `contain: layout paint style size`. */
+  isolation: isolate;
 }
 
 .editor-virtualized-viewport {
@@ -338,12 +345,6 @@
      estimate (visualColumnLength), which undercounts double-width glyphs. */
   contain: layout paint style size;
   height: var(--editor-row-height);
-  /* Establish a local stacking context in every scroll and positioning mode
-     (including content mode, which drops layout/paint containment, and top
-     positioning without a transform) while keeping `z-index: auto`. That lets
-     `.editor-virtualized-selection-layer` sit at `z-index: -1` above the row's
-     own background and strictly behind its text and highlights. */
-  isolation: isolate;
   left: var(--editor-gutter-width);
   line-height: var(--editor-row-height);
   position: absolute;
