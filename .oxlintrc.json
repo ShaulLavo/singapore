@@ -6,7 +6,7 @@
   "rules": {
     "no-nested-ternary": "error",
     "max-depth": ["error", 3],
-    "no-else-return": "error"
+    "no-else-return": ["error", { "allowElseIf": false }]
   },
   "overrides": [
     {
