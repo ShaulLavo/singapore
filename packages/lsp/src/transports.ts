@@ -341,9 +341,8 @@ const waitForWebSocketOpen = (
       const cleanupFailure = cleanup()
       const abortReason = signal?.reason
       const closeFailure = closeSocket()
-      reject(
-        closeFailure ? closeFailure.error : cleanupFailure ? cleanupFailure.error : abortReason,
-      )
+      const failure = closeFailure ?? cleanupFailure
+      reject(failure ? failure.error : abortReason)
     }
     const handleOpen = (): void => {
       if (settled) return

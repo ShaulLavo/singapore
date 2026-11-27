@@ -70,6 +70,11 @@ export function computeRenderLayout(options: {
     ? Math.ceil(Math.max(baseCanvasInnerHeight, fitted.documentMinimapHeight))
     : baseCanvasInnerHeight
 
+  let renderMinimap = RenderMinimap.None
+  if (options.minimap.enabled) {
+    renderMinimap = options.minimap.renderCharacters ? RenderMinimap.Text : RenderMinimap.Blocks
+  }
+
   return {
     width,
     height,
@@ -82,11 +87,7 @@ export function computeRenderLayout(options: {
     scale: fitted.scale,
     isSampling: fitted.isSampling,
     heightIsEditorHeight: fitted.heightIsEditorHeight,
-    renderMinimap: options.minimap.enabled
-      ? options.minimap.renderCharacters
-        ? RenderMinimap.Text
-        : RenderMinimap.Blocks
-      : RenderMinimap.None,
+    renderMinimap,
   }
 }
 

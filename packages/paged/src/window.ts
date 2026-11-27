@@ -80,11 +80,14 @@ function splitBlock(bytes: Uint8Array, terminal: boolean, offset: number): Block
     ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff))
   )
     throw new PagedSourceError('UTF-16 input is unsupported by the UTF-8 paged viewer')
-  const complete = terminal
-    ? bytes.length
-    : couldBeUtf16 && bytes.length === 1
-      ? 0
-      : completePrefix(bytes)
+  let complete: number
+  if (terminal) {
+    complete = bytes.length
+  } else if (couldBeUtf16 && bytes.length === 1) {
+    complete = 0
+  } else {
+    complete = completePrefix(bytes)
+  }
   return { bytes: bytes.subarray(0, complete), carry: bytes.subarray(complete), terminal }
 }
 

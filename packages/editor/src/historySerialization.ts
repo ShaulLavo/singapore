@@ -329,11 +329,12 @@ const restoreNode = (
   const selections = node.authored
     ? resolveIdentitySelections(snapshot, node.authored.after)
     : restoreSelections(snapshot, node.selections)
-  const selectionsBefore = node.authored
-    ? resolveIdentitySelections(snapshot, node.authored.before)
-    : parentSnapshot
-      ? restoreSelections(parentSnapshot, node.selectionsBefore)
-      : selections
+  let selectionsBefore = selections
+  if (node.authored) {
+    selectionsBefore = resolveIdentitySelections(snapshot, node.authored.before)
+  } else if (parentSnapshot) {
+    selectionsBefore = restoreSelections(parentSnapshot, node.selectionsBefore)
+  }
   const preferred = node.preferredChildId
   // Authored execution uses effects; inspection edits come from today's parent/child previews.
   const step = node.authored && parentSnapshot ? diffStep(parentSnapshot, snapshot) : node

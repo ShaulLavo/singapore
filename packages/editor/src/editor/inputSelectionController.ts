@@ -495,7 +495,8 @@ export class InputSelectionController {
     if (!this.session) return false
     if (command !== 'copy' && !this.#canTypeText()) return false
     const event = context.event
-    const nativeKey = command === 'copy' ? 'c' : command === 'cut' ? 'x' : 'v'
+    const nativeKeys = { copy: 'c', cut: 'x', paste: 'v' } as const
+    const nativeKey = nativeKeys[command]
     if (
       event?.key.toLowerCase() === nativeKey &&
       (event.ctrlKey || event.metaKey) &&
@@ -3454,11 +3455,11 @@ export class InputSelectionController {
     // on rather than the ones the last gesture left in the session.
     const handled = this.#handledPasteFragments(transfer, text, metadata !== null, 'paste')
     const pasted = handled?.join('') ?? text
+    const fallbackTextChange =
+      !handled && text.length > 0 ? this.#applyPaste(session, text, metadata) : null
     const textChange = handled
       ? this.#applyDistributedPaste(session, handled, this.#resolvedSelections())
-      : text.length > 0
-        ? this.#applyPaste(session, text, metadata)
-        : null
+      : fallbackTextChange
     this.#transitionInputState({ type: 'transaction-committed' })
     // Every handler passed on a payload that had no text of its own, so the gesture inserts
     // nothing; the selection the sync above corrected is still worth announcing.

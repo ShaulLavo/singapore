@@ -2,5 +2,71 @@
   // Pinned upstream bytes, checked by hash before the benchmark builds them.
   "ignorePatterns": ["packages/textbuffer/bench/vscode-textbuffer/**"],
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
-  "plugins": ["unicorn", "typescript", "oxc"]
+  "plugins": ["unicorn", "typescript", "oxc"],
+  "rules": {
+    "no-nested-ternary": "error",
+    "max-depth": ["error", 3],
+    "no-else-return": ["error", { "allowElseIf": false }]
+  },
+  "overrides": [
+    {
+      // Legacy max-depth baseline: shrink this list when touching a listed file; never add new files.
+      "files": [
+        "examples/stress/input-worker-proof.mjs",
+        "examples/stress/paged.ts",
+        "examples/stress/paired.mjs",
+        "examples/stress/reclamation-positions-per-id.mjs",
+        "examples/stress/runtime-graph.mjs",
+        "examples/stress/src/paged/proof.ts",
+        "packages/collab/test/concurrency.test.ts",
+        "packages/collab/test/ported/fixtures/fugue-max-oracle.ts",
+        "packages/collab/test/ported/yjs-scheduler.test.ts",
+        "packages/collab/test/review-regressions.test.ts",
+        "packages/collaboration/bench/detector.test.ts",
+        "packages/collaboration/bench/profile.test.ts",
+        "packages/collaboration/bench/runtime.browser.test.ts",
+        "packages/collaboration/bench/tail.test.ts",
+        "packages/collaboration/src/merge-review.ts",
+        "packages/collaboration/test/history.test.ts",
+        "packages/collaboration/test/merge-review-simulation.test.ts",
+        "packages/collaboration/test/network.ts",
+        "packages/diff/test/diffSyntaxProjection.test.ts",
+        "packages/editor/src/editor/documentAnalysis.ts",
+        "packages/editor/src/editor/inputSelectionController.ts",
+        "packages/editor/src/editor/snippetTokensFeature.ts",
+        "packages/editor/src/editor/syntaxController.ts",
+        "packages/editor/src/shiki/shiki.worker.ts",
+        "packages/editor/src/virtualization/documentPaintCapture.ts",
+        "packages/editor/src/virtualization/documentPaintRows.ts",
+        "packages/editor/src/virtualization/rowTokenPainter.ts",
+        "packages/editor/src/virtualization/virtualizedTextViewHighlights.ts",
+        "packages/editor/src/virtualization/wordWrap.ts",
+        "packages/editor/test/reading-order.proof.mjs",
+        "packages/editor/test/textbufferImports.node.test.ts",
+        "packages/editor/test/wordWrapTabs.browser.test.ts",
+        "packages/find/src/search.ts",
+        "packages/lsp-plugin/src/fuzzyMatch.ts",
+        "packages/markdown/src/linkRender.ts",
+        "packages/markdown/src/replacements.ts",
+        "packages/minimap/test/documentSource.test.ts",
+        "packages/textbuffer/bench/identity.mjs",
+        "packages/textbuffer/bench/profile.mjs",
+        "packages/textbuffer/bench/profile.spec.mjs",
+        "packages/textbuffer/bench/run.mjs",
+        "packages/textbuffer/bench/worker.mjs",
+        "packages/tree-sitter/src/index.ts",
+        "packages/tree-sitter/src/mergeReview.ts",
+        "packages/tree-sitter/src/treeSitter/mergeUnits.ts",
+        "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
+        "packages/tree-sitter/test/cursor-seek.test.ts",
+        "packages/tree-sitter/test/range-query-profile.browser.test.ts",
+        "packages/typescript-lsp/src/worker/libraries.ts",
+        "site/scripts/capture-page.ts",
+        "site/tests/manual.browser.ts"
+      ],
+      "rules": {
+        "max-depth": "off"
+      }
+    }
+  ]
 }

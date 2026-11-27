@@ -221,7 +221,8 @@ class BufferHistoryViewer<TResult> implements HistoryViewer<TResult> {
   #focusBySequence(step: 1 | -1): boolean {
     const nodes = this.state.graph.nodes
     const index = nodes.findIndex((node) => node.id === this.state.focusedId)
-    const target = nodes[index === -1 ? (step === 1 ? 0 : nodes.length - 1) : index + step]
+    const fallbackIndex = step === 1 ? 0 : nodes.length - 1
+    const target = nodes[index === -1 ? fallbackIndex : index + step]
     if (!target) return false
     return this.focus(target.id)
   }

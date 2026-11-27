@@ -242,16 +242,11 @@ async function main() {
         inputUtf8Bytes: Buffer.byteLength(fixture.initial),
         operations: fixture.operations.length || 1,
         setupOperations: fixture.setup.length,
-        primitiveEdits: fixture.operations.reduce(
-          (total, operation) =>
-            total +
-            (operation.kind === 'batch'
-              ? operation.edits.length
-              : operation.kind === 'edit'
-                ? 1
-                : 0),
-          0,
-        ),
+        primitiveEdits: fixture.operations.reduce((total, operation) => {
+          if (operation.kind === 'batch') return total + operation.edits.length
+          if (operation.kind === 'edit') return total + 1
+          return total
+        }, 0),
         engines,
         ratio: engines.vscode
           ? engines.singapore.timeMs.median / engines.vscode.timeMs.median

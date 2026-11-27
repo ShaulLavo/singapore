@@ -165,12 +165,14 @@ export class TextStorageMaintenance {
       this.#activeScheduler.cancel(this.#activeKey, 'migrated')
       this.#activeKey = null
     }
-    const key =
-      this.#activeScheduler === target && this.#activeKey
-        ? this.#activeKey
-        : target === this.#fallbackScheduler
-          ? 'text-storage'
-          : `text-storage:${nextWorkSchedulerScopeId(target)}`
+    let key: string
+    if (this.#activeScheduler === target && this.#activeKey) {
+      key = this.#activeKey
+    } else if (target === this.#fallbackScheduler) {
+      key = 'text-storage'
+    } else {
+      key = `text-storage:${nextWorkSchedulerScopeId(target)}`
+    }
     this.#activeScheduler = target
     this.#activeKey = key
     this.#scheduled = true

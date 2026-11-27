@@ -3752,34 +3752,34 @@ describe('viewport syntax readiness state machine (#169)', () => {
 
           allowRange = false
           const scrollRange: EditorSyntaxRange = { startIndex: 60, endIndex: 80 }
-          resolveScroll!(
-            outcome === 'superseded'
-              ? {
-                  ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
-                  projection: {
-                    ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }).projection,
-                    analysis: {
-                      kind: 'cancelled',
-                      reason: 'superseded',
-                      coveredRange: { startIndex: 0, endIndex: 0 },
-                      elapsedMs: 10,
-                      budgetMs: 50,
-                    },
-                  },
-                }
-              : outcome === 'partial'
-                ? {
-                    ...answerFor(scrollRange),
-                    projection: {
-                      ...answerFor(scrollRange).projection,
-                      analysis: { kind: 'partial', coveredRange: scrollRange },
-                    },
-                  }
-                : {
-                    ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
-                    degraded: { kind: 'range-unavailable', message: 'range-disabled' },
-                  },
-          )
+          if (outcome === 'superseded') {
+            resolveScroll!({
+              ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
+              projection: {
+                ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }).projection,
+                analysis: {
+                  kind: 'cancelled',
+                  reason: 'superseded',
+                  coveredRange: { startIndex: 0, endIndex: 0 },
+                  elapsedMs: 10,
+                  budgetMs: 50,
+                },
+              },
+            })
+          } else if (outcome === 'partial') {
+            resolveScroll!({
+              ...answerFor(scrollRange),
+              projection: {
+                ...answerFor(scrollRange).projection,
+                analysis: { kind: 'partial', coveredRange: scrollRange },
+              },
+            })
+          } else {
+            resolveScroll!({
+              ...createEmptySyntaxResult({ requestedRanges: [scrollRange] }),
+              degraded: { kind: 'range-unavailable', message: 'range-disabled' },
+            })
+          }
 
           await vi.waitFor(() => expect(view.syntax.status).toBe('ready'))
           expect(view.syntax.renderDataReady).toBe(true)

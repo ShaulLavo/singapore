@@ -40,12 +40,12 @@ class ConfigurationWorker extends EventTarget implements Worker {
   postMessage(request: ShikiWorkerRequest): void {
     this.requests.push(request)
     const payload = request.payload
-    const result =
-      payload.type === 'source'
-        ? { source: this.reader.apply(payload.command) }
-        : payload.type === 'open' || payload.type === 'edit'
-          ? { tokensPacked: packEditorTokens([]) }
-          : undefined
+    let result: Extract<ShikiWorkerResponse, { ok: true }>['result']
+    if (payload.type === 'source') {
+      result = { source: this.reader.apply(payload.command) }
+    } else if (payload.type === 'open' || payload.type === 'edit') {
+      result = { tokensPacked: packEditorTokens([]) }
+    }
     const reply: ShikiWorkerResponse = { id: request.id, ok: true, result }
     queueMicrotask(() => this.onmessage?.call(this, new MessageEvent('message', { data: reply })))
   }
@@ -131,7 +131,8 @@ async function opened(
   return payload
 }
 function disposables(result: ReturnType<EditorPlugin['activate']>) {
-  return !result ? [] : 'dispose' in result ? [result] : result
+  if (!result) return []
+  return 'dispose' in result ? [result] : result
 }
 
 describe('Shiki plugin contributions', () => {

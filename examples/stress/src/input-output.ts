@@ -55,11 +55,14 @@ function consumerSessions(text: string, point: InputPublicationPoint, identity: 
         (session.kind === 'shiki' || session.kind === 'treeSitter'),
     )
     .map((session) => {
-      const source = session.canonical
-        ? replayCanonicalSource(session.canonical)
-        : session.kind === 'shiki'
-          ? replayShikiSource(session.log)
-          : replayTreeSitterSource(session.log)
+      let source: string | null
+      if (session.canonical) {
+        source = replayCanonicalSource(session.canonical)
+      } else if (session.kind === 'shiki') {
+        source = replayShikiSource(session.log)
+      } else {
+        source = replayTreeSitterSource(session.log)
+      }
       return {
         kind: session.kind,
         current:

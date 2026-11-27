@@ -200,12 +200,12 @@ async function discoverFresh(
 ): Promise<Omit<Project, 'policy'>[]> {
   const { options: rawOptions, filter } = parseCLI(['vitest', 'run'].concat(args))
   const { exclude, ...options } = rawOptions
-  const config =
-    typeof options.config === 'string'
-      ? options.config
-      : existsSync(resolve(root, directory, 'vitest.config.ts'))
-        ? 'vitest.config.ts'
-        : ''
+  let config = ''
+  if (typeof options.config === 'string') {
+    config = options.config
+  } else if (existsSync(resolve(root, directory, 'vitest.config.ts'))) {
+    config = 'vitest.config.ts'
+  }
   const vitest = await createVitest({
     ...options,
     root: resolve(root, directory),
@@ -214,7 +214,12 @@ async function discoverFresh(
   })
   try {
     // CLI exclusions are additive. Copy each project's shared defaults before appending.
-    const cliExclude = exclude ? (Array.isArray(exclude) ? exclude : [exclude]) : []
+    let cliExclude: string[] = []
+    if (Array.isArray(exclude)) {
+      cliExclude = exclude
+    } else if (exclude) {
+      cliExclude = [exclude]
+    }
     for (const project of vitest.projects) {
       project.config.exclude = project.config.exclude.concat(cliExclude)
     }
