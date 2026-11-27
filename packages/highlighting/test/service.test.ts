@@ -30,14 +30,16 @@ describe('highlighting service without a worker', () => {
     expect(() => service.syntaxProvider()).toThrow(HighlightingError)
   })
 
-  test('clears retained theme caches and prevents late theme loads from repopulating them after dispose', async () => {
+  test('clears retained theme caches and prevents late theme loads or notifications from repopulating them after dispose', async () => {
     const lateTheme = Promise.withResolvers<{
       readonly name: string
       readonly type: 'dark'
       readonly colors: { readonly 'editor.background': string }
     }>()
+    let resolveCalls = 0
     const service = createHighlightingService({
       resolveTheme: (id) => {
+        resolveCalls += 1
         if (id === 'late-theme') return lateTheme.promise
         return Promise.resolve({
           name: id,
@@ -49,9 +51,15 @@ describe('highlighting service without a worker', () => {
     // Populate defaultTheme via highlight() (which loads github-dark before checking Worker).
     await service.highlight('const x = 1', { language: 'ts' }).catch(() => undefined)
     // Populate documentThemes and documentThemeContent via provider.loadTheme().
-    const initialProvider = service.highlighterProvider({
-      current: () => ({ format: 'vscode', id: 'custom-theme' }),
-    })
+    const listeners = new Set<() => void>()
+    const initialSource = {
+      current: () => ({ format: 'vscode' as const, id: 'custom-theme' }),
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    }
+    const initialProvider = service.highlighterProvider(initialSource)
     await initialProvider.loadTheme?.().catch(() => undefined)
 
     const documentThemes = Reflect.get(service, 'documentThemes') as Map<string, unknown>
@@ -72,16 +80,29 @@ describe('highlighting service without a worker', () => {
       current: () => ({ format: 'vscode', id: 'late-theme' }),
     })
     const pendingLateLoad = lateProvider.loadTheme?.().catch(() => undefined)
+    // Register a subscriber to verify post-dispose theme notifications do not restart work.
+    const unsubscribe = (
+      Reflect.get(service, 'onDocumentTheme') as (
+        theme: typeof initialSource,
+        listener: () => void,
+      ) => () => void
+    ).call(service, initialSource, () => undefined)
 
     await service.dispose()
+    const callsAfterDispose = resolveCalls
     lateTheme.resolve({
       name: 'late-theme',
       type: 'dark',
       colors: { 'editor.background': '#222222' },
     })
+    for (const listener of listeners) listener()
     await pendingLateLoad
+    // Flush multi-hop async continuations inside resolveImported -> importedTheme.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    unsubscribe()
 
     expect(service.inspect().disposed).toBe(true)
+    expect(resolveCalls).toBe(callsAfterDispose)
     expect(documentThemes.size).toBe(0)
     expect(documentThemeContent.size).toBe(0)
     expect(documentThemeRefreshes.size).toBe(0)

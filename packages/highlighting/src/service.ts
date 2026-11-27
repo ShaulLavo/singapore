@@ -596,6 +596,7 @@ class EditorHighlightingService implements HighlightingService {
   }
 
   private async refreshDocumentTheme(theme: HighlightingThemeSource): Promise<void> {
+    if (this.disposeTask) return
     const selection = theme.current()
     if (selection.format !== 'vscode') return
 
