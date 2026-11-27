@@ -104,7 +104,7 @@ export type TooltipShowOptions = {
   readonly preferredPlacement?: AnchoredSurfacePlacement
 }
 
-export type TooltipPointerRetention = 'none' | 'corridor' | 'approaching' | 'locked'
+export type TooltipPointerRetention = 'none' | 'corridor' | 'approaching' | 'anchor' | 'locked'
 
 export type TooltipOptions = {
   readonly registerKeymapNode?: EditorViewContributionContext['registerKeymapNode']
@@ -128,7 +128,8 @@ export type TooltipController = {
   containsTarget(target: EventTarget | null): boolean
   /**
    * Classifies how strongly the tooltip should stay open for a pointer position:
-   * - `locked`: actively engaged (focused, selected, resizing, inside the tooltip, or on its anchor)
+   * - `locked`: actively engaged with the tooltip itself (focused, selected, resizing, or inside it)
+   * - `anchor`: over the hovered token's anchor rect
    * - `approaching`: actively getting closer to the tooltip inside its approach corridor
    * - `corridor`: transiently inside the corridor or tooltip border grace without getting closer
    * - `none`: moved away from the anchor and tooltip
@@ -340,7 +341,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
         originY: clientY,
         bestDistance: distance,
       }
-      return 'locked'
+      return 'anchor'
     }
 
     return retainOutsideTarget(tooltipRect, distance, clientX, clientY)

@@ -129,7 +129,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     if (event.target instanceof Node && element.contains(event.target)) return stopOutsideTracking()
 
     const retention = tooltip.pointerRetention(event.clientX, event.clientY)
-    if (retention === 'locked') {
+    if (retention === 'locked' || retention === 'anchor') {
       outsideHideScheduled = false
       return tooltip.cancelHide()
     }
@@ -353,7 +353,8 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     const pending = corridorSettle
     corridorSettle = null
     if (!pending || disposed) return
-    if (tooltip.pointerRetention(pending.point.clientX, pending.point.clientY) === 'locked') return
+    const retention = tooltip.pointerRetention(pending.point.clientX, pending.point.clientY)
+    if (retention === 'locked' || retention === 'anchor') return
     if (!context.hasDocument()) return hide()
 
     const snapshot = context.getSnapshot()
@@ -407,6 +408,20 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     if (retention === 'locked') {
       clearCorridorSettle()
       return tooltip.cancelHide()
+    }
+    if (retention === 'anchor') {
+      const markerTarget = distinctMarkerTargetAtPoint(
+        context,
+        operation,
+        event.clientX,
+        event.clientY,
+      )
+      if (!markerTarget) {
+        clearCorridorSettle()
+        return tooltip.cancelHide()
+      }
+      clearCorridorSettle()
+      return scheduleTarget(markerTarget.target, markerTarget.snapshot, point)
     }
     if (retention === 'approaching') return scheduleCorridorSettle(point, true)
     if (retention === 'corridor') return scheduleCorridorSettle(point, false)
@@ -518,6 +533,27 @@ function clearTimers(operation: HoverOperation): void {
  * A scroll or relayout moves the text out from under the hover, and an edit may have changed what
  * it says. Both belong to the old frame, so the hover goes with them.
  */
+function distinctMarkerTargetAtPoint(
+  context: EditorViewContributionContext,
+  current: HoverOperation | null,
+  clientX: number,
+  clientY: number,
+): { readonly target: HoverPointTarget; readonly snapshot: EditorViewSnapshot } | null {
+  if (!context.hasDocument()) return null
+  const marker = context.markerAtPoint(clientX, clientY)
+  if (!marker) return null
+  const snapshot = context.getSnapshot()
+  const range = markerTargetRangeInSource(snapshot.textSnapshot, marker.offset)
+  if (
+    current &&
+    current.snapshot.textVersion === snapshot.textVersion &&
+    sameOffsetRange(current.anchor.range, range)
+  ) {
+    return null
+  }
+  return { target: { offset: marker.offset, range }, snapshot }
+}
+
 function hoverTargetFromPoint(
   context: EditorViewContributionContext,
   snapshot: EditorViewSnapshot,

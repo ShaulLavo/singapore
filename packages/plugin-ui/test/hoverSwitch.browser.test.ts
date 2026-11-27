@@ -262,6 +262,69 @@ it('switches cleanly between an identifier, its adjacent end-of-line zero-width 
   expect(harness.computeCount()).toBeGreaterThanOrEqual(4)
 })
 
+it('switches cleanly between an inline zero-width marker and the adjacent identifiers on both sides', async () => {
+  const text = ['', '', '', '', '', '', 'alpha\u200bbeta'].join('\n')
+  const alphaStart = text.indexOf('alpha')
+  const alphaEnd = alphaStart + 'alpha'.length
+  const zwspOffset = text.indexOf('\u200b')
+  const betaStart = text.indexOf('beta')
+  const betaEnd = betaStart + 'beta'.length
+  const harness = await mountEditor(text, undefined, (request) => {
+    if (request.anchor.offset === zwspOffset) {
+      return [
+        {
+          ordinal: 1,
+          range: { start: zwspOffset, end: zwspOffset + 1 },
+          markdown: 'inline zero-width space',
+        },
+      ]
+    }
+    if (request.anchor.offset >= alphaStart && request.anchor.offset < alphaEnd) {
+      return [
+        {
+          ordinal: 1,
+          range: { start: alphaStart, end: alphaEnd },
+          markdown: 'identifier:alpha',
+        },
+      ]
+    }
+    if (request.anchor.offset >= betaStart && request.anchor.offset < betaEnd) {
+      return [
+        {
+          ordinal: 1,
+          range: { start: betaStart, end: betaEnd },
+          markdown: 'identifier:beta',
+        },
+      ]
+    }
+    return []
+  })
+
+  const alphaRect = harness.tokenRect('alpha')
+  const betaRect = harness.tokenRect('beta')
+  const marker = document.querySelector<HTMLElement>(
+    `[data-editor-hidden-character-offset="${zwspOffset}"]`,
+  )
+  expect(marker).not.toBeNull()
+  const markerRect = marker!.getBoundingClientRect()
+
+  // Marker -> beta -> back to marker (overlapping beta's left edge) -> alpha -> back to marker.
+  await commands.movePointer(centerX(markerRect), centerY(markerRect))
+  await waitForHoverText('inline zero-width space')
+
+  await commands.movePointer(betaRect.right - 4, centerY(betaRect), 4)
+  await waitForHoverText('identifier:beta')
+
+  await commands.movePointer(centerX(markerRect), centerY(markerRect), 4)
+  await waitForHoverText('inline zero-width space')
+
+  await commands.movePointer(alphaRect.left + 4, centerY(alphaRect), 4)
+  await waitForHoverText('identifier:alpha')
+
+  await commands.movePointer(centerX(markerRect), centerY(markerRect), 4)
+  await waitForHoverText('inline zero-width space')
+})
+
 it('keeps the tooltip open during slow continuous movement across a gap above the first visible row', async () => {
   const text = 'const topRowToken = 1\nconst nextRow = 2'
   const harness = await mountEditor(text, undefined, undefined, { top: 180 })

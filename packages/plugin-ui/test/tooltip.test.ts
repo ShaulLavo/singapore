@@ -216,7 +216,7 @@ describe('tooltip pointer retention', () => {
     const anchor = new DOMRect(60, 200, 40, 18)
     controller.show({ ...showOptions(), anchor, pointer: { clientX: 80, clientY: 209 } })
 
-    expect(controller.pointerRetention(80, 209)).toBe('locked')
+    expect(controller.pointerRetention(80, 209)).toBe('anchor')
     expect(controller.pointerRetention(140, 209)).toBe('none')
     expect(controller.shouldKeepForPointer(210, 209)).toBe(false)
     controller.dispose()
@@ -234,7 +234,7 @@ describe('tooltip pointer retention', () => {
       pointer: { clientX: 80, clientY: 109 },
     })
 
-    expect(controller.pointerRetention(80, 109)).toBe('locked')
+    expect(controller.pointerRetention(80, 109)).toBe('anchor')
     expect(controller.pointerRetention(150, 109)).toBe('none')
     controller.dispose()
   })
@@ -246,13 +246,13 @@ describe('tooltip pointer retention', () => {
     const anchor = new DOMRect(60, 200, 40, 18)
     controller.show({ ...showOptions(), anchor })
 
-    expect(controller.pointerRetention(95, 209)).toBe('locked')
+    expect(controller.pointerRetention(95, 209)).toBe('anchor')
     // Diagonal move (+46 px right, -12.5 px up) into the gap approaches the tooltip.
     expect(controller.pointerRetention(141, 196.5)).toBe('approaching')
     // Lateral jitter at the same distance stays in the corridor without reporting new progress.
     expect(controller.pointerRetention(143, 196.5)).toBe('corridor')
     // Stepping outside the safe triangle toward a distant token drops retention immediately.
-    expect(controller.pointerRetention(95, 209)).toBe('locked')
+    expect(controller.pointerRetention(95, 209)).toBe('anchor')
     expect(controller.pointerRetention(230, 205)).toBe('none')
     controller.dispose()
   })
@@ -278,7 +278,7 @@ describe('tooltip pointer retention', () => {
     const anchor = new DOMRect(60, 200, 40, 18)
     controller.show({ ...showOptions(), anchor })
 
-    expect(controller.pointerRetention(80, 209)).toBe('locked')
+    expect(controller.pointerRetention(80, 209)).toBe('anchor')
     expect(controller.pointerRetention(80, 196)).toBe('approaching')
     expect(controller.pointerRetention(150, 204)).toBe('none')
     expect(controller.pointerRetention(80, 194)).toBe('none')
@@ -298,7 +298,7 @@ describe('tooltip pointer retention', () => {
       pointer: { clientX: 80, clientY: 209 },
     })
 
-    expect(controller.pointerRetention(80, 209)).toBe('locked')
+    expect(controller.pointerRetention(80, 209)).toBe('anchor')
     expect(controller.pointerRetention(150, 209)).toBe('none')
     controller.dispose()
   })
