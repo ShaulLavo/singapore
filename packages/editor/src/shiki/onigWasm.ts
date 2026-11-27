@@ -34,8 +34,8 @@ function resolveLocalTarget(url: string): string | URL {
 function canStreamWasm(url: string, contentType: string): boolean {
   if (url.startsWith('data:')) return false
   if (typeof WebAssembly.compileStreaming !== 'function') return false
-  // The WebAssembly Web API rejects parameterized MIME headers like `application/wasm; charset=utf-8`.
-  return contentType.trim().toLowerCase() === 'application/wasm'
+  // Node and the WebAssembly Web API reject parameterized or non-lowercase MIME headers.
+  return contentType.trim() === 'application/wasm'
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {

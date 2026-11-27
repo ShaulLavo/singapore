@@ -27,7 +27,7 @@ describe('compileOnigWasmFromUrl', () => {
     expect(result).toBe(compiled)
   })
 
-  it.each(['application/octet-stream', 'application/wasm; charset=utf-8'])(
+  it.each(['application/octet-stream', 'application/wasm; charset=utf-8', 'APPLICATION/WASM'])(
     'falls back to arrayBuffer compilation when content-type is %s',
     async (contentType) => {
       const response = new Response(MINIMAL_WASM, {

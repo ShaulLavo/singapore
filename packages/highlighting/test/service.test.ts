@@ -30,36 +30,29 @@ describe('highlighting service without a worker', () => {
     expect(() => service.syntaxProvider()).toThrow(HighlightingError)
   })
 
-  test('clears retained theme caches and ignores late theme refreshes after dispose', async () => {
-    const refreshGate = Promise.withResolvers<{
+  test('clears retained theme caches and prevents late theme loads from repopulating them after dispose', async () => {
+    const lateTheme = Promise.withResolvers<{
       readonly name: string
       readonly type: 'dark'
       readonly colors: { readonly 'editor.background': string }
     }>()
-    let calls = 0
     const service = createHighlightingService({
       resolveTheme: (id) => {
-        calls += 1
-        if (calls === 1) {
-          return Promise.resolve({
-            name: id,
-            type: 'dark',
-            colors: { 'editor.background': '#111111' },
-          })
-        }
-        return refreshGate.promise
+        if (id === 'late-theme') return lateTheme.promise
+        return Promise.resolve({
+          name: id,
+          type: 'dark',
+          colors: { 'editor.background': '#111111' },
+        })
       },
     })
-    const listeners = new Set<() => void>()
-    const provider = service.highlighterProvider({
+    // Populate defaultTheme via highlight() (which loads github-dark before checking Worker).
+    await service.highlight('const x = 1', { language: 'ts' }).catch(() => undefined)
+    // Populate documentThemes and documentThemeContent via provider.loadTheme().
+    const initialProvider = service.highlighterProvider({
       current: () => ({ format: 'vscode', id: 'custom-theme' }),
-      subscribe: (listener) => {
-        listeners.add(listener)
-        return () => listeners.delete(listener)
-      },
     })
-    await provider.loadTheme?.().catch(() => undefined)
-    expect(calls).toBe(1)
+    await initialProvider.loadTheme?.().catch(() => undefined)
 
     const documentThemes = Reflect.get(service, 'documentThemes') as Map<string, unknown>
     const documentThemeContent = Reflect.get(service, 'documentThemeContent') as Map<
@@ -70,16 +63,23 @@ describe('highlighting service without a worker', () => {
       string,
       unknown
     >
+    expect(Reflect.get(service, 'defaultTheme')).not.toBeNull()
     expect(documentThemes.size).toBe(1)
     expect(documentThemeContent.size).toBe(1)
 
+    // Start a pending theme load that will settle only after disposal.
+    const lateProvider = service.highlighterProvider({
+      current: () => ({ format: 'vscode', id: 'late-theme' }),
+    })
+    const pendingLateLoad = lateProvider.loadTheme?.().catch(() => undefined)
+
     await service.dispose()
-    refreshGate.resolve({
-      name: 'custom-theme',
+    lateTheme.resolve({
+      name: 'late-theme',
       type: 'dark',
       colors: { 'editor.background': '#222222' },
     })
-    await Promise.resolve()
+    await pendingLateLoad
 
     expect(service.inspect().disposed).toBe(true)
     expect(documentThemes.size).toBe(0)

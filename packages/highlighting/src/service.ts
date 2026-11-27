@@ -565,7 +565,7 @@ class EditorHighlightingService implements HighlightingService {
     if (captured) return workerThemeRegistration(captured, name)
 
     const registration = await this.resolveImported(name)
-    if (!this.documentThemes.has(name)) {
+    if (!this.disposeTask && !this.documentThemes.has(name)) {
       this.documentThemes.set(name, { revision: revisionName(name, registration), name })
       this.documentThemeContent.set(name, registration)
     }
@@ -603,7 +603,7 @@ class EditorHighlightingService implements HighlightingService {
     const refresh = (this.documentThemeRefreshes.get(id) ?? 0) + 1
     this.documentThemeRefreshes.set(id, refresh)
     const registration = await this.resolveImported(id)
-    if (this.documentThemeRefreshes.get(id) !== refresh) return
+    if (this.disposeTask || this.documentThemeRefreshes.get(id) !== refresh) return
 
     const revision = revisionName(id, registration)
     const known = this.documentThemes.get(id)
