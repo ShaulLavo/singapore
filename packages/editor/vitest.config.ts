@@ -6,6 +6,7 @@ import { playwright } from '@vitest/browser-playwright'
 import { devices } from '@playwright/test'
 import { defineConfig } from 'vitest/config'
 import type { BrowserCommand } from 'vitest/node'
+import { proofCompositorLayerCount, proofRenderTrace } from './test/renderPerformanceCommands.ts'
 
 const basicEditingTests = ['test/basicEditing.browser.test.ts']
 
@@ -151,6 +152,8 @@ export default defineConfig({
                   .screenshot({ animations: 'disabled' })
                 return image.toString('base64')
               },
+              proofCompositorLayerCount,
+              proofRenderTrace,
             },
             instances: [
               { browser: 'chromium' },
