@@ -678,6 +678,87 @@ describe('one hover per view', () => {
     expect(computeSync).toHaveBeenCalledTimes(1)
     controller.dispose()
   })
+
+  it('keeps a visible loading hover alive when briefly crossing blank space and returning before hide', async () => {
+    vi.useFakeTimers()
+    let finish!: () => void
+    const aborted: boolean[] = []
+    const slow: EditorHoverParticipant = {
+      computeAsync: (request, emit) =>
+        new Promise<void>((resolve) => {
+          request.signal.addEventListener('abort', () => {
+            aborted.push(true)
+            resolve()
+          })
+          finish = () => {
+            emit([part(request.anchor.range, 'resolved answer')])
+            resolve()
+          }
+        }),
+    }
+    const text = 'const alpha = 1'
+    const alphaStart = text.indexOf('alpha')
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot: createStringTextSnapshot(text),
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [slow]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: (clientX) => {
+        if (clientX >= 60 && clientX <= 100) {
+          return {
+            bufferRow: 0,
+            displayRow: 0,
+            source: 'document',
+            region: 'text',
+            offset: alphaStart + 1,
+          }
+        }
+        return { bufferRow: 0, displayRow: 0, source: 'document', region: 'trailing', offset: null }
+      },
+      markerAtPoint: () => null,
+      textOffsetFromPoint: () => alphaStart + 1,
+      getRangeClientRect: () => new DOMRect(60, 200, 40, 18),
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    tooltip().getBoundingClientRect = () => new DOMRect(12, 132, 300, 60)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 80, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_LOADING_DELAY_MS)
+    expect(tooltip().textContent).toContain('Loading…')
+
+    // Move into trailing blank space, then return to the anchor within the 300 ms hide grace.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 160, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 80, clientY: 209 }),
+    )
+    expect(aborted).toEqual([])
+
+    finish()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(tooltip().hidden).toBe(false)
+    expect(tooltip().textContent).not.toContain('Loading…')
+    expect(partTexts()).toEqual(['resolved answer'])
+    controller.dispose()
+  })
 })
 
 type PositionedToken = {

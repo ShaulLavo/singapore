@@ -431,7 +431,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     const snapshot = context.getSnapshot()
     const target = hoverTargetFromPoint(context, snapshot, event.clientX, event.clientY)
     if (!target) {
-      cancelOperation()
+      if (operation && !operation.shown) cancelOperation()
       return tooltip.scheduleHide()
     }
 
