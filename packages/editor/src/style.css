@@ -338,6 +338,12 @@
      estimate (visualColumnLength), which undercounts double-width glyphs. */
   contain: layout paint style size;
   height: var(--editor-row-height);
+  /* Establish a local stacking context in every scroll and positioning mode
+     (including content mode, which drops layout/paint containment, and top
+     positioning without a transform) while keeping `z-index: auto`. That lets
+     `.editor-virtualized-selection-layer` sit at `z-index: -1` above the row's
+     own background and strictly behind its text and highlights. */
+  isolation: isolate;
   left: var(--editor-gutter-width);
   line-height: var(--editor-row-height);
   position: absolute;
@@ -415,6 +421,9 @@
   user-select: none;
 }
 
+/* Negative stack level inside the row's isolated stacking context: paints above
+   the row's own background (cursor line, diff, merge conflict) and strictly
+   behind normal-flow text, CSS highlights, inline widgets, and markers. */
 .editor-virtualized-selection-layer {
   height: var(--editor-row-height);
   left: 0;
@@ -422,6 +431,7 @@
   position: absolute;
   top: 0;
   user-select: none;
+  z-index: -1;
 }
 
 .editor-virtualized-selection-range {
@@ -518,12 +528,14 @@
 
 /* The blink is a timer toggling this attribute (caretBlink.ts), not a CSS animation: Chromium
    restyles an animated element in every rendered frame, and each restyle repaints every row that
-   carries a CSS highlight. */
+   carries a CSS highlight. Mounted before rows in DOM order, so `z-index: 1` keeps carets above
+   row backgrounds and opaque selections while remaining below `--editor-z-inline-surface`. */
 .editor-virtualized-caret-layer {
   left: 0;
   pointer-events: none;
   position: absolute;
   top: 0;
+  z-index: 1;
 }
 
 .editor-virtualized-caret-layer[data-editor-caret-blink-off] {

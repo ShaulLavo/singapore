@@ -335,8 +335,9 @@ export default defineConfig({
                   : undefined
                 const image = await iframe
                   .locator(
-                    `#${hostId} [data-editor-virtual-row="0"], #${hostId} [data-editor-document-paint-row="0"]`,
+                    `#${hostId} [data-editor-virtual-row="0"], #${hostId} [data-editor-document-paint-row="0"], #${hostId} [data-editor-provisional-row]`,
                   )
+                  .first()
                   .screenshot({ animations: 'disabled', path })
                 if (path) console.info('Highlight boundary evidence', path)
                 return image.toString('base64')
