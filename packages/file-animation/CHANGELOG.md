@@ -1,5 +1,12 @@
 # @singapore-editor/file-animation
 
+## 0.2.15
+
+### Patch Changes
+
+- Updated dependencies [9e610a1]
+  - @singapore-editor/core@0.2.14
+
 ## 0.2.14
 
 ### Patch Changes

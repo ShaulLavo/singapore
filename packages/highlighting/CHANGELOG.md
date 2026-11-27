@@ -1,5 +1,15 @@
 # @singapore-editor/highlighting
 
+## 0.2.17
+
+### Patch Changes
+
+- Updated dependencies [9e610a1]
+  - @singapore-editor/core@0.2.14
+  - @singapore-editor/diff@0.2.14
+  - @singapore-editor/tree-sitter@0.2.16
+  - @singapore-editor/tree-sitter-languages@0.2.17
+
 ## 0.2.16
 
 ### Patch Changes
