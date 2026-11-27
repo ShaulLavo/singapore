@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it } from 'vitest'
+import { afterEach, assert, expect, it, vi } from 'vitest'
 import { commands } from 'vitest/browser'
 import { Editor } from '../src/editor/Editor'
 import type { RenderTraceAction, RenderTraceMetrics } from './renderPerformanceCommands'
@@ -53,6 +53,7 @@ async function waitFrames(count = 2): Promise<void> {
 async function mountEditor(
   id: string,
   height: number,
+  options: { readonly pollFocus?: boolean } = {},
 ): Promise<{ editor: Editor; host: HTMLElement }> {
   const host = document.createElement('div')
   host.id = id
@@ -73,7 +74,11 @@ async function mountEditor(
   editor.setTokens(sampleTokens())
   editor.focus()
   editor.setSelection(10)
-  await expect.poll(() => document.activeElement).toBe(editor.getInputElement())
+  if (options.pollFocus ?? true) {
+    await expect.poll(() => document.activeElement).toBe(editor.getInputElement())
+  } else {
+    expect(document.activeElement).toBe(editor.getInputElement())
+  }
   await waitFrames(3)
   return { editor, host }
 }
@@ -127,21 +132,27 @@ it('contains single-keystroke layout and style recalculation inside the edited r
 })
 
 it('avoids per-frame style recalculation and paint while idle with a focused caret', async () => {
-  const { editor, host } = await mountEditor('perf-idle-caret', 400)
-  const caretLayer = host.querySelector<HTMLElement>('.editor-virtualized-caret-layer')
-  const caret = host.querySelector<HTMLElement>('.editor-virtualized-caret')
-  assert(caretLayer)
-  assert(caret)
-  expect(getComputedStyle(caretLayer).animationName).toBe('none')
-  expect(getComputedStyle(caret).animationName).toBe('none')
+  // Freeze setTimeout/clearTimeout so the normal 500ms caret-blink timer cannot fire on a slow
+  // runner during the trace, while leaving requestAnimationFrame live so CSS animations still run.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const { editor, host } = await mountEditor('perf-idle-caret', 400, { pollFocus: false })
+    const caretLayer = host.querySelector<HTMLElement>('.editor-virtualized-caret-layer')
+    const caret = host.querySelector<HTMLElement>('.editor-virtualized-caret')
+    assert(caretLayer)
+    assert(caret)
+    expect(getComputedStyle(caretLayer).animationName).toBe('none')
+    expect(getComputedStyle(caret).animationName).toBe('none')
 
-  // Restart the 500ms solid blink phase and measure 6 idle animation frames (~100ms).
-  editor.setSelection(12)
-  await waitFrames(2)
-  const trace = await commands.proofRenderTrace({ kind: 'idle', frames: 6 })
-  expect(trace.styleRecalcCount).toBe(0)
-  expect(trace.layoutCount).toBe(0)
-  expect(trace.paintCount).toBe(0)
+    editor.setSelection(12)
+    await waitFrames(2)
+    const trace = await commands.proofRenderTrace({ kind: 'idle', frames: 6 })
+    expect(trace.styleRecalcCount).toBe(0)
+    expect(trace.layoutCount).toBe(0)
+    expect(trace.paintCount).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('recycles rows on scroll without per-row layout thrashing', async () => {

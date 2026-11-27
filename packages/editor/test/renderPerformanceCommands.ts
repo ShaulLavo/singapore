@@ -107,22 +107,43 @@ function isTimelineTraceEvent(value: unknown): value is TimelineTraceEvent {
   return value !== null && typeof value === 'object'
 }
 
+type LayerTreeLayer = {
+  readonly backendNodeId?: unknown
+}
+
+type LayerTreeSnapshot = readonly LayerTreeLayer[]
+
+function hasLayerForNode(layers: LayerTreeSnapshot, backendNodeId: number): boolean {
+  return layers.some((layer) => layer.backendNodeId === backendNodeId)
+}
+
+function waitForLayerTreePredicate(
+  cdp: Awaited<ReturnType<ReturnType<BrowserCommandContext['page']['context']>['newCDPSession']>>,
+  getLatest: () => LayerTreeSnapshot | null,
+  predicate: (layers: LayerTreeSnapshot) => boolean,
+): Promise<LayerTreeSnapshot> {
+  const current = getLatest()
+  if (current && predicate(current)) return Promise.resolve(current)
+  return new Promise<LayerTreeSnapshot>((resolve) => {
+    const handle = (event: { readonly layers?: readonly LayerTreeLayer[] }) => {
+      if (!Array.isArray(event.layers) || !predicate(event.layers)) return
+      cdp.off('LayerTree.layerTreeDidChange', handle)
+      resolve(event.layers)
+    }
+    cdp.on('LayerTree.layerTreeDidChange', handle)
+  })
+}
+
 export const proofCompositorLayerCount: BrowserCommand<[], number> = async ({ page }) => {
   const cdp = await page.context().newCDPSession(page)
-  const nextLayerCount = () =>
-    new Promise<number>((resolve) => {
-      const handle = (event: { readonly layers?: readonly unknown[] }) => {
-        if (!Array.isArray(event.layers)) return
-        cdp.off('LayerTree.layerTreeDidChange', handle)
-        resolve(event.layers.length)
-      }
-      cdp.on('LayerTree.layerTreeDidChange', handle)
-    })
+  let latestLayers: LayerTreeSnapshot | null = null
+  const trackLayers = (event: { readonly layers?: readonly LayerTreeLayer[] }) => {
+    if (Array.isArray(event.layers)) latestLayers = event.layers
+  }
+  cdp.on('LayerTree.layerTreeDidChange', trackLayers)
   try {
+    await cdp.send('DOM.enable')
     await cdp.send('LayerTree.enable')
-    // Toggle an offscreen layer so Chromium commits a fresh LayerTree snapshot even when idle,
-    // then read the snapshot emitted immediately after removing the probe.
-    const added = nextLayerCount()
     await page.evaluate(() => {
       const probe = document.createElement('div')
       probe.id = '__singapore-layer-probe'
@@ -130,13 +151,34 @@ export const proofCompositorLayerCount: BrowserCommand<[], number> = async ({ pa
         'position:fixed;left:-10px;top:-10px;width:1px;height:1px;will-change:transform;pointer-events:none'
       document.body.append(probe)
     })
-    await added
-    const cleaned = nextLayerCount()
+    const { root } = await cdp.send('DOM.getDocument')
+    const { nodeId } = await cdp.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector: '#__singapore-layer-probe',
+    })
+    const { node } = await cdp.send('DOM.describeNode', { nodeId })
+    const probeBackendNodeId = node.backendNodeId
+    await waitForLayerTreePredicate(
+      cdp,
+      () => latestLayers,
+      (layers) => hasLayerForNode(layers, probeBackendNodeId),
+    )
+    const cleaned = waitForLayerTreePredicate(
+      cdp,
+      () => latestLayers,
+      (layers) => !hasLayerForNode(layers, probeBackendNodeId),
+    )
     await page.evaluate(() => {
       document.getElementById('__singapore-layer-probe')?.remove()
     })
-    return await cleaned
+    return (await cleaned).length
   } finally {
+    await page
+      .evaluate(() => {
+        document.getElementById('__singapore-layer-probe')?.remove()
+      })
+      .catch(() => {})
+    cdp.off('LayerTree.layerTreeDidChange', trackLayers)
     await cdp.detach()
   }
 }
