@@ -351,7 +351,7 @@ export class InputSelectionController {
   // advances it — an event the editor decides not to act on leaves the element holding text it can
   // still be diffed against next time.
   #hiddenInputContent: HiddenInputState = EMPTY_HIDDEN_INPUT_STATE
-  #writingInputWindow = false
+  #writingInputWindowDepth = 0
   #suppressHiddenInputDuringDrag = false
   #hiddenInputDirty = false
   #hiddenInputLazy: LazyHiddenInputState | null = null
@@ -1840,11 +1840,11 @@ export class InputSelectionController {
 
     const content = pagedHiddenInputContent(snapshot, resolved)
     // Selection setters may synchronously dispatch select while the window is being written.
-    this.#writingInputWindow = true
+    this.#writingInputWindowDepth += 1
     try {
       this.#writeInputWindow(content)
     } finally {
-      this.#writingInputWindow = false
+      this.#writingInputWindowDepth -= 1
     }
     this.#hiddenInputContent = {
       selectionEnd: content.selectionEnd,
@@ -2260,13 +2260,13 @@ export class InputSelectionController {
 
   #focusInputPreservingSelection(): void {
     // See browser-quirks.md#ios-focus-selection-collapse for protected focus writes.
-    this.#writingInputWindow = true
+    this.#writingInputWindowDepth += 1
     try {
       this.options.view.focusInput()
     } finally {
-      this.#writingInputWindow = false
+      this.#writingInputWindowDepth -= 1
     }
-    this.#refreshHiddenInputContent()
+    this.#refreshHiddenInputContent({ force: true })
   }
 
   #placeTouchCaret(position: VirtualizedTextHitPosition): void {
@@ -2284,7 +2284,7 @@ export class InputSelectionController {
       position.affinity,
       'touch',
     )
-    this.options.view.focusInput()
+    this.#focusInputPreservingSelection()
   }
 
   #touchSelectionRangeAt(offset: number, granularity: TouchSelectionGranularity): TextOffsetRange {
@@ -4294,7 +4294,7 @@ export class InputSelectionController {
   }
 
   #syncHiddenInputSelection = (event: Event): void => {
-    if (this.#writingInputWindow || !this.#isInputFocused()) return
+    if (this.#writingInputWindowDepth > 0 || !this.#isInputFocused()) return
     this.#handleHiddenInputSelection(event)
   }
 
@@ -4307,7 +4307,7 @@ export class InputSelectionController {
   })
 
   #updateSessionSelectionFromHiddenInput(): DocumentSessionChange | null {
-    if (this.#writingInputWindow) return null
+    if (this.#writingInputWindowDepth > 0) return null
     const session = this.session
     const input = this.options.view.inputElement
     if (!session || !isTextareaElement(input)) return null

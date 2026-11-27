@@ -85,6 +85,12 @@ describe('Markdown authoring', () => {
     )
   })
 
+  it('preserves CRLF when toggling empty markers or formatting blank indented CRLF lines', () => {
+    expect(apply('  \r\nnext\r\n', 0, 2, 'markdown.heading').text).toBe('  ## \r\nnext\r\n')
+    expect(apply('- \r\n- two\r\n', 0, 9, 'markdown.bulletList').text).toBe('\r\ntwo\r\n')
+    expect(apply('  \r\nnext\r\n', 0, 2, 'markdown.bulletList').text).toBe('  - \r\nnext\r\n')
+  })
+
   it('changes the heading level without stacking markers', () => {
     expect(apply('# Title', 3, 3, 'markdown.heading').text).toBe('## Title')
     expect(apply('## Title', 3, 3, 'markdown.heading').text).toBe('Title')

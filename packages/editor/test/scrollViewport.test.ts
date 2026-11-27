@@ -23,3 +23,27 @@ it('retries unmeasurable geometry and caches only a successfully measured native
     rectSpy.mockRestore()
   }
 })
+
+it('writes --editor-gutter-scroll-left only when the gutter scroll offset changes', () => {
+  const scrollElement = document.createElement('div')
+  const viewport = new ScrollViewport(scrollElement)
+  const setPropertySpy = vi.spyOn(scrollElement.style, 'setProperty')
+
+  viewport.setScrollPosition(0, 0)
+  viewport.setScrollPosition(0, 120)
+  viewport.setScrollPosition(48, 240)
+  expect(setPropertySpy).not.toHaveBeenCalledWith('--editor-gutter-scroll-left', expect.any(String))
+
+  viewport.gutterScroll = 'content'
+  viewport.setScrollPosition(48, 240)
+  viewport.setScrollPosition(48, 360)
+  expect(setPropertySpy).toHaveBeenCalledTimes(1)
+  expect(setPropertySpy).toHaveBeenLastCalledWith('--editor-gutter-scroll-left', '48px')
+
+  viewport.gutterScroll = 'fixed'
+  viewport.setScrollPosition(48, 480)
+  expect(setPropertySpy).toHaveBeenCalledTimes(2)
+  expect(setPropertySpy).toHaveBeenLastCalledWith('--editor-gutter-scroll-left', '0px')
+
+  viewport.dispose()
+})

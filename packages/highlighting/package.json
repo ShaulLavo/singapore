@@ -48,6 +48,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
+    "@shikijs/themes": "^4.4.3",
     "@singapore-editor/diff": "workspace:*",
     "@singapore-editor/tree-sitter": "workspace:*",
     "@singapore-editor/tree-sitter-languages": "workspace:*",

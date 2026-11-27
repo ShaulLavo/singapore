@@ -29,8 +29,6 @@ import {
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import { TREE_SITTER_LANGUAGE_METADATA } from '@singapore-editor/tree-sitter-languages/metadata'
 
-import { bundledThemes } from 'shiki/themes'
-
 import { DiffSyntaxStore, type DiffSyntaxSnapshot, type HighlightingDiffView } from './diffs'
 import { HIGHLIGHTING_DOCUMENT_LANGUAGES, highlightingGrammar, loadGrammar } from './languages'
 import {
@@ -148,8 +146,6 @@ export class HighlightingError extends Error {
 const PLAIN_TEXT = 'text'
 const DEFAULT_FOREGROUND = '#d4d4d4'
 const DEFAULT_BACKGROUND = '#1e1e1e'
-// The palette a plugin-free `highlight` paints with when the caller names none.
-const DEFAULT_THEME_NAME = 'github-dark'
 // Without a workspace census, every grammar a code workspace commonly holds, loaded behind paint.
 const DEFAULT_PRELOAD_GRAMMARS = [
   'css',
@@ -340,7 +336,11 @@ class EditorHighlightingService implements HighlightingService {
     this.shikiOwner = null
     this.treeSitterBackend = null
     this.treeSitterProvider = null
+    this.defaultTheme = null
     this.grammars.clear()
+    this.documentThemes.clear()
+    this.documentThemeContent.clear()
+    this.documentThemeRefreshes.clear()
     this.diffs.dispose()
     void Promise.allSettled(pending)
       .then(() => Promise.allSettled([shiki?.dispose(), treeSitter?.dispose?.()]))
@@ -521,11 +521,17 @@ class EditorHighlightingService implements HighlightingService {
   }
 
   private loadDefaultTheme(): Promise<HighlightTheme> {
-    this.defaultTheme ??= bundledThemes[DEFAULT_THEME_NAME]().then((module): HighlightTheme => ({
+    if (this.defaultTheme) return this.defaultTheme
+    // Import only the default theme so consumer bundlers do not emit every bundled Shiki theme.
+    const pending = import('@shikijs/themes/github-dark').then((module): HighlightTheme => ({
       format: 'vscode',
       definition: module.default as unknown as VscodeThemeRegistration,
     }))
-    return this.defaultTheme
+    this.defaultTheme = pending
+    void pending.catch(() => {
+      if (this.defaultTheme === pending) this.defaultTheme = null
+    })
+    return pending
   }
 
   private diffScope(theme: HighlightingThemeSource): string {

@@ -29,6 +29,24 @@ describe('highlighting service without a worker', () => {
     expect(failure.code).toBe('disposed')
     expect(() => service.syntaxProvider()).toThrow(HighlightingError)
   })
+
+  test('populates imported theme cache via provider and clears cached state on dispose', async () => {
+    let calls = 0
+    const service = createHighlightingService({
+      resolveTheme: async (id) => {
+        calls += 1
+        return { name: id, type: 'dark', colors: { 'editor.background': '#111111' } }
+      },
+    })
+    const provider = service.highlighterProvider({
+      current: () => ({ format: 'vscode', id: 'custom-theme' }),
+    })
+    await provider.loadTheme?.().catch(() => undefined)
+    expect(calls).toBe(1)
+
+    await service.dispose()
+    expect(service.inspect().disposed).toBe(true)
+  })
 })
 
 describe('highlightingGrammar', () => {

@@ -1,11 +1,11 @@
 import { createOnigurumaEngine } from '@shikijs/engine-oniguruma'
-import wasm from '@shikijs/engine-oniguruma/wasm-inlined'
 import {
-  createHighlighterCore,
-  type HighlighterGeneric,
+  createShikiPrimitiveAsync,
   type LanguageRegistration,
+  type ShikiPrimitive,
   type ThemeRegistrationAny,
 } from 'shiki/core'
+import { loadOnigWasm } from './onigWasm'
 import { createIncrementalTokenizer, type CreateIncrementalTokenizerResult } from './tokenizer'
 import { packTokenLines } from './editor-tokens'
 import type { EditorTheme } from '../theme'
@@ -39,7 +39,7 @@ type DocumentState = {
   theme: string
   internalTheme: string
   themeRegistration: ShikiWorkerThemeRegistration
-  readonly highlighter: HighlighterGeneric<string, string>
+  readonly highlighter: ShikiPrimitive<string, string>
   readonly tokenizer: CreateIncrementalTokenizerResult['tokenizer']
   source: DocumentWorkerRead
 }
@@ -49,7 +49,7 @@ const documents = new Map<string, DocumentState>()
 const documentTasks = new Map<string, Promise<ShikiWorkerTransportResult | undefined>>()
 const disposedRuntimeSessions = new Set<string>()
 const activeWorkerTasks = new Set<Promise<void>>()
-let sharedHighlighterPromise: Promise<HighlighterGeneric<string, string>> | null = null
+let sharedHighlighterPromise: Promise<ShikiPrimitive<string, string>> | null = null
 const themeKeyCache = new WeakMap<ShikiWorkerThemeRegistration, string>()
 const languageKeyCache = new WeakMap<ShikiWorkerLanguageRegistration, string>()
 const internalThemeNameByKey = new Map<string, string>()
@@ -65,7 +65,7 @@ const canonicalNameByAlias = new Map<string, string>()
 const pendingLanguageLoads = new Map<string, Promise<void>>()
 const scheduledPreloadLanguages = new Set<string>()
 const preloadLanguageQueue: {
-  readonly highlighter: HighlighterGeneric<string, string>
+  readonly highlighter: ShikiPrimitive<string, string>
   readonly group: readonly ShikiWorkerLanguageRegistration[]
 }[] = []
 let preloadRunner: Promise<void> | null = null
@@ -151,7 +151,7 @@ const inspectRetention = async (): Promise<ShikiWorkerTransportResult> => {
   const highlighterResults = highlighterPromise
     ? await Promise.allSettled([highlighterPromise])
     : []
-  const highlighters = new Set<HighlighterGeneric<string, string>>()
+  const highlighters = new Set<ShikiPrimitive<string, string>>()
   for (const result of highlighterResults) {
     if (result.status === 'fulfilled') highlighters.add(result.value)
   }
@@ -314,7 +314,7 @@ const recolorDocument = async (
 }
 
 type ResolvedHighlighterDocument = {
-  readonly highlighter: HighlighterGeneric<string, string>
+  readonly highlighter: ShikiPrimitive<string, string>
   readonly internalLang: string
   readonly internalTheme: string
 }
@@ -348,7 +348,7 @@ const ensureHighlighter = async (
   return { highlighter, internalLang, internalTheme }
 }
 
-const canonicalLoadedLanguages = (highlighter: HighlighterGeneric<string, string>): Set<string> => {
+const canonicalLoadedLanguages = (highlighter: ShikiPrimitive<string, string>): Set<string> => {
   const canonical = new Set<string>()
   for (const name of highlighter.getLoadedLanguages()) {
     if (!canonicalNameByAlias.has(name)) canonical.add(name)
@@ -400,7 +400,7 @@ const assertEmbeddedDependenciesSatisfiable = (
 }
 
 const ensureLanguages = async (
-  highlighter: HighlighterGeneric<string, string>,
+  highlighter: ShikiPrimitive<string, string>,
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): Promise<void> => {
   const unique = uniqueBy(registrations, (registration) => registration.name)
@@ -450,7 +450,7 @@ const ensureLanguages = async (
 }
 
 const ensureThemes = async (
-  highlighter: HighlighterGeneric<string, string>,
+  highlighter: ShikiPrimitive<string, string>,
   registrations: readonly ShikiWorkerThemeRegistration[],
 ): Promise<void> => {
   const unique = uniqueBy(registrations, (theme) => theme.name)
@@ -462,7 +462,7 @@ const ensureThemes = async (
 }
 
 const ensureThemeByInternalName = async (
-  highlighter: HighlighterGeneric<string, string>,
+  highlighter: ShikiPrimitive<string, string>,
   registration: ShikiWorkerThemeRegistration,
 ): Promise<void> => {
   const name = registration.name
@@ -497,7 +497,7 @@ const ensureThemeByInternalName = async (
  * groups so urgent open/edit requests preempt warming and never observe half-loaded dependencies.
  */
 const scheduleCooperativeLanguagePreload = (
-  highlighter: HighlighterGeneric<string, string>,
+  highlighter: ShikiPrimitive<string, string>,
   registrations: readonly ShikiWorkerLanguageRegistration[],
 ): void => {
   const alreadyAvailable = canonicalLoadedLanguages(highlighter)
@@ -561,7 +561,7 @@ const scheduleCooperativeLanguagePreload = (
 const ensureSharedHighlighter = async (
   languages: readonly ShikiWorkerLanguageRegistration[],
   themes: readonly ShikiWorkerThemeRegistration[],
-): Promise<HighlighterGeneric<string, string>> => {
+): Promise<ShikiPrimitive<string, string>> => {
   const uniqueThemes = uniqueBy(themes, (theme) => theme.name)
   if (!sharedHighlighterPromise) {
     const uniqueLanguages = uniqueBy(languages, (registration) => registration.name)
@@ -569,11 +569,11 @@ const ensureSharedHighlighter = async (
     const initialThemeNames = uniqueThemes.map((theme) => theme.name)
     const generation = workerGeneration
     const created = (
-      createHighlighterCore({
-        engine: createOnigurumaEngine(wasm),
+      createShikiPrimitiveAsync({
+        engine: createOnigurumaEngine(loadOnigWasm),
         langs: uniqueLanguages as unknown as LanguageRegistration[],
         themes: uniqueThemes as unknown as ThemeRegistrationAny[],
-      }) as Promise<HighlighterGeneric<string, string>>
+      }) as Promise<ShikiPrimitive<string, string>>
     ).then(
       (highlighter) => {
         if (generation === workerGeneration) {
@@ -1328,12 +1328,12 @@ const createErrorMessage = (error: unknown): string => {
 }
 
 function editorThemeFromHighlighter(
-  highlighter: HighlighterGeneric<string, string>,
+  highlighter: ShikiPrimitive<string, string>,
   internalThemeName: string,
   publicThemeName: string,
   registration: ShikiWorkerThemeRegistration,
 ): EditorTheme | undefined {
-  const getTheme = (highlighter as Partial<Pick<HighlighterGeneric<string, string>, 'getTheme'>>)
+  const getTheme = (highlighter as Partial<Pick<ShikiPrimitive<string, string>, 'getTheme'>>)
     .getTheme
   if (getTheme) {
     const theme = getTheme.call(highlighter, internalThemeName) as ShikiThemeLike | undefined

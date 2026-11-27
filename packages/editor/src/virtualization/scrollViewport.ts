@@ -20,6 +20,7 @@ export class ScrollViewport {
   private viewportHeight = -1
   #originY = 0
   #documentWidth = -1
+  #gutterScrollLeft = 0
   #pageScrolled = false
   /** Every reservation change passes through here, including the provisional paint's. */
   public onReservedOverlayWidthChange: ((side: 'left' | 'right') => void) | null = null
@@ -127,7 +128,10 @@ export class ScrollViewport {
     const textTransform = `translate(${-left}px, ${-top}px)`
     const gutterLeft = this.gutterScroll === 'content' ? left : 0
     const gutterTransform = `translate(${-gutterLeft}px, ${-top}px)`
-    this.scrollElement.style.setProperty('--editor-gutter-scroll-left', `${gutterLeft}px`)
+    if (this.#gutterScrollLeft !== gutterLeft) {
+      this.#gutterScrollLeft = gutterLeft
+      this.scrollElement.style.setProperty('--editor-gutter-scroll-left', `${gutterLeft}px`)
+    }
     if (this.layers[0].content.style.transform !== textTransform)
       this.layers[0].content.style.transform = textTransform
     if (this.layers[1].content.style.transform !== gutterTransform)

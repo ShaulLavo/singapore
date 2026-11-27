@@ -14,8 +14,9 @@ import type {
 import type { TextEdit } from '../../src/tokens'
 import { unpackEditorTokens } from '../../src/syntax/packedTokens'
 
-const createHighlighterCore = vi.hoisted(() => vi.fn())
+const createShikiPrimitiveAsync = vi.hoisted(() => vi.fn())
 const createOnigurumaEngine = vi.hoisted(() => vi.fn(() => Promise.resolve('oniguruma')))
+const loadOnigWasm = vi.hoisted(() => vi.fn())
 
 /** What a real shiki highlighter exposes for loading grammars and themes after construction. */
 function languageApi() {
@@ -33,16 +34,16 @@ function languageApi() {
   }
 }
 
-vi.mock('shiki/core', () => ({ createHighlighterCore }))
+vi.mock('shiki/core', () => ({ createShikiPrimitiveAsync }))
 vi.mock('@shikijs/engine-oniguruma', () => ({ createOnigurumaEngine }))
-vi.mock('@shikijs/engine-oniguruma/wasm-inlined', () => ({ default: 'wasm' }))
+vi.mock('../../src/shiki/onigWasm', () => ({ loadOnigWasm }))
 
 describe('shiki worker', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.resetModules()
-    createHighlighterCore.mockReset()
+    createShikiPrimitiveAsync.mockReset()
 
     vi.unstubAllGlobals()
     scope = null
@@ -53,7 +54,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockRejectedValue(new Error('load failed'))
+    createShikiPrimitiveAsync.mockRejectedValue(new Error('load failed'))
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = workerHandler()
@@ -81,7 +82,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(externalHighlighter({ dispose, ...languageApi() }))
+    createShikiPrimitiveAsync.mockResolvedValue(externalHighlighter({ dispose, ...languageApi() }))
 
     await import('../../src/shiki/shiki.worker')
 
@@ -111,7 +112,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(
+    createShikiPrimitiveAsync.mockResolvedValue(
       externalHighlighter({
         getLoadedLanguages: () => [],
         loadLanguage,
@@ -165,7 +166,7 @@ describe('shiki worker', () => {
     await waitFor(() => responseWithId(postMessage, 4) !== undefined)
 
     expect(responseWithId(postMessage, 3)).toMatchObject({ id: 3, ok: true })
-    expect(createHighlighterCore).toHaveBeenCalledOnce()
+    expect(createShikiPrimitiveAsync).toHaveBeenCalledOnce()
     expect(loadLanguage).toHaveBeenCalledOnce()
   })
 
@@ -175,7 +176,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(externalHighlighter(api))
+    createShikiPrimitiveAsync.mockResolvedValue(externalHighlighter(api))
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = workerHandler()
@@ -215,7 +216,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(externalHighlighter(api))
+    createShikiPrimitiveAsync.mockResolvedValue(externalHighlighter(api))
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = workerHandler()
@@ -274,7 +275,7 @@ describe('shiki worker', () => {
     )
     await waitFor(() => responseWithId(postMessage, 4) !== undefined)
 
-    expect(createHighlighterCore).toHaveBeenCalledOnce()
+    expect(createShikiPrimitiveAsync).toHaveBeenCalledOnce()
     expect(createOnigurumaEngine).toHaveBeenCalledOnce()
     expect(api.loadTheme.mock.calls.map(([registration]) => registration.name)).toEqual([
       'github-light',
@@ -292,7 +293,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockImplementation(
+    createShikiPrimitiveAsync.mockImplementation(
       async (options: { themes?: { name: string; bg?: string; fg?: string }[] }) => {
         for (const theme of options.themes ?? []) {
           themesByName.set(theme.name, { bg: theme.bg ?? '#000000', fg: theme.fg ?? '#ffffff' })
@@ -337,7 +338,7 @@ describe('shiki worker', () => {
     requestTheme(3, '#ff0000')
     await waitFor(() => responseWithId(postMessage, 3) !== undefined)
 
-    expect(createHighlighterCore).toHaveBeenCalledOnce()
+    expect(createShikiPrimitiveAsync).toHaveBeenCalledOnce()
     expect(
       [1, 2, 3].map((id) => {
         const res = responseWithId(postMessage, id)
@@ -352,7 +353,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(
+    createShikiPrimitiveAsync.mockResolvedValue(
       externalHighlighter({
         getLoadedLanguages: () => [...loaded],
         loadLanguage: vi.fn(
@@ -416,7 +417,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(
+    createShikiPrimitiveAsync.mockResolvedValue(
       externalHighlighter({
         getLoadedLanguages: () => [...loaded],
         loadLanguage: vi.fn(
@@ -472,7 +473,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockImplementation(
+    createShikiPrimitiveAsync.mockImplementation(
       async (options: { themes?: { name: string; bg?: string; fg?: string }[] }) => {
         for (const theme of options.themes ?? []) {
           themesByName.set(theme.name, { bg: theme.bg ?? '#000000', fg: theme.fg ?? '#ffffff' })
@@ -578,7 +579,7 @@ describe('shiki worker', () => {
     const api = languageApi()
     const tokenizedLines: string[] = []
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue({
+    createShikiPrimitiveAsync.mockResolvedValue({
       ...externalHighlighter(api, true),
       getLanguage: () => ({
         tokenizeLine: (line: string) => {
@@ -650,7 +651,7 @@ describe('shiki worker', () => {
       },
     }))
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(
+    createShikiPrimitiveAsync.mockResolvedValue(
       externalHighlighter({ getTheme, ...languageApi() }, true),
     )
 
@@ -708,7 +709,7 @@ describe('shiki worker', () => {
     const postMessage =
       vi.fn<(response: ShikiWorkerResponse, transfers?: readonly ArrayBuffer[]) => void>()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(
+    createShikiPrimitiveAsync.mockResolvedValue(
       externalHighlighter(
         {
           getTheme: () => ({ bg: '#ffffff', fg: '#24292e', colors: {} }),
@@ -754,7 +755,7 @@ describe('shiki worker', () => {
       fg: '#24292e',
     }))
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(externalHighlighter({ getTheme, ...languageApi() }))
+    createShikiPrimitiveAsync.mockResolvedValue(externalHighlighter({ getTheme, ...languageApi() }))
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = workerHandler()
@@ -767,7 +768,7 @@ describe('shiki worker', () => {
     )
     await waitFor(() => postMessage.mock.calls.length > 0)
 
-    expect(createHighlighterCore).toHaveBeenCalledWith({
+    expect(createShikiPrimitiveAsync).toHaveBeenCalledWith({
       engine: expect.any(Promise),
       langs: [],
       themes: [{ name: 'github-light' }],
@@ -807,7 +808,7 @@ describe('shiki worker', () => {
       ],
     }))
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(externalHighlighter({ getTheme, ...languageApi() }))
+    createShikiPrimitiveAsync.mockResolvedValue(externalHighlighter({ getTheme, ...languageApi() }))
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = workerHandler()
@@ -864,7 +865,7 @@ describe('shiki worker', () => {
       ],
     }))
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(externalHighlighter({ getTheme, ...languageApi() }))
+    createShikiPrimitiveAsync.mockResolvedValue(externalHighlighter({ getTheme, ...languageApi() }))
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = workerHandler()
@@ -1109,7 +1110,7 @@ describe('shiki worker grammar loading', () => {
     const getTheme = vi.fn(() => ({ bg: '#ffffff', fg: '#24292e', colors: {} }))
     const api = languageApi()
     setupScope(postMessage)
-    createHighlighterCore.mockResolvedValue(externalHighlighter({ getTheme, ...api }))
+    createShikiPrimitiveAsync.mockResolvedValue(externalHighlighter({ getTheme, ...api }))
 
     await import('../../src/shiki/shiki.worker')
 
@@ -1126,7 +1127,7 @@ describe('shiki worker grammar loading', () => {
     )
     await waitFor(() => postMessage.mock.calls.length > 0)
 
-    expect(createHighlighterCore).toHaveBeenCalledWith(
+    expect(createShikiPrimitiveAsync).toHaveBeenCalledWith(
       expect.objectContaining({ langs: [languageRegistration('typescript')] }),
     )
     expect(api.loadLanguage).toHaveBeenCalledWith(languageRegistration('typescript'))
