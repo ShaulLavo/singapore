@@ -379,6 +379,34 @@ describe('WebSocket LSP transport', () => {
       wasClean: false,
     })
   })
+
+  it('skips close listeners unsubscribed during dispatch while still notifying remaining ones after a throw', async () => {
+    FakeWebSocket.instances.length = 0
+    const pending = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: FakeWebSocket,
+    })
+    const socket = FakeWebSocket.instances[0]!
+    socket.open()
+    const transport = await pending
+    const listenerFailure = new Error('first close listener failed')
+    const called: string[] = []
+    let unsubscribeSecond: () => void = () => undefined
+
+    transport.onDidClose(() => {
+      called.push('first')
+      unsubscribeSecond()
+      throw listenerFailure
+    })
+    unsubscribeSecond = transport.onDidClose(() => {
+      called.push('second')
+    })
+    transport.onDidClose(() => {
+      called.push('third')
+    })
+
+    expect(() => socket.drop(1006)).toThrow(listenerFailure)
+    expect(called).toEqual(['first', 'third'])
+  })
 })
 
 describe('Worker LSP transport', () => {

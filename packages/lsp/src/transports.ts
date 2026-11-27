@@ -188,10 +188,17 @@ class WebSocketLspTransport implements LspManagedTransport {
       sentCount: this.sentCount,
     })
     const handlers = Array.from(this.closeHandlers)
-    this.closeHandlers.clear()
-    runEach(
-      [() => this.detachSocketListeners()].concat(handlers.map((handler) => () => handler(error))),
-    )
+    try {
+      runEach(
+        [() => this.detachSocketListeners()].concat(
+          handlers.map((handler) => () => {
+            if (this.closeHandlers.has(handler)) handler(error)
+          }),
+        ),
+      )
+    } finally {
+      this.closeHandlers.clear()
+    }
   }
 
   private detachSocketListeners(): void {
