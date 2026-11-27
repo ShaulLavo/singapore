@@ -1,7 +1,11 @@
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import { describe, expect, it } from 'vitest'
 
-import { hoverTargetRange, hoverTargetRangeInSource } from '../src/offsetRange'
+import {
+  hoverTargetRange,
+  hoverTargetRangeInSource,
+  markerTargetRangeInSource,
+} from '../src/offsetRange'
 
 describe('hoverTargetRangeInSource', () => {
   it('answers every offset as the whole-string search does', () => {
@@ -46,5 +50,40 @@ describe('hoverTargetRangeInSource', () => {
         end: astralEnd,
       })
     }
+  })
+
+  it('keeps full identifiers for visible identifier markers and exact code point spans for non-identifier markers', () => {
+    const identText = 'const a𝐚bc = 1'
+    const identStart = identText.indexOf('a𝐚bc')
+    const boldOffset = identText.indexOf('𝐚')
+    expect(markerTargetRangeInSource(createStringTextSnapshot(identText), boldOffset)).toEqual({
+      start: identStart,
+      end: identStart + 'a𝐚bc'.length,
+    })
+
+    const zwspText = 'const alpha\u200b'
+    const zwspOffset = zwspText.indexOf('\u200b')
+    expect(markerTargetRangeInSource(createStringTextSnapshot(zwspText), zwspOffset)).toEqual({
+      start: zwspOffset,
+      end: zwspOffset + 1,
+    })
+
+    const astralInvisibleText = 'const alpha\u{E0001}'
+    const tagOffset = astralInvisibleText.indexOf('\u{E0001}')
+    expect(
+      markerTargetRangeInSource(createStringTextSnapshot(astralInvisibleText), tagOffset),
+    ).toEqual({
+      start: tagOffset,
+      end: tagOffset + 2,
+    })
+
+    const ambiguousPunctuation = 'alpha—'
+    const dashOffset = ambiguousPunctuation.indexOf('—')
+    expect(
+      markerTargetRangeInSource(createStringTextSnapshot(ambiguousPunctuation), dashOffset),
+    ).toEqual({
+      start: dashOffset,
+      end: dashOffset + 1,
+    })
   })
 })

@@ -606,6 +606,78 @@ describe('one hover per view', () => {
     expect(tooltip().hidden).toBe(true)
     harness.dispose()
   })
+
+  it('keeps the full identifier target across a painted astral Unicode character inside the identifier', async () => {
+    vi.useFakeTimers()
+    const text = 'const a𝐚bc = 1'
+    const identStart = text.indexOf('a𝐚bc')
+    const identEnd = identStart + 'a𝐚bc'.length
+    const boldOffset = text.indexOf('𝐚')
+    const bOffset = text.indexOf('b')
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot: createStringTextSnapshot(text),
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const computeSync = vi.fn(
+      (request: {
+        readonly anchor: { readonly range: { readonly start: number; readonly end: number } }
+      }) => [
+        part(
+          request.anchor.range,
+          `hover:${text.slice(request.anchor.range.start, request.anchor.range.end)}`,
+        ),
+      ],
+    )
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [{ computeSync }]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: (clientX) => ({
+        bufferRow: 0,
+        displayRow: 0,
+        source: 'document',
+        region: 'text',
+        offset: clientX < 80 ? boldOffset : bOffset,
+      }),
+      markerAtPoint: (clientX) =>
+        clientX >= 68 && clientX < 80 ? { kind: 'ambiguous', offset: boldOffset } : null,
+      textOffsetFromPoint: (clientX) => (clientX < 80 ? boldOffset : bOffset),
+      getRangeClientRect: (start, end) => {
+        if (start === identStart && end === identEnd) return new DOMRect(60, 200, 48, 18)
+        return new DOMRect(60, 200, 12, 18)
+      },
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    tooltip().getBoundingClientRect = () => new DOMRect(12, 132, 300, 60)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 72, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:a𝐚bc'])
+    expect(computeSync).toHaveBeenCalledTimes(1)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 88, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:a𝐚bc'])
+    expect(computeSync).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
 })
 
 type PositionedToken = {

@@ -36,26 +36,8 @@ export function identifierRangeAtOffset(text: string, offset: number): OffsetRan
   const initial = identifierSpanAtOffset(text, clamped)
   if (!initial) return null
 
-  let start = initial.start
-  for (
-    let prev = codePointSpanAt(text, start - 1);
-    isIdentifierSpan(text, prev);
-    prev = codePointSpanAt(text, start - 1)
-  ) {
-    start = prev!.start
-  }
-
-  let end = initial.end
-  for (
-    let next = codePointSpanAt(text, end);
-    isIdentifierSpan(text, next);
-    next = codePointSpanAt(text, end)
-  ) {
-    end = next!.end
-  }
-
-  if (end <= start) return null
-  return { start, end }
+  const expanded = expandIdentifierSpan(text, initial)
+  return expanded.end > expanded.start ? expanded : null
 }
 
 /** The identifier at `offset`, else the single visible code point there. */
@@ -75,18 +57,67 @@ const HOVER_WINDOW_RADIUS = 256
  * document. The window widens only while an identifier runs into its edge.
  */
 export function hoverTargetRangeInSource(source: TextReadSnapshot, offset: number): OffsetRange {
+  return targetRangeInSource(source, offset, hoverTargetRange)
+}
+
+/**
+ * Target range for a painted character marker at `offset`: expands to the full identifier only
+ * when the character at `offset` itself is an identifier character, otherwise returns the exact
+ * code point span at `offset` (without stepping backward into an adjacent identifier).
+ */
+export function markerTargetRangeInSource(source: TextReadSnapshot, offset: number): OffsetRange {
+  return targetRangeInSource(source, offset, markerTargetRange)
+}
+
+function markerTargetRange(text: string, offset: number): OffsetRange {
+  if (text.length === 0) return { start: 0, end: 0 }
+  const index = Math.max(0, Math.min(offset, text.length - 1))
+  const span = codePointSpanAt(text, index)
+  if (isIdentifierSpan(text, span)) {
+    return expandIdentifierSpan(text, span!)
+  }
+  return span ?? { start: index, end: Math.min(text.length, index + 1) }
+}
+
+function targetRangeInSource(
+  source: TextReadSnapshot,
+  offset: number,
+  resolve: (text: string, localOffset: number) => OffsetRange,
+): OffsetRange {
   const line = source.lineRange(source.lineAt(Math.min(offset, Math.max(0, source.length - 1))))
   // One past the break, so a caret on the line break targets it as the string search did.
   const lineEnd = Math.min(source.length, line.end + 1)
   for (let radius = HOVER_WINDOW_RADIUS; ; radius *= 2) {
     const from = Math.max(line.start, offset - radius)
     const to = Math.min(lineEnd, Math.max(from, offset + radius))
-    const local = hoverTargetRange(source.readRange(from, to), offset - from)
+    const local = resolve(source.readRange(from, to), offset - from)
     const range = { start: from + local.start, end: from + local.end }
     const clippedLeft = range.start <= from + 1 && from > line.start
     const clippedRight = range.end >= to - 1 && to < lineEnd
     if (!clippedLeft && !clippedRight) return range
   }
+}
+
+function expandIdentifierSpan(text: string, initial: OffsetRange): OffsetRange {
+  let start = initial.start
+  for (
+    let prev = codePointSpanAt(text, start - 1);
+    isIdentifierSpan(text, prev);
+    prev = codePointSpanAt(text, start - 1)
+  ) {
+    start = prev!.start
+  }
+
+  let end = initial.end
+  for (
+    let next = codePointSpanAt(text, end);
+    isIdentifierSpan(text, next);
+    next = codePointSpanAt(text, end)
+  ) {
+    end = next!.end
+  }
+
+  return { start, end }
 }
 
 function identifierSpanAtOffset(text: string, offset: number): OffsetRange | null {

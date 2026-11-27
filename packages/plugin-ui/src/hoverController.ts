@@ -19,6 +19,7 @@ import type {
 import { EDITOR_HOVER_PARTICIPANT } from './hoverToken'
 import {
   hoverTargetRangeInSource,
+  markerTargetRangeInSource,
   sameOffsetRange,
   unionOffsetRange,
   type OffsetRange,
@@ -525,8 +526,10 @@ function hoverTargetFromPoint(
 ): HoverPointTarget | null {
   const marker = context.markerAtPoint(clientX, clientY)
   if (marker) {
-    const end = Math.min(snapshot.textSnapshot.length, marker.offset + 1)
-    return { offset: marker.offset, range: { start: marker.offset, end } }
+    return {
+      offset: marker.offset,
+      range: markerTargetRangeInSource(snapshot.textSnapshot, marker.offset),
+    }
   }
   const hit = context.rowAtPoint(clientX, clientY)
   if (!hit || hit.region !== 'text' || hit.offset === null) return null

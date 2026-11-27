@@ -316,13 +316,25 @@ describe('tooltip pointer retention', () => {
     controller.dispose()
   })
 
-  it('stays locked while keyboard-focused or resizing regardless of pointer position', () => {
+  it('stays locked while keyboard-focused or dragging a resize sash regardless of pointer position', () => {
     const controller = tooltipController()
     const element = document.querySelector<HTMLElement>('.editor-test-hover')!
     element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
     controller.show({ ...showOptions(), anchor: new DOMRect(60, 200, 40, 18), focus: true })
 
     expect(controller.pointerRetention(500, 500)).toBe('locked')
+
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(controller.pointerRetention(500, 500)).toBe('none')
+
+    const rightSash = element.querySelector<HTMLElement>('.editor-test-hover-resize-right')!
+    rightSash.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 412, clientY: 160 }),
+    )
+    expect(controller.pointerRetention(500, 500)).toBe('locked')
+
+    document.dispatchEvent(new PointerEvent('pointerup'))
+    expect(controller.pointerRetention(500, 500)).toBe('none')
     controller.dispose()
   })
 })
