@@ -459,5 +459,170 @@ it.each([5, 7])(
       expect(painted.data[offset + 1]).toBe(0)
       expect(painted.data[offset + 2]).toBe(0)
     }
+    expect(
+      ink(painted, (red, green, blue) => red > 180 && green > 180 && blue > 180),
+    ).toBeGreaterThan(15)
   },
 )
+
+function nearRgb(
+  red: number,
+  green: number,
+  blue: number,
+  target: readonly [number, number, number],
+  tolerance = 8,
+): boolean {
+  return (
+    Math.abs(red - target[0]) <= tolerance &&
+    Math.abs(green - target[1]) <= tolerance &&
+    Math.abs(blue - target[2]) <= tolerance
+  )
+}
+
+const OPAQUE_SELECTION_THEMES = [
+  {
+    appearance: 'dark' as const,
+    background: '#000000',
+    foreground: '#ffffff',
+    selection: '#1f3b5c',
+    selectionRgb: [31, 59, 92] as const,
+    inactiveSelection: '#3a3d41',
+    inactiveSelectionRgb: [58, 61, 65] as const,
+    whitespaceColor: '#00ff00',
+    matchesForeground: (red: number, green: number, blue: number) =>
+      red > 180 && green > 180 && blue > 180,
+    matchesWhitespace: (red: number, green: number, blue: number) =>
+      green > 140 && green > red + 50 && green > blue + 35,
+  },
+  {
+    appearance: 'light' as const,
+    background: '#ffffff',
+    foreground: '#000000',
+    selection: '#cfe0ff',
+    selectionRgb: [207, 224, 255] as const,
+    inactiveSelection: '#e5e7eb',
+    inactiveSelectionRgb: [229, 231, 235] as const,
+    whitespaceColor: '#00aa00',
+    matchesForeground: (red: number, green: number, blue: number) =>
+      red < 80 && green < 80 && blue < 80,
+    matchesWhitespace: (red: number, green: number, blue: number) =>
+      green > red + 25 && green > blue + 25,
+  },
+] as const
+
+it.for(OPAQUE_SELECTION_THEMES)(
+  'paints opaque selectionColor behind code text, syntax tokens, and hidden whitespace in $appearance theme',
+  async (spec) => {
+    const host = document.createElement('div')
+    host.id = `opaque-selection-${spec.appearance}`
+    host.style.cssText = 'width:480px;height:80px;display:flex'
+    document.body.append(host)
+    const editor = new Editor(host, {
+      cursorLineHighlight: { rowBackground: false, gutterNumber: false, gutterBackground: false },
+      fontSize: 24,
+      hiddenCharacters: 'show-on-selection',
+      lineHeight: 32,
+      theme: {
+        type: spec.appearance,
+        backgroundColor: spec.background,
+        foregroundColor: spec.foreground,
+        selectionColor: spec.selection,
+        inactiveSelectionColor: spec.inactiveSelection,
+      },
+    })
+    try {
+      const editorRoot = host.querySelector<HTMLElement>('.editor-virtualized')
+      assert(editorRoot)
+      editorRoot.style.setProperty('--editor-hidden-character-foreground', spec.whitespaceColor)
+      const source = 'MMMM NNNN'
+      editor.setText(source)
+      editor.setTokens([{ start: 0, end: 4, style: { color: '#ff0000' } }])
+      editor.focus()
+      editor.setSelection(0, source.length)
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+
+      const active = await pixels(host.id)
+      expect(
+        ink(active, (red, green, blue) => nearRgb(red, green, blue, spec.selectionRgb)),
+      ).toBeGreaterThan(200)
+      expect(redInk(active)).toBeGreaterThan(20)
+      expect(ink(active, spec.matchesForeground)).toBeGreaterThan(20)
+      expect(ink(active, spec.matchesWhitespace)).toBeGreaterThan(0)
+
+      const focused = document.activeElement
+      if (focused instanceof HTMLElement) focused.blur()
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+
+      const inactive = await pixels(host.id)
+      expect(
+        ink(inactive, (red, green, blue) => nearRgb(red, green, blue, spec.inactiveSelectionRgb)),
+      ).toBeGreaterThan(200)
+      expect(redInk(inactive)).toBeGreaterThan(20)
+      expect(ink(inactive, spec.matchesForeground)).toBeGreaterThan(20)
+    } finally {
+      editor.dispose()
+      host.remove()
+    }
+  },
+)
+
+it('layers opaque selection above row backgrounds and behind search highlights, carets, and trailers in content mode', async () => {
+  const host = document.createElement('div')
+  host.id = 'opaque-selection-layers'
+  host.style.cssText = 'width:480px;height:80px;background:black;color:white;font:24px monospace'
+  host.style.setProperty('--editor-merge-current-header-background', '#442222')
+  host.style.setProperty('--editor-merge-description-foreground', '#00ffff')
+  document.body.append(host)
+  const view = new VirtualizedTextView(host, {
+    rowHeight: 32,
+    overscan: 0,
+    scrollMode: 'content',
+    rowPositioning: 'top',
+  })
+  mounted.push({ host, view })
+  view.setTheme({
+    type: 'dark',
+    backgroundColor: '#000000',
+    foregroundColor: '#ffffff',
+    selectionColor: '#1f3b5c',
+    caretColor: '#00ff00',
+  })
+  view.setText('MMMM NNNN')
+  view.setRowDecorations(new Map([[0, { className: 'editor-merge-conflict-current-header' }]]))
+  view.setScrollMetrics(0, 80, 480)
+  view.setTokens([{ start: 0, end: 4, style: { color: '#ff0000' } }])
+  view.setRangeHighlight('find-match', [{ start: 5, end: 9 }], { backgroundColor: '#ff00ff' })
+  const caretLayer = host.querySelector<HTMLElement>('.editor-virtualized-caret-layer')
+  assert(caretLayer)
+  // Prevent the 500ms blink timer from hiding the caret if a screenshot stalls.
+  caretLayer.style.opacity = '1'
+  view.focusInput()
+  view.setSelection(9, 0)
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+
+  const painted = await pixels(host.id)
+  // Row background paints on the unselected right half; selection paints above it.
+  expect(
+    ink(painted, (red, green, blue) => nearRgb(red, green, blue, [68, 34, 34])),
+  ).toBeGreaterThan(200)
+  expect(
+    ink(painted, (red, green, blue) => nearRgb(red, green, blue, [31, 59, 92])),
+  ).toBeGreaterThan(100)
+  // Search/match CSS Highlight background paints above selection.
+  expect(ink(painted, (red, green, blue) => red > 180 && green < 80 && blue > 180)).toBeGreaterThan(
+    50,
+  )
+  // Syntax token and plain text glyphs paint above selection and search highlight.
+  expect(redInk(painted)).toBeGreaterThan(20)
+  expect(
+    ink(painted, (red, green, blue) => red > 180 && green > 180 && blue > 180),
+  ).toBeGreaterThan(20)
+  // Caret at the reversed selection head paints above the opaque selection.
+  expect(ink(painted, (red, green, blue) => red < 80 && green > 180 && blue < 80)).toBeGreaterThan(
+    10,
+  )
+  // Merge-conflict ::after trailer paints above the row background.
+  expect(ink(painted, (red, green, blue) => red < 80 && green > 180 && blue > 180)).toBeGreaterThan(
+    20,
+  )
+})
