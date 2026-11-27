@@ -71,6 +71,8 @@ type PooledConnection = {
   connected: boolean
   readyAt: number | null
   idleTimer: ReturnType<typeof setTimeout> | null
+  /** True once the entry has left the pool and its retirement gate has been installed. */
+  withdrawn: boolean
   /** Set once the entry has left the pool and its key is gated: what disposes its connection. */
   disposal: (() => void) | null
 }
@@ -179,11 +181,17 @@ export class LspConnectionPool {
     createTransport: LspConnectionOptions['createTransport'],
   ): LspConnectionOptions['createTransport'] {
     return (signal) => {
+      // A withdrawn entry must never wait on the gate installed for its own retirement.
+      if (signal.aborted || this.#entries.get(entry.key) !== entry) {
+        return Promise.reject(new Error('LSP connection was closed'))
+      }
       const retiring = this.#retiring.get(entry.key)
       if (!retiring) return createTransport(signal)
 
       return retiring.then(() => {
-        if (this.#entries.get(entry.key) !== entry) throw new Error('LSP connection was closed')
+        if (signal.aborted || this.#entries.get(entry.key) !== entry) {
+          throw new Error('LSP connection was closed')
+        }
         return createTransport(signal)
       })
     }
@@ -203,6 +211,7 @@ export class LspConnectionPool {
       notificationMethods,
       readyAt: null,
       status: 'idle',
+      withdrawn: false,
     }
     // Assigned after the record exists because the callbacks close over it: the
     // connection reports `loading` from inside `connect()`, which is before any
@@ -271,8 +280,11 @@ export class LspConnectionPool {
       },
       onUnavailable: () => {
         entry.connected = false
-        this.#retire(entry)
-        for (const lease of leasesOf(entry)) lease.callbacks.onUnavailable()
+        runEach(
+          [() => this.#retire(entry)].concat(
+            leasesOf(entry).map((lease) => () => lease.callbacks.onUnavailable()),
+          ),
+        )
       },
       onPublishDiagnostics: (params) => {
         for (const lease of leasesOf(entry)) lease.callbacks.onPublishDiagnostics(params)
@@ -282,7 +294,7 @@ export class LspConnectionPool {
         // A connection that gave up leaves the pool before anyone hears so: a borrower that retries
         // gets a new one. `onUnavailable`, which follows, disposes it.
         if (status === 'error') this.#withdraw(entry)
-        for (const lease of leasesOf(entry)) lease.callbacks.onStatusChange?.(status)
+        runEach(leasesOf(entry).map((lease) => () => lease.callbacks.onStatusChange?.(status)))
       },
       onError: (error) => {
         this.#emit(entry, 'error', {
@@ -290,7 +302,7 @@ export class LspConnectionPool {
           error,
           reachedReady: entry.readyAt !== null,
         })
-        for (const lease of leasesOf(entry)) lease.callbacks.onError?.(error)
+        runEach(leasesOf(entry).map((lease) => () => lease.callbacks.onError?.(error)))
       },
     }
   }
@@ -337,8 +349,11 @@ export class LspConnectionPool {
 
   #retire(entry: PooledConnection): void {
     this.#withdraw(entry)
+    const disposal = entry.disposal
+    if (!disposal) return
+    entry.disposal = null
     try {
-      entry.disposal?.()
+      disposal()
     } finally {
       this.#emit(entry, 'retired', {
         durationMs: Math.round(now() - entry.createdAt),
@@ -349,8 +364,9 @@ export class LspConnectionPool {
 
   /** Takes the entry out of the pool and gates its key; disposing its connection comes after. */
   #withdraw(entry: PooledConnection): void {
-    if (entry.disposal) return
+    if (entry.withdrawn) return
 
+    entry.withdrawn = true
     if (this.#entries.get(entry.key) === entry) this.#entries.delete(entry.key)
     entry.disposal = this.#gateRetirement(entry)
   }

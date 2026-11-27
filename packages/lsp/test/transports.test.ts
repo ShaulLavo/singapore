@@ -222,6 +222,31 @@ describe('WebSocket LSP transport', () => {
     await expect(promise).rejects.toBe(closeFailure)
   })
 
+  it('closes the socket and rejects cancellation even when removeEventListener throws', async () => {
+    FakeWebSocket.instances.length = 0
+    const removeFailure = new Error('removeEventListener failed')
+    class ThrowingRemoveWebSocket extends FakeWebSocket {
+      public override removeEventListener(type: string, handler: Listener): void {
+        super.removeEventListener(type, handler)
+        if (type === 'open' || type === 'message') throw removeFailure
+      }
+    }
+    const controller = new AbortController()
+    const promise = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: ThrowingRemoveWebSocket,
+      signal: controller.signal,
+    })
+    const socket = FakeWebSocket.instances[0]!
+
+    controller.abort(new Error('connection closed'))
+
+    await expect(promise).rejects.toBe(removeFailure)
+    expect(socket.readyState).toBe(3)
+    for (const type of ['open', 'error', 'close', 'message']) {
+      expect(socket.listenerCount(type)).toBe(0)
+    }
+  })
+
   it('opens no socket for a signal that is already aborted', async () => {
     FakeWebSocket.instances.length = 0
     const reason = new Error('connection closed')

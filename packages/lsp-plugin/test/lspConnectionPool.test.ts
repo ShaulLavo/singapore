@@ -558,6 +558,64 @@ describe('LspConnectionPool', () => {
     expect(starts).toBe(2)
   })
 
+  it('still retires and unblocks the pool key when a terminal status callback throws', async () => {
+    const statusFailure = new Error('status callback exploded')
+    let starts = 0
+    const provider = pool.provider(KEY)
+    const options = connectionOptions({
+      createTransport: () => {
+        starts += 1
+        return new FakeTransport()
+      },
+    })
+    const sibling = callbacks()
+    provider.acquire(options, {
+      ...callbacks(),
+      onStatusChange: (status) => {
+        if (status === 'error') throw statusFailure
+      },
+    })
+    provider.acquire(options, sibling)
+
+    expect(() => FakeTransport.created[0]!.fail()).toThrow(statusFailure)
+    expect(sibling.onStatusChange).toHaveBeenCalledWith('error')
+    expect(sibling.onUnavailable).toHaveBeenCalledTimes(1)
+
+    const replacement = provider.acquire(options, callbacks())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(replacement).toBeDefined()
+    expect(starts).toBe(2)
+  })
+
+  it('does not deadlock its own retirement gate when connect() is called on a failed lease inside onStatusChange', async () => {
+    let starts = 0
+    const provider = pool.provider(KEY)
+    const options = connectionOptions({
+      createTransport: () => {
+        starts += 1
+        return new FakeTransport()
+      },
+    })
+    let lease!: LspConnectionLease
+    lease = provider.acquire(options, {
+      ...callbacks(),
+      onStatusChange: (status) => {
+        if (status === 'error') lease.connection.connect()
+      },
+    })
+
+    FakeTransport.created[0]!.fail()
+    // Calling connect() again after retirement/disposal must also stay a no-op.
+    lease.connection.connect()
+
+    const replacement = provider.acquire(options, callbacks())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(replacement.connection).not.toBe(lease.connection)
+    expect(starts).toBe(2)
+  })
+
   it('keeps waiting for an old server after a connection that was waiting for it closes', async () => {
     vi.useFakeTimers()
     const provider = pool.provider(KEY)

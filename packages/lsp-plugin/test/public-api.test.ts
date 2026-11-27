@@ -16,6 +16,7 @@ import {
   type WorkspaceTextDocumentProvenance,
   type WorkspaceTextReplayInput,
 } from '@singapore-editor/lsp-plugin/workspace-edit'
+import type { LspWebSocketTransportOptions } from '@singapore-editor/lsp'
 import type {
   ApplyWorkspaceEditRequest,
   ApplyWorkspaceEditResult,
@@ -33,8 +34,15 @@ describe('LanguageServerPluginOptions', () => {
       // @ts-expect-error The connection aborts its own signal; a caller's would be dropped.
       signal: AbortSignal.abort(),
     }
+    const transportOptions: LspWebSocketTransportOptions = {
+      protocols: ['lsp'],
+      signal: AbortSignal.abort(),
+    }
+    // @ts-expect-error Pre-typed WebSocket transport options with a signal must not pass structural typing.
+    const rejected: LanguageServerPluginOptions['webSocketTransportOptions'] = transportOptions
 
     expect(options).toBeDefined()
+    expect(rejected).toBeDefined()
   })
 })
 
