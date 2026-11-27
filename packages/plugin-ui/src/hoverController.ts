@@ -109,7 +109,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   let lastPointer: PointerPoint | null = null
   let corridorSettle: CorridorSettleState | null = null
   let trackingOutside = false
-  let outsideHideScheduled = false
+  let hideScheduled = false
   let nextOperationId = 0
   let theme: EditorTheme | null = context.getSnapshot().theme ?? null
   let disposed = false
@@ -120,31 +120,31 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     corridorSettle = null
   }
 
+  const cancelHide = (): void => {
+    hideScheduled = false
+    tooltip.cancelHide()
+  }
+
+  const schedulePlainHide = (refresh: boolean): void => {
+    if (hideScheduled && !refresh) return
+    hideScheduled = true
+    tooltip.scheduleHide()
+  }
+
   const handleDocumentPointerMove = (event: PointerEvent): void => {
     if (event.buttons !== 0) return hide()
     if (tooltip.containsTarget(event.target)) {
       stopOutsideTracking()
-      return tooltip.cancelHide()
+      return cancelHide()
     }
     if (event.target instanceof Node && element.contains(event.target)) return stopOutsideTracking()
 
     const retention = tooltip.pointerRetention(event.clientX, event.clientY)
-    if (retention === 'locked' || retention === 'anchor') {
-      outsideHideScheduled = false
-      return tooltip.cancelHide()
-    }
-    if (retention === 'approaching') {
-      outsideHideScheduled = true
-      return tooltip.scheduleHide()
-    }
-    if (retention === 'corridor') {
-      if (outsideHideScheduled) return
-      outsideHideScheduled = true
-      return tooltip.scheduleHide()
-    }
-    const needsHide = !outsideHideScheduled
+    if (retention === 'locked' || retention === 'anchor') return cancelHide()
+    if (retention === 'approaching') return schedulePlainHide(true)
+    if (retention === 'corridor') return schedulePlainHide(false)
     stopOutsideTracking()
-    if (needsHide) tooltip.scheduleHide()
+    schedulePlainHide(false)
   }
 
   const startOutsideTracking = (): void => {
@@ -156,7 +156,6 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   const stopOutsideTracking = (): void => {
     if (!trackingOutside) return
     trackingOutside = false
-    outsideHideScheduled = false
     ownerDocument.removeEventListener('pointermove', handleDocumentPointerMove)
   }
 
@@ -170,6 +169,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     codeTokenizer,
     onDidHide: () => cancelOperation(),
     onPointerEnter: () => {
+      hideScheduled = false
       stopOutsideTracking()
       clearCorridorSettle()
     },
@@ -177,6 +177,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   })
 
   const cancelOperation = (): void => {
+    hideScheduled = false
     stopOutsideTracking()
     clearCorridorSettle()
     const current = operation
@@ -196,6 +197,18 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   }
 
   const isCurrent = (candidate: HoverOperation): boolean => operation === candidate
+
+  const isPointOnOperation = (
+    current: HoverOperation,
+    clientX: number,
+    clientY: number,
+  ): boolean => {
+    if (!isCurrent(current) || !context.hasDocument()) return false
+    const snapshot = context.getSnapshot()
+    if (snapshot.textVersion !== current.snapshot.textVersion) return false
+    const target = hoverTargetFromPoint(context, snapshot, clientX, clientY)
+    return target !== null && sameOffsetRange(current.anchor.range, target.range)
+  }
 
   const render = (current: HoverOperation): void => {
     if (!isCurrent(current)) return
@@ -220,12 +233,14 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
       ? rect
       : (context.getRangeClientRect(current.anchor.range.start, current.anchor.range.end) ?? rect)
     const pointer =
-      current.anchor.source === 'pointer' ? (lastPointer ?? current.anchor.point ?? null) : null
-    const pointerAnchor = pointerAnchorForTarget(tokenRect, pointer)
+      current.anchor.source === 'pointer' && !current.shown
+        ? (lastPointer ?? current.anchor.point ?? null)
+        : null
 
     tooltip.show({
       anchor: rect,
-      pointerAnchor,
+      pointerAnchor: tokenRect,
+      isPointOnAnchor: (clientX, clientY) => isPointOnOperation(current, clientX, clientY),
       pointer,
       hoverText: null,
       parts,
@@ -333,7 +348,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     snapshot: EditorViewSnapshot,
     point: HoverAnchor['point'],
   ): void => {
-    tooltip.cancelHide()
+    cancelHide()
     const current = operation
     if (
       current &&
@@ -395,6 +410,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
       return
     }
 
+    hideScheduled = false
     corridorSettle = { point, targetRange }
     tooltip.scheduleHide(() => settleCorridor())
   }
@@ -405,23 +421,9 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     const point: PointerPoint = { clientX: event.clientX, clientY: event.clientY }
     lastPointer = point
     const retention = tooltip.pointerRetention(event.clientX, event.clientY)
-    if (retention === 'locked') {
+    if (retention === 'locked' || retention === 'anchor') {
       clearCorridorSettle()
-      return tooltip.cancelHide()
-    }
-    if (retention === 'anchor') {
-      const markerTarget = distinctMarkerTargetAtPoint(
-        context,
-        operation,
-        event.clientX,
-        event.clientY,
-      )
-      if (!markerTarget) {
-        clearCorridorSettle()
-        return tooltip.cancelHide()
-      }
-      clearCorridorSettle()
-      return scheduleTarget(markerTarget.target, markerTarget.snapshot, point)
+      return cancelHide()
     }
     if (retention === 'approaching') return scheduleCorridorSettle(point, true)
     if (retention === 'corridor') return scheduleCorridorSettle(point, false)
@@ -432,7 +434,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     const target = hoverTargetFromPoint(context, snapshot, event.clientX, event.clientY)
     if (!target) {
       if (operation && !operation.shown) cancelOperation()
-      return tooltip.scheduleHide()
+      return schedulePlainHide(false)
     }
 
     scheduleTarget(target, snapshot, point)
@@ -443,15 +445,12 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     lastPointer = null
     if (tooltip.containsTarget(event.relatedTarget)) {
       stopOutsideTracking()
-      return tooltip.cancelHide()
+      return cancelHide()
     }
     // A hover that has not painted yet has nothing to keep: the pointer is gone.
     if (operation && !operation.shown) cancelOperation()
-    if (operation?.shown) {
-      outsideHideScheduled = true
-      startOutsideTracking()
-    }
-    tooltip.scheduleHide()
+    if (operation?.shown) startOutsideTracking()
+    schedulePlainHide(false)
   }
 
   const handleDocumentPointerDown = (event: PointerEvent): void => {
@@ -533,27 +532,6 @@ function clearTimers(operation: HoverOperation): void {
  * A scroll or relayout moves the text out from under the hover, and an edit may have changed what
  * it says. Both belong to the old frame, so the hover goes with them.
  */
-function distinctMarkerTargetAtPoint(
-  context: EditorViewContributionContext,
-  current: HoverOperation | null,
-  clientX: number,
-  clientY: number,
-): { readonly target: HoverPointTarget; readonly snapshot: EditorViewSnapshot } | null {
-  if (!context.hasDocument()) return null
-  const marker = context.markerAtPoint(clientX, clientY)
-  if (!marker) return null
-  const snapshot = context.getSnapshot()
-  const range = markerTargetRangeInSource(snapshot.textSnapshot, marker.offset)
-  if (
-    current &&
-    current.snapshot.textVersion === snapshot.textVersion &&
-    sameOffsetRange(current.anchor.range, range)
-  ) {
-    return null
-  }
-  return { target: { offset: marker.offset, range }, snapshot }
-}
-
 function hoverTargetFromPoint(
   context: EditorViewContributionContext,
   snapshot: EditorViewSnapshot,
@@ -573,18 +551,6 @@ function hoverTargetFromPoint(
     offset: hit.offset,
     range: hoverTargetRangeInSource(snapshot.textSnapshot, hit.offset),
   }
-}
-
-function pointerAnchorForTarget(tokenRect: DOMRect, pointer: PointerPoint | null): DOMRect {
-  if (!pointer || tokenRect.width > 0) return tokenRect
-  if (pointer.clientX < tokenRect.left) return tokenRect
-  if (pointer.clientY < tokenRect.top || pointer.clientY > tokenRect.bottom) return tokenRect
-  return new DOMRect(
-    tokenRect.left,
-    tokenRect.top,
-    pointer.clientX - tokenRect.left + 1,
-    tokenRect.height,
-  )
 }
 
 function sameNullableRange(left: OffsetRange | null, right: OffsetRange | null): boolean {

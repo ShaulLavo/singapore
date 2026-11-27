@@ -759,6 +759,98 @@ describe('one hover per view', () => {
     expect(partTexts()).toEqual(['resolved answer'])
     controller.dispose()
   })
+
+  it('does not let an async update make a zero-width marker tooltip stick over trailing whitespace', async () => {
+    vi.useFakeTimers()
+    let emitAsync!: () => void
+    const text = 'const end\u200b'
+    const zwspOffset = text.indexOf('\u200b')
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot: createStringTextSnapshot(text),
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const syncParticipant: EditorHoverParticipant = {
+      computeSync: (request) =>
+        request.anchor.offset === zwspOffset
+          ? [part({ start: zwspOffset, end: zwspOffset + 1 }, 'zero-width space')]
+          : [],
+    }
+    const asyncParticipant: EditorHoverParticipant = {
+      computeAsync: (request, emit) =>
+        new Promise<void>((resolve) => {
+          request.signal.addEventListener('abort', () => resolve())
+          emitAsync = () => {
+            emit([
+              {
+                ordinal: 2,
+                range: { start: zwspOffset, end: zwspOffset + 1 },
+                markdown: 'async detail',
+              },
+            ])
+            resolve()
+          }
+        }),
+    }
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [
+        syncParticipant,
+        asyncParticipant,
+      ]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: () => ({
+        bufferRow: 0,
+        displayRow: 0,
+        source: 'document',
+        region: 'trailing',
+        offset: null,
+      }),
+      markerAtPoint: (clientX, clientY) =>
+        clientX >= 90 && clientX < 92 && clientY >= 200 && clientY <= 218
+          ? { kind: 'invisible', offset: zwspOffset }
+          : null,
+      textOffsetFromPoint: () => zwspOffset,
+      getRangeClientRect: () => new DOMRect(90, 200, 0, 18),
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    tooltip().getBoundingClientRect = () => new DOMRect(12, 132, 240, 60)
+
+    // Hover the 2 px painted marker until the sync part paints.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 91, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['zero-width space'])
+
+    // Leave 80 px into trailing whitespace; async provider then emits a second part.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 171, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    emitAsync()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(partTexts()).toEqual(['zero-width space', 'async detail'])
+
+    // Moving further in trailing whitespace must not cancel or reset the pending hide timer.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 170, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS - 100)
+    expect(tooltip().hidden).toBe(true)
+    controller.dispose()
+  })
 })
 
 type PositionedToken = {

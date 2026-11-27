@@ -303,6 +303,41 @@ describe('tooltip pointer retention', () => {
     controller.dispose()
   })
 
+  it('uses isPointOnAnchor over pointerAnchor bounds and preserves travel state across updates', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    const zeroWidthAnchor = new DOMRect(90, 200, 0, 18)
+    const isPointOnAnchor = (clientX: number, clientY: number) =>
+      clientX >= 90 && clientX < 92 && clientY >= 200 && clientY <= 218
+
+    controller.show({
+      ...showOptions(),
+      anchor: zeroWidthAnchor,
+      pointerAnchor: zeroWidthAnchor,
+      isPointOnAnchor,
+      pointer: { clientX: 91, clientY: 209 },
+    })
+
+    // Initial travel starts from the painted marker hit, allowing approach into the tooltip.
+    expect(controller.pointerRetention(91, 209)).toBe('anchor')
+    expect(controller.pointerRetention(91, 196)).toBe('approaching')
+
+    // Moving far into trailing whitespace drops retention; a subsequent update must not restore it.
+    expect(controller.pointerRetention(171, 209)).toBe('none')
+    controller.show({
+      ...showOptions(),
+      anchor: zeroWidthAnchor,
+      pointerAnchor: zeroWidthAnchor,
+      isPointOnAnchor,
+      hoverText: 'updated async hover',
+      pointer: null,
+    })
+    expect(controller.pointerRetention(170, 209)).toBe('none')
+    expect(controller.pointerRetention(91, 209)).toBe('anchor')
+    controller.dispose()
+  })
+
   it('allows a 4px border grace after leaving the tooltip, then releases immediately beyond it', () => {
     const controller = tooltipController()
     const element = document.querySelector<HTMLElement>('.editor-test-hover')!

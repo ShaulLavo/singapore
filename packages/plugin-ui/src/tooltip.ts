@@ -93,6 +93,8 @@ export type TooltipShowOptions = {
   readonly anchor: DOMRect
   /** Optional tighter rect for pointer retention when the visual anchor spans wider than the hovered token. */
   readonly pointerAnchor?: DOMRect
+  /** Optional authoritative anchor hit-test, taking precedence over `pointerAnchor` bounds. */
+  readonly isPointOnAnchor?: (clientX: number, clientY: number) => boolean
   /** Pointer coordinate that opened the hover, so fast travel from the anchor starts inside the corridor. */
   readonly pointer?: { readonly clientX: number; readonly clientY: number } | null
   /** A single Markdown body, for a surface with one thing to say. */
@@ -164,6 +166,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
   let disposed = false
   let anchorRect: DOMRect | null = null
   let pointerAnchorRect: DOMRect | null = null
+  let pointerAnchorCheck: ((clientX: number, clientY: number) => boolean) | null = null
   let placement: AnchoredSurfacePlacement = 'top'
   let controls = false
   let pointerTravel: PointerTravelState = { kind: 'idle' }
@@ -204,6 +207,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     tooltip.hidden = true
     anchorRect = null
     pointerAnchorRect = null
+    pointerAnchorCheck = null
     surface.release()
     tooltip.replaceChildren()
     actionRows = new WeakMap()
@@ -224,18 +228,29 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     }, TOOLTIP_HIDE_DELAY_MS)
   }
 
+  const isOnAnchor = (clientX: number, clientY: number): boolean => {
+    if (pointerAnchorCheck) return pointerAnchorCheck(clientX, clientY)
+    const activeAnchor = pointerAnchorRect ?? anchorRect
+    return activeAnchor ? rectContainsPoint(activeAnchor, clientX, clientY) : false
+  }
+
   const show = (showOptions: TooltipShowOptions): void => {
     const wasHidden = tooltip.hidden !== false
     const focusState = tooltipFocusState(tooltip, document.activeElement)
     const scrollState = tooltipScrollState(tooltip)
     const nextPointerAnchor = showOptions.pointerAnchor ?? showOptions.anchor
+    const nextPointerAnchorCheck = showOptions.isPointOnAnchor ?? null
     const pointerAnchorChanged =
       !pointerAnchorRect || !sameRect(pointerAnchorRect, nextPointerAnchor)
-    if (wasHidden || (pointerAnchorChanged && pointerTravel.kind !== 'tooltip')) {
-      pointerTravel = initialPointerTravel(nextPointerAnchor, showOptions.pointer)
-    }
     anchorRect = showOptions.anchor
     pointerAnchorRect = nextPointerAnchor
+    pointerAnchorCheck = nextPointerAnchorCheck
+    if (
+      wasHidden ||
+      (!nextPointerAnchorCheck && pointerAnchorChanged && pointerTravel.kind !== 'tooltip')
+    ) {
+      pointerTravel = initialPointerTravel(isOnAnchor, showOptions.pointer)
+    }
     const parts = showOptions.parts ?? []
     controls = parts.some((part) => part.presentation === 'controls')
     tooltip.dataset.editorHoverPresentation = controls ? 'controls' : 'text'
@@ -273,6 +288,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
 
     anchorRect = nextAnchor
     pointerAnchorRect = nextAnchor
+    pointerAnchorCheck = null
     pointerTravel = { kind: 'idle' }
     surface.place(nextAnchor, placement)
   }
@@ -332,9 +348,8 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
       return 'locked'
     }
 
-    const activeAnchor = pointerAnchorRect ?? anchorRect
     const distance = pointToRectDistance(tooltipRect, clientX, clientY)
-    if (rectContainsPoint(activeAnchor, clientX, clientY)) {
+    if (isOnAnchor(clientX, clientY)) {
       pointerTravel = {
         kind: 'anchor',
         originX: clientX,
@@ -1133,10 +1148,10 @@ function pointToRectDistance(rect: DOMRect, clientX: number, clientY: number): n
 }
 
 function initialPointerTravel(
-  anchor: DOMRect,
+  isOnAnchor: (clientX: number, clientY: number) => boolean,
   pointer: { readonly clientX: number; readonly clientY: number } | null | undefined,
 ): PointerTravelState {
-  if (!pointer || !rectContainsPoint(anchor, pointer.clientX, pointer.clientY)) {
+  if (!pointer || !isOnAnchor(pointer.clientX, pointer.clientY)) {
     return { kind: 'idle' }
   }
   return {
