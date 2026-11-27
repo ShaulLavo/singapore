@@ -367,8 +367,8 @@ export class LspConnection {
     if (this.scheduleReconnect(error)) return
 
     runEach([
-      () => this.setStatus('error'),
-      () => this.callbacks.onUnavailable(),
+      () => this.callHost(() => this.setStatus('error')),
+      () => this.callHost(() => this.callbacks.onUnavailable()),
       () => this.handleError(error),
     ])
   }

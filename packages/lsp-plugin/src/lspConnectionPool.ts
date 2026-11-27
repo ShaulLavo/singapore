@@ -280,11 +280,10 @@ export class LspConnectionPool {
       },
       onUnavailable: () => {
         entry.connected = false
-        runEach(
-          [() => this.#retire(entry)].concat(
-            leasesOf(entry).map((lease) => () => lease.callbacks.onUnavailable()),
-          ),
-        )
+        runEach([
+          () => this.#retire(entry),
+          () => runEach(leasesOf(entry).map((lease) => () => lease.callbacks.onUnavailable())),
+        ])
       },
       onPublishDiagnostics: (params) => {
         for (const lease of leasesOf(entry)) lease.callbacks.onPublishDiagnostics(params)

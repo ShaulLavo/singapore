@@ -100,11 +100,11 @@ export const createWebSocketLspTransport = (
   if (options.signal?.aborted) return Promise.reject(options.signal.reason)
 
   const socket = new WebSocketCtor(url, mutableProtocols(options.protocols))
-  const transport = new WebSocketLspTransport(socket)
-  if (options.signal?.aborted) return Promise.reject(closeForAbort(transport, options.signal))
-  if (socket.readyState === WEB_SOCKET_OPEN) return Promise.resolve(transport)
+  if (options.signal?.aborted) return Promise.reject(closeSocketForAbort(socket, options.signal))
+  if (socket.readyState === WEB_SOCKET_OPEN)
+    return Promise.resolve(new WebSocketLspTransport(socket))
 
-  return waitForWebSocketOpen(socket, transport, options.signal)
+  return waitForWebSocketOpen(socket, options.signal)
 }
 
 export const createWorkerLspTransport = (
@@ -311,7 +311,6 @@ function workerError(event: Event): unknown {
 
 const waitForWebSocketOpen = (
   socket: LspWebSocketLike,
-  transport: LspManagedTransport,
   signal: AbortSignal | undefined,
 ): Promise<LspManagedTransport> =>
   new Promise((resolve, reject) => {
@@ -323,12 +322,18 @@ const waitForWebSocketOpen = (
         () => socket.removeEventListener('close', handleClose),
         () => signal?.removeEventListener('abort', handleAbort),
       ])
+    const closeSocket = (): { readonly error: unknown } | null =>
+      captureFirstError([
+        () => {
+          if (canCloseWebSocket(socket)) socket.close()
+        },
+      ])
     const handleAbort = (): void => {
       if (settled) return
       settled = true
       const cleanupFailure = cleanup()
       const abortReason = signal?.reason
-      const closeFailure = captureFirstError([() => transport.close()])
+      const closeFailure = closeSocket()
       reject(
         closeFailure ? closeFailure.error : cleanupFailure ? cleanupFailure.error : abortReason,
       )
@@ -338,8 +343,16 @@ const waitForWebSocketOpen = (
       settled = true
       const cleanupFailure = cleanup()
       if (cleanupFailure) {
-        captureFirstError([() => transport.close()])
+        closeSocket()
         reject(cleanupFailure.error)
+        return
+      }
+      let transport: WebSocketLspTransport
+      try {
+        transport = new WebSocketLspTransport(socket)
+      } catch (error) {
+        closeSocket()
+        reject(error)
         return
       }
       resolve(transport)
@@ -393,9 +406,9 @@ const runEach = (steps: readonly (() => void)[]): void => {
 }
 
 /** Closes a cancelled handshake's socket; the abort reason, or what closing threw instead. */
-const closeForAbort = (transport: LspManagedTransport, signal: AbortSignal): unknown => {
+const closeSocketForAbort = (socket: LspWebSocketLike, signal: AbortSignal): unknown => {
   try {
-    transport.close()
+    if (canCloseWebSocket(socket)) socket.close()
   } catch (error) {
     return error
   }

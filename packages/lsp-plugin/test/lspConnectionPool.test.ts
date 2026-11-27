@@ -577,15 +577,80 @@ describe('LspConnectionPool', () => {
     })
     provider.acquire(options, sibling)
 
-    expect(() => FakeTransport.created[0]!.fail()).toThrow(statusFailure)
+    FakeTransport.created[0]!.fail()
     expect(sibling.onStatusChange).toHaveBeenCalledWith('error')
     expect(sibling.onUnavailable).toHaveBeenCalledTimes(1)
+    expect(sibling.onError).toHaveBeenCalledWith(statusFailure)
 
     const replacement = provider.acquire(options, callbacks())
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(replacement).toBeDefined()
     expect(starts).toBe(2)
+  })
+
+  it('retires without an unhandled rejection when an async transport factory rejects and onStatusChange throws', async () => {
+    const statusFailure = new Error('async status callback exploded')
+    const connectFailure = new Error('async factory failed')
+    const unhandled: unknown[] = []
+    const onUnhandled = (event: PromiseRejectionEvent): void => {
+      unhandled.push(event.reason)
+    }
+    globalThis.addEventListener('unhandledrejection', onUnhandled)
+    try {
+      let starts = 0
+      const provider = pool.provider(KEY)
+      const options = connectionOptions({
+        createTransport: () => {
+          starts += 1
+          return starts === 1 ? Promise.reject(connectFailure) : new FakeTransport()
+        },
+      })
+      const sibling = callbacks()
+      provider.acquire(options, {
+        ...callbacks(),
+        onStatusChange: (status) => {
+          if (status === 'error') throw statusFailure
+        },
+      })
+      provider.acquire(options, sibling)
+
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(unhandled).toEqual([])
+      expect(sibling.onStatusChange).toHaveBeenCalledWith('error')
+      expect(sibling.onUnavailable).toHaveBeenCalledTimes(1)
+      expect(sibling.onError).toHaveBeenCalledWith(statusFailure)
+      expect(sibling.onError).toHaveBeenCalledWith(connectFailure)
+
+      const replacement = provider.acquire(options, callbacks())
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(replacement).toBeDefined()
+      expect(starts).toBe(2)
+    } finally {
+      globalThis.removeEventListener('unhandledrejection', onUnhandled)
+    }
+  })
+
+  it('does not deliver onUnavailable to a lease that released itself during retirement idle status', () => {
+    const provider = pool.provider(KEY)
+    const released = callbacks()
+    const retained = callbacks()
+    let lease!: LspConnectionLease
+    lease = provider.acquire(connectionOptions(), {
+      ...released,
+      onStatusChange: (status) => {
+        released.onStatusChange(status)
+        if (status === 'idle') lease.release()
+      },
+    })
+    provider.acquire(connectionOptions(), retained)
+
+    FakeTransport.created[0]!.fail()
+
+    expect(released.onStatusChange).toHaveBeenCalledWith('idle')
+    expect(released.onUnavailable).not.toHaveBeenCalled()
+    expect(retained.onUnavailable).toHaveBeenCalledTimes(1)
   })
 
   it('does not deadlock its own retirement gate when connect() is called on a failed lease inside onStatusChange', async () => {
