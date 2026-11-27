@@ -4035,6 +4035,42 @@ describe('Editor', () => {
       expect(session.materializeFullText()).toBe('aX!d')
     })
 
+    it('preserves a single touch tap caret when focusing collapses the hidden input selection', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+      const row = editorRoot().querySelector<HTMLElement>('.editor-virtualized-row')!
+      const input = editorInput()
+      const originalFocus = input.focus.bind(input)
+      const focusSpy = vi.spyOn(input, 'focus').mockImplementation((options?: FocusOptions) => {
+        originalFocus(options)
+        input.setSelectionRange(0, 0)
+        document.dispatchEvent(new Event('selectionchange'))
+      })
+
+      const touchEvent = (type: string, count: number): Event => {
+        const event = new Event(type, { bubbles: true, cancelable: true })
+        Object.defineProperty(event, 'timeStamp', { value: Date.now() })
+        Object.defineProperty(event, 'touches', {
+          value: Array.from({ length: count }, (_, identifier) => ({
+            identifier,
+            clientX: 48,
+            clientY: 10,
+          })),
+        })
+        return event
+      }
+      row.dispatchEvent(touchEvent('touchstart', 1))
+      row.dispatchEvent(touchEvent('touchend', 0))
+
+      expect(focusSpy).toHaveBeenCalledOnce()
+      const [selection] = resolvedSelectionRanges(session)
+      expect(selection?.anchor).toBeGreaterThan(0)
+      expect(selection?.head).toBe(selection?.anchor)
+      expect(input.selectionStart).toBe(selection?.anchor)
+      expect(input.selectionEnd).toBe(selection?.head)
+    })
+
     it('renders range selections with custom selection geometry', () => {
       const session = createDocumentSession('abcd')
       editor.attachSession(session)

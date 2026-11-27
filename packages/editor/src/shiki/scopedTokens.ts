@@ -1,4 +1,4 @@
-import type { HighlighterGeneric, ThemedToken } from 'shiki/core'
+import type { ShikiPrimitive, ThemedToken } from 'shiki/core'
 import { Theme, type StateStack } from 'shiki/textmate'
 import type { TokenizeLineFn, StatesEqualFn } from './tokenizer'
 import { ScopePath } from './scopePath'
@@ -11,7 +11,7 @@ class GrammarLineState {
 
 /** Keep grammar scopes independent of colors so a theme change never reparses text. */
 export function createScopedLineTokenizer(
-  highlighter: Pick<HighlighterGeneric<string, string>, 'getLanguage' | 'getTheme'>,
+  highlighter: Pick<ShikiPrimitive<string, string>, 'getLanguage' | 'getTheme'>,
   language: string,
   initialTheme: string,
   maxLineLength: number,

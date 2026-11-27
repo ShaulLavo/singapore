@@ -638,4 +638,54 @@ describe('grammar state stabilization', () => {
       )
     }
   })
+
+  it('produces exact patches for edits across start, middle, and end of multi-line LF and CRLF files', async () => {
+    const real = await createHighlighter({
+      themes: ['github-dark'],
+      langs: ['typescript'],
+    })
+    highlighters.push(real)
+
+    const initial =
+      Array.from({ length: 40 }, (_, i) => `const v${i} = ${i};`).join('\r\n') + '\r\n'
+    const { tokenizer } = await createCoreIncrementalTokenizer({
+      lang: 'typescript',
+      theme: 'github-dark',
+      maxLineLength: DEFAULT_SHIKI_MAX_TOKENIZATION_LINE_LENGTH,
+      code: initial,
+      highlighter: real,
+    })
+
+    // Edit near the end of the document (exercises reverse offset scan and in-place line replacement).
+    const target = 'const v39 = 39;'
+    const targetStart = initial.indexOf(target)
+    const edit = { from: targetStart + 12, to: targetStart + 14, text: '999' }
+    const patch = tokenizer.applyEdit(edit)
+    const expectedCode = initial.slice(0, edit.from) + edit.text + initial.slice(edit.to)
+    expect(tokenizer.getCode()).toBe(expectedCode)
+    expect(patch.fromLine).toBe(39)
+    expect(patch.toLine).toBe(40)
+    expect(patch.fromOffset).toBe(targetStart)
+    expect(patch.oldEndOffset).toBe(targetStart + target.length + 2)
+    expect(patch.newEndOffset).toBe(targetStart + target.length + 1 + 2)
+
+    const fresh = await createCoreIncrementalTokenizer({
+      lang: 'typescript',
+      theme: 'github-dark',
+      maxLineLength: DEFAULT_SHIKI_MAX_TOKENIZATION_LINE_LENGTH,
+      code: expectedCode,
+      highlighter: real,
+    })
+    expect(tokenizer.getLineSnapshots()).toEqual(fresh.tokenizer.getLineSnapshots())
+
+    // Update middle line and verify patch offsets before in-place replacement.
+    const updatedCode = expectedCode.replace('const v10 = 10;', 'const v10 = "ten";')
+    const updatePatch = tokenizer.update(updatedCode)
+    expect(updatePatch.fromLine).toBe(10)
+    expect(updatePatch.toLine).toBe(11)
+    expect(updatePatch.fromOffset).toBe(expectedCode.indexOf('const v10 = 10;'))
+    expect(updatePatch.oldEndOffset).toBe(expectedCode.indexOf('const v11 = 11;'))
+    expect(updatePatch.newEndOffset).toBe(updatedCode.indexOf('const v11 = 11;'))
+    expect(tokenizer.getCode()).toBe(updatedCode)
+  })
 })

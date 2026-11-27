@@ -3,6 +3,7 @@ import type { EditorViewContributionContext } from '@singapore-editor/core/exten
 import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
 import type { TextReadSnapshot } from '@singapore-editor/core/document'
 import type { MarkdownSpan } from './linkDestination'
+import { radixOrderByOffset } from './radixOrder'
 
 export type MarkdownLinkOptions = {
   readonly registerKeymapNode?: EditorViewContributionContext['registerKeymapNode']
@@ -22,12 +23,12 @@ export function renderMarkdownLinks(
   options: MarkdownLinkOptions,
 ): void {
   if (!links.length) return
-  const ordered = sourceOrder(specs, (spec) => spec.startIndex)
+  const ordered = radixOrderByOffset(specs, (spec) => spec.startIndex)
   const consumed = new Set<InlineReplacementSpec>()
   const rendered = new Map<MarkdownLink, InlineReplacementSpec[]>()
   let cursor = 0
   let parent: MarkdownLink | undefined
-  for (const link of sourceOrder(links, (link) => link.span.start)) {
+  for (const link of radixOrderByOffset(links, (link) => link.span.start)) {
     if (parent && contains(parent.label, link.span)) continue
     parent = link
     const runs: InlineReplacementSpec[] = []
@@ -86,33 +87,6 @@ function linkRun(
     revealRange: link.span,
     render: linkMount(link, options),
   }
-}
-
-// Parser offsets are unsigned 32-bit integers. Stable radix passes keep ordering linear
-// even when nested opening and closing markers arrive out of source order.
-function sourceOrder<T>(values: readonly T[], offset: (value: T) => number): readonly T[] {
-  const keys = Uint32Array.from(values, offset)
-  let sorted = true
-  for (let index = 1; index < keys.length; index++) {
-    if (keys[index - 1]! > keys[index]!) sorted = false
-  }
-  if (sorted) return values
-  let order = Uint32Array.from({ length: values.length }, (_, index) => index)
-  let next = new Uint32Array(values.length)
-  const counts = new Uint32Array(256)
-  for (let shift = 0; shift < 32; shift += 8) {
-    counts.fill(0)
-    for (const index of order) counts[(keys[index]! >>> shift) & 255]!++
-    let start = 0
-    for (let bucket = 0; bucket < counts.length; bucket++) {
-      const count = counts[bucket]!
-      counts[bucket] = start
-      start += count
-    }
-    for (const index of order) next[counts[(keys[index]! >>> shift) & 255]!++] = index
-    ;[order, next] = [next, order]
-  }
-  return Array.from(order, (index) => values[index]!)
 }
 
 function linkMount(

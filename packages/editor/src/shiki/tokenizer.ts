@@ -1,6 +1,6 @@
 import type { TextEdit } from '../tokens'
 import type { TextReadSnapshot } from '../documentTextSnapshot'
-import type { HighlighterGeneric, ThemedToken } from 'shiki/core'
+import type { HighlighterGeneric, ShikiPrimitive, ThemedToken } from 'shiki/core'
 import { createScopedLineTokenizer } from './scopedTokens'
 
 /** What ends a line, split as Shiki splits: LF or CRLF, '' on the last line. A lone CR is text. */
@@ -43,7 +43,7 @@ export interface LineTokens {
 export type TokenizeLineFn = (line: string, previousState: unknown) => LineTokens
 export type StatesEqualFn = (left: unknown, right: unknown) => boolean
 
-type TokenizerHighlighter = Pick<HighlighterGeneric<string, string>, 'getLanguage' | 'getTheme'>
+type TokenizerHighlighter = Pick<ShikiPrimitive<string, string>, 'getLanguage' | 'getTheme'>
 
 export interface CreateIncrementalTokenizerOptions<
   Highlighter = HighlighterGeneric<string, string>,
@@ -177,7 +177,8 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     const { from, to, text } = edit
 
     const start = this.offsetToLine(from)
-    const end = this.offsetToLine(to)
+    const end =
+      to >= from ? this.offsetToLineFrom(to, start.line, start.lineStart) : this.offsetToLine(to)
 
     // Splice the edit into the affected lines, separators included: an edit may split a CRLF.
     const startLine = this.lines[start.line]
@@ -208,8 +209,9 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       stableAt = i + 1
     }
 
-    const fromOffset = from - start.col
-    const oldEndOffset = lineOffset(this.lines, stableAt)
+    const fromOffset = start.lineStart
+    const oldEndOffset = fromOffset + spanRawLength(this.lines, start.line, stableAt)
+    const newEndOffset = fromOffset + spanRawLength(retokenized, 0, retokenized.length)
     this.replaceLines(start.line, stableAt, retokenized)
 
     return {
@@ -218,7 +220,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       lines: cloneSnapshot(retokenized),
       fromOffset,
       oldEndOffset,
-      newEndOffset: lineOffset(this.lines, start.line + retokenized.length),
+      newEndOffset,
     }
   }
 
@@ -233,17 +235,52 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
   }
 
   /** The line holding `offset`, where a column may fall inside that line's separator. */
-  private offsetToLine(offset: number): { line: number; col: number } {
-    let remaining = offset
-    const last = this.lines.length - 1
+  private offsetToLine(offset: number): { line: number; col: number; lineStart: number } {
+    if (this.lines.length > 0 && offset > this.sourceLength / 2) {
+      return this.offsetToLineFromEnd(offset)
+    }
+    return this.offsetToLineFrom(offset, 0, 0)
+  }
 
-    for (let i = 0; i < last; i++) {
-      const length = rawLength(this.lines[i]!)
-      if (remaining < length) return { line: i, col: remaining }
-      remaining -= length
+  private offsetToLineFrom(
+    offset: number,
+    startLine: number,
+    startOffset: number,
+  ): { line: number; col: number; lineStart: number } {
+    let lineStart = startOffset
+    const last = this.lines.length - 1
+    if (last < 0) return { line: 0, col: 0, lineStart: 0 }
+
+    for (let i = startLine; i < last; i++) {
+      const nextStart = lineStart + rawLength(this.lines[i]!)
+      if (offset < nextStart) return { line: i, col: offset - lineStart, lineStart }
+      lineStart = nextStart
     }
 
-    return { line: last, col: Math.min(remaining, this.lines[last]?.text.length ?? 0) }
+    return {
+      line: last,
+      col: Math.min(offset - lineStart, this.lines[last]?.text.length ?? 0),
+      lineStart,
+    }
+  }
+
+  private offsetToLineFromEnd(offset: number): { line: number; col: number; lineStart: number } {
+    const last = this.lines.length - 1
+    let lineEnd = this.sourceLength
+    let lineStart = lineEnd - rawLength(this.lines[last]!)
+    if (offset >= lineStart) {
+      return {
+        line: last,
+        col: Math.min(offset - lineStart, this.lines[last]!.text.length),
+        lineStart,
+      }
+    }
+    for (let i = last - 1; i >= 0; i--) {
+      lineEnd = lineStart
+      lineStart = lineEnd - rawLength(this.lines[i]!)
+      if (offset >= lineStart) return { line: i, col: offset - lineStart, lineStart }
+    }
+    return { line: 0, col: offset, lineStart: 0 }
   }
 
   private append(chunk: string): TokenPatch {
@@ -261,15 +298,15 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
     const previousLength = this.lines.length
     const startLine = previousLength === 0 ? 0 : previousLength - 1
-    const prefix = this.lines.slice(0, startLine)
     const previousTail = previousLength === 0 ? '' : (this.lines[previousLength - 1]?.text ?? '')
     const suffixLines = splitLines(previousTail + chunk)
     const nextTail = this.tokenizeLines(
       suffixLines,
-      startLine === 0 ? undefined : prefix[startLine - 1]?.endState,
+      startLine === 0 ? undefined : this.lines[startLine - 1]?.endState,
     )
 
-    const fromOffset = lineOffset(this.lines, startLine)
+    const fromOffset =
+      previousLength === 0 ? 0 : this.sourceLength - rawLength(this.lines[startLine]!)
     const oldEndOffset = this.sourceLength
     this.replaceLines(startLine, previousLength, nextTail)
 
@@ -315,9 +352,8 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       suffixLength++
     }
 
-    const nextPrefix = previousLines.slice(0, prefixLength)
     const rebuiltMiddle: LineState[] = []
-    let previousState = prefixLength === 0 ? undefined : nextPrefix[prefixLength - 1]?.endState
+    let previousState = prefixLength === 0 ? undefined : previousLines[prefixLength - 1]?.endState
     const previousTailStart = previousLength - suffixLength
     const nextTailStart = nextLength - suffixLength
 
@@ -327,33 +363,36 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       const tokenizedLine = lineState(line, result)
       previousState = tokenizedLine.endState
 
-      const inSharedSuffix = suffixLength > 0 && nextIndex >= nextTailStart
-      if (inSharedSuffix) {
-        const previousIndex = previousTailStart + (nextIndex - nextTailStart)
-        const previousLine = previousLines[previousIndex]
-        if (
-          previousLine &&
-          sameSource(previousLine, line) &&
-          tokenLinesEqual(tokenizedLine.tokens, previousLine.tokens) &&
-          this.statesEqual(tokenizedLine.endState, previousLine.endState)
-        ) {
-          this.replaceLines(prefixLength, previousIndex, rebuiltMiddle)
-          const nextDocument = this.lines
+      const previousIndex =
+        suffixLength > 0 && nextIndex >= nextTailStart
+          ? previousTailStart + (nextIndex - nextTailStart)
+          : -1
+      const previousLine = previousIndex >= 0 ? previousLines[previousIndex] : undefined
+      if (
+        previousLine &&
+        sameSource(previousLine, line) &&
+        tokenLinesEqual(tokenizedLine.tokens, previousLine.tokens) &&
+        this.statesEqual(tokenizedLine.endState, previousLine.endState)
+      ) {
+        const fromOffset = lineOffset(previousLines, prefixLength)
+        const oldEndOffset = fromOffset + spanRawLength(previousLines, prefixLength, previousIndex)
+        const newEndOffset = fromOffset + spanRawLength(rebuiltMiddle, 0, rebuiltMiddle.length)
+        this.replaceLines(prefixLength, previousIndex, rebuiltMiddle)
 
-          return {
-            fromLine: prefixLength,
-            toLine: previousIndex,
-            lines: cloneSnapshot(rebuiltMiddle),
-            fromOffset: lineOffset(previousLines, prefixLength),
-            oldEndOffset: lineOffset(previousLines, previousIndex),
-            newEndOffset: lineOffset(nextDocument, prefixLength + rebuiltMiddle.length),
-          }
+        return {
+          fromLine: prefixLength,
+          toLine: previousIndex,
+          lines: cloneSnapshot(rebuiltMiddle),
+          fromOffset,
+          oldEndOffset,
+          newEndOffset,
         }
       }
 
       rebuiltMiddle.push(tokenizedLine)
     }
 
+    const fromOffset = lineOffset(previousLines, prefixLength)
     const oldEndOffset = this.sourceLength
     this.replaceLines(prefixLength, previousLength, rebuiltMiddle)
 
@@ -361,7 +400,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       fromLine: prefixLength,
       toLine: previousLength,
       lines: cloneSnapshot(rebuiltMiddle),
-      fromOffset: lineOffset(previousLines, prefixLength),
+      fromOffset,
       oldEndOffset,
       newEndOffset: this.sourceLength,
     }
@@ -412,6 +451,19 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     for (const line of next) {
       if (line.untokenized) this.untokenized++
       this.sourceLength += rawLength(line)
+    }
+    const deleteCount = Math.max(0, end - start)
+    if (start === 0 && end >= this.lines.length) {
+      this.lines = next.slice()
+      return
+    }
+    if (next.length === 1 && deleteCount === 1) {
+      this.lines[start] = next[0]!
+      return
+    }
+    if (next.length <= 1024) {
+      this.lines.splice(start, deleteCount, ...next)
+      return
     }
     this.lines = this.lines.slice(0, start).concat(next, this.lines.slice(end))
   }
@@ -491,8 +543,13 @@ function emptyPatch(): TokenPatch {
 
 /** Offset of the start of `line`; the document length when `line` is the line count. */
 function lineOffset(lines: readonly SourceLine[], line: number): number {
+  return spanRawLength(lines, 0, line)
+}
+
+function spanRawLength(lines: readonly SourceLine[], start: number, end: number): number {
   let offset = 0
-  for (let index = 0; index < line && index < lines.length; index += 1) {
+  const limit = Math.min(end, lines.length)
+  for (let index = start; index < limit; index += 1) {
     offset += rawLength(lines[index]!)
   }
   return offset

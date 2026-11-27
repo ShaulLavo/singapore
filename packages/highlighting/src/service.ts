@@ -29,8 +29,6 @@ import {
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import { TREE_SITTER_LANGUAGE_METADATA } from '@singapore-editor/tree-sitter-languages/metadata'
 
-import { bundledThemes } from 'shiki/themes'
-
 import { DiffSyntaxStore, type DiffSyntaxSnapshot, type HighlightingDiffView } from './diffs'
 import { HIGHLIGHTING_DOCUMENT_LANGUAGES, highlightingGrammar, loadGrammar } from './languages'
 import {
@@ -148,8 +146,6 @@ export class HighlightingError extends Error {
 const PLAIN_TEXT = 'text'
 const DEFAULT_FOREGROUND = '#d4d4d4'
 const DEFAULT_BACKGROUND = '#1e1e1e'
-// The palette a plugin-free `highlight` paints with when the caller names none.
-const DEFAULT_THEME_NAME = 'github-dark'
 // Without a workspace census, every grammar a code workspace commonly holds, loaded behind paint.
 const DEFAULT_PRELOAD_GRAMMARS = [
   'css',
@@ -340,7 +336,11 @@ class EditorHighlightingService implements HighlightingService {
     this.shikiOwner = null
     this.treeSitterBackend = null
     this.treeSitterProvider = null
+    this.defaultTheme = null
     this.grammars.clear()
+    this.documentThemes.clear()
+    this.documentThemeContent.clear()
+    this.documentThemeRefreshes.clear()
     this.diffs.dispose()
     void Promise.allSettled(pending)
       .then(() => Promise.allSettled([shiki?.dispose(), treeSitter?.dispose?.()]))
@@ -521,7 +521,8 @@ class EditorHighlightingService implements HighlightingService {
   }
 
   private loadDefaultTheme(): Promise<HighlightTheme> {
-    this.defaultTheme ??= bundledThemes[DEFAULT_THEME_NAME]().then((module): HighlightTheme => ({
+    // Import only the default theme so consumer bundlers do not emit every bundled Shiki theme.
+    this.defaultTheme ??= import('@shikijs/themes/github-dark').then((module): HighlightTheme => ({
       format: 'vscode',
       definition: module.default as unknown as VscodeThemeRegistration,
     }))
@@ -564,7 +565,7 @@ class EditorHighlightingService implements HighlightingService {
     if (captured) return workerThemeRegistration(captured, name)
 
     const registration = await this.resolveImported(name)
-    if (!this.documentThemes.has(name)) {
+    if (!this.disposeTask && !this.documentThemes.has(name)) {
       this.documentThemes.set(name, { revision: revisionName(name, registration), name })
       this.documentThemeContent.set(name, registration)
     }
@@ -595,6 +596,7 @@ class EditorHighlightingService implements HighlightingService {
   }
 
   private async refreshDocumentTheme(theme: HighlightingThemeSource): Promise<void> {
+    if (this.disposeTask) return
     const selection = theme.current()
     if (selection.format !== 'vscode') return
 
@@ -602,7 +604,7 @@ class EditorHighlightingService implements HighlightingService {
     const refresh = (this.documentThemeRefreshes.get(id) ?? 0) + 1
     this.documentThemeRefreshes.set(id, refresh)
     const registration = await this.resolveImported(id)
-    if (this.documentThemeRefreshes.get(id) !== refresh) return
+    if (this.disposeTask || this.documentThemeRefreshes.get(id) !== refresh) return
 
     const revision = revisionName(id, registration)
     const known = this.documentThemes.get(id)

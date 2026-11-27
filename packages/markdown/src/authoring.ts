@@ -141,20 +141,23 @@ function linesEdit(
   text: string,
   command: LineCommand,
 ): MarkdownEdit | null {
-  const lines = text.split('\n')
+  const rawLines = text.split('\n')
+  const lines = rawLines.map((rawLine) => (rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine))
   const remove =
     lines.some((line) => line.trim()) &&
     lines.every((line) => line.trim() === '' || hasStyle(line, command))
   let offset = from
   const numbers = new Map<number, number>()
   const edits: TextEdit[] = []
-  for (const line of lines) {
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const rawLine = rawLines[index]!
+    const line = lines[index]!
     const depth = line.match(/^\s*/)?.[0].length ?? 0
     const number = nextListNumber(numbers, depth)
     const next = !line.trim() && lines.length > 1 ? line : formatLine(line, command, remove, number)
     if (line.trim()) numbers.set(depth, number + 1)
     if (next !== line) edits.push({ from: offset, to: offset + line.length, text: next })
-    offset += line.length + 1
+    offset += rawLine.length + 1
   }
   if (!edits.length) return null
   return {

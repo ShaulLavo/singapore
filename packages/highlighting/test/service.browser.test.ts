@@ -193,4 +193,12 @@ describe('standalone highlighting in the real worker', () => {
     await expect(pending).rejects.toBeInstanceOf(Error)
     expect(highlighting.inspect().shiki).toBeNull()
   })
+
+  test('highlights with the default github-dark theme when no theme is provided', async () => {
+    const result = await service().highlight('const answer = 42', { language: 'ts' })
+    expect(result.language).toBe('typescript')
+    expect(result.tokens.length).toBeGreaterThan(0)
+    expect(result.background).toBeTruthy()
+    expect(result.foreground).toBeTruthy()
+  })
 })
