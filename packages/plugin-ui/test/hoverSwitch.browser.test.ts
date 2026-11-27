@@ -205,27 +205,51 @@ it('keeps the tooltip visible when moving across characters inside a non-ASCII i
   expect(harness.computeCount()).toBe(1)
 })
 
-it('hovers a painted end-of-line zero-width marker and hides over trailing blank space beside it', async () => {
+it('switches cleanly between an identifier, its adjacent end-of-line zero-width marker, and trailing blank space', async () => {
   const text = ['', '', '', '', '', '', 'const endMarker\u200b'].join('\n')
+  const markerStart = text.indexOf('endMarker')
+  const markerEnd = markerStart + 'endMarker'.length
   const zwspOffset = text.indexOf('\u200b')
   const harness = await mountEditor(text, undefined, (request) => {
-    if (request.anchor.offset !== zwspOffset) return []
-    return [
-      {
-        ordinal: 1,
-        range: { start: zwspOffset, end: zwspOffset + 1 },
-        markdown: 'invisible zero-width space',
-      },
-    ]
+    if (request.anchor.offset === zwspOffset) {
+      return [
+        {
+          ordinal: 1,
+          range: { start: zwspOffset, end: zwspOffset + 1 },
+          markdown: 'invisible zero-width space',
+        },
+      ]
+    }
+    if (request.anchor.offset >= markerStart && request.anchor.offset < markerEnd) {
+      return [
+        {
+          ordinal: 1,
+          range: { start: markerStart, end: markerEnd },
+          markdown: 'identifier:endMarker',
+        },
+      ]
+    }
+    return []
   })
 
+  const identifierRect = harness.tokenRect('endMarker')
   const marker = document.querySelector<HTMLElement>(
     `[data-editor-hidden-character-offset="${zwspOffset}"]`,
   )
   expect(marker).not.toBeNull()
   const markerRect = marker!.getBoundingClientRect()
 
-  await commands.movePointer(centerX(markerRect), centerY(markerRect))
+  // Identifier -> adjacent zero-width marker -> back to identifier -> marker -> trailing blank space.
+  await commands.movePointer(centerX(identifierRect), centerY(identifierRect))
+  await waitForHoverText('identifier:endMarker')
+
+  await commands.movePointer(centerX(markerRect), centerY(markerRect), 4)
+  await waitForHoverText('invisible zero-width space')
+
+  await commands.movePointer(centerX(identifierRect), centerY(identifierRect), 4)
+  await waitForHoverText('identifier:endMarker')
+
+  await commands.movePointer(centerX(markerRect), centerY(markerRect), 4)
   await waitForHoverText('invisible zero-width space')
 
   await commands.movePointer(markerRect.right + 10, centerY(markerRect), 3)
@@ -235,7 +259,7 @@ it('hovers a painted end-of-line zero-width marker and hides over trailing blank
     },
     { timeout: 3000, interval: 25 },
   )
-  expect(harness.computeCount()).toBeGreaterThanOrEqual(1)
+  expect(harness.computeCount()).toBeGreaterThanOrEqual(4)
 })
 
 it('keeps the tooltip open during slow continuous movement across a gap above the first visible row', async () => {

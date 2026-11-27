@@ -498,6 +498,114 @@ describe('one hover per view', () => {
     expect(tooltip().hidden).toBe(false)
     harness.dispose()
   })
+
+  it('switches cleanly in both directions between an identifier and its adjacent end-of-line marker', async () => {
+    vi.useFakeTimers()
+    const text = 'const alpha\u200b'
+    const alphaStart = text.indexOf('alpha')
+    const alphaEnd = alphaStart + 'alpha'.length
+    const zwspOffset = text.indexOf('\u200b')
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot: createStringTextSnapshot(text),
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const participant: EditorHoverParticipant = {
+      computeSync: (request) => {
+        if (request.anchor.offset === zwspOffset) {
+          return [part({ start: zwspOffset, end: zwspOffset + 1 }, 'hover:zwsp')]
+        }
+        if (request.anchor.offset >= alphaStart && request.anchor.offset < alphaEnd) {
+          return [part({ start: alphaStart, end: alphaEnd }, 'hover:alpha')]
+        }
+        return []
+      },
+    }
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [participant]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: (clientX) => {
+        if (clientX >= 50 && clientX <= 90) {
+          return {
+            bufferRow: 0,
+            displayRow: 0,
+            source: 'document',
+            region: 'text',
+            offset: alphaStart + 1,
+          }
+        }
+        return { bufferRow: 0, displayRow: 0, source: 'document', region: 'trailing', offset: null }
+      },
+      markerAtPoint: (clientX) =>
+        clientX >= 90 && clientX <= 96 ? { kind: 'invisible', offset: zwspOffset } : null,
+      textOffsetFromPoint: (clientX) => (clientX >= 90 ? zwspOffset : alphaStart + 1),
+      getRangeClientRect: (start, end) => {
+        if (start === alphaStart && end === alphaEnd) return new DOMRect(50, 200, 40, 18)
+        if (start === zwspOffset && end === zwspOffset + 1) return new DOMRect(90, 200, 0, 18)
+        return null
+      },
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    tooltip().getBoundingClientRect = () => new DOMRect(12, 132, 240, 60)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 70, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    // Move from `alpha` onto the adjacent zero-width marker.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 93, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:zwsp'])
+
+    // Move from the zero-width marker back onto `alpha`.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 70, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+    controller.dispose()
+  })
+
+  it('does not restart an active hide timer when turning away outside the editor', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const topRow = 1',
+      tooltipRect: new DOMRect(12, 52, 300, 60),
+      tokens: [{ name: 'topRow', rect: new DOMRect(60, 120, 48, 18) }],
+    })
+
+    harness.moveTo(80, 129)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:topRow'])
+
+    const editor = document.body.firstElementChild as HTMLElement
+    editor.dispatchEvent(new PointerEvent('pointerleave', { relatedTarget: document.body }))
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS - 50)
+    expect(tooltip().hidden).toBe(false)
+
+    // Turning far away outside the editor must keep the original 50 ms remaining deadline.
+    document.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 500, clientY: 500 }),
+    )
+    await vi.advanceTimersByTimeAsync(50)
+    expect(tooltip().hidden).toBe(true)
+    harness.dispose()
+  })
 })
 
 type PositionedToken = {
