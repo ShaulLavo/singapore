@@ -21,4 +21,30 @@ describe('hoverTargetRangeInSource', () => {
       hoverTargetRange('', 0),
     )
   })
+
+  it('recognizes Unicode identifiers including CJK, accented letters, and astral code points', () => {
+    const text = 'const 变量名 = café + 𠀀名'
+    const source = createStringTextSnapshot(text)
+
+    const cjkStart = text.indexOf('变量名')
+    const cjkEnd = cjkStart + '变量名'.length
+    for (let offset = cjkStart; offset <= cjkEnd; offset += 1) {
+      expect(hoverTargetRangeInSource(source, offset)).toEqual({ start: cjkStart, end: cjkEnd })
+    }
+
+    const cafeStart = text.indexOf('café')
+    const cafeEnd = cafeStart + 'café'.length
+    for (let offset = cafeStart; offset <= cafeEnd; offset += 1) {
+      expect(hoverTargetRangeInSource(source, offset)).toEqual({ start: cafeStart, end: cafeEnd })
+    }
+
+    const astralStart = text.indexOf('𠀀名')
+    const astralEnd = astralStart + '𠀀名'.length
+    for (let offset = astralStart; offset <= astralEnd; offset += 1) {
+      expect(hoverTargetRangeInSource(source, offset)).toEqual({
+        start: astralStart,
+        end: astralEnd,
+      })
+    }
+  })
 })

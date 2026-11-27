@@ -186,12 +186,34 @@ it('hides the tooltip instead of opening a token hover when pausing in trailing 
   )
 })
 
-async function mountEditor(text = SAMPLE_TEXT) {
+it('keeps the tooltip visible when moving across characters inside a non-ASCII identifier', async () => {
+  const text = ['', '', '', '', '', '', 'const 变量名 = 1'].join('\n')
+  const harness = await mountEditor(text, (word) => word === '变量名')
+  const identifier = harness.tokenRect('变量名')
+
+  await commands.movePointer(identifier.left + 4, centerY(identifier))
+  await waitForHoverText('token:变量名')
+  expect(harness.computeCount()).toBe(1)
+
+  await commands.movePointer(identifier.right - 4, centerY(identifier), 3)
+  await wait(HOVER_REQUEST_DEBOUNCE_MS + 100)
+
+  const dialog = hoverDialog()
+  expect(dialog.hidden).toBe(false)
+  expect(dialog.textContent).toContain('token:变量名')
+  expect(harness.computeCount()).toBe(1)
+})
+
+async function mountEditor(
+  text = SAMPLE_TEXT,
+  matchesWord: (word: string) => boolean = (word) => word.endsWith('Token'),
+) {
   const host = document.createElement('div')
   host.style.cssText = 'position:fixed;left:40px;top:40px;width:900px;height:500px'
   document.body.append(host)
 
   let viewContext: EditorViewContributionContext | null = null
+  let computeCount = 0
   const testPlugin: EditorPlugin = {
     name: 'test.hoverSwitch',
     activate: (plugin) =>
@@ -203,9 +225,10 @@ async function mountEditor(text = SAMPLE_TEXT) {
             { language: '*' },
             {
               computeSync: (request) => {
+                computeCount += 1
                 const { start, end } = request.anchor.range
                 const word = request.snapshot.textSnapshot.readRange(start, end)
-                if (!word.endsWith('Token')) return []
+                if (!matchesWord(word)) return []
                 return [
                   {
                     ordinal: 1,
@@ -235,13 +258,11 @@ async function mountEditor(text = SAMPLE_TEXT) {
   })
   dispose = () => editor.dispose()
 
-  const alphaStart = text.indexOf('alphaToken')
+  const firstVisible = text.search(/\S/)
   await vi.waitFor(
     () => {
       expect(viewContext).not.toBeNull()
-      expect(
-        viewContext!.getRangeClientRect(alphaStart, alphaStart + 'alphaToken'.length),
-      ).not.toBeNull()
+      expect(viewContext!.getRangeClientRect(firstVisible, firstVisible + 1)).not.toBeNull()
       expect(document.querySelector('.editor-plugin-hover')).not.toBeNull()
     },
     { timeout: 3000, interval: 25 },
@@ -252,6 +273,7 @@ async function mountEditor(text = SAMPLE_TEXT) {
   )
 
   return {
+    computeCount: () => computeCount,
     tokenRect: (word: string): DOMRect => {
       if (!viewContext) throw new Error('missing view context')
       const start = text.indexOf(word)

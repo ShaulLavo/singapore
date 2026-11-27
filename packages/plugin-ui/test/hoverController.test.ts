@@ -337,6 +337,78 @@ describe('one hover per view', () => {
     expect(tooltip().hidden).toBe(true)
     harness.dispose()
   })
+
+  it('keeps the tooltip visible and calls the provider once when moving within a non-ASCII identifier', async () => {
+    vi.useFakeTimers()
+    const text = 'const 变量名 = 1'
+    const start = text.indexOf('变量名')
+    const end = start + '变量名'.length
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot: createStringTextSnapshot(text),
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const computeSync = vi.fn(
+      (request: {
+        readonly anchor: { readonly range: { readonly start: number; readonly end: number } }
+      }) => [
+        part(
+          { start, end },
+          `hover:${text.slice(request.anchor.range.start, request.anchor.range.end)}`,
+        ),
+      ],
+    )
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [{ computeSync }]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: (clientX) => {
+        const charOffset = clientX < 76 ? start : start + 2
+        return {
+          bufferRow: 0,
+          displayRow: 0,
+          source: 'document',
+          region: 'text',
+          offset: charOffset,
+        }
+      },
+      markerAtPoint: () => null,
+      textOffsetFromPoint: (clientX) => (clientX < 76 ? start : start + 2),
+      getRangeClientRect: (rangeStart, rangeEnd) => {
+        if (rangeStart === start && rangeEnd === end) return new DOMRect(60, 200, 48, 18)
+        return new DOMRect(60 + (rangeStart - start) * 16, 200, (rangeEnd - rangeStart) * 16, 18)
+      },
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    tooltip().getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 68, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:变量名'])
+    expect(computeSync).toHaveBeenCalledTimes(1)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 100, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:变量名'])
+    expect(computeSync).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
 })
 
 type PositionedToken = {
