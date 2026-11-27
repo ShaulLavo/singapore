@@ -18,7 +18,9 @@ import type {
 } from './hoverParticipant'
 import { EDITOR_HOVER_PARTICIPANT } from './hoverToken'
 import {
+  hasIdentifierBeforeOffsetInSource,
   hoverTargetRangeInSource,
+  isIdentifierAtOffsetInSource,
   markerTargetRangeInSource,
   sameOffsetRange,
   unionOffsetRange,
@@ -52,9 +54,15 @@ type PointerPoint = {
   readonly clientY: number
 }
 
+type CachedHoverRange = {
+  readonly textVersion: number
+  readonly range: OffsetRange
+  readonly isIdentifier: boolean
+}
+
 type CorridorSettleState = {
   point: PointerPoint
-  readonly targetRange: OffsetRange | null
+  readonly target: CachedHoverRange | null
 }
 
 type HoverStartOptions = {
@@ -75,6 +83,7 @@ type ParticipantResult = {
 type HoverOperation = {
   readonly id: number
   readonly anchor: HoverAnchor
+  readonly rangeIsIdentifier: boolean
   readonly snapshot: EditorViewSnapshot
   readonly participants: readonly EditorHoverParticipant[]
   readonly results: Map<EditorHoverParticipant, ParticipantResult>
@@ -206,8 +215,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     if (!isCurrent(current) || !context.hasDocument()) return false
     const snapshot = context.getSnapshot()
     if (snapshot.textVersion !== current.snapshot.textVersion) return false
-    const target = hoverTargetFromPoint(context, snapshot, clientX, clientY)
-    return target !== null && sameOffsetRange(current.anchor.range, target.range)
+    return isPointInCachedRange(context, snapshot, cachedRangeFor(current), clientX, clientY)
   }
 
   const render = (current: HoverOperation): void => {
@@ -305,6 +313,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     const current: HoverOperation = {
       id: nextOperationId,
       anchor,
+      rangeIsIdentifier: isIdentifierAtOffsetInSource(snapshot.textSnapshot, anchor.range.start),
       snapshot,
       participants,
       results: new Map(),
@@ -378,6 +387,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
       snapshot,
       pending.point.clientX,
       pending.point.clientY,
+      pending.target ?? cachedRangeForOperation(operation),
     )
     if (!target) return hide()
 
@@ -397,21 +407,31 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   }
 
   const scheduleCorridorSettle = (point: PointerPoint, refreshDeadline: boolean): void => {
-    const targetRange = context.hasDocument()
-      ? (hoverTargetFromPoint(context, context.getSnapshot(), point.clientX, point.clientY)
-          ?.range ?? null)
+    const snapshot = context.hasDocument() ? context.getSnapshot() : null
+    const cached = corridorSettle?.target ?? cachedRangeForOperation(operation)
+    const target = snapshot
+      ? hoverTargetFromPoint(context, snapshot, point.clientX, point.clientY, cached)
       : null
+    const targetRange = target?.range ?? null
     if (
       !refreshDeadline &&
       corridorSettle &&
-      sameNullableRange(corridorSettle.targetRange, targetRange)
+      sameNullableRange(corridorSettle.target?.range ?? null, targetRange)
     ) {
       corridorSettle.point = point
       return
     }
 
+    const nextTarget: CachedHoverRange | null =
+      snapshot && target
+        ? {
+            textVersion: snapshot.textVersion,
+            range: target.range,
+            isIdentifier: isIdentifierAtOffsetInSource(snapshot.textSnapshot, target.range.start),
+          }
+        : null
     hideScheduled = false
-    corridorSettle = { point, targetRange }
+    corridorSettle = { point, target: nextTarget }
     tooltip.scheduleHide(() => settleCorridor())
   }
 
@@ -431,7 +451,13 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     if (!context.hasDocument()) return hide()
 
     const snapshot = context.getSnapshot()
-    const target = hoverTargetFromPoint(context, snapshot, event.clientX, event.clientY)
+    const target = hoverTargetFromPoint(
+      context,
+      snapshot,
+      event.clientX,
+      event.clientY,
+      cachedRangeForOperation(operation),
+    )
     if (!target) {
       if (operation && !operation.shown) cancelOperation()
       return schedulePlainHide(false)
@@ -532,14 +558,60 @@ function clearTimers(operation: HoverOperation): void {
  * A scroll or relayout moves the text out from under the hover, and an edit may have changed what
  * it says. Both belong to the old frame, so the hover goes with them.
  */
+function cachedRangeFor(current: HoverOperation): CachedHoverRange {
+  return {
+    textVersion: current.snapshot.textVersion,
+    range: current.anchor.range,
+    isIdentifier: current.rangeIsIdentifier,
+  }
+}
+
+function cachedRangeForOperation(current: HoverOperation | null): CachedHoverRange | null {
+  return current ? cachedRangeFor(current) : null
+}
+
+function isPointInCachedRange(
+  context: EditorViewContributionContext,
+  snapshot: EditorViewSnapshot,
+  cached: CachedHoverRange,
+  clientX: number,
+  clientY: number,
+): boolean {
+  const marker = context.markerAtPoint(clientX, clientY)
+  if (marker) return marker.offset >= cached.range.start && marker.offset < cached.range.end
+
+  const hit = context.rowAtPoint(clientX, clientY)
+  if (!hit || hit.region !== 'text' || hit.offset === null) return false
+  return matchesCachedTextOffset(snapshot, cached, hit.offset)
+}
+
+function matchesCachedTextOffset(
+  snapshot: EditorViewSnapshot,
+  cached: CachedHoverRange,
+  offset: number,
+): boolean {
+  if (cached.isIdentifier) return offset >= cached.range.start && offset <= cached.range.end
+  if (offset < cached.range.start || offset >= cached.range.end) return false
+  return !hasIdentifierBeforeOffsetInSource(snapshot.textSnapshot, cached.range.start)
+}
+
 function hoverTargetFromPoint(
   context: EditorViewContributionContext,
   snapshot: EditorViewSnapshot,
   clientX: number,
   clientY: number,
+  cached: CachedHoverRange | null = null,
 ): HoverPointTarget | null {
+  const validCache = cached && cached.textVersion === snapshot.textVersion ? cached : null
   const marker = context.markerAtPoint(clientX, clientY)
   if (marker) {
+    if (
+      validCache &&
+      marker.offset >= validCache.range.start &&
+      marker.offset < validCache.range.end
+    ) {
+      return { offset: marker.offset, range: validCache.range }
+    }
     return {
       offset: marker.offset,
       range: markerTargetRangeInSource(snapshot.textSnapshot, marker.offset),
@@ -547,6 +619,9 @@ function hoverTargetFromPoint(
   }
   const hit = context.rowAtPoint(clientX, clientY)
   if (!hit || hit.region !== 'text' || hit.offset === null) return null
+  if (validCache && matchesCachedTextOffset(snapshot, validCache, hit.offset)) {
+    return { offset: hit.offset, range: validCache.range }
+  }
   return {
     offset: hit.offset,
     range: hoverTargetRangeInSource(snapshot.textSnapshot, hit.offset),

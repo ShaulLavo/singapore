@@ -851,6 +851,176 @@ describe('one hover per view', () => {
     expect(tooltip().hidden).toBe(true)
     controller.dispose()
   })
+
+  it('keeps pointer travel alive when an async update moves the tooltip upward mid-approach', async () => {
+    vi.useFakeTimers()
+    let emitAsync!: () => void
+    const text = 'const upper = 1\nconst alpha = 2'
+    const alphaStart = text.indexOf('alpha')
+    const alphaEnd = alphaStart + 'alpha'.length
+    const upperStart = text.indexOf('upper')
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot: createStringTextSnapshot(text),
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const syncParticipant: EditorHoverParticipant = {
+      computeSync: (request) => [
+        part(
+          request.anchor.range,
+          `hover:${text.slice(request.anchor.range.start, request.anchor.range.end)}`,
+        ),
+      ],
+    }
+    const asyncParticipant: EditorHoverParticipant = {
+      computeAsync: (request, emit) =>
+        new Promise<void>((resolve) => {
+          request.signal.addEventListener('abort', () => resolve())
+          emitAsync = () => {
+            emit([
+              { ordinal: 2, range: { start: upperStart, end: alphaEnd }, markdown: 'expanded' },
+            ])
+            resolve()
+          }
+        }),
+    }
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [
+        syncParticipant,
+        asyncParticipant,
+      ]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: (_clientX, clientY) => ({
+        bufferRow: clientY < 200 ? 0 : 1,
+        displayRow: clientY < 200 ? 0 : 1,
+        source: 'document',
+        region: 'text',
+        offset: clientY < 200 ? upperStart + 1 : alphaStart + 1,
+      }),
+      markerAtPoint: () => null,
+      textOffsetFromPoint: (_clientX, clientY) => (clientY < 200 ? upperStart + 1 : alphaStart + 1),
+      getRangeClientRect: (start, end) => {
+        if (start === upperStart && end === alphaEnd) return new DOMRect(60, 170, 40, 48)
+        return new DOMRect(60, 200, 40, 18)
+      },
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    let tooltipRect = new DOMRect(12, 132, 400, 60)
+    tooltip().getBoundingClientRect = () => tooltipRect
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 80, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:alpha'])
+
+    // Approach within 2 px of the tooltip, then async range expansion moves the tooltip 30 px up.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 80, clientY: 194 }),
+    )
+    tooltipRect = new DOMRect(12, 102, 400, 60)
+    emitAsync()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(partTexts()).toEqual(['hover:alpha', 'expanded'])
+
+    // Continuing upward must keep the original hover instead of switching to `upper`.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 80, clientY: 190 }),
+    )
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:alpha', 'expanded'])
+    controller.dispose()
+  })
+
+  it('reuses the active identifier range on interior pointer moves without rescanning text', async () => {
+    vi.useFakeTimers()
+    const longIdent = 'a'.repeat(50_000)
+    const text = `const ${longIdent}\u200b`
+    const identStart = text.indexOf(longIdent)
+    const zwspOffset = identStart + longIdent.length
+    const textSnapshot = createStringTextSnapshot(text)
+    const readRangeSpy = vi.spyOn(textSnapshot, 'readRange')
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot,
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const participant: EditorHoverParticipant = {
+      computeSync: (request) => [
+        part(
+          request.anchor.range,
+          request.anchor.offset === zwspOffset ? 'hover:zwsp' : 'hover:long',
+        ),
+      ],
+    }
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [participant]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: (clientX) => {
+        if (clientX < 300) {
+          return {
+            bufferRow: 0,
+            displayRow: 0,
+            source: 'document',
+            region: 'text',
+            offset: identStart + Math.floor((clientX - 50) * 100),
+          }
+        }
+        return { bufferRow: 0, displayRow: 0, source: 'document', region: 'trailing', offset: null }
+      },
+      markerAtPoint: (clientX) =>
+        clientX >= 300 && clientX < 304 ? { kind: 'invisible', offset: zwspOffset } : null,
+      textOffsetFromPoint: () => identStart,
+      getRangeClientRect: (start) =>
+        start === zwspOffset ? new DOMRect(300, 200, 0, 18) : new DOMRect(50, 200, 250, 18),
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    tooltip().getBoundingClientRect = () => new DOMRect(12, 132, 300, 60)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 60, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:long'])
+
+    // Interior pointer moves must hit O(1) range reuse without calling readRange at all.
+    readRangeSpy.mockClear()
+    for (let clientX = 70; clientX <= 260; clientX += 10) {
+      element.dispatchEvent(new PointerEvent('pointermove', { buttons: 0, clientX, clientY: 209 }))
+    }
+    expect(readRangeSpy).not.toHaveBeenCalled()
+    expect(partTexts()).toEqual(['hover:long'])
+
+    // Painted marker at the end of the identifier still switches cleanly.
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 302, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:zwsp'])
+    controller.dispose()
+  })
 })
 
 type PositionedToken = {

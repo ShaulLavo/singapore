@@ -338,6 +338,40 @@ describe('tooltip pointer retention', () => {
     controller.dispose()
   })
 
+  it('rebases pointer travel progress when an async update moves the tooltip upward', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    let tooltipRect = new DOMRect(12, 132, 400, 60)
+    element.getBoundingClientRect = () => tooltipRect
+    const anchor = new DOMRect(60, 200, 40, 18)
+
+    controller.show({
+      ...showOptions(),
+      anchor,
+      pointerAnchor: anchor,
+      pointer: { clientX: 80, clientY: 209 },
+    })
+
+    // Approach to within 2 px of the original tooltip bottom (192).
+    expect(controller.pointerRetention(80, 194)).toBe('approaching')
+
+    // Async update repositions the tooltip 30 px higher (bottom = 162).
+    tooltipRect = new DOMRect(12, 102, 400, 60)
+    controller.show({
+      ...showOptions(),
+      anchor: new DOMRect(60, 170, 40, 48),
+      pointerAnchor: anchor,
+      hoverText: 'updated async hover',
+      pointer: null,
+    })
+
+    // Continuing upward remains approaching; sideways stays corridor; turning back drops retention.
+    expect(controller.pointerRetention(80, 190)).toBe('approaching')
+    expect(controller.pointerRetention(82, 190)).toBe('corridor')
+    expect(controller.pointerRetention(80, 196)).toBe('none')
+    controller.dispose()
+  })
+
   it('allows a 4px border grace after leaving the tooltip, then releases immediately beyond it', () => {
     const controller = tooltipController()
     const element = document.querySelector<HTMLElement>('.editor-test-hover')!

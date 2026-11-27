@@ -149,7 +149,8 @@ type PointerTravelState =
       readonly kind: 'anchor'
       readonly originX: number
       readonly originY: number
-      bestDistance: number | null
+      bestX: number
+      bestY: number
     }
 
 export function createTooltipController(options: TooltipOptions): TooltipController {
@@ -311,9 +312,7 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
       return 'none'
     }
 
-    const bestDistance =
-      pointerTravel.bestDistance ??
-      pointToRectDistance(tooltipRect, pointerTravel.originX, pointerTravel.originY)
+    const bestDistance = pointToRectDistance(tooltipRect, pointerTravel.bestX, pointerTravel.bestY)
     if (distance > bestDistance + TOOLTIP_POINTER_INTENT_TOLERANCE_PX) {
       pointerTravel = { kind: 'idle' }
       return 'none'
@@ -332,7 +331,10 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     }
 
     const madeProgress = distance < bestDistance
-    pointerTravel.bestDistance = Math.min(bestDistance, distance)
+    if (madeProgress) {
+      pointerTravel.bestX = clientX
+      pointerTravel.bestY = clientY
+    }
     return madeProgress ? 'approaching' : 'corridor'
   }
 
@@ -354,7 +356,8 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
         kind: 'anchor',
         originX: clientX,
         originY: clientY,
-        bestDistance: distance,
+        bestX: clientX,
+        bestY: clientY,
       }
       return 'anchor'
     }
@@ -1158,7 +1161,8 @@ function initialPointerTravel(
     kind: 'anchor',
     originX: pointer.clientX,
     originY: pointer.clientY,
-    bestDistance: null,
+    bestX: pointer.clientX,
+    bestY: pointer.clientY,
   }
 }
 

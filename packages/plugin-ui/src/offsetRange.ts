@@ -69,6 +69,27 @@ export function markerTargetRangeInSource(source: TextReadSnapshot, offset: numb
   return targetRangeInSource(source, offset, markerTargetRange)
 }
 
+/** True when the code point at `offset` is a Unicode identifier character. */
+export function isIdentifierAtOffsetInSource(source: TextReadSnapshot, offset: number): boolean {
+  if (offset < 0 || offset >= source.length) return false
+  const from = Math.max(0, offset - 1)
+  const to = Math.min(source.length, offset + 2)
+  const local = source.readRange(from, to)
+  return isIdentifierSpan(local, codePointSpanAt(local, offset - from))
+}
+
+/** True when the code point immediately preceding `offset` is a Unicode identifier character. */
+export function hasIdentifierBeforeOffsetInSource(
+  source: TextReadSnapshot,
+  offset: number,
+): boolean {
+  if (offset <= 0 || offset > source.length) return false
+  const from = Math.max(0, offset - 2)
+  const to = Math.min(source.length, offset)
+  const local = source.readRange(from, to)
+  return isIdentifierSpan(local, codePointSpanAt(local, local.length - 1))
+}
+
 function markerTargetRange(text: string, offset: number): OffsetRange {
   if (text.length === 0) return { start: 0, end: 0 }
   const index = Math.max(0, Math.min(offset, text.length - 1))
