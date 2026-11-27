@@ -102,6 +102,8 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   let operation: HoverOperation | null = null
   let lastPointer: PointerPoint | null = null
   let corridorSettle: CorridorSettleState | null = null
+  let trackingOutside = false
+  let outsideHideScheduled = false
   let nextOperationId = 0
   let theme: EditorTheme | null = context.getSnapshot().theme ?? null
   let disposed = false
@@ -110,6 +112,45 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
 
   const clearCorridorSettle = (): void => {
     corridorSettle = null
+  }
+
+  const handleDocumentPointerMove = (event: PointerEvent): void => {
+    if (event.buttons !== 0) return hide()
+    if (tooltip.containsTarget(event.target)) {
+      stopOutsideTracking()
+      return tooltip.cancelHide()
+    }
+    if (event.target instanceof Node && element.contains(event.target)) return stopOutsideTracking()
+
+    const retention = tooltip.pointerRetention(event.clientX, event.clientY)
+    if (retention === 'locked') {
+      outsideHideScheduled = false
+      return tooltip.cancelHide()
+    }
+    if (retention === 'approaching') {
+      outsideHideScheduled = true
+      return tooltip.scheduleHide()
+    }
+    if (retention === 'corridor') {
+      if (outsideHideScheduled) return
+      outsideHideScheduled = true
+      return tooltip.scheduleHide()
+    }
+    stopOutsideTracking()
+    if (!outsideHideScheduled) tooltip.scheduleHide()
+  }
+
+  const startOutsideTracking = (): void => {
+    if (trackingOutside || disposed) return
+    trackingOutside = true
+    ownerDocument.addEventListener('pointermove', handleDocumentPointerMove)
+  }
+
+  const stopOutsideTracking = (): void => {
+    if (!trackingOutside) return
+    trackingOutside = false
+    outsideHideScheduled = false
+    ownerDocument.removeEventListener('pointermove', handleDocumentPointerMove)
   }
 
   const tooltip: TooltipController = createTooltipController({
@@ -121,11 +162,15 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
     classNamespace: options.classNamespace,
     codeTokenizer,
     onDidHide: () => cancelOperation(),
-    onPointerEnter: () => clearCorridorSettle(),
+    onPointerEnter: () => {
+      stopOutsideTracking()
+      clearCorridorSettle()
+    },
     onRequestEditorFocus: () => context.focusEditor(),
   })
 
   const cancelOperation = (): void => {
+    stopOutsideTracking()
     clearCorridorSettle()
     const current = operation
     if (!current) return
@@ -336,6 +381,7 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   }
 
   const handlePointerMove = (event: PointerEvent): void => {
+    stopOutsideTracking()
     if (event.buttons !== 0) return hide()
     const point: PointerPoint = { clientX: event.clientX, clientY: event.clientY }
     lastPointer = point
@@ -361,9 +407,16 @@ export function createHoverController(options: HoverControllerOptions): HoverCon
   const handlePointerLeave = (event: PointerEvent): void => {
     clearCorridorSettle()
     lastPointer = null
-    if (tooltip.containsTarget(event.relatedTarget)) return tooltip.cancelHide()
+    if (tooltip.containsTarget(event.relatedTarget)) {
+      stopOutsideTracking()
+      return tooltip.cancelHide()
+    }
     // A hover that has not painted yet has nothing to keep: the pointer is gone.
     if (operation && !operation.shown) cancelOperation()
+    if (operation?.shown) {
+      outsideHideScheduled = true
+      startOutsideTracking()
+    }
     tooltip.scheduleHide()
   }
 
@@ -451,6 +504,8 @@ function hoverOffsetFromPoint(
   clientX: number,
   clientY: number,
 ): number | null {
+  const marker = context.markerAtPoint(clientX, clientY)
+  if (marker) return marker.offset
   const hit = context.rowAtPoint(clientX, clientY)
   if (!hit || hit.region !== 'text') return null
   return hit.offset

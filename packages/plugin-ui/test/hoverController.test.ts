@@ -409,6 +409,95 @@ describe('one hover per view', () => {
     expect(computeSync).toHaveBeenCalledTimes(1)
     controller.dispose()
   })
+
+  it('opens hover for a painted end-of-line marker even when rowAtPoint classifies the point as trailing', async () => {
+    vi.useFakeTimers()
+    const text = 'const end\u200b'
+    const zwspOffset = text.indexOf('\u200b')
+    const element = document.createElement('div')
+    element.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)
+    document.body.append(element)
+    const snapshot = {
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      textSnapshot: createStringTextSnapshot(text),
+      textVersion: 1,
+      tokens: [],
+      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    } as unknown as EditorViewSnapshot
+    const participant: EditorHoverParticipant = {
+      computeSync: (request) => {
+        if (request.anchor.offset !== zwspOffset) return []
+        return [part({ start: zwspOffset, end: zwspOffset + 1 }, 'zero-width space')]
+      },
+    }
+    const context = createTestViewContributionContext({
+      container: element,
+      scrollElement: element,
+      contentElement: element,
+      hasDocument: () => true,
+      getSnapshot: () => snapshot,
+      getProviders: (() => [participant]) as EditorViewContributionContext['getProviders'],
+      focusEditor: vi.fn(),
+      rowAtPoint: () => ({
+        bufferRow: 0,
+        displayRow: 0,
+        source: 'document',
+        region: 'trailing',
+        offset: null,
+      }),
+      markerAtPoint: (clientX) =>
+        clientX >= 90 && clientX <= 96 ? { kind: 'invisible', offset: zwspOffset } : null,
+      textOffsetFromPoint: () => zwspOffset,
+      getRangeClientRect: () => new DOMRect(90, 200, 6, 18),
+    })
+    const controller = createHoverController({ context, classNamespace: 'test' })
+    tooltip().getBoundingClientRect = () => new DOMRect(12, 132, 200, 60)
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 93, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['zero-width space'])
+
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { buttons: 0, clientX: 110, clientY: 209 }),
+    )
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS)
+    expect(tooltip().hidden).toBe(true)
+    controller.dispose()
+  })
+
+  it('refreshes the hide timer during slow approach across an outside-editor gap above row 0', async () => {
+    vi.useFakeTimers()
+    const harness = mountGeometry({
+      text: 'const topRow = 1',
+      tooltipRect: new DOMRect(12, 52, 300, 60),
+      tokens: [{ name: 'topRow', rect: new DOMRect(60, 120, 48, 18) }],
+    })
+
+    harness.moveTo(80, 129)
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+    expect(partTexts()).toEqual(['hover:topRow'])
+
+    // Pointer leaves the editor into the 8 px gap above row 0 (y = 119..112), moving 1 px / 50 ms.
+    const editor = document.body.firstElementChild as HTMLElement
+    editor.dispatchEvent(new PointerEvent('pointerleave', { relatedTarget: document.body }))
+    for (let y = 119; y >= 112; y -= 1) {
+      document.dispatchEvent(
+        new PointerEvent('pointermove', { buttons: 0, clientX: 80, clientY: y }),
+      )
+      await vi.advanceTimersByTimeAsync(50)
+    }
+    expect(tooltip().hidden).toBe(false)
+    expect(partTexts()).toEqual(['hover:topRow'])
+
+    tooltip().dispatchEvent(new PointerEvent('pointerenter'))
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS + 100)
+    expect(tooltip().hidden).toBe(false)
+    harness.dispose()
+  })
 })
 
 type PositionedToken = {

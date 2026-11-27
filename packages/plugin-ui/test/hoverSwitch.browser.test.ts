@@ -3,6 +3,7 @@ import type { EditorPlugin, EditorViewContributionContext } from '@singapore-edi
 import { afterEach, expect, it, vi } from 'vitest'
 import { commands } from 'vitest/browser'
 
+import type { HoverPart, HoverRequest } from '../src/hoverParticipant'
 import { EDITOR_HOVER_PARTICIPANT } from '../src/hoverToken'
 import { HOVER_REQUEST_DEBOUNCE_MS, TOOLTIP_HIDE_DELAY_MS } from '../src/tooltip'
 
@@ -204,12 +205,73 @@ it('keeps the tooltip visible when moving across characters inside a non-ASCII i
   expect(harness.computeCount()).toBe(1)
 })
 
+it('hovers a painted end-of-line zero-width marker and hides over trailing blank space beside it', async () => {
+  const text = ['', '', '', '', '', '', 'const endMarker\u200b'].join('\n')
+  const zwspOffset = text.indexOf('\u200b')
+  const harness = await mountEditor(text, undefined, (request) => {
+    if (request.anchor.offset !== zwspOffset) return []
+    return [
+      {
+        ordinal: 1,
+        range: { start: zwspOffset, end: zwspOffset + 1 },
+        markdown: 'invisible zero-width space',
+      },
+    ]
+  })
+
+  const marker = document.querySelector<HTMLElement>(
+    `[data-editor-hidden-character-offset="${zwspOffset}"]`,
+  )
+  expect(marker).not.toBeNull()
+  const markerRect = marker!.getBoundingClientRect()
+
+  await commands.movePointer(centerX(markerRect), centerY(markerRect))
+  await waitForHoverText('invisible zero-width space')
+
+  await commands.movePointer(markerRect.right + 10, centerY(markerRect), 3)
+  await vi.waitFor(
+    () => {
+      expect(hoverDialog().hidden).toBe(true)
+    },
+    { timeout: 3000, interval: 25 },
+  )
+  expect(harness.computeCount()).toBeGreaterThanOrEqual(1)
+})
+
+it('keeps the tooltip open during slow continuous movement across a gap above the first visible row', async () => {
+  const text = 'const topRowToken = 1\nconst nextRow = 2'
+  const harness = await mountEditor(text, undefined, undefined, { top: 180 })
+  const token = harness.tokenRect('topRowToken')
+  const x = centerX(token)
+
+  await commands.movePointer(x, centerY(token))
+  await waitForHoverText('token:topRowToken')
+
+  const popupRect = hoverDialog().getBoundingClientRect()
+  expect(popupRect.bottom).toBeLessThanOrEqual(token.top)
+
+  // Move 1 px every 50 ms across the gap outside the scroll element (> 300 ms total) into the tooltip.
+  const startY = Math.floor(token.top) - 1
+  const endY = Math.floor(popupRect.bottom) - 4
+  for (let y = startY; y >= endY; y -= 1) {
+    await commands.movePointer(x, y)
+    await wait(50)
+  }
+
+  await wait(HOVER_REQUEST_DEBOUNCE_MS + 100)
+  const dialog = hoverDialog()
+  expect(dialog.hidden).toBe(false)
+  expect(dialog.textContent).toContain('token:topRowToken')
+})
+
 async function mountEditor(
   text = SAMPLE_TEXT,
   matchesWord: (word: string) => boolean = (word) => word.endsWith('Token'),
+  customCompute?: (request: HoverRequest) => readonly HoverPart[],
+  position: { readonly top?: number } = {},
 ) {
   const host = document.createElement('div')
-  host.style.cssText = 'position:fixed;left:40px;top:40px;width:900px;height:500px'
+  host.style.cssText = `position:fixed;left:40px;top:${position.top ?? 40}px;width:900px;height:500px`
   document.body.append(host)
 
   let viewContext: EditorViewContributionContext | null = null
@@ -226,6 +288,7 @@ async function mountEditor(
             {
               computeSync: (request) => {
                 computeCount += 1
+                if (customCompute) return customCompute(request)
                 const { start, end } = request.anchor.range
                 const word = request.snapshot.textSnapshot.readRange(start, end)
                 if (!matchesWord(word)) return []
