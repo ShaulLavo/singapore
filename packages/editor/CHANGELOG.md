@@ -1,5 +1,11 @@
 # @singapore-editor/core
 
+## 0.2.14
+
+### Patch Changes
+
+- 9e610a1: Paint `.editor-virtualized-selection-layer` and restored provisional viewport selections at `z-index: -1` inside an isolated `.editor-virtualized-row` stacking context so opaque `selectionColor` and `inactiveSelectionColor` values render above row backgrounds and strictly behind code text, CSS highlights, inline widgets, and hidden-character markers. Layer `.editor-virtualized-caret-layer` at `z-index: 1` so carets remain visible above row backgrounds and opaque selections.
+
 ## 0.2.13
 
 ### Patch Changes
