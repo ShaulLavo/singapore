@@ -53,17 +53,21 @@ it('opens Token B hover when moving horizontally from Token A underneath a wide 
 it('opens the closer token hover when moving up into the gap between anchor and tooltip and stopping', async () => {
   const harness = await mountEditor()
   const alpha = harness.tokenRect('alphaToken')
+  const alphaRow = harness.rowBounds('alphaToken')
   const upper = harness.tokenRect('upperToken')
 
   await commands.movePointer(centerX(alpha), centerY(alpha))
   await waitForHoverText('token:alphaToken')
 
   const popupRect = hoverDialog().getBoundingClientRect()
-  expect(popupRect.bottom).toBeLessThanOrEqual(alpha.top)
-  // The 8px gap between the open tooltip and alphaToken overlaps the bottom of upperToken's row.
-  const gapY = (popupRect.bottom + alpha.top) / 2
+  expect(popupRect.bottom).toBeLessThan(alphaRow.top)
+  // Stay in the part of the 8px gap that lands on upperToken's row (independent of font leading).
+  const gapY = (popupRect.bottom + alphaRow.top) / 2
   expect(gapY).toBeGreaterThan(popupRect.bottom)
-  expect(gapY).toBeLessThan(alpha.top)
+  expect(gapY).toBeLessThan(alphaRow.top)
+  expect(harness.rowAtPoint(centerX(upper), gapY)?.displayRow).toBe(
+    harness.rowBounds('upperToken').displayRow,
+  )
 
   await commands.movePointer(centerX(upper), gapY, 3)
   await waitForHoverText('token:upperToken')
@@ -107,6 +111,7 @@ it('keeps the tooltip open when moving straight from Token A across the gap into
 it('keeps the tooltip open along a wide diagonal path through the gap into the tooltip', async () => {
   const harness = await mountEditor()
   const alpha = harness.tokenRect('alphaToken')
+  const alphaRow = harness.rowBounds('alphaToken')
   const startX = centerX(alpha)
   const startY = centerY(alpha)
 
@@ -114,11 +119,11 @@ it('keeps the tooltip open along a wide diagonal path through the gap into the t
   await waitForHoverText('token:alphaToken')
 
   const popupRect = hoverDialog().getBoundingClientRect()
-  expect(popupRect.bottom).toBeLessThanOrEqual(alpha.top)
+  expect(popupRect.bottom).toBeLessThan(alphaRow.top)
   expect(popupRect.right).toBeGreaterThan(startX + 80)
 
-  const gapY = (popupRect.bottom + alpha.top) / 2
-  // Move diagonally (+46 px right, up into the gap), then continue into the tooltip.
+  const gapY = (popupRect.bottom + alphaRow.top) / 2
+  // Move diagonally (+46 px right, up into the gap above alphaToken's row), then continue into the tooltip.
   await commands.movePointer(startX + 46, gapY, 3)
   expect(hoverDialog().hidden).toBe(false)
   await commands.movePointer(startX + 64, popupRect.bottom - 10, 3)
@@ -132,21 +137,25 @@ it('keeps the tooltip open along a wide diagonal path through the gap into the t
 it('keeps the tooltip open during slow continuous movement through the gap exceeding the settle delay', async () => {
   const harness = await mountEditor()
   const alpha = harness.tokenRect('alphaToken')
+  const alphaRow = harness.rowBounds('alphaToken')
   const x = centerX(alpha)
 
   await commands.movePointer(x, centerY(alpha))
   await waitForHoverText('token:alphaToken')
 
   const popupRect = hoverDialog().getBoundingClientRect()
-  expect(popupRect.bottom).toBeLessThanOrEqual(alpha.top)
+  expect(popupRect.bottom).toBeLessThan(alphaRow.top)
 
-  // Move 1 px every 50 ms across the 8 px gap (~450 ms total > 300 ms settle delay) into the tooltip.
-  const startY = Math.floor(alpha.top) - 1
-  const endY = Math.floor(popupRect.bottom) - 4
-  for (let y = startY; y >= endY; y -= 1) {
+  // Step across every integer pixel strictly inside the gap above alphaToken's row,
+  // spending more than TOOLTIP_HIDE_DELAY_MS in transit before entering the tooltip.
+  const ys = gapIntegerYs(popupRect.bottom, alphaRow.top)
+  expect(ys.length).toBeGreaterThanOrEqual(2)
+  const stepDelayMs = Math.ceil((TOOLTIP_HIDE_DELAY_MS + 90) / ys.length)
+  for (const y of ys) {
     await commands.movePointer(x, y)
-    await wait(50)
+    await wait(stepDelayMs)
   }
+  await commands.movePointer(x, popupRect.bottom - 4)
 
   await wait(HOVER_REQUEST_DEBOUNCE_MS + 100)
   const dialog = hoverDialog()
@@ -168,14 +177,19 @@ it('hides the tooltip instead of opening a token hover when pausing in trailing 
   ].join('\n')
   const harness = await mountEditor(text)
   const alpha = harness.tokenRect('alphaToken')
+  const alphaRow = harness.rowBounds('alphaToken')
   const upper = harness.tokenRect('upperToken')
 
   await commands.movePointer(centerX(alpha), centerY(alpha))
   await waitForHoverText('token:alphaToken')
 
   const popupRect = hoverDialog().getBoundingClientRect()
-  expect(popupRect.bottom).toBeLessThanOrEqual(alpha.top)
-  const gapY = (popupRect.bottom + alpha.top) / 2
+  expect(popupRect.bottom).toBeLessThan(alphaRow.top)
+  const gapY = (popupRect.bottom + alphaRow.top) / 2
+  expect(harness.rowAtPoint(upper.right + 6, gapY)).toMatchObject({
+    displayRow: harness.rowBounds('upperToken').displayRow,
+    region: 'trailing',
+  })
 
   // Stop 6 px past the end of `let upperToken` (trailing blank space inside the corridor).
   await commands.movePointer(upper.right + 6, gapY, 3)
@@ -329,21 +343,24 @@ it('keeps the tooltip open during slow continuous movement across a gap above th
   const text = 'const topRowToken = 1\nconst nextRow = 2'
   const harness = await mountEditor(text, undefined, undefined, { top: 180 })
   const token = harness.tokenRect('topRowToken')
+  const tokenRow = harness.rowBounds('topRowToken')
   const x = centerX(token)
 
   await commands.movePointer(x, centerY(token))
   await waitForHoverText('token:topRowToken')
 
   const popupRect = hoverDialog().getBoundingClientRect()
-  expect(popupRect.bottom).toBeLessThanOrEqual(token.top)
+  expect(popupRect.bottom).toBeLessThan(tokenRow.top)
 
-  // Move 1 px every 50 ms across the gap outside the scroll element (> 300 ms total) into the tooltip.
-  const startY = Math.floor(token.top) - 1
-  const endY = Math.floor(popupRect.bottom) - 4
-  for (let y = startY; y >= endY; y -= 1) {
+  // Spend > TOOLTIP_HIDE_DELAY_MS moving across the gap outside the scroll element into the tooltip.
+  const ys = gapIntegerYs(popupRect.bottom, tokenRow.top)
+  expect(ys.length).toBeGreaterThanOrEqual(2)
+  const stepDelayMs = Math.ceil((TOOLTIP_HIDE_DELAY_MS + 90) / ys.length)
+  for (const y of ys) {
     await commands.movePointer(x, y)
-    await wait(50)
+    await wait(stepDelayMs)
   }
+  await commands.movePointer(x, popupRect.bottom - 4)
 
   await wait(HOVER_REQUEST_DEBOUNCE_MS + 100)
   const dialog = hoverDialog()
@@ -422,17 +439,49 @@ async function mountEditor(
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   )
 
+  const tokenRect = (word: string): DOMRect => {
+    if (!viewContext) throw new Error('missing view context')
+    const start = text.indexOf(word)
+    if (start < 0) throw new Error(`missing token ${word}`)
+    const rect = viewContext.getRangeClientRect(start, start + word.length)
+    if (!rect) throw new Error(`missing rect for ${word}`)
+    return rect
+  }
+
+  const rowBounds = (
+    word: string,
+  ): { readonly top: number; readonly bottom: number; readonly displayRow: number } => {
+    if (!viewContext) throw new Error('missing view context')
+    const rect = tokenRect(word)
+    const hit = viewContext.rowAtPoint(centerX(rect), centerY(rect))
+    if (!hit) throw new Error(`missing row for ${word}`)
+    const { rowHeight } = viewContext.getSnapshot().metrics
+    const top =
+      viewContext.scrollElement.getBoundingClientRect().top +
+      hit.displayRow * rowHeight -
+      viewContext.scrollElement.scrollTop
+    return { top, bottom: top + rowHeight, displayRow: hit.displayRow }
+  }
+
   return {
     computeCount: () => computeCount,
-    tokenRect: (word: string): DOMRect => {
+    tokenRect,
+    rowBounds,
+    rowAtPoint: (clientX: number, clientY: number) => {
       if (!viewContext) throw new Error('missing view context')
-      const start = text.indexOf(word)
-      if (start < 0) throw new Error(`missing token ${word}`)
-      const rect = viewContext.getRangeClientRect(start, start + word.length)
-      if (!rect) throw new Error(`missing rect for ${word}`)
-      return rect
+      return viewContext.rowAtPoint(clientX, clientY)
     },
   }
+}
+
+function gapIntegerYs(popupBottom: number, rowTop: number): readonly number[] {
+  const startY = Math.ceil(rowTop) - 1
+  const endY = Math.floor(popupBottom) + 1
+  const ys: number[] = []
+  for (let y = startY; y >= endY; y -= 1) {
+    ys.push(y)
+  }
+  return ys
 }
 
 function hoverDialog(): HTMLElement {
