@@ -526,25 +526,73 @@ describe('Tree-sitter scope-compat VS Code highlighter', () => {
     htmlSession.dispose()
     htmlAnalysis.dispose()
 
-    const mdxBuffer = createEditorTextBuffer('# Title\n\n```ts\nconst n = 7\n```\n')
+    const mdxOwner = createTreeSitterWorkerOwner()
+    owners.push(mdxOwner)
+    const mdxProvider = createTreeSitterHighlighterProvider({
+      workerOwner: mdxOwner,
+      languageResolver: makeRegistry(),
+      theme: 'github-dark',
+      resolveTheme: async () => ({ ...githubDark, name: 'github-dark' }),
+    })
+    const mdxText = '# Title\n\n```ts\nconst n = 7\n```\n'
+    const mdxBuffer = createEditorTextBuffer(mdxText)
     const mdxAnalysis = createEditorDocumentAnalysis({ buffer: mdxBuffer, documentId: 'cold.mdx' })
-    const mdxSession = mdxAnalysis.borrowHighlighter({ provider, languageId: 'mdx' })!
+    const mdxSession = mdxAnalysis.borrowHighlighter({ provider: mdxProvider, languageId: 'mdx' })!
     const mdxResult = await mdxSession.refresh(mdxBuffer.getTextSnapshot())
-    expect(
-      colorOf('# Title\n\n```ts\nconst n = 7\n```\n', mdxResult.tokens.toTokens(), 'const'),
-    ).not.toBe(defaultFg)
+    const mdxConstColor = colorOf(mdxText, mdxResult.tokens.toTokens(), 'const')
+    expect(mdxConstColor).toBeDefined()
+    expect(mdxConstColor).not.toBe(defaultFg)
     mdxSession.dispose()
     mdxAnalysis.dispose()
     mdSession.dispose()
     mdAnalysis.dispose()
 
     await owner.awaitIdleFence()
-    const retention = await owner.inspectRetention()
-    expect(retention?.markdownDocumentEntries ?? 0).toBe(0)
-    expect(retention?.markdownDocumentCount ?? 0).toBe(0)
-    expect(retention?.treeCount ?? 0).toBe(0)
-    expect(retention?.source.readCount ?? 0).toBe(0)
-    expect(retention?.source.documentCount ?? 0).toBe(0)
+    await mdxOwner.awaitIdleFence()
+    for (const activeOwner of [owner, mdxOwner]) {
+      const retention = await activeOwner.inspectRetention()
+      expect(retention?.markdownDocumentEntries ?? 0).toBe(0)
+      expect(retention?.markdownDocumentCount ?? 0).toBe(0)
+      expect(retention?.treeCount ?? 0).toBe(0)
+      expect(retention?.source.readCount ?? 0).toBe(0)
+      expect(retention?.source.documentCount ?? 0).toBe(0)
+    }
+
+    // A broken fence grammar inside Markdown must not leak retained source reads when parsing fails.
+    const brokenRegistry = makeRegistry()
+    brokenRegistry.registerLanguage(
+      {
+        id: 'brokenfence',
+        wasmUrl: 'data:application/wasm;base64,AAAA',
+        highlightQuerySource: '(identifier) @variable',
+      },
+      { replace: true },
+    )
+    const brokenOwner = createTreeSitterWorkerOwner()
+    owners.push(brokenOwner)
+    const brokenProvider = createTreeSitterHighlighterProvider({
+      workerOwner: brokenOwner,
+      languageResolver: brokenRegistry,
+      theme: 'github-dark',
+      resolveTheme: async () => ({ ...githubDark, name: 'github-dark' }),
+    })
+    const brokenBuffer = createEditorTextBuffer('# Broken\n\n```brokenfence\nfoo\n```\n')
+    const brokenAnalysis = createEditorDocumentAnalysis({
+      buffer: brokenBuffer,
+      documentId: 'broken.md',
+    })
+    cleanups.push(() => brokenAnalysis.dispose())
+    const brokenSession = brokenAnalysis.borrowHighlighter({
+      provider: brokenProvider,
+      languageId: 'markdown',
+    })!
+    cleanups.push(() => brokenSession.dispose())
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(brokenSession.refresh(brokenBuffer.getTextSnapshot())).rejects.toThrow()
+    }
+    await brokenOwner.awaitIdleFence()
+    const brokenRetention = await brokenOwner.inspectRetention()
+    expect(brokenRetention?.source.readCount ?? 0).toBe(0)
   })
 
   it('resolves language aliases through createTreeSitterSyntaxProvider and handles prototype keys safely', async () => {
@@ -580,6 +628,39 @@ describe('Tree-sitter scope-compat VS Code highlighter', () => {
       const result = await session.refresh(buf.getTextSnapshot())
       expect(result.tokens.toTokens()).toEqual([])
     }
+
+    // A registered custom grammar whose id collides with an Object.prototype key must also work.
+    const cContribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((entry) => entry.id === 'c')!
+    const protoRegistry = makeRegistry()
+    protoRegistry.registerLanguage(
+      {
+        ...cContribution,
+        id: 'constructor',
+        aliases: [],
+        extensions: [],
+        filenames: [],
+      },
+      { replace: true },
+    )
+    const protoProvider = createTreeSitterHighlighterProvider({
+      workerOwner: owner,
+      languageResolver: protoRegistry,
+      theme: 'red',
+      resolveTheme: async () => customTheme('red', '#FF0000'),
+    })
+    const protoBuffer = createEditorTextBuffer('int main(void) { return 0; }\n')
+    const protoAnalysis = createEditorDocumentAnalysis({
+      buffer: protoBuffer,
+      documentId: 'custom.ctor',
+    })
+    cleanups.push(() => protoAnalysis.dispose())
+    const protoSession = protoAnalysis.borrowHighlighter({
+      provider: protoProvider,
+      languageId: 'constructor',
+    })!
+    cleanups.push(() => protoSession.dispose())
+    const protoResult = await protoSession.refresh(protoBuffer.getTextSnapshot())
+    expect(protoResult.tokens.toTokens().length).toBeGreaterThan(0)
   })
 
   it('releases the default worker lease when session setup throws synchronously', async () => {

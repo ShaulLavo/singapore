@@ -12,6 +12,8 @@ import type { EditorPlugin } from '@singapore-editor/core/extensions'
 import {
   createShikiHighlighterPlugin,
   createShikiHighlighterProvider,
+  loadShikiGrammar,
+  shikiHighlightingGrammar,
   shikiLanguageForDocument,
   type ShikiHighlighterPluginOptions,
 } from '../src/index'
@@ -252,6 +254,15 @@ describe('Shiki plugin contributions', () => {
         .flatMap((worker) => worker.requests)
         .some((request) => request.payload.type === 'open'),
     ).toBe(false)
+  })
+
+  it('ignores Object.prototype keys in shikiHighlightingGrammar and loadShikiGrammar', async () => {
+    expect(shikiHighlightingGrammar('constructor')).toBeNull()
+    expect(shikiHighlightingGrammar('__proto__')).toBeNull()
+    expect(shikiHighlightingGrammar('toString')).toBeNull()
+    await expect(loadShikiGrammar('constructor')).rejects.toThrow(
+      'No Shiki grammar for constructor',
+    )
   })
 })
 

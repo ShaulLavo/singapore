@@ -682,8 +682,12 @@ const fallbackScopeInfo = (
   languageId: string,
 ): { readonly rootScope: string; readonly scopeSuffix: string } => {
   const builtin = getBuiltinPack(languageId)
-  if (builtin) return { rootScope: builtin.rootScope, scopeSuffix: builtin.scopeSuffix }
-  const known = FALLBACK_SCOPE_INFO[languageId]
+  if (builtin && typeof builtin === 'object' && typeof builtin.rootScope === 'string') {
+    return { rootScope: builtin.rootScope, scopeSuffix: builtin.scopeSuffix }
+  }
+  const known = Object.hasOwn(FALLBACK_SCOPE_INFO, languageId)
+    ? FALLBACK_SCOPE_INFO[languageId]
+    : undefined
   if (known) return known
   const safe = languageId.replace(/[^A-Za-z0-9_-]/g, '') || 'text'
   return { rootScope: `source.${safe}`, scopeSuffix: `.${safe}` }

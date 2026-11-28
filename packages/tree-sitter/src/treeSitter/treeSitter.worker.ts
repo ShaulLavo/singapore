@@ -554,8 +554,9 @@ const collectMarkdownScopeMultiLayer = async <T>(
       size: text.length,
       lastUsed: nextUse++,
     }
-    const prepared = await parseMarkdownFences(parsed, context, null, [])
+    let prepared: ParsedDocument = parsed
     try {
+      prepared = await parseMarkdownFences(parsed, context, null, [])
       const flattened = await flattenDocument(prepared, context, false, true)
       const layers = await toScopeLayerInputs(prepared.layers)
       return consume({
