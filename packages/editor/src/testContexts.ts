@@ -127,7 +127,13 @@ export function createTestViewContributionContext(
     getReservedOverlayWidth: () => 0,
     onDidChangeReservedOverlayWidth: () => noDisposal,
     getRowPresentation: () => null,
-    rowAtPoint: () => null,
+    rowAtPoint: overrides.textOffsetFromPoint
+      ? (clientX, clientY) => {
+          const offset = overrides.textOffsetFromPoint!(clientX, clientY)
+          if (offset === null) return null
+          return { bufferRow: 0, displayRow: 0, source: 'document', region: 'text', offset }
+        }
+      : () => null,
     markerAtPoint: () => null,
     textOffsetFromPoint: () => null,
     getRangeClientRect: () => null,

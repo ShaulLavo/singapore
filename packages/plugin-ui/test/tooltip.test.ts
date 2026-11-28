@@ -206,6 +206,208 @@ describe('tooltip content', () => {
   })
 })
 
+describe('tooltip pointer retention', () => {
+  afterEach(() => document.body.replaceChildren())
+
+  it('drops retention immediately when sliding horizontally underneath a wide top tooltip', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    const anchor = new DOMRect(60, 200, 40, 18)
+    controller.show({ ...showOptions(), anchor, pointer: { clientX: 80, clientY: 209 } })
+
+    expect(controller.pointerRetention(80, 209)).toBe('anchor')
+    expect(controller.pointerRetention(140, 209)).toBe('none')
+    expect(controller.shouldKeepForPointer(210, 209)).toBe(false)
+    controller.dispose()
+  })
+
+  it('drops retention when moving horizontally underneath a wide bottom tooltip', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 126, 400, 60)
+    const anchor = new DOMRect(60, 100, 40, 18)
+    controller.show({
+      ...showOptions(),
+      anchor,
+      preferredPlacement: 'bottom',
+      pointer: { clientX: 80, clientY: 109 },
+    })
+
+    expect(controller.pointerRetention(80, 109)).toBe('anchor')
+    expect(controller.pointerRetention(150, 109)).toBe('none')
+    controller.dispose()
+  })
+
+  it('keeps a diagonal corridor toward a wide tooltip and drops points outside the wedge', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 600, 60)
+    const anchor = new DOMRect(60, 200, 40, 18)
+    controller.show({ ...showOptions(), anchor })
+
+    expect(controller.pointerRetention(95, 209)).toBe('anchor')
+    // Diagonal move (+46 px right, -12.5 px up) into the gap approaches the tooltip.
+    expect(controller.pointerRetention(141, 196.5)).toBe('approaching')
+    // Lateral jitter at the same distance stays in the corridor without reporting new progress.
+    expect(controller.pointerRetention(143, 196.5)).toBe('corridor')
+    // Stepping outside the safe triangle toward a distant token drops retention immediately.
+    expect(controller.pointerRetention(95, 209)).toBe('anchor')
+    expect(controller.pointerRetention(230, 205)).toBe('none')
+    controller.dispose()
+  })
+
+  it('keeps an approaching corridor when traveling straight or diagonally across the gap into the tooltip', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    const anchor = new DOMRect(60, 200, 40, 18)
+    controller.show({ ...showOptions(), anchor, pointer: { clientX: 80, clientY: 209 } })
+
+    // First frame jumps straight from anchor into the 8px gap toward the tooltip.
+    expect(controller.pointerRetention(80, 196)).toBe('approaching')
+    expect(controller.pointerRetention(88, 193)).toBe('approaching')
+    expect(controller.pointerRetention(92, 188)).toBe('locked')
+    controller.dispose()
+  })
+
+  it('drops retention after turning away midway through the corridor', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    const anchor = new DOMRect(60, 200, 40, 18)
+    controller.show({ ...showOptions(), anchor })
+
+    expect(controller.pointerRetention(80, 209)).toBe('anchor')
+    expect(controller.pointerRetention(80, 196)).toBe('approaching')
+    expect(controller.pointerRetention(150, 204)).toBe('none')
+    expect(controller.pointerRetention(80, 194)).toBe('none')
+    controller.dispose()
+  })
+
+  it('uses pointerAnchor when the visual anchor spans wider than the hovered token', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    const diagnosticAnchor = new DOMRect(60, 200, 240, 18)
+    const tokenAnchor = new DOMRect(60, 200, 40, 18)
+    controller.show({
+      ...showOptions(),
+      anchor: diagnosticAnchor,
+      pointerAnchor: tokenAnchor,
+      pointer: { clientX: 80, clientY: 209 },
+    })
+
+    expect(controller.pointerRetention(80, 209)).toBe('anchor')
+    expect(controller.pointerRetention(150, 209)).toBe('none')
+    controller.dispose()
+  })
+
+  it('uses isPointOnAnchor over pointerAnchor bounds and preserves travel state across updates', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    const zeroWidthAnchor = new DOMRect(90, 200, 0, 18)
+    const isPointOnAnchor = (clientX: number, clientY: number) =>
+      clientX >= 90 && clientX < 92 && clientY >= 200 && clientY <= 218
+
+    controller.show({
+      ...showOptions(),
+      anchor: zeroWidthAnchor,
+      pointerAnchor: zeroWidthAnchor,
+      isPointOnAnchor,
+      pointer: { clientX: 91, clientY: 209 },
+    })
+
+    // Initial travel starts from the painted marker hit, allowing approach into the tooltip.
+    expect(controller.pointerRetention(91, 209)).toBe('anchor')
+    expect(controller.pointerRetention(91, 196)).toBe('approaching')
+
+    // Moving far into trailing whitespace drops retention; a subsequent update must not restore it.
+    expect(controller.pointerRetention(171, 209)).toBe('none')
+    controller.show({
+      ...showOptions(),
+      anchor: zeroWidthAnchor,
+      pointerAnchor: zeroWidthAnchor,
+      isPointOnAnchor,
+      hoverText: 'updated async hover',
+      pointer: null,
+    })
+    expect(controller.pointerRetention(170, 209)).toBe('none')
+    expect(controller.pointerRetention(91, 209)).toBe('anchor')
+    controller.dispose()
+  })
+
+  it('rebases pointer travel progress when an async update moves the tooltip upward', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    let tooltipRect = new DOMRect(12, 132, 400, 60)
+    element.getBoundingClientRect = () => tooltipRect
+    const anchor = new DOMRect(60, 200, 40, 18)
+
+    controller.show({
+      ...showOptions(),
+      anchor,
+      pointerAnchor: anchor,
+      pointer: { clientX: 80, clientY: 209 },
+    })
+
+    // Approach to within 2 px of the original tooltip bottom (192).
+    expect(controller.pointerRetention(80, 194)).toBe('approaching')
+
+    // Async update repositions the tooltip 30 px higher (bottom = 162).
+    tooltipRect = new DOMRect(12, 102, 400, 60)
+    controller.show({
+      ...showOptions(),
+      anchor: new DOMRect(60, 170, 40, 48),
+      pointerAnchor: anchor,
+      hoverText: 'updated async hover',
+      pointer: null,
+    })
+
+    // Continuing upward remains approaching; sideways stays corridor; turning back drops retention.
+    expect(controller.pointerRetention(80, 190)).toBe('approaching')
+    expect(controller.pointerRetention(82, 190)).toBe('corridor')
+    expect(controller.pointerRetention(80, 196)).toBe('none')
+    controller.dispose()
+  })
+
+  it('allows a 4px border grace after leaving the tooltip, then releases immediately beyond it', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    const anchor = new DOMRect(60, 200, 40, 18)
+    controller.show({ ...showOptions(), anchor })
+
+    expect(controller.pointerRetention(120, 160)).toBe('locked')
+    expect(controller.pointerRetention(120, 196)).toBe('corridor')
+    expect(controller.pointerRetention(120, 204)).toBe('none')
+    controller.dispose()
+  })
+
+  it('stays locked while keyboard-focused or dragging a resize sash regardless of pointer position', () => {
+    const controller = tooltipController()
+    const element = document.querySelector<HTMLElement>('.editor-test-hover')!
+    element.getBoundingClientRect = () => new DOMRect(12, 132, 400, 60)
+    controller.show({ ...showOptions(), anchor: new DOMRect(60, 200, 40, 18), focus: true })
+
+    expect(controller.pointerRetention(500, 500)).toBe('locked')
+
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(controller.pointerRetention(500, 500)).toBe('none')
+
+    const rightSash = element.querySelector<HTMLElement>('.editor-test-hover-resize-right')!
+    rightSash.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 412, clientY: 160 }),
+    )
+    expect(controller.pointerRetention(500, 500)).toBe('locked')
+
+    document.dispatchEvent(new PointerEvent('pointerup'))
+    expect(controller.pointerRetention(500, 500)).toBe('none')
+    controller.dispose()
+  })
+})
+
 function tooltipController() {
   const editor = document.createElement('div')
   editor.getBoundingClientRect = () => new DOMRect(0, 0, 900, 700)

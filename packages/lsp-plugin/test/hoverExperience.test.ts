@@ -508,7 +508,6 @@ function hoverController(
     getSnapshot: () => snapshot,
     getProviders: (() => [participant]) as EditorViewContributionContext['getProviders'],
     focusEditor: vi.fn(),
-    rowAtPoint: () => null,
     markerAtPoint: () => null,
     textOffsetFromPoint: vi.fn(() => 6),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
