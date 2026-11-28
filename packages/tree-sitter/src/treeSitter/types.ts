@@ -428,6 +428,7 @@ export type TreeSitterHighlightResult = {
   readonly tokensPacked?: PackedEditorTokens
   readonly theme?: EditorTheme
   readonly untokenizedLines?: number
+  readonly missingLanguages?: readonly TreeSitterLanguageId[]
 }
 
 export type TreeSitterWorkerRequestPayload =

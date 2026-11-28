@@ -515,6 +515,21 @@ const toScopeLayerInputs = async (
   return inputs
 }
 
+const createScratchMdxMarkdown = async (
+  source: TreeSitterPieceTableInput,
+  root: ParsedLayer,
+): Promise<MarkdownDocument> => {
+  const support = await loadMarkdown()
+  const document = new support.MarkdownDocument()
+  document.setText(
+    support.markdownMdxSource(
+      readTreeSitterInputRange(source, 0, source.length),
+      root.tree.rootNode,
+    ),
+  )
+  return document
+}
+
 const collectMarkdownScopeMultiLayer = async <T>(
   languageId: TreeSitterLanguageId,
   source: TreeSitterPieceTableInput,
@@ -546,6 +561,7 @@ const collectMarkdownScopeMultiLayer = async <T>(
       return consume({
         layers,
         captures: flattened.captures,
+        missingLanguages: prepared.missingLanguages,
       })
     } finally {
       disposePreparedLayers(prepared)
@@ -569,44 +585,23 @@ const collectScopeMultiLayer = async <T>(
   if (languageId === 'markdown') {
     return collectMarkdownScopeMultiLayer(languageId, source, text, context, consume)
   }
-  if (!languageDescriptors.has(languageId)) return consume({ layers: [], captures: [] })
+  if (!languageDescriptors.has(languageId)) {
+    return consume({ layers: [], captures: [], missingLanguages: [] })
+  }
   const runtime = await ensureRuntime(languageId)
   const rootLayer = parseRootLayer(runtime, source, null, context)
+  let mdxMarkdown: MarkdownDocument | undefined
   let parsedDoc: ParsedDocument | null = null
   try {
     const degraded: TreeSitterDegradedState[] = []
-    const mdxMarkdown =
-      languageId === 'mdx'
-        ? await prepareMdxMarkdown(
-            {
-              type: 'parse',
-              documentId: '',
-              runtimeSessionId: '',
-              snapshotVersion: 0,
-              languageId,
-              includeHighlights: false,
-              source: {
-                identity: {
-                  documentId: '',
-                  documentGeneration: 1,
-                  endpointGeneration: 1,
-                  registrationId: 1,
-                },
-                point: { segment: 'scope', revision: 0, textVersion: 0 },
-                readId: 'scope',
-              },
-              generation: 0,
-            },
-            source,
-            rootLayer,
-          )
-        : undefined
+    mdxMarkdown =
+      languageId === 'mdx' ? await createScratchMdxMarkdown(source, rootLayer) : undefined
     parsedDoc = await parseParsedDocument({
       readOnly: true,
       documentId: '',
       snapshotVersion: 0,
       languageId,
-      source: source.retain(),
+      source,
       rootLayer,
       markdown: mdxMarkdown,
       context,
@@ -620,10 +615,12 @@ const collectScopeMultiLayer = async <T>(
     return consume({
       layers,
       captures: flattened.captures,
+      missingLanguages: parsedDoc.missingLanguages,
     })
   } finally {
     if (parsedDoc) disposeCachedSnapshot(parsedDoc)
     else rootLayer.tree.delete()
+    mdxMarkdown?.dispose()
   }
 }
 

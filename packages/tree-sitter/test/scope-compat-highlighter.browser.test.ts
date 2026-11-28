@@ -9,6 +9,7 @@ import {
   createTreeSitterHighlighterPlugin,
   createTreeSitterHighlighterProvider,
   createTreeSitterLanguageRegistry,
+  createTreeSitterSyntaxProvider,
   createTreeSitterWorkerOwner,
   flushDefaultTreeSitterProvider,
   type TreeSitterWorkerOwner,
@@ -475,6 +476,133 @@ describe('Tree-sitter scope-compat VS Code highlighter', () => {
     expect(state[key]).toBeDefined()
 
     editor.dispose()
+    await flushDefaultTreeSitterProvider()
+    expect(state[key]).toBeUndefined()
+  })
+
+  it('colors Markdown and MDX fenced code blocks on a cold worker without leaking retained reads or markdown docs', async () => {
+    const owner = createTreeSitterWorkerOwner()
+    owners.push(owner)
+    const provider = createTreeSitterHighlighterProvider({
+      workerOwner: owner,
+      languageResolver: makeRegistry(),
+      theme: 'github-dark',
+      resolveTheme: async () => ({ ...githubDark, name: 'github-dark' }),
+    })
+
+    const markdown = '# Heading\n\n```ts\nconst answer = 42\n```\n'
+    const mdBuffer = createEditorTextBuffer(markdown)
+    const mdAnalysis = createEditorDocumentAnalysis({ buffer: mdBuffer, documentId: 'cold.md' })
+    cleanups.push(() => mdAnalysis.dispose())
+    const mdSession = mdAnalysis.borrowHighlighter({ provider, languageId: 'markdown' })!
+    cleanups.push(() => mdSession.dispose())
+
+    const mdResult = await mdSession.refresh(mdBuffer.getTextSnapshot())
+    const mdTokens = mdResult.tokens.toTokens()
+    const defaultFg = mdResult.theme?.foregroundColor?.toUpperCase()
+    const colorOf = (text: string, tokens: typeof mdTokens, needle: string) => {
+      const start = text.indexOf(needle)
+      return tokens
+        .find((token) => token.start <= start && token.end >= start + needle.length)
+        ?.style.color?.toUpperCase()
+    }
+    expect(colorOf(markdown, mdTokens, 'const')).toBeDefined()
+    expect(colorOf(markdown, mdTokens, 'const')).not.toBe(defaultFg)
+    expect(colorOf(markdown, mdTokens, '42')).toBeDefined()
+    expect(colorOf(markdown, mdTokens, '42')).not.toBe(defaultFg)
+
+    // Repeated HTML and MDX refreshes must not leak source reads or cached Markdown documents.
+    const htmlBuffer = createEditorTextBuffer('<script>const x = 1;</script>\n')
+    const htmlView = createEditorBufferSession(htmlBuffer)
+    const htmlAnalysis = createEditorDocumentAnalysis({
+      buffer: htmlBuffer,
+      documentId: 'leak.html',
+    })
+    const htmlSession = htmlAnalysis.borrowHighlighter({ provider, languageId: 'html' })!
+    for (let step = 0; step < 4; step += 1) {
+      htmlView.applyEdits([{ from: 18, to: 19, text: String(step + 2) }])
+      await htmlSession.refresh(htmlBuffer.getTextSnapshot())
+    }
+    htmlSession.dispose()
+    htmlAnalysis.dispose()
+
+    const mdxBuffer = createEditorTextBuffer('# Title\n\n```ts\nconst n = 7\n```\n')
+    const mdxAnalysis = createEditorDocumentAnalysis({ buffer: mdxBuffer, documentId: 'cold.mdx' })
+    const mdxSession = mdxAnalysis.borrowHighlighter({ provider, languageId: 'mdx' })!
+    const mdxResult = await mdxSession.refresh(mdxBuffer.getTextSnapshot())
+    expect(
+      colorOf('# Title\n\n```ts\nconst n = 7\n```\n', mdxResult.tokens.toTokens(), 'const'),
+    ).not.toBe(defaultFg)
+    mdxSession.dispose()
+    mdxAnalysis.dispose()
+    mdSession.dispose()
+    mdAnalysis.dispose()
+
+    await owner.awaitIdleFence()
+    const retention = await owner.inspectRetention()
+    expect(retention?.markdownDocumentEntries ?? 0).toBe(0)
+    expect(retention?.markdownDocumentCount ?? 0).toBe(0)
+    expect(retention?.treeCount ?? 0).toBe(0)
+    expect(retention?.source.readCount ?? 0).toBe(0)
+    expect(retention?.source.documentCount ?? 0).toBe(0)
+  })
+
+  it('resolves language aliases through createTreeSitterSyntaxProvider and handles prototype keys safely', async () => {
+    const owner = createTreeSitterWorkerOwner()
+    owners.push(owner)
+    const syntax = createTreeSitterSyntaxProvider({ workerOwner: owner })
+    for (const contribution of TREE_SITTER_LANGUAGE_CONTRIBUTIONS) {
+      syntax.registerLanguage(contribution, { replace: true })
+    }
+    const provider = createTreeSitterHighlighterProvider({
+      workerOwner: owner,
+      languageResolver: syntax,
+      theme: 'red',
+      resolveTheme: async () => customTheme('red', '#FF0000'),
+    })
+
+    const tsBuffer = createEditorTextBuffer('const ok = 1\n')
+    const tsAnalysis = createEditorDocumentAnalysis({ buffer: tsBuffer, documentId: 'alias.ts' })
+    cleanups.push(() => tsAnalysis.dispose())
+    const tsSession = tsAnalysis.borrowHighlighter({ provider, languageId: 'ts' })!
+    cleanups.push(() => tsSession.dispose())
+    const tsResult = await tsSession.refresh(tsBuffer.getTextSnapshot())
+    expect(tsResult.tokens.toTokens().find((token) => token.start === 0)?.style.color).toBe(
+      '#FF0000',
+    )
+
+    for (const key of ['constructor', '__proto__']) {
+      const buf = createEditorTextBuffer('plain text\n')
+      const analysis = createEditorDocumentAnalysis({ buffer: buf, documentId: `${key}.txt` })
+      cleanups.push(() => analysis.dispose())
+      const session = analysis.borrowHighlighter({ provider, languageId: key })!
+      cleanups.push(() => session.dispose())
+      const result = await session.refresh(buf.getTextSnapshot())
+      expect(result.tokens.toTokens()).toEqual([])
+    }
+  })
+
+  it('releases the default worker lease when session setup throws synchronously', async () => {
+    await flushDefaultTreeSitterProvider()
+    const key = Symbol.for('@singapore-editor/tree-sitter/default-provider')
+    const state = globalThis as Record<PropertyKey, unknown>
+    expect(state[key]).toBeUndefined()
+
+    const provider = createTreeSitterHighlighterProvider({
+      languageResolver: makeRegistry(),
+      theme: () => {
+        throw new Error('theme getter boom')
+      },
+      resolveTheme: async () => customTheme('red', '#FF0000'),
+    })
+
+    const buffer = createEditorTextBuffer('const x = 1\n')
+    const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'boom.ts' })
+    cleanups.push(() => analysis.dispose())
+    expect(() => analysis.borrowHighlighter({ provider, languageId: 'typescript' })).toThrow(
+      'theme getter boom',
+    )
+
     await flushDefaultTreeSitterProvider()
     expect(state[key]).toBeUndefined()
   })

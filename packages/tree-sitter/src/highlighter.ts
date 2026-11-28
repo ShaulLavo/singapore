@@ -139,14 +139,24 @@ export function createTreeSitterHighlighterProvider(
       const lease = options.workerOwner ? null : retainDefaultTreeSitterOwner()
       const owner = options.workerOwner ?? lease!.owner
       const backend = treeSitterBackendForOwner(owner)
-      const session = createSession(context, options, themeCache, backend, lease, () =>
-        warm(backend),
-      )
-      if (!session) lease?.release()
-      return session
+      try {
+        const session = createSession(context, options, themeCache, backend, lease, () =>
+          warm(backend),
+        )
+        if (!session) lease?.release()
+        return session
+      } catch (error) {
+        lease?.release()
+        throw error
+      }
     }),
   }
 }
+
+const ownLanguageEntry = (
+  map: TreeSitterHighlightLanguageMap | undefined,
+  key: string,
+): string | undefined => (map && Object.hasOwn(map, key) ? map[key] : undefined)
 
 export const treeSitterHighlightLanguageForDocument = (
   options: Pick<HighlighterOperationContext, 'documentId' | 'languageId'>,
@@ -155,11 +165,11 @@ export const treeSitterHighlightLanguageForDocument = (
 ): ResolvedTreeSitterHighlightLanguage | null => {
   if (!options.languageId) return null
 
-  const configured = languages?.[options.languageId]
+  const configured = ownLanguageEntry(languages, options.languageId)
   const raw =
     configured ??
     languageForDocumentExtension(options.documentId, options.languageId) ??
-    DEFAULT_LANGUAGE_MAP[options.languageId] ??
+    ownLanguageEntry(DEFAULT_LANGUAGE_MAP, options.languageId) ??
     options.languageId
 
   if (raw === 'jsx' || raw === 'javascriptreact') {
@@ -264,6 +274,7 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
   private readonly documentId: string
   private readonly runtimeSessionId: string
   private readonly languageId: TreeSitterLanguageId
+  private resolvedLanguageId: TreeSitterLanguageId
   private readonly packLanguageId: string | undefined
   public readonly onDidChangeTheme: TreeSitterHighlighterProviderOptions['onThemeChanged']
   private themeRevision: string
@@ -285,6 +296,7 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
     this.documentId = init.context.documentId
     this.runtimeSessionId = init.context.runtimeSessionId ?? createEditorRuntimeSessionId()
     this.languageId = init.languageId
+    this.resolvedLanguageId = init.languageId
     this.packLanguageId = init.packLanguageId
     this.onDidChangeTheme = init.options.onThemeChanged
     this.themeRevision = configuredThemeName(init.options)
@@ -362,8 +374,15 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
 
     try {
       work.throwIfAborted()
-      const result = await this.dispatchHighlight(
+      let result = await this.dispatchHighlight(
         read,
+        prepared.reference,
+        themeRegistration,
+        maxLineLength,
+        work,
+      )
+      result = await this.retryWithMissingLanguages(
+        result,
         prepared.reference,
         themeRegistration,
         maxLineLength,
@@ -376,6 +395,66 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
     } finally {
       await prepared.dispose()
     }
+  }
+
+  private async retryWithMissingLanguages(
+    initial: Awaited<ReturnType<TreeSitterWorkerClient['highlightOpen']>>,
+    source: Parameters<TreeSitterWorkerClient['highlightOpen']>[0]['source'],
+    themeRegistration: VscodeThemeRegistration,
+    maxLineLength: number,
+    work: AbortSignal,
+  ): Promise<Awaited<ReturnType<TreeSitterWorkerClient['highlightOpen']>>> {
+    let result = initial
+    const attempted = new Set<TreeSitterLanguageId>()
+    for (let round = 0; round < 2; round += 1) {
+      const missing = result?.missingLanguages?.filter((id) => !attempted.has(id)) ?? []
+      if (missing.length === 0) break
+      for (const id of missing) attempted.add(id)
+      const registered = await this.registerMissingLanguages(missing, work)
+      if (!registered) break
+      work.throwIfAborted()
+      result = await this.init.backend.highlightOpen(
+        {
+          documentId: this.documentId,
+          runtimeSessionId: this.runtimeSessionId,
+          languageId: this.resolvedLanguageId,
+          packLanguageId: this.packLanguageId,
+          themeRevision: this.themeRevision,
+          themeRegistration,
+          maxLineLength,
+          source,
+        },
+        work,
+      )
+    }
+    return result
+  }
+
+  private async registerMissingLanguages(
+    languageIds: readonly TreeSitterLanguageId[],
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const resolver = this.init.options.languageResolver
+    if (!resolver) return false
+    const closures = await Promise.allSettled(
+      languageIds.map((languageId) =>
+        waitForDocumentWork(resolveTreeSitterLanguageClosure(resolver, languageId), signal),
+      ),
+    )
+    signal.throwIfAborted()
+    const descriptors = new Map<TreeSitterLanguageId, TreeSitterLanguageDescriptor>()
+    for (const closure of closures) {
+      if (closure.status === 'rejected') continue
+      for (const descriptor of closure.value) {
+        if (!descriptors.has(descriptor.id)) descriptors.set(descriptor.id, descriptor)
+      }
+    }
+    if (descriptors.size === 0) return false
+    await waitForDocumentWork(
+      this.init.backend.registerLanguages([...descriptors.values()]),
+      signal,
+    )
+    return true
   }
 
   private async dispatchHighlight(
@@ -399,7 +478,7 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
         {
           documentId: this.documentId,
           runtimeSessionId: this.runtimeSessionId,
-          languageId: this.languageId,
+          languageId: this.resolvedLanguageId,
           packLanguageId: this.packLanguageId,
           themeRevision: this.themeRevision,
           themeRegistration,
@@ -420,7 +499,7 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
       {
         documentId: this.documentId,
         runtimeSessionId: this.runtimeSessionId,
-        languageId: this.languageId,
+        languageId: this.resolvedLanguageId,
         packLanguageId: this.packLanguageId,
         themeRevision: this.themeRevision,
         themeRegistration,
@@ -498,6 +577,7 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
       this.registeredGeneration = currentGen
       return false
     }
+    this.resolvedLanguageId = descriptors[0]!.id
     await waitForDocumentWork(this.init.backend.registerLanguages(descriptors), signal)
     this.languageSupported = true
     this.registeredGeneration = this.init.backend.generation

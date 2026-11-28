@@ -27,7 +27,7 @@ const editor = new Editor(host, {
     createShikiHighlighterPlugin({
       theme: 'dark',
       resolveLanguage: (lang) => loadShikiGrammar(lang),
-      resolveTheme: async () => editorThemeToShikiTheme({ type: 'dark' }),
+      resolveTheme: async () => editorThemeToShikiTheme({ type: 'dark' }, { name: 'dark' }),
     }),
   ],
 })

@@ -21,6 +21,12 @@ describe('highlighting service without a worker', () => {
     expect(failure.name).toBe('AbortError')
   })
 
+  test('returns null for Object.prototype property names in highlightingGrammar', () => {
+    expect(highlightingGrammar('constructor')).toBeNull()
+    expect(highlightingGrammar('__proto__')).toBeNull()
+    expect(highlightingGrammar('toString')).toBeNull()
+  })
+
   test('refuses work after disposal, and disposing twice is safe', async () => {
     const service = createHighlightingService()
     await service.dispose()

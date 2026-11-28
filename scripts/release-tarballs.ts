@@ -370,7 +370,7 @@ function bunWorkerSmokeScript(): string {
     `    workerOwner: shikiWorker,\n` +
     `    theme: 'dark',\n` +
     `    resolveLanguage: (language) => loadShikiGrammar(language),\n` +
-    `    resolveTheme: async () => editorThemeToShikiTheme({ type: 'dark' }),\n` +
+    `    resolveTheme: async () => editorThemeToShikiTheme({ type: 'dark' }, { name: 'dark' }),\n` +
     `  })\n` +
     `  const buffer = createEditorTextBuffer('export const answer = 42\\n')\n` +
     `  const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'smoke.ts' })\n` +

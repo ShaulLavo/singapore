@@ -118,6 +118,7 @@ type ScopeDocumentState = {
   readonly packId: string | null
   readonly packEntry: CompiledPackEntry | null
   readonly maxLineLength: number
+  readonly missingLanguages: readonly TreeSitterLanguageId[]
   sourcePointKey: string
   themeRevision: string
   themeRegistration: VscodeThemeRegistration
@@ -153,6 +154,7 @@ export type ScopeLayerInput = {
 export type ScopeMultiLayerData = {
   readonly layers: readonly ScopeLayerInput[]
   readonly captures: readonly TreeSitterCapture[]
+  readonly missingLanguages: readonly TreeSitterLanguageId[]
 }
 
 export type ScopeOpenInput = {
@@ -360,6 +362,7 @@ export const openScopeDocument = async (
     tokensPacked,
     theme: editorTheme,
     untokenizedLines: sanitized.maskedLines.length,
+    ...(state.missingLanguages.length > 0 ? { missingLanguages: state.missingLanguages } : {}),
   }
 }
 
@@ -568,16 +571,17 @@ const buildScopeDocumentState = async (
     return buildSingleLayerFallbackState(input, sanitized, runtime)
   }
   const scopeInfo = fallbackScopeInfo(input.languageId)
-  const scopeResult = await input.collectMultiLayer(input.languageId, sanitized.text, (data) =>
-    buildScopeResultFromMultiLayer(
+  const collected = await input.collectMultiLayer(input.languageId, sanitized.text, (data) => ({
+    scopeResult: buildScopeResultFromMultiLayer(
       compat,
       data,
       sanitized.text,
       scopeInfo.rootScope,
       scopeInfo.scopeSuffix,
     ),
-  )
-  return createFallbackState(input, sanitized, scopeResult)
+    missingLanguages: data.missingLanguages,
+  }))
+  return createFallbackState(input, sanitized, collected.scopeResult, collected.missingLanguages)
 }
 
 const shouldUseMultiLayerFallback = (
@@ -617,6 +621,7 @@ const buildPackDocumentState = (
     packId,
     packEntry,
     maxLineLength: input.maxLineLength,
+    missingLanguages: [],
     sourcePointKey: input.sourcePointKey,
     themeRevision: input.themeRevision,
     themeRegistration: input.themeRegistration,
@@ -653,12 +658,14 @@ const createFallbackState = (
   input: ScopeOpenInput,
   sanitized: SanitizedSource,
   scopeResult: ScopeResult,
+  missingLanguages: readonly TreeSitterLanguageId[] = [],
 ): ScopeDocumentState => ({
   runtimeSessionId: input.runtimeSessionId,
   languageId: input.languageId,
   packId: null,
   packEntry: null,
   maxLineLength: input.maxLineLength,
+  missingLanguages,
   sourcePointKey: input.sourcePointKey,
   themeRevision: input.themeRevision,
   themeRegistration: input.themeRegistration,
