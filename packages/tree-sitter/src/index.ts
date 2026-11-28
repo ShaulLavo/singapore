@@ -80,7 +80,6 @@ import type {
   EditorPluginContext,
 } from '@singapore-editor/core/extensions'
 import type {
-  TreeSitterLanguageAssets,
   TreeSitterLanguageContribution,
   TreeSitterLanguageDescriptor,
   TreeSitterLanguageDisposable,
@@ -88,6 +87,14 @@ import type {
   TreeSitterLanguageRegistrationOptions,
   TreeSitterLanguageResolver,
 } from './treeSitter/registry'
+import {
+  cancelDefaultIdleDispose,
+  flushDefaultTreeSitterProvider,
+  getDefaultTreeSitterRegistration,
+  languageRegistrationKey,
+  scheduleDefaultIdleDisposeIfUnused,
+  type DefaultTreeSitterRegistration,
+} from './defaultProvider'
 import { TreeSitterLanguageRegistry, resolveTreeSitterLanguageClosure } from './treeSitter/registry'
 import { TreeSitterSyntaxSession } from './session'
 import { treeSitterSelectionRanges } from './structuralSelection'
@@ -124,38 +131,9 @@ export type TreeSitterSyntaxPluginOptions = {
   readonly name?: string
 }
 
-type TreeSitterProviderRegistration = {
-  readonly owner: TreeSitterWorkerOwner
+type TreeSitterProviderRegistration = DefaultTreeSitterRegistration<TreeSitterSyntaxProvider> & {
   readonly provider: TreeSitterSyntaxProvider
-  readonly contextReferences: WeakMap<EditorPluginContext, TreeSitterContextReference>
-  readonly languageReferences: Map<string, TreeSitterLanguageReference>
-  readonly loaderIdentityIds: WeakMap<() => Promise<TreeSitterLanguageAssets>, number>
-  nextLoaderIdentityId: number
-  activeContexts: number
-  pendingActivations: number
-  idleDisposeTimer: ReturnType<typeof setTimeout> | null
-  disposed: boolean
 }
-
-type TreeSitterContextReference = {
-  contributions: readonly EditorDisposable[]
-  references: number
-}
-
-type TreeSitterLanguageReference = {
-  disposable: TreeSitterLanguageDisposable
-  references: number
-}
-
-const DEFAULT_TREE_SITTER_PROVIDER_KEY = Symbol.for(
-  '@singapore-editor/tree-sitter/default-provider',
-)
-
-/**
- * Keeps the shared default Tree-sitter worker warm across brief SPA route transitions, then
- * terminates the worker and releases its WASM heap once no mounted editors retain it.
- */
-const DEFAULT_PROVIDER_IDLE_GRACE_MS = 5_000
 
 export const createTreeSitterSyntaxProvider = (
   options: TreeSitterSyntaxProviderOptions = {},
@@ -236,7 +214,7 @@ export const createTreeSitterLanguagePlugin = (
       return disposables
     } catch (error) {
       for (const disposable of disposables.toReversed()) disposable.dispose()
-      scheduleIdleDisposeIfUnused(registration)
+      scheduleDefaultIdleDisposeIfUnused(registration)
       throw error
     }
   },
@@ -244,17 +222,10 @@ export const createTreeSitterLanguagePlugin = (
 
 /**
  * Immediately disposes the idle default Tree-sitter provider (and terminates its worker) if no
- * active editors or language registrations currently retain it. Useful for deterministic teardown
- * in tests or route-exit cleanup.
+ * active editors, highlighters, or language registrations currently retain it. Useful for
+ * deterministic teardown in tests or route-exit cleanup.
  */
-export const flushDefaultTreeSitterProvider = (): Promise<void> => {
-  const state = globalThis as Record<PropertyKey, unknown>
-  const registration = state[DEFAULT_TREE_SITTER_PROVIDER_KEY] as
-    | TreeSitterProviderRegistration
-    | undefined
-  if (!registration) return Promise.resolve()
-  return disposeDefaultProviderRegistration(registration)
-}
+export { flushDefaultTreeSitterProvider }
 
 /** Registers an already-configured provider with an editor without constructing another backend. */
 export const createTreeSitterSyntaxPlugin = (
@@ -265,29 +236,10 @@ export const createTreeSitterSyntaxPlugin = (
   activate: (context) => contributeToEditor(context, provider),
 })
 
-const defaultProviderRegistration = (): TreeSitterProviderRegistration => {
-  const state = globalThis as Record<PropertyKey, unknown>
-  const existing = state[DEFAULT_TREE_SITTER_PROVIDER_KEY] as
-    | TreeSitterProviderRegistration
-    | undefined
-  if (existing && !existing.disposed) return existing
-
-  const owner = createTreeSitterWorkerOwner()
-  const registration: TreeSitterProviderRegistration = {
-    owner,
-    provider: createTreeSitterSyntaxProvider({ workerOwner: owner }),
-    contextReferences: new WeakMap<EditorPluginContext, TreeSitterContextReference>(),
-    languageReferences: new Map<string, TreeSitterLanguageReference>(),
-    loaderIdentityIds: new WeakMap<() => Promise<TreeSitterLanguageAssets>, number>(),
-    nextLoaderIdentityId: 0,
-    activeContexts: 0,
-    pendingActivations: 0,
-    idleDisposeTimer: null,
-    disposed: false,
-  }
-  state[DEFAULT_TREE_SITTER_PROVIDER_KEY] = registration
-  return registration
-}
+const defaultProviderRegistration = (): TreeSitterProviderRegistration =>
+  getDefaultTreeSitterRegistration((owner) =>
+    createTreeSitterSyntaxProvider({ workerOwner: owner }),
+  ) as TreeSitterProviderRegistration
 
 const retainSyntaxProvider = (
   context: EditorPluginContext,
@@ -295,13 +247,13 @@ const retainSyntaxProvider = (
 ): EditorDisposable => {
   const existing = registration.contextReferences.get(context)
   if (existing) {
-    cancelIdleDispose(registration)
+    cancelDefaultIdleDispose(registration)
     existing.references += 1
   } else {
     registration.pendingActivations += 1
     try {
       const contributions = contributeToEditor(context, registration.provider)
-      cancelIdleDispose(registration)
+      cancelDefaultIdleDispose(registration)
       registration.contextReferences.set(context, {
         contributions,
         references: 1,
@@ -345,13 +297,13 @@ const retainLanguage = (
   const key = languageRegistrationKey(registration, contribution)
   const existing = registration.languageReferences.get(key)
   if (existing) {
-    cancelIdleDispose(registration)
+    cancelDefaultIdleDispose(registration)
     existing.references += 1
   } else {
     registration.pendingActivations += 1
     try {
       const disposable = registration.provider.registerLanguage(contribution, { replace: true })
-      cancelIdleDispose(registration)
+      cancelDefaultIdleDispose(registration)
       registration.languageReferences.set(key, {
         disposable,
         references: 1,
@@ -404,7 +356,7 @@ const releaseSyntaxProvider = (
   try {
     outcome = disposeContributionsInReverse(reference.contributions)
   } finally {
-    scheduleIdleDisposeIfUnused(registration)
+    scheduleDefaultIdleDisposeIfUnused(registration)
   }
   if (outcome.hasError) throw outcome.firstError
 }
@@ -420,111 +372,6 @@ const releaseLanguage = (registration: TreeSitterProviderRegistration, key: stri
   try {
     reference.disposable.dispose()
   } finally {
-    scheduleIdleDisposeIfUnused(registration)
+    scheduleDefaultIdleDisposeIfUnused(registration)
   }
 }
-
-const cancelIdleDispose = (registration: TreeSitterProviderRegistration): void => {
-  if (registration.idleDisposeTimer === null) return
-
-  clearTimeout(registration.idleDisposeTimer)
-  registration.idleDisposeTimer = null
-}
-
-const isRegistrationInUse = (registration: TreeSitterProviderRegistration): boolean =>
-  registration.activeContexts > 0 ||
-  registration.languageReferences.size > 0 ||
-  registration.pendingActivations > 0
-
-const scheduleIdleDisposeIfUnused = (registration: TreeSitterProviderRegistration): void => {
-  if (registration.disposed) return
-  if (isRegistrationInUse(registration)) return
-  if (registration.idleDisposeTimer !== null) return
-
-  const timer = setTimeout(() => {
-    void disposeDefaultProviderRegistration(registration)
-  }, DEFAULT_PROVIDER_IDLE_GRACE_MS)
-  unrefTimer(timer)
-  registration.idleDisposeTimer = timer
-}
-
-const unrefTimer = (timer: unknown): void => {
-  if (
-    typeof timer === 'object' &&
-    timer !== null &&
-    'unref' in timer &&
-    typeof (timer as { readonly unref?: unknown }).unref === 'function'
-  ) {
-    ;(timer as { unref(): void }).unref()
-  }
-}
-
-const disposeDefaultProviderRegistration = (
-  registration: TreeSitterProviderRegistration,
-): Promise<void> => {
-  if (isRegistrationInUse(registration)) {
-    return Promise.resolve()
-  }
-  cancelIdleDispose(registration)
-  if (registration.disposed) return Promise.resolve()
-
-  registration.disposed = true
-  const state = globalThis as Record<PropertyKey, unknown>
-  if (state[DEFAULT_TREE_SITTER_PROVIDER_KEY] === registration) {
-    delete state[DEFAULT_TREE_SITTER_PROVIDER_KEY]
-  }
-  return registration.owner.dispose()
-}
-
-const languageRegistrationKey = (
-  registration: TreeSitterProviderRegistration,
-  contribution: TreeSitterLanguageContribution,
-): string =>
-  JSON.stringify({
-    aliases: sortedItems(contribution.aliases),
-    assets: inlineAssetSignature(contribution),
-    extensions: sortedItems(contribution.extensions),
-    filenames: sortedItems(contribution.filenames),
-    id: contribution.id,
-    injectionDependencies: sortedItems(contribution.injectionDependencies),
-    loader: lazyLoaderSignature(registration, contribution),
-  })
-
-const lazyLoaderSignature = (
-  registration: TreeSitterProviderRegistration,
-  contribution: TreeSitterLanguageContribution,
-):
-  | { readonly kind: 'cacheKey'; readonly key: string }
-  | { readonly kind: 'fn'; readonly id: number }
-  | null => {
-  if (!('load' in contribution) || !contribution.load) return null
-
-  if (contribution.cacheKey !== undefined) {
-    return { kind: 'cacheKey', key: contribution.cacheKey }
-  }
-
-  let id = registration.loaderIdentityIds.get(contribution.load)
-  if (id === undefined) {
-    id = ++registration.nextLoaderIdentityId
-    registration.loaderIdentityIds.set(contribution.load, id)
-  }
-  return { kind: 'fn', id }
-}
-
-const inlineAssetSignature = (
-  contribution: TreeSitterLanguageContribution,
-): TreeSitterLanguageAssets | null => {
-  if ('load' in contribution) return null
-
-  return {
-    foldQuerySource: contribution.foldQuerySource,
-    highlightQuerySource: contribution.highlightQuerySource,
-    injectionQuerySource: contribution.injectionQuerySource,
-    mergeUnitQuerySource: contribution.mergeUnitQuerySource,
-    wasmUrl: contribution.wasmUrl,
-    extraWasmUrls: contribution.extraWasmUrls,
-  }
-}
-
-const sortedItems = (items: readonly string[] | undefined): readonly string[] =>
-  (items ?? []).toSorted()

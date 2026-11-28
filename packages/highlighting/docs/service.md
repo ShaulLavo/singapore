@@ -15,7 +15,7 @@ const highlighting = createHighlightingService({
 })
 ```
 
-Other options: `treeSitterBackend` replaces the default Tree-sitter worker, and `maxTokenizationLineLength` is read on every VS Code theme document open and snippet.
+Other options: `treeSitterWorker` replaces the default Tree-sitter worker, and `maxTokenizationLineLength` is read on every VS Code theme document open and snippet.
 
 ## Editors
 

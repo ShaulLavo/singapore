@@ -121,12 +121,12 @@ Each entry names its source and whether the limit is expected to change.
 - Why. Structural queries run at candidate nodes; bounded state prevents patterns from consuming unbounded native query memory. Starting at depth zero keeps each candidate query local.
 - Outlook. No change is planned. This value belongs specifically to structural merge queries.
 
-### Shiki long-line tokenization
+### Long-line VS Code theme tokenization (Tree-sitter and optional Shiki)
 
-- Limit. The default maximum line length is **20,000 code units**, configurable through the worker client's `maxTokenizationLineLength` option. Lines strictly longer than the limit skip grammar tokenization.
-- Source. `DEFAULT_SHIKI_MAX_TOKENIZATION_LINE_LENGTH` in [workerClient.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/shiki/workerClient.ts#L93), and `createScopedLineTokenizer` in [scopedTokens.ts](https://github.com/ShaulLavo/singapore/blob/main/packages/editor/src/shiki/scopedTokens.ts#L36).
-- What you see. The oversized line becomes one plain token with `untokenized: true`. The previous grammar state passes through unchanged, so subsequent multiline coloring can lack context from the skipped line.
-- Why. Grammar tokenization has no time bound on this path. The length check avoids expensive minified or generated lines.
+- Limit. The default maximum line length is **20,000 code units**, configurable through `maxTokenizationLineLength` on `TreeSitterWorkerOwner`, `HighlightingService`, or `ShikiWorkerOwner`. Lines strictly longer than the limit skip grammar tokenization.
+- Source. `DEFAULT_TREE_SITTER_MAX_TOKENIZATION_LINE_LENGTH` in [workerClient.ts](../packages/tree-sitter/src/treeSitter/workerClient.ts) and `sanitizeSourceText` in [scopeCompat.ts](../packages/tree-sitter/src/treeSitter/scopeCompat.ts) for the default Tree-sitter path; `DEFAULT_SHIKI_MAX_TOKENIZATION_LINE_LENGTH` in [workerClient.ts](../packages/shiki/src/workerClient.ts) and `createScopedLineTokenizer` in [scopedTokens.ts](../packages/shiki/src/scopedTokens.ts) for the optional `@singapore-editor/shiki` package.
+- What you see. The oversized line becomes one plain token with `untokenized: true` (and increments `untokenizedLines`). On the Tree-sitter path, the oversized line is masked to spaces of the exact same UTF-16 length before parsing so following short lines stay unaffected. On the Shiki path, the previous grammar state passes through unchanged.
+- Why. Grammar tokenization has no time bound on single minified or generated lines. The length cap prevents pathological line latency.
 - Outlook. The option already permits changing the limit. No change is planned for the default.
 
 ## Search and language tools

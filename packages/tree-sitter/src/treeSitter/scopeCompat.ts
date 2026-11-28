@@ -107,14 +107,18 @@ type SanitizedSource = {
 
 type CompiledPackEntry = {
   readonly pack: ScopePack
-  readonly registryVersion: number
+  readonly language: Language
+  refCount: number
+  retired: boolean
 }
 
 type ScopeDocumentState = {
   readonly runtimeSessionId: string
   readonly languageId: TreeSitterLanguageId
   readonly packId: string | null
+  readonly packEntry: CompiledPackEntry | null
   readonly maxLineLength: number
+  sourcePointKey: string
   themeRevision: string
   themeRegistration: VscodeThemeRegistration
   text: string
@@ -133,23 +137,43 @@ export type ScopeThemeRuntime = {
   readonly hasInjections: boolean
 }
 
+export type ScopeLayerInput = {
+  readonly languageId: TreeSitterLanguageId
+  readonly depth: number
+  readonly language: Language
+  readonly parser: Parser
+  readonly ranges: readonly {
+    readonly startIndex: number
+    readonly endIndex: number
+    readonly startPosition: { readonly row: number; readonly column: number }
+    readonly endPosition: { readonly row: number; readonly column: number }
+  }[]
+}
+
+export type ScopeMultiLayerData = {
+  readonly layers: readonly ScopeLayerInput[]
+  readonly captures: readonly TreeSitterCapture[]
+}
+
 export type ScopeOpenInput = {
   readonly runtimeSessionId: string
   readonly languageId: TreeSitterLanguageId
   readonly packLanguageId?: string
+  readonly sourcePointKey: string
   readonly text: string
   readonly themeRevision: string
   readonly themeRegistration: VscodeThemeRegistration
   readonly maxLineLength: number
-  readonly registryVersion: number
   readonly ensureRuntime: (languageId: TreeSitterLanguageId) => Promise<ScopeThemeRuntime | null>
-  readonly collectCaptures: (
+  readonly collectMultiLayer: <T>(
     languageId: TreeSitterLanguageId,
     text: string,
-  ) => Promise<readonly TreeSitterCapture[]>
+    consume: (data: ScopeMultiLayerData) => T,
+  ) => Promise<T>
 }
 
 export type ScopeEditInput = ScopeOpenInput & {
+  readonly previousPointKey: string
   readonly edits: readonly TextEdit[]
   readonly inputEdits: readonly TreeSitterInputEdit[]
 }
@@ -248,19 +272,24 @@ export const resolveScopePackId = (
   return builtin.languageId
 }
 
+const releaseCompiledPackIfUnused = (entry: CompiledPackEntry): void => {
+  if (!entry.retired || entry.refCount > 0 || entry.pack.disposed) return
+  entry.pack.dispose()
+}
+
 const getCompiledPack = (
   compat: ScopeCompat,
   packId: string,
   language: Language,
-  registryVersion: number,
-): ScopePack => {
+): CompiledPackEntry => {
   const existing = compiledPacks.get(packId)
-  if (existing && existing.registryVersion === registryVersion && !existing.pack.disposed) {
-    return existing.pack
+  if (existing && existing.language === language && !existing.pack.disposed) {
+    return existing
   }
   if (existing) {
-    existing.pack.dispose()
     compiledPacks.delete(packId)
+    existing.retired = true
+    releaseCompiledPackIfUnused(existing)
   }
   const metadata = BUILTIN_PACKS[packId]!
   const query = PACK_QUERY_SOURCES[packId]!
@@ -271,23 +300,28 @@ const getCompiledPack = (
     query,
     localInvalidation: metadata.localInvalidation,
   })
-  compiledPacks.set(packId, { pack, registryVersion })
-  return pack
+  const entry: CompiledPackEntry = { pack, language, refCount: 0, retired: false }
+  compiledPacks.set(packId, entry)
+  return entry
 }
+
+const themeCacheKey = (themeRevision: string, themeRegistration: VscodeThemeRegistration): string =>
+  `${themeRevision}\0${JSON.stringify(themeRegistration)}`
 
 const getCompiledTheme = (
   compat: ScopeCompat,
   themeRevision: string,
   themeRegistration: VscodeThemeRegistration,
 ): ScopeTheme => {
-  const existing = compiledThemes.get(themeRevision)
+  const key = themeCacheKey(themeRevision, themeRegistration)
+  const existing = compiledThemes.get(key)
   if (existing && !existing.disposed) {
-    compiledThemes.delete(themeRevision)
-    compiledThemes.set(themeRevision, existing)
+    compiledThemes.delete(key)
+    compiledThemes.set(key, existing)
     return existing
   }
   const compiled = compat.compileTheme(themeRegistration)
-  compiledThemes.set(themeRevision, compiled)
+  compiledThemes.set(key, compiled)
   if (compiledThemes.size > MAX_COMPILED_THEMES) {
     const oldest = compiledThemes.keys().next().value
     if (oldest !== undefined) {
@@ -312,11 +346,14 @@ export const openScopeDocument = async (
 ): Promise<TreeSitterHighlightResult> => {
   disposeScopeDocument(input.runtimeSessionId)
   const compat = await ensureScopeCompat()
-  const theme = getCompiledTheme(compat, input.themeRevision, input.themeRegistration)
   const editorTheme = editorThemeFromVscodeTheme(input.themeRegistration)
   const sanitized = sanitizeSourceText(input.text, input.maxLineLength)
   const state = await buildScopeDocumentState(compat, input, sanitized)
+  // Re-clear in case an overlapping open installed a state while awaiting grammar/captures.
+  disposeScopeDocument(input.runtimeSessionId)
   scopeDocuments.set(input.runtimeSessionId, state)
+  // Acquire the compiled theme synchronously right before resolve so concurrent requests cannot evict it.
+  const theme = getCompiledTheme(compat, input.themeRevision, input.themeRegistration)
   const styled = theme.resolve(state.scopeResult)
   const tokensPacked = styledResultToPackedTokens(styled, input.text, sanitized.maskedLines)
   return {
@@ -334,9 +371,18 @@ export const editScopeDocument = async (
     return openScopeDocument(input)
   }
   const compat = await ensureScopeCompat()
-  const theme = getCompiledTheme(compat, input.themeRevision, input.themeRegistration)
   const runtime = await input.ensureRuntime(input.languageId)
-  if (!runtime || !existing.buffer || !existing.tree || !existing.session) {
+  const current = scopeDocuments.get(input.runtimeSessionId)
+  if (
+    !runtime ||
+    current !== existing ||
+    !existing.buffer ||
+    !existing.tree ||
+    !existing.session ||
+    !existing.packEntry ||
+    existing.packEntry.language !== runtime.language ||
+    existing.packEntry.pack.disposed
+  ) {
     return openScopeDocument(input)
   }
 
@@ -353,10 +399,12 @@ export const editScopeDocument = async (
     edits: scopeEdits,
     changedRanges,
   })
+  existing.sourcePointKey = input.sourcePointKey
   existing.text = input.text
   existing.themeRevision = input.themeRevision
   existing.themeRegistration = input.themeRegistration
 
+  const theme = getCompiledTheme(compat, input.themeRevision, input.themeRegistration)
   const styled = theme.resolve(existing.scopeResult)
   const tokensPacked = styledResultToPackedTokens(styled, input.text, existing.maskedLines)
   return {
@@ -375,15 +423,20 @@ export const recolorScopeDocument = async (
     return null
   }
   const compat = await ensureScopeCompat()
+  const current = scopeDocuments.get(input.runtimeSessionId)
+  if (!current) return null
+  if (input.maxLineLength !== undefined && input.maxLineLength !== current.maxLineLength) {
+    return null
+  }
   const theme = getCompiledTheme(compat, input.themeRevision, input.themeRegistration)
-  existing.themeRevision = input.themeRevision
-  existing.themeRegistration = input.themeRegistration
-  const styled = theme.resolve(existing.scopeResult)
-  const tokensPacked = styledResultToPackedTokens(styled, existing.text, existing.maskedLines)
+  current.themeRevision = input.themeRevision
+  current.themeRegistration = input.themeRegistration
+  const styled = theme.resolve(current.scopeResult)
+  const tokensPacked = styledResultToPackedTokens(styled, current.text, current.maskedLines)
   return {
     tokensPacked,
     theme: editorThemeFromVscodeTheme(input.themeRegistration),
-    untokenizedLines: existing.maskedLines.length,
+    untokenizedLines: current.maskedLines.length,
   }
 }
 
@@ -394,18 +447,23 @@ export const disposeScopeDocument = (runtimeSessionId: string): void => {
   state.tree?.delete()
   state.buffer?.delete()
   state.session?.reset()
+  if (state.packEntry) {
+    state.packEntry.refCount = Math.max(0, state.packEntry.refCount - 1)
+    releaseCompiledPackIfUnused(state.packEntry)
+  }
 }
 
 export const disposeScopePacksForLanguage = (languageId: TreeSitterLanguageId): void => {
+  for (const [sessionId, state] of Array.from(scopeDocuments.entries())) {
+    if (state.languageId === languageId) disposeScopeDocument(sessionId)
+  }
   const packIds = languageId === 'javascript' ? ['javascript', 'jsx'] : [languageId]
   for (const packId of packIds) {
     const entry = compiledPacks.get(packId)
     if (!entry) continue
-    entry.pack.dispose()
     compiledPacks.delete(packId)
-  }
-  for (const [sessionId, state] of scopeDocuments) {
-    if (state.languageId === languageId) disposeScopeDocument(sessionId)
+    entry.retired = true
+    releaseCompiledPackIfUnused(entry)
   }
 }
 
@@ -413,7 +471,10 @@ export const disposeAllScopeCompat = (): void => {
   for (const sessionId of Array.from(scopeDocuments.keys())) {
     disposeScopeDocument(sessionId)
   }
-  for (const entry of compiledPacks.values()) entry.pack.dispose()
+  for (const entry of compiledPacks.values()) {
+    entry.retired = true
+    releaseCompiledPackIfUnused(entry)
+  }
   compiledPacks.clear()
   for (const theme of compiledThemes.values()) theme.dispose()
   compiledThemes.clear()
@@ -432,8 +493,18 @@ const canIncrementallyUpdate = (
 ): existing is ScopeDocumentState => {
   if (!existing) return false
   if (existing.languageId !== input.languageId) return false
+  if (existing.sourcePointKey !== input.previousPointKey) return false
   if (existing.maxLineLength !== input.maxLineLength) return false
-  if (!existing.packId || !existing.buffer || !existing.tree || !existing.session) return false
+  if (
+    !existing.packId ||
+    !existing.packEntry ||
+    existing.packEntry.pack.disposed ||
+    !existing.buffer ||
+    !existing.tree ||
+    !existing.session
+  ) {
+    return false
+  }
   if (existing.hadSpecialChars || existing.maskedLines.length > 0) return false
   if (input.edits.length === 0 || input.inputEdits.length === 0) return false
   if (editsHaveSpecialChars(input.edits)) return false
@@ -496,13 +567,15 @@ const buildScopeDocumentState = async (
   if (runtime && runtime.highlightQuery && !runtime.hasInjections) {
     return buildSingleLayerFallbackState(input, sanitized, runtime)
   }
-  const captures = await input.collectCaptures(input.languageId, sanitized.text)
   const scopeInfo = fallbackScopeInfo(input.languageId)
-  const scopeResult = buildScopeResultFromCaptures(
-    captures,
-    sanitized.text,
-    scopeInfo.rootScope,
-    scopeInfo.scopeSuffix,
+  const scopeResult = await input.collectMultiLayer(input.languageId, sanitized.text, (data) =>
+    buildScopeResultFromMultiLayer(
+      compat,
+      data,
+      sanitized.text,
+      scopeInfo.rootScope,
+      scopeInfo.scopeSuffix,
+    ),
   )
   return createFallbackState(input, sanitized, scopeResult)
 }
@@ -510,13 +583,7 @@ const buildScopeDocumentState = async (
 const shouldUseMultiLayerFallback = (
   languageId: TreeSitterLanguageId,
   runtime: ScopeThemeRuntime,
-): boolean => {
-  // HTML documents often embed JS/CSS via injections; wait: Wave 1 html pack covers HTML tags cleanly,
-  // while languages like astro/svelte/mdx have no Wave 1 pack and always take multi-layer fallback.
-  void languageId
-  void runtime
-  return false
-}
+): boolean => languageId === 'html' && runtime.hasInjections
 
 const buildPackDocumentState = (
   compat: ScopeCompat,
@@ -525,20 +592,32 @@ const buildPackDocumentState = (
   packId: string,
   runtime: ScopeThemeRuntime,
 ): ScopeDocumentState => {
-  const pack = getCompiledPack(compat, packId, runtime.language, input.registryVersion)
+  const packEntry = getCompiledPack(compat, packId, runtime.language)
   const buffer = new TextBuffer(sanitized.text)
   const tree = runtime.parser.parse(buffer)
   if (!tree) {
     buffer.delete()
     throw new Error(`Tree-sitter failed to parse ${input.languageId}`)
   }
-  const session = compat.createSession(pack, pack.languageId)
-  const scopeResult = session.update(tree, buffer)
+  let session: ScopeHighlightSession | null = null
+  let scopeResult: ScopeResult
+  try {
+    session = compat.createSession(packEntry.pack, packEntry.pack.languageId)
+    scopeResult = session.update(tree, buffer)
+  } catch (error) {
+    session?.reset()
+    tree.delete()
+    buffer.delete()
+    throw error
+  }
+  packEntry.refCount += 1
   return {
     runtimeSessionId: input.runtimeSessionId,
     languageId: input.languageId,
     packId,
+    packEntry,
     maxLineLength: input.maxLineLength,
+    sourcePointKey: input.sourcePointKey,
     themeRevision: input.themeRevision,
     themeRegistration: input.themeRegistration,
     text: input.text,
@@ -578,7 +657,9 @@ const createFallbackState = (
   runtimeSessionId: input.runtimeSessionId,
   languageId: input.languageId,
   packId: null,
+  packEntry: null,
   maxLineLength: input.maxLineLength,
+  sourcePointKey: input.sourcePointKey,
   themeRevision: input.themeRevision,
   themeRegistration: input.themeRegistration,
   text: input.text,
@@ -687,8 +768,9 @@ type CaptureSpan = {
   readonly scopeIds: readonly number[]
 }
 
-const buildScopeResultFromCaptures = (
-  captures: readonly TreeSitterCapture[],
+const buildScopeResultFromMultiLayer = (
+  compat: ScopeCompat,
+  data: ScopeMultiLayerData,
   source: string,
   rootScope: string,
   defaultSuffix: string,
@@ -708,30 +790,167 @@ const buildScopeResultFromCaptures = (
   const scopes = [rootScope]
   const scopeIds = new Map<string, number>([[rootScope, 0]])
   const boundaries = new Set<number>([0, sourceLength])
-  const spans = collectCaptureSpans(
-    captures,
+  const spans: CaptureSpan[] = []
+  const packHandledLayers = collectWave1LayerSpans(
+    compat,
+    data.layers,
+    source,
+    scopes,
+    scopeIds,
+    boundaries,
+    spans,
+  )
+  appendFallbackCaptureSpans(
+    data.captures,
+    packHandledLayers,
     sourceLength,
     defaultSuffix,
     scopes,
     scopeIds,
     boundaries,
+    spans,
   )
+  spans.sort(compareCaptureSpan)
   const separators = collectLineSeparators(source, boundaries)
   const points = Array.from(boundaries).sort((left, right) => left - right)
   return sweepCaptureSpans(sourceLength, window, points, spans, separators, scopes)
 }
 
-const collectCaptureSpans = (
+const layerIdentityKey = (languageId: string, depth: number): string => `${languageId}\0${depth}`
+
+const collectWave1LayerSpans = (
+  compat: ScopeCompat,
+  layers: readonly ScopeLayerInput[],
+  source: string,
+  scopes: string[],
+  scopeIds: Map<string, number>,
+  boundaries: Set<number>,
+  spans: CaptureSpan[],
+): Set<string> => {
+  const handled = new Set<string>()
+  const eligible = layers.filter((layer) => resolveScopePackId(layer.languageId) !== null)
+  if (eligible.length === 0) return handled
+
+  const buffer = new TextBuffer(source)
+  try {
+    let order = 0
+    for (const layer of eligible) {
+      const packId = resolveScopePackId(layer.languageId)
+      if (!packId) continue
+      const packEntry = getCompiledPack(compat, packId, layer.language)
+      order = appendPackLayerSpans(
+        compat,
+        packEntry.pack,
+        layer,
+        buffer,
+        source.length,
+        order,
+        scopes,
+        scopeIds,
+        boundaries,
+        spans,
+      )
+      handled.add(layerIdentityKey(layer.languageId, layer.depth))
+    }
+  } finally {
+    buffer.delete()
+  }
+  return handled
+}
+
+const appendPackLayerSpans = (
+  compat: ScopeCompat,
+  pack: ScopePack,
+  layer: ScopeLayerInput,
+  buffer: TextBuffer,
+  sourceLength: number,
+  startOrder: number,
+  scopes: string[],
+  scopeIds: Map<string, number>,
+  boundaries: Set<number>,
+  spans: CaptureSpan[],
+): number => {
+  const includedRanges = layer.ranges.filter((range) => range.startIndex < range.endIndex)
+  if (includedRanges.length === 0) return startOrder
+  const layerTree = layer.parser.parse(buffer, null, { includedRanges })
+  if (!layerTree) return startOrder
+  let order = startOrder
+  try {
+    for (const range of includedRanges) {
+      const start = Math.max(0, range.startIndex)
+      const end = Math.min(sourceLength, range.endIndex)
+      if (start >= end) continue
+      const result = compat.highlightTree(pack, layerTree, buffer, { window: { start, end } })
+      order = appendScopeResultSpans(
+        result,
+        start,
+        end,
+        layer.depth,
+        order,
+        scopes,
+        scopeIds,
+        boundaries,
+        spans,
+      )
+    }
+  } finally {
+    layerTree.delete()
+  }
+  return order
+}
+
+const appendScopeResultSpans = (
+  result: ScopeResult,
+  rangeStart: number,
+  rangeEnd: number,
+  depth: number,
+  startOrder: number,
+  scopes: string[],
+  scopeIds: Map<string, number>,
+  boundaries: Set<number>,
+  spans: CaptureSpan[],
+): number => {
+  let order = startOrder
+  const { segments, paths, scopes: resultScopes } = result
+  for (let index = 0; index < segments.length; index += 3) {
+    const from = Math.max(rangeStart, segments[index]!)
+    const to = Math.min(rangeEnd, segments[index + 1]!)
+    if (from >= to) continue
+    const path = paths[segments[index + 2]!]
+    if (!path || path.length === 0) continue
+    const mapped = path.map((id) => internScope(resultScopes[id]!, scopes, scopeIds))
+    spans.push({
+      from,
+      to,
+      origFrom: from,
+      origTo: to,
+      depth,
+      order: order++,
+      scopeIds: mapped,
+    })
+    boundaries.add(from)
+    boundaries.add(to)
+  }
+  return order
+}
+
+const appendFallbackCaptureSpans = (
   captures: readonly TreeSitterCapture[],
+  packHandledLayers: ReadonlySet<string>,
   sourceLength: number,
   defaultSuffix: string,
   scopes: string[],
   scopeIds: Map<string, number>,
   boundaries: Set<number>,
-): CaptureSpan[] => {
-  const spans: CaptureSpan[] = []
+  spans: CaptureSpan[],
+): void => {
+  const baseOrder = spans.length
   for (let index = 0; index < captures.length; index += 1) {
     const capture = captures[index]!
+    const depth = capture.injectionDepth ?? 0
+    if (capture.languageId && packHandledLayers.has(layerIdentityKey(capture.languageId, depth))) {
+      continue
+    }
     const from = Math.max(0, capture.startIndex)
     const to = Math.min(sourceLength, capture.endIndex)
     if (from >= to) continue
@@ -746,15 +965,13 @@ const collectCaptureSpans = (
       to,
       origFrom: capture.startIndex,
       origTo: capture.endIndex,
-      depth: capture.injectionDepth ?? 0,
-      order: index,
+      depth,
+      order: baseOrder + index,
       scopeIds: ids,
     })
     boundaries.add(from)
     boundaries.add(to)
   }
-  spans.sort(compareCaptureSpan)
-  return spans
 }
 
 const compareCaptureSpan = (left: CaptureSpan, right: CaptureSpan): number =>

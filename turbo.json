@@ -76,11 +76,21 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/scripts/browser-test-responses.ts"]
     },
     "@singapore-editor/shiki#typecheck": {
-      "dependsOn": ["^build", "build"],
+      "dependsOn": [
+        "^build",
+        "build",
+        "@singapore-editor/tree-sitter#build",
+        "@singapore-editor/tree-sitter-languages#build"
+      ],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/examples/stress/src/fixtures.ts"]
     },
     "@singapore-editor/shiki#test": {
-      "dependsOn": ["^build", "build"],
+      "dependsOn": [
+        "^build",
+        "build",
+        "@singapore-editor/tree-sitter#build",
+        "@singapore-editor/tree-sitter-languages#build"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/examples/stress/src/fixtures.ts",
@@ -88,7 +98,12 @@
       ]
     },
     "@singapore-editor/shiki#test:browser": {
-      "dependsOn": ["^build", "build"],
+      "dependsOn": [
+        "^build",
+        "build",
+        "@singapore-editor/tree-sitter#build",
+        "@singapore-editor/tree-sitter-languages#build"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/examples/stress/src/fixtures.ts",

@@ -10,12 +10,17 @@ import {
   type EditorHighlighterRuntime,
   type HighlighterOperationContext,
 } from '@singapore-editor/core/internal/document-worker'
-import type { EditorTheme, VscodeThemeRegistration } from '@singapore-editor/core/rendering'
+import {
+  editorThemeFromVscodeTheme,
+  type EditorTheme,
+  type VscodeThemeRegistration,
+} from '@singapore-editor/core/rendering'
 import {
   EditorTokenStore,
   createEditorRuntimeSessionId,
   type EditorSyntaxLanguageId,
 } from '@singapore-editor/core/syntax'
+import { retainDefaultTreeSitterOwner, type DefaultTreeSitterOwnerLease } from './defaultProvider'
 import { createTreeSitterInputEdits } from './treeSitter/edits'
 import {
   resolveTreeSitterLanguageAlias,
@@ -25,7 +30,6 @@ import {
   type TreeSitterLanguageResolver,
 } from './treeSitter/registry'
 import {
-  createTreeSitterWorkerOwner,
   treeSitterBackendForOwner,
   type TreeSitterWorkerClient,
   type TreeSitterWorkerOwner,
@@ -59,10 +63,6 @@ export type ResolvedTreeSitterHighlightLanguage = {
 
 const DEFAULT_THEME = 'github-dark'
 
-const DEFAULT_HIGHLIGHTER_WORKER_OWNER_KEY = Symbol.for(
-  '@singapore-editor/tree-sitter/default-highlighter-owner',
-)
-
 const DEFAULT_LANGUAGE_MAP: TreeSitterHighlightLanguageMap = {
   css: 'css',
   html: 'html',
@@ -80,7 +80,30 @@ export function createTreeSitterHighlighterPlugin(
   return {
     name: options.name ?? 'tree-sitter-highlighter',
     activate(context) {
-      return context.registerHighlighter(createTreeSitterHighlighterProvider(options))
+      if (options.workerOwner) {
+        return context.registerHighlighter(createTreeSitterHighlighterProvider(options))
+      }
+      const lease = retainDefaultTreeSitterOwner()
+      try {
+        const registration = context.registerHighlighter(
+          createTreeSitterHighlighterProvider({ ...options, workerOwner: lease.owner }),
+        )
+        let disposed = false
+        return {
+          dispose: () => {
+            if (disposed) return
+            disposed = true
+            try {
+              registration.dispose()
+            } finally {
+              lease.release()
+            }
+          },
+        }
+      } catch (error) {
+        lease.release()
+        throw error
+      }
     },
   }
 }
@@ -92,11 +115,9 @@ export function createTreeSitterHighlighterPlugin(
 export function createTreeSitterHighlighterProvider(
   options: TreeSitterHighlighterProviderOptions,
 ): EditorHighlighterProvider {
-  const owner = options.workerOwner ?? defaultHighlighterWorkerOwner()
-  const backend = treeSitterBackendForOwner(owner)
   const themeCache = createThemeResolverCache(options.resolveTheme)
   let warmedKey: string | null = null
-  const warm = () => {
+  const warm = (backend: TreeSitterWorkerClient) => {
     const languageIds = options.warmLanguages?.() ?? []
     const key = languageIds.join('\n')
     if (languageIds.length === 0 || key === warmedKey || !options.languageResolver) return
@@ -105,10 +126,25 @@ export function createTreeSitterHighlighterProvider(
   }
 
   return {
-    loadTheme: () => loadConfiguredTheme(options, themeCache, backend),
-    operation: defineHighlighterOperation((context) =>
-      createSession(context, options, themeCache, backend, warm),
-    ),
+    loadTheme: async () => {
+      const lease = options.workerOwner ? null : retainDefaultTreeSitterOwner()
+      const owner = options.workerOwner ?? lease!.owner
+      try {
+        return await loadConfiguredTheme(options, themeCache, treeSitterBackendForOwner(owner))
+      } finally {
+        lease?.release()
+      }
+    },
+    operation: defineHighlighterOperation((context) => {
+      const lease = options.workerOwner ? null : retainDefaultTreeSitterOwner()
+      const owner = options.workerOwner ?? lease!.owner
+      const backend = treeSitterBackendForOwner(owner)
+      const session = createSession(context, options, themeCache, backend, lease, () =>
+        warm(backend),
+      )
+      if (!session) lease?.release()
+      return session
+    }),
   }
 }
 
@@ -140,16 +176,6 @@ export const treeSitterHighlightLanguageForDocument = (
       : null
   const canonical = resolverAlias ?? resolveTreeSitterLanguageAlias(raw) ?? raw
   return { languageId: canonical }
-}
-
-const defaultHighlighterWorkerOwner = (): TreeSitterWorkerOwner => {
-  const state = globalThis as Record<PropertyKey, unknown>
-  const existing = state[DEFAULT_HIGHLIGHTER_WORKER_OWNER_KEY] as TreeSitterWorkerOwner | undefined
-  if (existing && existing.inspect().lifecycle !== 'disposed') return existing
-
-  const owner = createTreeSitterWorkerOwner()
-  state[DEFAULT_HIGHLIGHTER_WORKER_OWNER_KEY] = owner
-  return owner
 }
 
 type ThemeResolverCache = {
@@ -200,6 +226,7 @@ const createSession = (
   options: TreeSitterHighlighterProviderOptions,
   themeCache: ThemeResolverCache,
   backend: TreeSitterWorkerClient,
+  ownerLease: DefaultTreeSitterOwnerLease | null,
   onFirstHighlight: () => void,
 ): EditorHighlighterRuntime | null => {
   if (!backend.canUseWorker()) return null
@@ -217,6 +244,7 @@ const createSession = (
     options,
     themeCache,
     backend,
+    ownerLease,
     onFirstHighlight,
   })
 }
@@ -228,6 +256,7 @@ type SessionInit = {
   readonly options: TreeSitterHighlighterProviderOptions
   readonly themeCache: ThemeResolverCache
   readonly backend: TreeSitterWorkerClient
+  readonly ownerLease: DefaultTreeSitterOwnerLease | null
   readonly onFirstHighlight: () => void
 }
 
@@ -245,6 +274,7 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
   private opened = false
   private workerGeneration = 0
   private registeredGeneration: number | null = null
+  private languageSupported = true
   private openedLineLimit = 0
   private firstHighlightFired = false
   private disposed = false
@@ -286,8 +316,12 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
       () => this.init.backend.disposeDocument(this.runtimeSessionId),
     )
     this.task = release.then(
-      () => undefined,
-      () => undefined,
+      () => {
+        this.init.ownerLease?.release()
+      },
+      () => {
+        this.init.ownerLease?.release()
+      },
     )
   }
 
@@ -307,10 +341,14 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
     const recolored = await this.synchronizeTheme(read, work)
     if (recolored) return recolored
 
-    await this.ensureLanguageRegistered(work)
+    const supported = await this.ensureLanguageRegistered(work)
     const themeRegistration = await waitForDocumentWork(this.themeRegistration, work)
     const maxLineLength = this.lineLimit()
     work.throwIfAborted()
+
+    if (!supported) {
+      return this.adoptPlainResult(read, themeRegistration, work)
+    }
 
     const prepared = await this.init.context.source.prepareReader(
       this.init.backend.sourceEndpoint,
@@ -443,21 +481,47 @@ class TreeSitterHighlighterSession implements EditorHighlighterRuntime {
     return null
   }
 
-  private async ensureLanguageRegistered(signal: AbortSignal): Promise<void> {
+  private async ensureLanguageRegistered(signal: AbortSignal): Promise<boolean> {
     const resolver = this.init.options.languageResolver
-    if (!resolver) return
+    if (!resolver) return true
     const currentGen = this.init.backend.generation
-    if (this.registeredGeneration !== null && this.registeredGeneration === currentGen) return
+    if (this.registeredGeneration !== null && this.registeredGeneration === currentGen) {
+      return this.languageSupported
+    }
 
     const descriptors = await waitForDocumentWork(
       resolveTreeSitterLanguageClosure(resolver, this.languageId),
       signal,
     )
     if (descriptors.length === 0) {
-      throw new Error(`No Tree-sitter grammar registered for ${this.languageId}`)
+      this.languageSupported = false
+      this.registeredGeneration = currentGen
+      return false
     }
     await waitForDocumentWork(this.init.backend.registerLanguages(descriptors), signal)
+    this.languageSupported = true
     this.registeredGeneration = this.init.backend.generation
+    return true
+  }
+
+  private adoptPlainResult(
+    read: DocumentRead,
+    themeRegistration: VscodeThemeRegistration,
+    work: AbortSignal,
+  ): EditorHighlightResult {
+    this.lifetime.signal.throwIfAborted()
+    const theme = editorThemeFromVscodeTheme(themeRegistration)
+    this.analysedRead = read
+    this.opened = false
+    this.store = EditorTokenStore.empty()
+    this.currentTheme = theme
+    this.init.backend.setHighlightUntokenizedLines(this.runtimeSessionId, 0)
+    if (!this.firstHighlightFired) {
+      this.firstHighlightFired = true
+      this.init.onFirstHighlight()
+    }
+    work.throwIfAborted()
+    return { tokens: this.store, theme }
   }
 
   private adoptResult(

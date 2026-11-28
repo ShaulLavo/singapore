@@ -532,10 +532,10 @@
     },
     {
       "api": "setTimeout",
-      "file": "packages/tree-sitter/src/index.ts",
-      "id": "packages/tree-sitter/src/index.ts:setTimeout:ec2643b7b0",
-      "justification": "Keeps the shared default Tree-sitter worker warm across brief SPA route transitions after the final editor context and language registrations release. Re-acquiring cancels the timer, and disposal rechecks active context and language counts plus global registration identity before terminating the worker.",
-      "line": 444,
+      "file": "packages/tree-sitter/src/defaultProvider.ts",
+      "id": "packages/tree-sitter/src/defaultProvider.ts:setTimeout:4447a06b30",
+      "justification": "Keeps the shared default Tree-sitter worker warm across brief SPA route transitions after the final editor context, highlighter session, and language registrations release. Re-acquiring cancels the timer, and disposal rechecks active context, highlighter, and language counts plus global registration identity before terminating the worker.",
+      "line": 120,
       "snippet": "const timer = setTimeout(() => {"
     },
     {
@@ -543,7 +543,7 @@
       "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
       "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:12f91c71b2",
       "justification": "One quiet round before a closed document is freed. A timer, not a posted message: it has to outlast the round trips between the requests of a document opened in its place. `waitForQuiet` bounds the rounds.",
-      "line": 5066,
+      "line": 5121,
       "snippet": "setTimeout(resolve, DOCUMENT_RELEASE_QUIET_MS)"
     },
     {

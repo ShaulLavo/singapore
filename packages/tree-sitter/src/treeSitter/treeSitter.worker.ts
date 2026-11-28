@@ -47,6 +47,7 @@ import type * as MarkdownSupportModule from './markdown'
 import type * as ScopeCompatSupportModule from './scopeCompat'
 import type { TreeSitterLanguageDescriptor } from './registry'
 import {
+  createStringTreeSitterInput,
   createTreeSitterInput,
   limitTreeSitterInput,
   readTreeSitterInputRange,
@@ -495,12 +496,32 @@ const disposePreparedLayers = (prepared: ParsedDocument): void => {
   prepared.source.dispose()
 }
 
-const collectMarkdownScopeCaptures = async (
+const toScopeLayerInputs = async (
+  layers: readonly ParsedLayer[],
+): Promise<readonly ScopeCompatSupportModule.ScopeLayerInput[]> => {
+  const inputs: ScopeCompatSupportModule.ScopeLayerInput[] = []
+  for (const layer of layers) {
+    const runtimePromise = runtimePromises.get(layer.languageId)
+    if (!runtimePromise) continue
+    const runtime = await runtimePromise
+    inputs.push({
+      languageId: layer.languageId,
+      depth: layer.depth,
+      language: runtime.language,
+      parser: runtime.parser,
+      ranges: layer.ranges,
+    })
+  }
+  return inputs
+}
+
+const collectMarkdownScopeMultiLayer = async <T>(
   languageId: TreeSitterLanguageId,
   source: TreeSitterPieceTableInput,
   text: string,
   context: CancellationContext,
-): Promise<readonly TreeSitterCapture[]> => {
+  consume: (data: ScopeCompatSupportModule.ScopeMultiLayerData) => T,
+): Promise<T> => {
   await ensureParserRuntime()
   const support = await loadMarkdown()
   const document = new support.MarkdownDocument({ frontmatter: true })
@@ -521,7 +542,11 @@ const collectMarkdownScopeCaptures = async (
     const prepared = await parseMarkdownFences(parsed, context, null, [])
     try {
       const flattened = await flattenDocument(prepared, context, false, true)
-      return flattened.captures
+      const layers = await toScopeLayerInputs(prepared.layers)
+      return consume({
+        layers,
+        captures: flattened.captures,
+      })
     } finally {
       disposePreparedLayers(prepared)
     }
@@ -530,20 +555,21 @@ const collectMarkdownScopeCaptures = async (
   }
 }
 
-const collectScopeFallbackCaptures = async (
+const collectScopeMultiLayer = async <T>(
   languageId: TreeSitterLanguageId,
   source: TreeSitterPieceTableInput,
   text: string,
-): Promise<readonly TreeSitterCapture[]> => {
+  consume: (data: ScopeCompatSupportModule.ScopeMultiLayerData) => T,
+): Promise<T> => {
   const context: CancellationContext = {
     startedAt: nowMs(),
     budgetMs: PARSE_BUDGET_MS,
     flag: null,
   }
   if (languageId === 'markdown') {
-    return collectMarkdownScopeCaptures(languageId, source, text, context)
+    return collectMarkdownScopeMultiLayer(languageId, source, text, context, consume)
   }
-  if (!languageDescriptors.has(languageId)) return []
+  if (!languageDescriptors.has(languageId)) return consume({ layers: [], captures: [] })
   const runtime = await ensureRuntime(languageId)
   const rootLayer = parseRootLayer(runtime, source, null, context)
   let parsedDoc: ParsedDocument | null = null
@@ -590,10 +616,38 @@ const collectScopeFallbackCaptures = async (
       degraded,
     })
     const flattened = await flattenDocument(parsedDoc, context, false, true)
-    return flattened.captures
+    const layers = await toScopeLayerInputs(parsedDoc.layers)
+    return consume({
+      layers,
+      captures: flattened.captures,
+    })
   } finally {
     if (parsedDoc) disposeCachedSnapshot(parsedDoc)
     else rootLayer.tree.delete()
+  }
+}
+
+const formatSourcePointKey = (point: {
+  readonly segment: string
+  readonly revision: number
+  readonly textVersion: number
+}): string => `${point.segment}:${point.revision}:${point.textVersion}`
+
+const collectSanitizedMultiLayer = async <T>(
+  languageId: TreeSitterLanguageId,
+  source: TreeSitterPieceTableInput,
+  originalText: string,
+  sanitizedText: string,
+  consume: (data: ScopeCompatSupportModule.ScopeMultiLayerData) => T,
+): Promise<T> => {
+  if (sanitizedText === originalText) {
+    return collectScopeMultiLayer(languageId, source, sanitizedText, consume)
+  }
+  const maskedSource = createStringTreeSitterInput(sanitizedText, source)
+  try {
+    return await collectScopeMultiLayer(languageId, maskedSource, sanitizedText, consume)
+  } finally {
+    maskedSource.dispose()
   }
 }
 
@@ -607,14 +661,14 @@ const highlightThemeOpen = async (
     runtimeSessionId: request.runtimeSessionId,
     languageId: request.languageId,
     packLanguageId: request.packLanguageId,
+    sourcePointKey: formatSourcePointKey(request.source.point),
     text,
     themeRevision: request.themeRevision,
     themeRegistration: request.themeRegistration,
     maxLineLength: request.maxLineLength,
-    registryVersion: languageRegistryVersion,
     ensureRuntime: ensureScopeThemeRuntime,
-    collectCaptures: (langId, sanitizedText) =>
-      collectScopeFallbackCaptures(langId, source, sanitizedText),
+    collectMultiLayer: (langId, sanitizedText, consume) =>
+      collectSanitizedMultiLayer(langId, source, text, sanitizedText, consume),
   })
 }
 
@@ -628,16 +682,17 @@ const highlightThemeEdit = async (
     runtimeSessionId: request.runtimeSessionId,
     languageId: request.languageId,
     packLanguageId: request.packLanguageId,
+    sourcePointKey: formatSourcePointKey(request.source.point),
+    previousPointKey: formatSourcePointKey(request.previousPoint),
     text,
     themeRevision: request.themeRevision,
     themeRegistration: request.themeRegistration,
     maxLineLength: request.maxLineLength,
-    registryVersion: languageRegistryVersion,
     edits: request.edits,
     inputEdits: request.inputEdits,
     ensureRuntime: ensureScopeThemeRuntime,
-    collectCaptures: (langId, sanitizedText) =>
-      collectScopeFallbackCaptures(langId, source, sanitizedText),
+    collectMultiLayer: (langId, sanitizedText, consume) =>
+      collectSanitizedMultiLayer(langId, source, text, sanitizedText, consume),
   })
 }
 

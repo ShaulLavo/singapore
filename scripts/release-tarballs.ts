@@ -327,6 +327,8 @@ function bunWorkerSmokeScript(): string {
   return (
     `import { createEditorTextBuffer } from '@singapore-editor/core/document'\n` +
     `import { createEditorDocumentAnalysis } from '@singapore-editor/core/editor'\n` +
+    `import { createHighlightingService } from '@singapore-editor/highlighting'\n` +
+    `import { createShikiHighlighterProvider, createShikiWorkerOwner, editorThemeToShikiTheme, loadShikiGrammar } from '@singapore-editor/shiki'\n` +
     `import { createTreeSitterSyntaxProvider, createTreeSitterWorkerOwner } from '@singapore-editor/tree-sitter'\n` +
     `import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'\n\n` +
     `const jsonContribution = TREE_SITTER_LANGUAGE_CONTRIBUTIONS.find((entry) => entry.id === 'json')\n` +
@@ -353,6 +355,39 @@ function bunWorkerSmokeScript(): string {
     `  console.log('verified Bun worker JSON and Markdown parsing')\n` +
     `} finally {\n` +
     `  await worker.dispose()\n` +
+    `}\n` +
+    `const highlighting = createHighlightingService()\n` +
+    `try {\n` +
+    `  const snippet = await highlighting.highlight('export const answer = 42\\n', { language: 'typescript' })\n` +
+    `  if (snippet.tokens.length === 0) throw new Error('No VS Code highlight tokens from @singapore-editor/highlighting')\n` +
+    `  console.log('verified Bun worker Tree-sitter VS Code highlighting (scope-compat)')\n` +
+    `} finally {\n` +
+    `  await highlighting.dispose()\n` +
+    `}\n` +
+    `const shikiWorker = createShikiWorkerOwner()\n` +
+    `try {\n` +
+    `  const shikiProvider = createShikiHighlighterProvider({\n` +
+    `    workerOwner: shikiWorker,\n` +
+    `    theme: 'dark',\n` +
+    `    resolveLanguage: (language) => loadShikiGrammar(language),\n` +
+    `    resolveTheme: async () => editorThemeToShikiTheme({ type: 'dark' }),\n` +
+    `  })\n` +
+    `  const buffer = createEditorTextBuffer('export const answer = 42\\n')\n` +
+    `  const analysis = createEditorDocumentAnalysis({ buffer, documentId: 'smoke.ts' })\n` +
+    `  const lease = analysis.borrowHighlighter({ provider: shikiProvider, languageId: 'typescript' })\n` +
+    `  if (!lease) throw new Error('Missing opt-in Shiki highlighter lease')\n` +
+    `  try {\n` +
+    `    const shikiResult = await lease.refresh(buffer.getTextSnapshot())\n` +
+    `    if (shikiResult.tokens.length === 0) {\n` +
+    `      throw new Error('No tokens from opt-in @singapore-editor/shiki')\n` +
+    `    }\n` +
+    `    console.log('verified Bun worker opt-in Shiki highlighting')\n` +
+    `  } finally {\n` +
+    `    lease.dispose()\n` +
+    `    analysis.dispose()\n` +
+    `  }\n` +
+    `} finally {\n` +
+    `  await shikiWorker.dispose()\n` +
     `}\n`
   )
 }
