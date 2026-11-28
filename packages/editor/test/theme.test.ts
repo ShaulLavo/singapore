@@ -3,7 +3,7 @@ import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor'
-import { editorThemeFromShikiTheme } from '../src/shiki/theme-extract'
+import { editorThemeFromVscodeTheme as editorThemeFromShikiTheme } from '../src/vscodeThemes'
 import { createEditorScopeStyles } from '../src/theme'
 import { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from '../src/public/syntax'
 import {

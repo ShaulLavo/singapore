@@ -1,6 +1,6 @@
 import type { Editor } from '@singapore-editor/core/editor'
 import type { EditorPlugin } from '@singapore-editor/core/extensions'
-import { createShikiHighlighterPlugin, createShikiWorkerOwner } from '@singapore-editor/core/shiki'
+import { createShikiHighlighterPlugin, createShikiWorkerOwner } from '@singapore-editor/shiki'
 import { createEditorFindPlugin } from '@singapore-editor/find'
 import { createMinimapPlugin } from '@singapore-editor/minimap'
 import { createInputProductTree } from '../input-product-tree.mjs'

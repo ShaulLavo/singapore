@@ -80,11 +80,6 @@
       "import": "./dist/public/secondaryViews.js",
       "default": "./dist/public/secondaryViews.js"
     },
-    "./shiki": {
-      "types": "./dist/shiki/index.d.ts",
-      "import": "./dist/shiki/index.js",
-      "default": "./dist/shiki/index.js"
-    },
     "./syntax": {
       "types": "./dist/public/syntax.d.ts",
       "import": "./dist/public/syntax.js",
@@ -139,16 +134,12 @@
   },
   "dependencies": {
     "@shaulavo/hotkeys": "catalog:",
-    "@shikijs/engine-oniguruma": "4.4.3",
     "@singapore-editor/textbuffer": "workspace:*",
     "diff": "^9.0.0",
-    "evlog": "^2.29.0",
-    "shiki": "^4.4.3"
+    "evlog": "^2.29.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "@shikijs/langs": "4.4.3",
-    "@shikijs/themes": "4.4.3",
     "@types/bun": "catalog:",
     "@vitest/browser-playwright": "5.0.2",
     "happy-dom": "^20.14.5",

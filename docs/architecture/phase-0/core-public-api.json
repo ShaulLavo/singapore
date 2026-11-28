@@ -1743,6 +1743,36 @@
           "via": "packages/editor/src/index.ts"
         },
         {
+          "kind": "type",
+          "name": "VscodeThemeColorMode",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeDefinition",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeLike",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeRegistration",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeTokenSetting",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
           "kind": "unknown",
           "name": "acquireDocumentMutationLease",
           "source": "packages/editor/src/public/document.ts",
@@ -2152,6 +2182,12 @@
         },
         {
           "kind": "unknown",
+          "name": "editorThemeFromVscodeTheme",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorThemesEqual",
           "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
@@ -2442,6 +2478,12 @@
           "kind": "unknown",
           "name": "treeSitterCapturesToEditorTokens",
           "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "VSCODE_THEMES",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -5998,6 +6040,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorHighlighterRuntime",
+          "source": "packages/editor/src/syntax/highlighter.ts",
+          "via": "packages/editor/src/document/workerEntry.ts"
+        },
+        {
+          "kind": "type",
+          "name": "HighlighterOperationContext",
+          "source": "packages/editor/src/editor/operationDefinitions.ts",
+          "via": "packages/editor/src/document/workerEntry.ts"
+        },
+        {
+          "kind": "type",
           "name": "HighlighterOperationContext",
           "source": "packages/editor/src/editor/operationDefinitions.ts",
           "via": "packages/editor/src/document/workerEntry.ts -> packages/editor/src/document/workerReader.ts"
@@ -6544,6 +6598,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorVscodeSyntaxScopeMapping",
+          "source": "packages/editor/src/vscodeThemes.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
           "name": "HiddenCharactersMode",
           "source": "packages/editor/src/virtualization/index.ts",
           "via": "packages/editor/src/public/rendering.ts"
@@ -6657,6 +6717,36 @@
           "via": "packages/editor/src/public/rendering.ts"
         },
         {
+          "kind": "type",
+          "name": "VscodeThemeColorMode",
+          "source": "packages/editor/src/vscodeThemes.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeDefinition",
+          "source": "packages/editor/src/vscodeThemes.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeLike",
+          "source": "packages/editor/src/vscodeThemes.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeRegistration",
+          "source": "packages/editor/src/vscodeThemes.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "VscodeThemeTokenSetting",
+          "source": "packages/editor/src/vscodeThemes.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
           "kind": "unknown",
           "name": "applyEditorTheme",
           "source": "packages/editor/src/theme.ts",
@@ -6682,6 +6772,12 @@
         },
         {
           "kind": "unknown",
+          "name": "EDITOR_VSCODE_SYNTAX_SCOPE_MAPPINGS",
+          "source": "packages/editor/src/vscodeThemes.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorColorReference",
           "source": "packages/editor/src/theme.ts",
           "via": "packages/editor/src/public/rendering.ts"
@@ -6690,6 +6786,12 @@
           "kind": "unknown",
           "name": "editorColorValue",
           "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorThemeFromVscodeTheme",
+          "source": "packages/editor/src/vscodeThemes.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
         {
@@ -6774,6 +6876,12 @@
           "kind": "unknown",
           "name": "updateInlineMapForEdit",
           "source": "packages/editor/src/inlineMap.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "VSCODE_THEMES",
+          "source": "packages/editor/src/vscodeThemes.ts",
           "via": "packages/editor/src/public/rendering.ts"
         }
       ],
@@ -6911,306 +7019,6 @@
       ],
       "source": "packages/editor/src/public/secondaryViews.ts",
       "specifier": "./secondary-views"
-    },
-    {
-      "exports": [
-        {
-          "kind": "type",
-          "name": "CreateIncrementalTokenizerOptions",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "CreateIncrementalTokenizerResult",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorShikiSyntaxScopeMapping",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorShikiTheme",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorShikiThemeColorMode",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorShikiThemeSettingLike",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorThemeToShikiThemeOptions",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "IncrementalTokenizer",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "IncrementalTokenizerRetentionSnapshot",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "IncrementalTokenizerSnapshot",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "LineTokens",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiHighlighterPluginOptions",
-          "source": "packages/editor/src/shiki/plugin.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiLanguageMap",
-          "source": "packages/editor/src/shiki/plugin.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiLanguageRegistrationResolver",
-          "source": "packages/editor/src/shiki/plugin.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiPreloadRegistrations",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiResolvedRegistrations",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiThemeLike",
-          "source": "packages/editor/src/shiki/theme-extract.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiThemeOptions",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiThemeRegistrationResolver",
-          "source": "packages/editor/src/shiki/plugin.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerCacheSnapshot",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerLanguageRegistration",
-          "source": "packages/editor/src/shiki/workerTypes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerLifecycleState",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerOwnerOptions",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerOwnerSnapshot",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerRetentionSnapshot",
-          "source": "packages/editor/src/shiki/workerTypes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerThemeRegistration",
-          "source": "packages/editor/src/shiki/workerTypes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "ShikiWorkerTransportResult",
-          "source": "packages/editor/src/shiki/workerTypes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "StatesEqualFn",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "TokenizeLineFn",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "TokenLineSnapshot",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "TokenPatch",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "VscodeThemeDefinition",
-          "source": "packages/editor/src/shiki/vscode-themes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "VscodeThemeRegistration",
-          "source": "packages/editor/src/shiki/vscode-themes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "canUseShikiWorker",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "createIncrementalTokenizer",
-          "source": "packages/editor/src/shiki/tokenizer.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "createShikiHighlighterPlugin",
-          "source": "packages/editor/src/shiki/plugin.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "createShikiHighlighterProvider",
-          "source": "packages/editor/src/shiki/plugin.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "createShikiWorkerOwner",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "DEFAULT_SHIKI_MAX_TOKENIZATION_LINE_LENGTH",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "EDITOR_SHIKI_SYNTAX_SCOPE_MAPPINGS",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "editorThemeFromShikiTheme",
-          "source": "packages/editor/src/shiki/theme-extract.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "editorThemeFromVscodeTheme",
-          "source": "packages/editor/src/shiki/vscode-themes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "editorThemeToShikiTheme",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "editorThemeToShikiTokenColors",
-          "source": "packages/editor/src/shiki/theme.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "shikiLanguageForDocument",
-          "source": "packages/editor/src/shiki/plugin.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "ShikiWorkerOwner",
-          "source": "packages/editor/src/shiki/workerClient.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "snapshotToEditorTokens",
-          "source": "packages/editor/src/shiki/editor-tokens.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "tokenLinesToEditorTokens",
-          "source": "packages/editor/src/shiki/editor-tokens.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
-          "name": "VSCODE_THEMES",
-          "source": "packages/editor/src/shiki/vscode-themes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        }
-      ],
-      "source": "packages/editor/src/shiki/index.ts",
-      "specifier": "./shiki"
     },
     {
       "exports": [],
@@ -7401,6 +7209,12 @@
         },
         {
           "kind": "type",
+          "name": "PackedEditorTokenWriter",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
           "name": "SemanticTokenDropReason",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
@@ -7473,6 +7287,12 @@
         },
         {
           "kind": "unknown",
+          "name": "createPackedEditorTokenWriter",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "createSemanticTokenStyles",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
@@ -7504,6 +7324,12 @@
         {
           "kind": "unknown",
           "name": "EditorTokenStore",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "finishPackedEditorTokenWriter",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
         },
@@ -7546,6 +7372,12 @@
         {
           "kind": "unknown",
           "name": "unpackEditorTokens",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "writePackedEditorToken",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
         }

@@ -153,12 +153,14 @@ export {
   darkenEditorColor,
   editorColorReference,
   editorColorValue,
+  editorThemeFromVscodeTheme,
   editorThemesEqual,
   firstEditorColor,
   lightenEditorColor,
   mergeEditorThemes,
   registerEditorColor,
   transparentEditorColor,
+  VSCODE_THEMES,
 } from './public/rendering'
 export {
   createSemanticTokenLayer,
@@ -414,6 +416,11 @@ export type {
   VirtualizedTextHighlightRange,
   VirtualizedTextHighlightStyle,
   VirtualizedTextRowDecoration,
+  VscodeThemeColorMode,
+  VscodeThemeDefinition,
+  VscodeThemeLike,
+  VscodeThemeRegistration,
+  VscodeThemeTokenSetting,
 } from './public/rendering'
 export type {
   BracketInfo,

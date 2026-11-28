@@ -5,9 +5,9 @@
   "keywords": [
     "browser",
     "editor",
-    "shiki",
     "singapore",
     "syntax-highlighting",
+    "tree-sitter",
     "typescript"
   ],
   "homepage": "https://singapore.shaulavo.dev/docs/reference/api/highlighting/overview/",
@@ -51,8 +51,7 @@
     "@shikijs/themes": "^4.4.3",
     "@singapore-editor/diff": "workspace:*",
     "@singapore-editor/tree-sitter": "workspace:*",
-    "@singapore-editor/tree-sitter-languages": "workspace:*",
-    "shiki": "^4.4.3"
+    "@singapore-editor/tree-sitter-languages": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

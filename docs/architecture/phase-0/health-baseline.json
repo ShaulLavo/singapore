@@ -94,7 +94,6 @@
         "packages/editor/src/virtualization/virtualizedTextViewTypes.ts",
         "packages/editor/src/virtualization/wheelScrollTarget.ts"
       ],
-      ["packages/editor/src/shiki/scopedTokens.ts", "packages/editor/src/shiki/tokenizer.ts"],
       [
         "packages/editor/src/syntax/packedTokens.ts",
         "packages/editor/src/syntax/tokenStore.ts",

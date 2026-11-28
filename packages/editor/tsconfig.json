@@ -27,7 +27,6 @@
       "@singapore-editor/core/logging/evlog": ["./src/logging/evlog.ts"],
       "@singapore-editor/core/rendering": ["./src/public/rendering.ts"],
       "@singapore-editor/core/secondary-views": ["./src/public/secondaryViews.ts"],
-      "@singapore-editor/core/shiki": ["./src/shiki/index.ts"],
       "@singapore-editor/core/syntax": ["./src/public/syntax.ts"],
       "@singapore-editor/core/testing": ["./src/public/testing.ts"]
     }

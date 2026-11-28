@@ -6,7 +6,7 @@ Singapore mounts visible text as DOM content. The browser lays it out and answer
 
 A highlighting worker derives tokens from a document version. The editor maps the relevant token ranges onto mounted text and adds them to named CSS highlights. Scrolling changes which ranges need paint as rows enter and leave the viewport.
 
-Tree-sitter supplies structural syntax data, including fold and injection information. Shiki supplies another tokenization path. Semantic tokens from a language server can add a separate layer where the integration supports them.
+Tree-sitter supplies both structural syntax data (folds, brackets, injections) and default VS Code theme highlighting through `@shaulavo/tree-sitter-scope-compat`. An optional `@singapore-editor/shiki` package remains available if a host specifically wants Shiki or TextMate grammars. Semantic tokens from a language server can add a separate layer where the integration supports them.
 
 ## Paint has limits
 

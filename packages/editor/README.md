@@ -51,9 +51,9 @@ What tests cover it:
 
 The automated tests above do not run on a physical phone, and [Browser quirks](https://github.com/ShaulLavo/singapore/blob/main/docs/display/browser-quirks.md#touch-haptic-availability) lists physical-device haptic feedback as unverified.
 
-## Shiki entry point
+## VS Code themes and optional Shiki
 
-`@singapore-editor/core/shiki` is a subpath export of this package. It holds the Shiki-based tokenizer that runs in a worker (`createShikiWorkerOwner`, `ShikiWorkerOwner`), `createShikiHighlighterPlugin` for editors that bring their own Shiki grammar and theme loaders, and theme converters such as `editorThemeFromVscodeTheme`. The [Themes guide](https://singapore.shaulavo.dev/docs/guides/themes/) uses the converters. For editor syntax colors, use the [`tree-sitter`](https://github.com/ShaulLavo/singapore/blob/main/packages/tree-sitter/README.md) package instead. The unpublished `highlighting` package builds on this entry point for snippets and diffs. Worker details are in [Worker topology](https://github.com/ShaulLavo/singapore/blob/main/docs/architecture/worker-topology.md#shiki-tokenizer-worker).
+`@singapore-editor/core/rendering` exports `editorThemeFromVscodeTheme` and related converters for VS Code theme definitions without pulling in Shiki or Oniguruma. For syntax colors, use [`@singapore-editor/tree-sitter`](https://github.com/ShaulLavo/singapore/blob/main/packages/tree-sitter/README.md) or [`@singapore-editor/highlighting`](https://github.com/ShaulLavo/singapore/blob/main/packages/highlighting/README.md). If you specifically want Shiki or TextMate grammars, install the separate optional [`@singapore-editor/shiki`](https://github.com/ShaulLavo/singapore/blob/main/packages/shiki/README.md) package.
 
 ## API highlights
 

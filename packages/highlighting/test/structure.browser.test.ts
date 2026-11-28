@@ -1,5 +1,4 @@
 import { createTextDiff, type PreparedDiffSyntaxInput } from '@singapore-editor/diff'
-import { TREE_SITTER_LANGUAGE_METADATA } from '@singapore-editor/tree-sitter-languages/metadata'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import {
@@ -59,19 +58,28 @@ describe('built-in palettes color through Tree-sitter captures', () => {
     expect(highlighting.inspect().snippetSessions).toBe(0)
   })
 
-  test('languages Tree-sitter lacks keep their Shiki grammar under a palette', async () => {
-    const structural = new Set<string>(
-      TREE_SITTER_LANGUAGE_METADATA.flatMap((language) => {
-        const ids: string[] = [language.id]
-        return ids.concat(language.aliases)
-      }),
-    )
-    const language = ['fsharp', 'haskell', 'clojure', 'elixir', 'ocaml'].find(
-      (id) => !structural.has(id),
-    )!
-    const result = await service().highlight('let x = 1', { language, theme: PALETTE })
-    expect(result.language).toBe(language)
+  test('non-Wave-1 Tree-sitter languages highlight via Zed-plus fallback under VS Code themes', async () => {
+    const result = await service().highlight('int main(void) { return 0; }', {
+      language: 'c',
+      theme: {
+        format: 'vscode',
+        definition: {
+          name: 'fallback-test',
+          type: 'dark',
+          colors: { 'editor.foreground': '#eeeeee', 'editor.background': '#111111' },
+          tokenColors: [
+            { scope: ['keyword', 'storage'], settings: { foreground: '#ff0000' } },
+            { scope: ['support.type', 'entity.name.type'], settings: { foreground: '#00ff00' } },
+            { scope: ['constant.numeric'], settings: { foreground: '#0000ff' } },
+          ],
+        },
+      },
+    })
+    expect(result.language).toBe('c')
     expect(result.tokens.length).toBeGreaterThan(0)
+    expect(styleAt(result, 'int main(void) { return 0; }', 'return')?.color?.toLowerCase()).toBe(
+      '#ff0000',
+    )
   })
 
   test('a palette revision changes with contributed colors too', () => {
@@ -107,7 +115,7 @@ describe('failures, cancellation and retention', () => {
           }),
         ),
       )
-    const highlighting = service({ shikiWorker: crashing })
+    const highlighting = service({ treeSitterWorker: crashing })
     const theme: HighlightTheme = { format: 'vscode', definition: { name: 'crash' } }
     const results = await Promise.allSettled([
       highlighting.highlight('a', { language: 'ts', theme }),
@@ -119,7 +127,7 @@ describe('failures, cancellation and retention', () => {
     }
     expect(highlighting.inspect()).toMatchObject({
       pendingHighlights: 0,
-      shiki: { lifecycle: 'crashed', pendingRequests: 0 },
+      treeSitter: { lifecycle: 'crashed', pendingRequests: 0 },
     })
   })
 
@@ -153,7 +161,7 @@ describe('failures, cancellation and retention', () => {
     expect(highlighting.inspect()).toMatchObject({
       pendingHighlights: 0,
       snippetSessions: 0,
-      shiki: { pendingRequests: 0 },
+      treeSitter: { pendingRequests: 0 },
     })
   })
 })

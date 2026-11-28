@@ -25,15 +25,17 @@ function workerBoundary() {
       name: 'loan-proof',
       tokenColors: [{ scope: ['keyword', 'storage'], settings: { foreground: color } }],
     }),
-    shikiWorker: () => {
+    treeSitterWorker: () => {
       const worker = new Worker(
-        new URL('../../editor/src/shiki/shiki.worker.ts', import.meta.url),
+        new URL('../../tree-sitter/src/treeSitter/treeSitter.worker.ts', import.meta.url),
         { type: 'module' },
       )
       const postMessage = worker.postMessage.bind(worker)
       worker.postMessage = (message) => {
         sent.push(message.payload.type)
-        if (message.payload.type === 'open') opened.push(message.payload.lang)
+        if (message.payload.type === 'highlightOpen') {
+          opened.push(message.payload.packLanguageId ?? message.payload.languageId)
+        }
         postMessage(message)
       }
       return worker
@@ -102,12 +104,12 @@ test('known-good real worker prepared view paints synchronously and retains its 
   let shown: { dispose(): void } | undefined
   try {
     expect(await service.prepareDiff(file(), theme)).toBe(true)
-    const requests = sent.filter((type) => type === 'open').length
+    const requests = sent.filter((type) => type === 'highlightOpen').length
     shown = service.showDiff(plugin, file(), 'stacked', theme)
     expect(plugin.isSyntaxReady()).toBe(true)
     expect(plugin.getTokens().length).toBeGreaterThan(0)
     await service.awaitIdle()
-    expect(sent.filter((type) => type === 'open')).toHaveLength(requests)
+    expect(sent.filter((type) => type === 'highlightOpen')).toHaveLength(requests)
     shown.dispose()
     plugin.setFile(null)
     expect(service.inspect().disposed).toBe(false)
@@ -132,7 +134,7 @@ test('bounded real worker two-view requests share active immutable sources', asy
     await expect.poll(() => second.isSyntaxReady()).toBe(true)
     await service.awaitIdle()
     console.log('syntax200 two-view worker requests', JSON.stringify(sent))
-    expect(sent.filter((type) => type === 'open')).toHaveLength(2)
+    expect(sent.filter((type) => type === 'highlightOpen')).toHaveLength(2)
     expect(second.getTokens()).toEqual(first.getTokens())
     a.dispose()
     first.setFile(null)

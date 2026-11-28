@@ -1,14 +1,9 @@
-declare module '*.scm?raw' {
-  const source: string
-  export default source
-}
-
-declare module '*.ts?raw' {
-  const source: string
-  export default source
-}
-
-declare module '*.wasm?url' {
+declare module '*?url' {
   const url: string
   export default url
+}
+
+declare module '*?raw' {
+  const content: string
+  export default content
 }

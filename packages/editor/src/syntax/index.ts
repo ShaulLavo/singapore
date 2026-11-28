@@ -33,8 +33,19 @@ export {
   type FoldRange,
 } from './session'
 export { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from './captures'
-export { packEditorTokens, packedEditorTokenTransfers, unpackEditorTokens } from './packedTokens'
-export type { PackedEditorTokenPatch, PackedEditorTokens } from './packedTokens'
+export {
+  createPackedEditorTokenWriter,
+  finishPackedEditorTokenWriter,
+  packEditorTokens,
+  packedEditorTokenTransfers,
+  unpackEditorTokens,
+  writePackedEditorToken,
+} from './packedTokens'
+export type {
+  PackedEditorTokenPatch,
+  PackedEditorTokens,
+  PackedEditorTokenWriter,
+} from './packedTokens'
 export { createSnippetDocument } from './snippetDocument'
 export { EditorTokenStore, toEditorTokenStore } from './tokenStore'
 export type { EditorTokenInput, EditorTokenStoreOrigin } from './tokenStore'

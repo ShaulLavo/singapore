@@ -4,7 +4,7 @@ export const TREE_SITTER_LANGUAGE_METADATA = [
     id: 'javascript',
     extensions: ['.cjs', '.js', '.jsx', '.mjs'],
     filenames: [],
-    aliases: ['js', 'jsx', 'node'],
+    aliases: ['javascriptreact', 'js', 'jsx', 'node'],
     injectionDependencies: ['regex', 'jsdoc'],
     capabilities: {
       highlighting: 'partial',

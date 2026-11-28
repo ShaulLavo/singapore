@@ -3,9 +3,9 @@ import {
   EDITOR_SNIPPET_TOKENS_FEATURE,
   type EditorSnippetTokensFeature,
 } from '@singapore-editor/core/extensions'
-import type { VscodeThemeRegistration } from '@singapore-editor/core/shiki'
+import type { VscodeThemeRegistration } from '@singapore-editor/core/rendering'
 import type { EditorToken } from '@singapore-editor/core/syntax'
-import { bundledThemes } from 'shiki/themes'
+import githubDarkTheme from '@shikijs/themes/github-dark'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import {
@@ -57,8 +57,7 @@ function service(): HighlightingService {
 }
 
 async function githubDark(): Promise<VscodeThemeRegistration> {
-  const module = await bundledThemes['github-dark']()
-  return module.default as unknown as VscodeThemeRegistration
+  return githubDarkTheme as unknown as VscodeThemeRegistration
 }
 
 /** The snippet feature of a real editor whose syntax comes from the highlighting plugin. */

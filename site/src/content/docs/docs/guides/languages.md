@@ -51,9 +51,9 @@ provider.registerLanguage({
 
 Build the grammar against Singapore's tree-sitter runtime. A grammar from a different runtime build needs compatibility verification.
 
-## Shiki as a separate path
+## Optional Shiki package
 
-The core's `/shiki` entry point exposes Shiki highlighting and VS Code theme conversion. Use it when your integration needs its supported grammars or theme conversion. Tree-sitter supplies structural syntax information in addition to colours. Each path has its own worker and asset setup.
+Tree-sitter handles both editor palettes and VS Code themes by default through `@singapore-editor/tree-sitter` and `@singapore-editor/highlighting`. There is almost no reason to install Shiki unless you specifically want Shiki or TextMate grammars. When you do, install the separate `@singapore-editor/shiki` package. It runs in its own worker and adds zero cost to applications that do not import it. For VS Code theme conversion without Shiki, import `editorThemeFromVscodeTheme` from `@singapore-editor/core/rendering`.
 
 ## If it doesn't work
 

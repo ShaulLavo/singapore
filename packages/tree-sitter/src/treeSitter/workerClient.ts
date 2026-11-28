@@ -11,6 +11,12 @@ import {
 } from '@singapore-editor/core/internal/document-worker'
 import type {
   TreeSitterEditRequest,
+  TreeSitterHighlightEditRequest,
+  TreeSitterHighlightOpenRequest,
+  TreeSitterHighlightRecolorRequest,
+  TreeSitterHighlightResult,
+  TreeSitterHighlightSliceResult,
+  TreeSitterHighlightThemeRequest,
   TreeSitterLanguageId,
   TreeSitterParseAckResult,
   TreeSitterParseRequest,
@@ -31,7 +37,6 @@ import type {
   TreeSitterWorkerResponse,
   TreeSitterWorkerResult,
   TreeSitterWorkerRetentionSnapshot,
-  TreeSitterHighlightSliceResult,
 } from './types'
 
 type PendingRequest = {
@@ -136,12 +141,23 @@ export type TreeSitterWorkerCacheSnapshot = {
   readonly registeredLanguages: number
 }
 
+export const DEFAULT_TREE_SITTER_MAX_TOKENIZATION_LINE_LENGTH = 20_000
+
+export type TreeSitterWorkerOwnerOptions = {
+  readonly workerFactory?: () => Worker
+  /** Read on every VS Code theme highlight open; documents pick up a change on their next refresh. */
+  readonly maxTokenizationLineLength?: () => number
+}
+
 export type TreeSitterWorkerOwnerSnapshot = {
   readonly lifecycle: TreeSitterWorkerLifecycleState
   readonly pendingRequests: number
   readonly workerGeneration: number
   readonly cache: TreeSitterWorkerCacheSnapshot
   readonly lastError: string | null
+  readonly maxTokenizationLineLength: number
+  /** Plain lines exceeding `maxTokenizationLineLength` across live VS Code highlight sessions. */
+  readonly untokenizedLines: number
 }
 
 export type TreeSitterBackend = {
@@ -183,7 +199,7 @@ const supportsSharedCancellation = (): boolean => typeof SharedArrayBuffer !== '
 export const canUseTreeSitterWorker = (): boolean => supportsWorkers()
 
 export class TreeSitterWorkerClient implements TreeSitterBackend {
-  public constructor(private readonly options: { readonly workerFactory?: () => Worker } = {}) {}
+  public constructor(private readonly options: TreeSitterWorkerOwnerOptions = {}) {}
   private worker: Worker | null = null
   private disposeTask: Promise<void> | null = null
   private nextRequestId = 1
@@ -204,6 +220,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   >()
   private readonly clientTasks = new Set<Promise<unknown>>()
   private readonly runtimeTasks = new Map<string, Set<Promise<unknown>>>()
+  private readonly highlightUntokenizedLines = new Map<string, number>()
   private connection: DocumentSourceConnection | null = null
   private nextRegistration = 0
   public readonly sourceEndpoint: DocumentSourceEndpoint = {
@@ -220,7 +237,30 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return this.worker ? this.workerGeneration : null
   }
 
+  public canUseWorker(): boolean {
+    if (this.lifecycle === 'disposing' || this.lifecycle === 'disposed') return false
+    return Boolean(this.options.workerFactory) || supportsWorkers()
+  }
+
+  public maxTokenizationLineLength(): number {
+    const value = this.options.maxTokenizationLineLength?.()
+    if (value === undefined || !Number.isInteger(value) || value < 1) {
+      return DEFAULT_TREE_SITTER_MAX_TOKENIZATION_LINE_LENGTH
+    }
+    return value
+  }
+
+  public setHighlightUntokenizedLines(runtimeSessionId: string, count: number | null): void {
+    if (count === null || count <= 0) {
+      this.highlightUntokenizedLines.delete(runtimeSessionId)
+      return
+    }
+    this.highlightUntokenizedLines.set(runtimeSessionId, count)
+  }
+
   public inspect(): TreeSitterWorkerOwnerSnapshot {
+    let untokenizedLines = 0
+    for (const count of this.highlightUntokenizedLines.values()) untokenizedLines += count
     return {
       lifecycle: this.lifecycle,
       pendingRequests: this.pendingRequests.size,
@@ -229,7 +269,86 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
         registeredLanguages: this.registeredLanguages.size,
       },
       lastError: this.lastError?.message ?? null,
+      maxTokenizationLineLength: this.maxTokenizationLineLength(),
+      untokenizedLines,
     }
+  }
+
+  public highlightTheme(
+    payload: Omit<TreeSitterHighlightThemeRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    return this.trackClientTask(this.finishHighlightTheme(payload, signal))
+  }
+
+  private async finishHighlightTheme(
+    payload: Omit<TreeSitterHighlightThemeRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
+    if (!handle || this.worker !== handle) return undefined
+    const result = await this.postRequest({ type: 'highlightTheme', ...payload }, true, signal)
+    return isTreeSitterHighlightResult(result) ? result : undefined
+  }
+
+  public highlightOpen(
+    payload: Omit<TreeSitterHighlightOpenRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    return this.trackRuntimeTask(
+      payload.runtimeSessionId,
+      this.finishHighlightOpen(payload, signal),
+    )
+  }
+
+  private async finishHighlightOpen(
+    payload: Omit<TreeSitterHighlightOpenRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
+    if (!handle || this.worker !== handle) return undefined
+    const result = await this.postRequest({ type: 'highlightOpen', ...payload }, true, signal)
+    return isTreeSitterHighlightResult(result) ? result : undefined
+  }
+
+  public highlightEdit(
+    payload: Omit<TreeSitterHighlightEditRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    return this.trackRuntimeTask(
+      payload.runtimeSessionId,
+      this.finishHighlightEdit(payload, signal),
+    )
+  }
+
+  private async finishHighlightEdit(
+    payload: Omit<TreeSitterHighlightEditRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
+    if (!handle || this.worker !== handle) return undefined
+    const result = await this.postRequest({ type: 'highlightEdit', ...payload }, true, signal)
+    return isTreeSitterHighlightResult(result) ? result : undefined
+  }
+
+  public highlightRecolor(
+    payload: Omit<TreeSitterHighlightRecolorRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    return this.trackRuntimeTask(
+      payload.runtimeSessionId,
+      this.finishHighlightRecolor(payload, signal),
+    )
+  }
+
+  private async finishHighlightRecolor(
+    payload: Omit<TreeSitterHighlightRecolorRequest, 'type'>,
+    signal?: AbortSignal,
+  ): Promise<TreeSitterHighlightResult | undefined> {
+    const handle = await waitForDocumentWork(this.ensureWorkerReady(), signal)
+    if (!handle || this.worker !== handle) return undefined
+    const result = await this.postRequest({ type: 'highlightRecolor', ...payload }, true, signal)
+    return isTreeSitterHighlightResult(result) ? result : undefined
   }
 
   public registerLanguages(languages: readonly TreeSitterLanguageDescriptor[]): Promise<void> {
@@ -1061,7 +1180,10 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     this.initPromise = null
     this.registeredLanguages.clear()
     this.warmedLanguages.clear()
-    if (lifecycle === 'disposed') this.sliceLanguages.clear()
+    if (lifecycle === 'disposed') {
+      this.sliceLanguages.clear()
+      this.highlightUntokenizedLines.clear()
+    }
     this.connection = null
     this.nextRegistration = 0
   }
@@ -1071,11 +1193,17 @@ const backendBinding = Symbol('tree-sitter.backend')
 
 export class TreeSitterWorkerOwner {
   readonly #backend: TreeSitterWorkerClient
-  constructor(options: { readonly workerFactory?: () => Worker } = {}) {
+  constructor(options: TreeSitterWorkerOwnerOptions = {}) {
     this.#backend = new TreeSitterWorkerClient(options)
   }
   [backendBinding](): TreeSitterWorkerClient {
     return this.#backend
+  }
+  canUseWorker(): boolean {
+    return this.#backend.canUseWorker()
+  }
+  maxTokenizationLineLength(): number {
+    return this.#backend.maxTokenizationLineLength()
   }
   reviewBatch(payload: Omit<TreeSitterReviewBatchRequest, 'type'>) {
     return this.#backend.reviewBatch(payload)
@@ -1106,7 +1234,7 @@ export class TreeSitterWorkerOwner {
 }
 
 export function createTreeSitterWorkerOwner(
-  options: { readonly workerFactory?: () => Worker } = {},
+  options: TreeSitterWorkerOwnerOptions = {},
 ): TreeSitterWorkerOwner {
   return new TreeSitterWorkerOwner(options)
 }
@@ -1197,3 +1325,12 @@ const isTreeSitterSelectionResult = (
   result: TreeSitterWorkerResult,
 ): result is TreeSitterSelectionResult =>
   Boolean(result && 'status' in result && 'ranges' in result)
+
+const isTreeSitterHighlightResult = (
+  result: TreeSitterWorkerResult,
+): result is TreeSitterHighlightResult =>
+  Boolean(
+    result &&
+    typeof result === 'object' &&
+    ('tokensPacked' in result || 'theme' in result || 'untokenizedLines' in result),
+  )

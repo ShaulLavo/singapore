@@ -18,12 +18,13 @@ const PALETTE: HighlightTheme = {
 }
 
 function vscode(index: number): HighlightTheme {
+  const digit = (index % 16).toString(16)
   return {
     format: 'vscode',
     definition: {
       name: `burst-${index}`,
       tokenColors: [
-        { scope: ['keyword'], settings: { foreground: `#${index}0${index}0${index}0` } },
+        { scope: ['keyword'], settings: { foreground: `#${digit}0${digit}0${digit}0` } },
       ],
     },
   }
@@ -48,14 +49,14 @@ test('an interactive request waits behind at most one burst of previews', async 
 
     const rows: Record<string, number> = {}
     for (const [engine, theme] of [
-      ['shiki', vscode(0)],
-      ['tree-sitter', PALETTE],
+      ['vscode', vscode(0)],
+      ['palette', PALETTE],
     ] as const) {
       rows[`${engine} alone ms`] = await timed(interactive(theme))
       const burst = Array.from({ length: BURST }, (_, index) =>
         service.highlight(SAMPLE, {
           language: 'typescript',
-          theme: engine === 'shiki' ? vscode(index + 1) : PALETTE,
+          theme: engine === 'vscode' ? vscode(index + 1) : PALETTE,
         }),
       )
       rows[`${engine} behind ${BURST} previews ms`] = await timed(interactive(theme))

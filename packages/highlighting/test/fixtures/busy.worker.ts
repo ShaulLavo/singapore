@@ -1,19 +1,20 @@
 import { DocumentWorkerReader } from '@singapore-editor/core/internal/document-worker'
-import type { ShikiWorkerRequest } from '../../../editor/src/shiki/workerTypes'
+import type { TreeSitterWorkerRequest } from '../../../tree-sitter/src/treeSitter/types'
 
 const reader = new DocumentWorkerReader()
 
-self.onmessage = ({ data: request }: MessageEvent<ShikiWorkerRequest>) => {
-  if (request.payload.type === 'open') {
+self.onmessage = ({ data: request }: MessageEvent<TreeSitterWorkerRequest>) => {
+  if (request.payload.type === 'highlightOpen') {
     self.postMessage({ busy: true })
     for (;;) {}
   }
-  self.postMessage({
-    id: request.id,
-    ok: true,
-    result:
-      request.payload.type === 'source'
-        ? { source: reader.apply(request.payload.command) }
-        : { theme: { backgroundColor: 'ready' } },
-  })
+  if (request.payload.type === 'source') {
+    self.postMessage({ id: request.id, ok: true, result: reader.apply(request.payload.command) })
+    return
+  }
+  if (request.payload.type === 'highlightTheme') {
+    self.postMessage({ id: request.id, ok: true, result: { theme: { backgroundColor: 'ready' } } })
+    return
+  }
+  self.postMessage({ id: request.id, ok: true })
 }

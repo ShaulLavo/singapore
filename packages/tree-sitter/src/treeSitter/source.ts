@@ -1,3 +1,4 @@
+import { createEditorTextBuffer } from '@singapore-editor/core/document'
 import type { DocumentWorkerRead } from '@singapore-editor/core/internal/document-worker'
 
 export const TREE_SITTER_BOOTSTRAP_UNITS = 65_536
@@ -79,4 +80,24 @@ export function limitTreeSitterInput(
     retain: () => limitTreeSitterInput(owner, length),
     dispose: () => owner.dispose(),
   }
+}
+
+/**
+ * Wraps an in-memory string (such as long-line masked or newline-normalized text) as a
+ * `TreeSitterPieceTableInput` so multi-layer fallback parsers never read unmasked source bytes.
+ */
+export function createStringTreeSitterInput(
+  text: string,
+  base: TreeSitterPieceTableInput,
+): TreeSitterPieceTableInput {
+  const snapshot = createEditorTextBuffer(text).getTextSnapshot()
+  const read: DocumentWorkerRead = {
+    identity: base.read.identity,
+    point: base.read.point,
+    text: snapshot,
+    isValid: () => true,
+    retain: () => read,
+    dispose: () => undefined,
+  }
+  return createTreeSitterInput(read)
 }

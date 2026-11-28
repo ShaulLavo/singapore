@@ -1,6 +1,6 @@
 import { Editor } from '@singapore-editor/core/editor'
 import { createEditorTextBuffer, createEditorBufferSession } from '@singapore-editor/core/document'
-import { createShikiWorkerOwner, createShikiHighlighterPlugin } from '@singapore-editor/core/shiki'
+import { createShikiWorkerOwner, createShikiHighlighterPlugin } from '@singapore-editor/shiki'
 import { createEditorFindPlugin } from '@singapore-editor/find'
 import { createMinimapPlugin } from '@singapore-editor/minimap'
 import { createLspConsumer } from './lspConsumer'

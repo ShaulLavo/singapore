@@ -1,8 +1,10 @@
 # @singapore-editor/highlighting
 
-Worker-based syntax highlighting for Singapore editors, diffs, and code snippets.
+Worker-based Tree-sitter syntax highlighting for Singapore editors, diffs, and code snippets.
 
 Part of [Singapore](https://singapore.shaulavo.dev/). A code editor for the browser that keeps every version.
+
+Tree-sitter is the default highlighting engine for both editor palettes and VS Code themes via `@shaulavo/tree-sitter-scope-compat`, running in a single Tree-sitter worker with no Shiki or Oniguruma runtime. Only install [`@singapore-editor/shiki`](https://github.com/ShaulLavo/singapore/blob/main/packages/shiki/README.md) if you specifically want Shiki or TextMate grammars.
 
 ## Install
 
@@ -24,19 +26,8 @@ await service.dispose()
 
 ## API highlights
 
-- `createHighlightingService()` creates a service for code snippets or shared views.
+- `createHighlightingService()` creates a shared Tree-sitter service for snippets, editors, and diffs.
 - `highlightLines()` splits tokens into line segments.
 - `createHighlightingPlugin()` connects the service to an editor.
 
-[Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/highlighting/overview/)
-
-## In the Singapore family
-
-You can use this package on its own. `@singapore-editor/core` owns editor views; optional packages add syntax, search, gutters, and language features.
-Use a bundler that serves the package worker and data assets. See the [hosting guide](https://singapore.shaulavo.dev/docs/guides/bundling/).
-
-[Singapore README](https://github.com/ShaulLavo/singapore/blob/main/README.md) · [Documentation](https://singapore.shaulavo.dev/docs/start-here/introduction/)
-
-## License
-
-MIT. [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)
+[Generated API reference](https://singapore.shaulavo.dev/docs/reference/api/highlighting/overview/) · [Service docs](https://github.com/ShaulLavo/singapore/blob/main/packages/highlighting/docs/service.md) · [License](https://github.com/ShaulLavo/singapore/blob/main/LICENSE)

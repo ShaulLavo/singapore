@@ -61,6 +61,7 @@
         "@singapore-editor/minimap": "workspace:*",
         "@singapore-editor/paged": "workspace:*",
         "@singapore-editor/scope-lines": "workspace:*",
+        "@singapore-editor/shiki": "workspace:*",
         "@singapore-editor/tree-sitter": "workspace:*",
         "@singapore-editor/tree-sitter-languages": "workspace:*",
         "evlog": "^2.29.0",
@@ -109,7 +110,7 @@
         "oxlint": "1.85.0",
         "typescript": "7.0.2",
         "vitest": "5.0.2",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#235d18bff9e7942bcb4a0554a3477ab7ba82f24c",
       },
     },
     "packages/diff": {
@@ -132,16 +133,12 @@
       "version": "0.2.14",
       "dependencies": {
         "@shaulavo/hotkeys": "catalog:",
-        "@shikijs/engine-oniguruma": "4.4.3",
         "@singapore-editor/textbuffer": "workspace:*",
         "diff": "^9.0.0",
         "evlog": "^2.29.0",
-        "shiki": "^4.4.3",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
-        "@shikijs/langs": "4.4.3",
-        "@shikijs/themes": "4.4.3",
         "@types/bun": "catalog:",
         "@vitest/browser-playwright": "5.0.2",
         "happy-dom": "^20.14.5",
@@ -207,7 +204,6 @@
         "@singapore-editor/diff": "workspace:*",
         "@singapore-editor/tree-sitter": "workspace:*",
         "@singapore-editor/tree-sitter-languages": "workspace:*",
-        "shiki": "^4.4.3",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -354,6 +350,7 @@
         "@playwright/test": "^1.63.0",
         "@shikijs/langs": "4.4.3",
         "@shikijs/themes": "4.4.3",
+        "@singapore-editor/shiki": "workspace:*",
         "@types/react": "19.3.0",
         "@types/react-dom": "19.3.0",
         "@vitest/browser-playwright": "5.0.2",
@@ -386,6 +383,30 @@
         "oxlint": "1.85.0",
         "typescript": "7.0.2",
         "vitest": "5.0.2",
+      },
+    },
+    "packages/shiki": {
+      "name": "@singapore-editor/shiki",
+      "version": "0.1.0",
+      "dependencies": {
+        "@shikijs/engine-oniguruma": "4.4.3",
+        "shiki": "^4.4.3",
+      },
+      "devDependencies": {
+        "@playwright/test": "^1.63.0",
+        "@shikijs/langs": "4.4.3",
+        "@shikijs/themes": "4.4.3",
+        "@singapore-editor/core": "workspace:*",
+        "@types/node": "^26.6.3",
+        "@vitest/browser-playwright": "5.0.2",
+        "happy-dom": "^20.14.5",
+        "oxfmt": "0.70.0",
+        "oxlint": "1.85.0",
+        "typescript": "7.0.2",
+        "vitest": "5.0.2",
+      },
+      "peerDependencies": {
+        "@singapore-editor/core": "workspace:*",
       },
     },
     "packages/solid": {
@@ -446,13 +467,13 @@
       "name": "@singapore-editor/tree-sitter",
       "version": "0.2.16",
       "dependencies": {
+        "@shaulavo/tree-sitter-scope-compat": "github:ShaulLavo/tree-sitter-x#5525cb7bc63e7ceb0ab7bba53159d128c37aae7b",
         "@singapore-editor/core": "workspace:*",
         "tree-sitter-md": "github:ShaulLavo/tree-sitter-md#f02e277a34375f326572b4ade2602f44ac769005",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#235d18bff9e7942bcb4a0554a3477ab7ba82f24c",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
-        "@shikijs/langs": "4.4.3",
         "@shikijs/themes": "4.4.3",
         "@types/node": "^26.6.3",
         "@vitest/browser-playwright": "5.0.2",
@@ -500,7 +521,7 @@
         "oxlint": "1.85.0",
         "typescript": "7.0.2",
         "vitest": "5.0.2",
-        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
+        "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#235d18bff9e7942bcb4a0554a3477ab7ba82f24c",
       },
       "peerDependencies": {
         "@singapore-editor/core": "workspace:*",
@@ -550,6 +571,7 @@
         "@singapore-editor/plugin-ui": "workspace:*",
         "@singapore-editor/react": "workspace:*",
         "@singapore-editor/scope-lines": "workspace:*",
+        "@singapore-editor/shiki": "workspace:*",
         "@singapore-editor/solid": "workspace:*",
         "@singapore-editor/spellcheck": "workspace:*",
         "@singapore-editor/textbuffer": "workspace:*",
@@ -590,7 +612,7 @@
     "@vitest/browser-playwright@5.0.2": "patches/@vitest%2Fbrowser-playwright@5.0.2.patch",
   },
   "overrides": {
-    "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65",
+    "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#235d18bff9e7942bcb4a0554a3477ab7ba82f24c",
   },
   "catalog": {
     "@shaulavo/hotkeys": "^0.0.4",
@@ -1062,6 +1084,10 @@
 
     "@shaulavo/hotkeys": ["@shaulavo/hotkeys@0.0.4", "", { "dependencies": { "@tanstack/store": "^0.11.1" }, "peerDependencies": { "@tanstack/react-store": "^0.11.1", "react": ">=18", "react-dom": ">=18" }, "optionalPeers": ["@tanstack/react-store", "react", "react-dom"] }, "sha512-CFFlIU0zSouq7wmNRcB87MM6VNA4yaOXvN4ZaoZ+J2UZn6Erw180gV22uYOdsPvFH1Uw/QaLDg6SxpL75bOQ9w=="],
 
+    "@shaulavo/tree-sitter-scope-compat": ["@shaulavo/tree-sitter-scope-compat@github:ShaulLavo/tree-sitter-x#5525cb7", { "peerDependencies": { "@shaulavo/web-tree-sitter-x": ">=0.28.0" } }, "ShaulLavo-tree-sitter-x-5525cb7", "sha512-fObkry4koZpRo+/u1M56hJqLh6gYMnaxPVdDp91DcVBscGV97gjCvllNQI78bueqH3iy12ajr67cqOVA01D1Tw=="],
+
+    "@shaulavo/web-tree-sitter-x": ["@shaulavo/web-tree-sitter-x@0.28.6", "", {}, "sha512-0s+HxMSIeF6t6eofPdF77FqFZTHEMubf9imykyyOveXCBJ3flDjkCcRoprTgQypzj0vqyiuMwE1t+QZxFA4E/Q=="],
+
     "@shikijs/core": ["@shikijs/core@4.5.0", "", { "dependencies": { "@shikijs/primitive": "4.5.0", "@shikijs/types": "4.5.0", "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5", "hast-util-to-html": "^9.0.5" } }, "sha512-6CIgwq+bt2JZ3OSjb/nBkkwEf/CfpHcbam+Mg5Pllco7HAGRQ2/EFhZrrJtbyNTgKwknfVS+llsXGygiDGwJWw=="],
 
     "@shikijs/engine-javascript": ["@shikijs/engine-javascript@4.5.0", "", { "dependencies": { "@shikijs/types": "4.5.0", "@shikijs/vscode-textmate": "^10.0.2", "oniguruma-to-es": "^4.3.6" } }, "sha512-Ed6UdEj84LyYkwnxM5CvSMWAD+id9ExTYri0/+x41U9zrgNifPSS9lZm0JqBP0VfYI8yr8tY5nbNq9+p9R0kFA=="],
@@ -1072,9 +1098,9 @@
 
     "@shikijs/primitive": ["@shikijs/primitive@4.5.0", "", { "dependencies": { "@shikijs/types": "4.5.0", "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UM7ShlA8oz0OWxLLO8BmO9Ip6fVqdkt8yF0EH7nOCqHfrx1eEAzF0ZUVK7L+I8NEgeu1PEWSRlxaiPPeCb4iDg=="],
 
-    "@shikijs/themes": ["@shikijs/themes@4.4.3", "", { "dependencies": { "@shikijs/types": "4.4.3" } }, "sha512-w8UHjeUnIR965KMWJHUPXOc2mNJUnK3vpVLYLvw5IYU2mnTTJ89E24OrJDBNiJDQ0qzb0tc4l7mrIXx5cFeIyw=="],
+    "@shikijs/themes": ["@shikijs/themes@4.5.0", "", { "dependencies": { "@shikijs/types": "4.5.0" } }, "sha512-zGb87H3UBbpuI4yoh5UguB1XbU+2BDU3kflM7UfZ+Cy2hWo9lBtqjSVK20gmLY6ukYl040hAypGXMgud9vul8Q=="],
 
-    "@shikijs/types": ["@shikijs/types@4.4.3", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UEJxmRR++MAGR6hugn0vgVS2W/6lWAts84FFSrnlH9sP0LNol7E5+NQ792pH8liWUhyMyjhTgSUH3k7iD7tc5g=="],
+    "@shikijs/types": ["@shikijs/types@4.5.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-drtPrtD8N0DENyD2cyt6Ajy+IWsiCLgMxODwLTpvH1UsN6a9jf90tNTPjqwHvA+0Lzu9e0txk8DjfqH1p9UJRw=="],
 
     "@shikijs/vscode-textmate": ["@shikijs/vscode-textmate@10.1.0", "", {}, "sha512-cVBuhDQjBZaNMTwBquYfPydrUP+E3hE6oYGasx8h6ZrODIM7/r+gxLDXdd66oszbrggZHEntdE6j+5gYIVyMWQ=="],
 
@@ -1113,6 +1139,8 @@
     "@singapore-editor/react": ["@singapore-editor/react@workspace:packages/react"],
 
     "@singapore-editor/scope-lines": ["@singapore-editor/scope-lines@workspace:packages/scope-lines"],
+
+    "@singapore-editor/shiki": ["@singapore-editor/shiki@workspace:packages/shiki"],
 
     "@singapore-editor/solid": ["@singapore-editor/solid@workspace:packages/solid"],
 
@@ -2028,7 +2056,7 @@
 
     "web-namespaces": ["web-namespaces@2.0.1", "", {}, "sha512-bKr1DkiNa2krS7qxNtdrtHAmzuYGFQLiQ13TsorsdT6ULTkPLKuu5+GsFpDlg6JFjUTwX2DyhMPG2be8uPrqsQ=="],
 
-    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#33a55c7", {}, "ShaulLavo-tree-sitter-x-33a55c7", "sha512-Ujnr04TVZW85BnGxkpf+UaDKtmfjppaOGD5xOo3QZjMqVbNA8TXnNrFWvFb9z/qJnT6RCsIZcDyS0eUNbMP4/g=="],
+    "web-tree-sitter": ["web-tree-sitter@github:ShaulLavo/tree-sitter-x#235d18b", {}, "ShaulLavo-tree-sitter-x-235d18b", "sha512-2w0Jlyc+P8vVKpU7pbuITUhG4U2oWzioz84+OGb88ZysrhB5sThGJHQviXKeaOZ3zlwUUzqveYYMnZ02FWSGcg=="],
 
     "whatwg-mimetype": ["whatwg-mimetype@3.0.0", "", {}, "sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q=="],
 
@@ -2076,13 +2104,17 @@
 
     "@playwright/test/playwright": ["playwright@1.64.1", "", { "dependencies": { "playwright-core": "1.64.1" }, "bin": { "playwright": "cli.js" } }, "sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn1tsTCPZxqHhHCfVURu7UA=="],
 
-    "@shikijs/core/@shikijs/types": ["@shikijs/types@4.5.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-drtPrtD8N0DENyD2cyt6Ajy+IWsiCLgMxODwLTpvH1UsN6a9jf90tNTPjqwHvA+0Lzu9e0txk8DjfqH1p9UJRw=="],
+    "@shikijs/engine-oniguruma/@shikijs/types": ["@shikijs/types@4.4.3", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UEJxmRR++MAGR6hugn0vgVS2W/6lWAts84FFSrnlH9sP0LNol7E5+NQ792pH8liWUhyMyjhTgSUH3k7iD7tc5g=="],
 
-    "@shikijs/engine-javascript/@shikijs/types": ["@shikijs/types@4.5.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-drtPrtD8N0DENyD2cyt6Ajy+IWsiCLgMxODwLTpvH1UsN6a9jf90tNTPjqwHvA+0Lzu9e0txk8DjfqH1p9UJRw=="],
+    "@shikijs/langs/@shikijs/types": ["@shikijs/types@4.4.3", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UEJxmRR++MAGR6hugn0vgVS2W/6lWAts84FFSrnlH9sP0LNol7E5+NQ792pH8liWUhyMyjhTgSUH3k7iD7tc5g=="],
 
-    "@shikijs/primitive/@shikijs/types": ["@shikijs/types@4.5.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-drtPrtD8N0DENyD2cyt6Ajy+IWsiCLgMxODwLTpvH1UsN6a9jf90tNTPjqwHvA+0Lzu9e0txk8DjfqH1p9UJRw=="],
+    "@singapore-editor/react/@shikijs/themes": ["@shikijs/themes@4.4.3", "", { "dependencies": { "@shikijs/types": "4.4.3" } }, "sha512-w8UHjeUnIR965KMWJHUPXOc2mNJUnK3vpVLYLvw5IYU2mnTTJ89E24OrJDBNiJDQ0qzb0tc4l7mrIXx5cFeIyw=="],
 
-    "@singapore-editor/highlighting/@shikijs/themes": ["@shikijs/themes@4.5.0", "", { "dependencies": { "@shikijs/types": "4.5.0" } }, "sha512-zGb87H3UBbpuI4yoh5UguB1XbU+2BDU3kflM7UfZ+Cy2hWo9lBtqjSVK20gmLY6ukYl040hAypGXMgud9vul8Q=="],
+    "@singapore-editor/shiki/@shikijs/themes": ["@shikijs/themes@4.4.3", "", { "dependencies": { "@shikijs/types": "4.4.3" } }, "sha512-w8UHjeUnIR965KMWJHUPXOc2mNJUnK3vpVLYLvw5IYU2mnTTJ89E24OrJDBNiJDQ0qzb0tc4l7mrIXx5cFeIyw=="],
+
+    "@singapore-editor/stress/@shikijs/themes": ["@shikijs/themes@4.4.3", "", { "dependencies": { "@shikijs/types": "4.4.3" } }, "sha512-w8UHjeUnIR965KMWJHUPXOc2mNJUnK3vpVLYLvw5IYU2mnTTJ89E24OrJDBNiJDQ0qzb0tc4l7mrIXx5cFeIyw=="],
+
+    "@singapore-editor/tree-sitter/@shikijs/themes": ["@shikijs/themes@4.4.3", "", { "dependencies": { "@shikijs/types": "4.4.3" } }, "sha512-w8UHjeUnIR965KMWJHUPXOc2mNJUnK3vpVLYLvw5IYU2mnTTJ89E24OrJDBNiJDQ0qzb0tc4l7mrIXx5cFeIyw=="],
 
     "anymatch/picomatch": ["picomatch@2.3.2", "", {}, "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA=="],
 
@@ -2108,10 +2140,6 @@
 
     "shiki/@shikijs/langs": ["@shikijs/langs@4.5.0", "", { "dependencies": { "@shikijs/types": "4.5.0" } }, "sha512-wwBTqwduXSz0X4v9Qa2EWeFaYJEw1clCncWjoRNQRbVDu3SPRTRWucnouYapKj3b8Q+sk/41Vbc4B5c8nuYzLA=="],
 
-    "shiki/@shikijs/themes": ["@shikijs/themes@4.5.0", "", { "dependencies": { "@shikijs/types": "4.5.0" } }, "sha512-zGb87H3UBbpuI4yoh5UguB1XbU+2BDU3kflM7UfZ+Cy2hWo9lBtqjSVK20gmLY6ukYl040hAypGXMgud9vul8Q=="],
-
-    "shiki/@shikijs/types": ["@shikijs/types@4.5.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-drtPrtD8N0DENyD2cyt6Ajy+IWsiCLgMxODwLTpvH1UsN6a9jf90tNTPjqwHvA+0Lzu9e0txk8DjfqH1p9UJRw=="],
-
     "singapore-editor-site/@types/react": ["@types/react@19.2.17", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-MXfmqaVPEVgkBT/aY0aGCkRWWtByiYQXo3xdQ8r5RzuFrPiRn8Gar2tQdXSUQ2GKV3bkXckek89V8wQBY2Q/Aw=="],
 
     "singapore-editor-site/react": ["react@19.2.7", "", {}, "sha512-HNe9WslTbXmFK8o8cmwgAeJFSBvt1bPdHCVKtaaV+WlAN36mpT4hcRpwbf3fY56ar2oIXzsBpOAiIRHAdY0OlQ=="],
@@ -2132,7 +2160,13 @@
 
     "@playwright/test/playwright/playwright-core": ["playwright-core@1.64.1", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ=="],
 
-    "@singapore-editor/highlighting/@shikijs/themes/@shikijs/types": ["@shikijs/types@4.5.0", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-drtPrtD8N0DENyD2cyt6Ajy+IWsiCLgMxODwLTpvH1UsN6a9jf90tNTPjqwHvA+0Lzu9e0txk8DjfqH1p9UJRw=="],
+    "@singapore-editor/react/@shikijs/themes/@shikijs/types": ["@shikijs/types@4.4.3", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UEJxmRR++MAGR6hugn0vgVS2W/6lWAts84FFSrnlH9sP0LNol7E5+NQ792pH8liWUhyMyjhTgSUH3k7iD7tc5g=="],
+
+    "@singapore-editor/shiki/@shikijs/themes/@shikijs/types": ["@shikijs/types@4.4.3", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UEJxmRR++MAGR6hugn0vgVS2W/6lWAts84FFSrnlH9sP0LNol7E5+NQ792pH8liWUhyMyjhTgSUH3k7iD7tc5g=="],
+
+    "@singapore-editor/stress/@shikijs/themes/@shikijs/types": ["@shikijs/types@4.4.3", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UEJxmRR++MAGR6hugn0vgVS2W/6lWAts84FFSrnlH9sP0LNol7E5+NQ792pH8liWUhyMyjhTgSUH3k7iD7tc5g=="],
+
+    "@singapore-editor/tree-sitter/@shikijs/themes/@shikijs/types": ["@shikijs/types@4.4.3", "", { "dependencies": { "@shikijs/vscode-textmate": "^10.0.2", "@types/hast": "^3.0.5" } }, "sha512-UEJxmRR++MAGR6hugn0vgVS2W/6lWAts84FFSrnlH9sP0LNol7E5+NQ792pH8liWUhyMyjhTgSUH3k7iD7tc5g=="],
 
     "csso/css-tree/mdn-data": ["mdn-data@2.0.28", "", {}, "sha512-aylIc7Z9y4yzHYAJNuESG3hfhC+0Ibp/MAMiaOZgNv4pmEdFyfZhhhny4MNiAfWdBQ1RQ2mfDWmM1x8SvGyp8g=="],
 

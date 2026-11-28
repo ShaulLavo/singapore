@@ -13,6 +13,7 @@ const screenshotDirectory = runTempDir('tree-sitter-screenshots')
 const languagePackageDir = resolve(packageDir, '../tree-sitter-languages')
 const servedDependencyRoots = uniqueItems(
   [
+    '@shaulavo/tree-sitter-scope-compat',
     'web-tree-sitter',
     'tree-sitter-md',
     'tree-sitter-css',

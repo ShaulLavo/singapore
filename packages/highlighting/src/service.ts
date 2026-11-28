@@ -8,29 +8,23 @@ import {
   effectiveEditorTheme,
   resolveEditorThemeColor,
   type EditorTheme,
+  type VscodeThemeRegistration,
 } from '@singapore-editor/core/rendering'
 import { createSnippetDocument, type EditorToken } from '@singapore-editor/core/syntax'
 import {
-  createShikiHighlighterProvider,
-  createShikiWorkerOwner,
-  shikiLanguageForDocument,
-  type ShikiWorkerLanguageRegistration,
-  type ShikiWorkerOwner,
-  type ShikiWorkerOwnerSnapshot,
-  type ShikiWorkerThemeRegistration,
-  type VscodeThemeRegistration,
-} from '@singapore-editor/core/shiki'
-import {
+  createTreeSitterHighlighterProvider,
   createTreeSitterSyntaxProvider,
   createTreeSitterWorkerOwner,
-  type TreeSitterWorkerOwner,
+  treeSitterHighlightLanguageForDocument,
   type TreeSitterSyntaxProvider,
+  type TreeSitterWorkerOwner,
+  type TreeSitterWorkerOwnerSnapshot,
 } from '@singapore-editor/tree-sitter'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '@singapore-editor/tree-sitter-languages/catalog'
 import { TREE_SITTER_LANGUAGE_METADATA } from '@singapore-editor/tree-sitter-languages/metadata'
 
 import { DiffSyntaxStore, type DiffSyntaxSnapshot, type HighlightingDiffView } from './diffs'
-import { HIGHLIGHTING_DOCUMENT_LANGUAGES, highlightingGrammar, loadGrammar } from './languages'
+import { HIGHLIGHTING_DOCUMENT_LANGUAGES, highlightingGrammar } from './languages'
 import {
   resolveHighlightTheme,
   revisionName,
@@ -62,9 +56,8 @@ export type HighlightingServiceOptions = {
   readonly resolveTheme?: (id: string) => Promise<VscodeThemeRegistration>
   /** Languages to prepare after first paint; `null` prepares Editor's default grammar set. */
   readonly preloadLanguages?: () => readonly HighlightingLanguage[] | null
-  readonly shikiWorker?: () => Worker
   readonly treeSitterWorker?: () => Worker
-  /** Read on every Shiki document open and snippet; documents pick up a change on their next request. */
+  /** Read on every document open and snippet; documents pick up a change on their next request. */
   readonly maxTokenizationLineLength?: () => number
 }
 
@@ -95,7 +88,7 @@ export type HighlightingServiceSnapshot = {
   /** Contributions retained by standalone snippets until their request ends. */
   readonly snippetSessions: number
   readonly diffs: DiffSyntaxSnapshot
-  readonly shiki: ShikiWorkerOwnerSnapshot | null
+  readonly treeSitter: TreeSitterWorkerOwnerSnapshot | null
 }
 
 export interface HighlightingService {
@@ -152,7 +145,6 @@ const DEFAULT_PRELOAD_GRAMMARS = [
   'html',
   'javascript',
   'json',
-  'jsx',
   'markdown',
   'tsx',
   'typescript',
@@ -178,7 +170,6 @@ export function createHighlightingService(
 }
 
 class EditorHighlightingService implements HighlightingService {
-  private shikiOwner: ShikiWorkerOwner | null = null
   private treeSitterBackend: TreeSitterWorkerOwner | null = null
   private treeSitterProvider: TreeSitterSyntaxProvider | null = null
   private readonly highlighterProviders = new WeakMap<
@@ -195,7 +186,6 @@ class EditorHighlightingService implements HighlightingService {
   private defaultTheme: Promise<HighlightTheme> | null = null
   private snippetSessions = 0
   private nextSnippetId = 1
-  private readonly grammars = new Map<string, Promise<readonly ShikiWorkerLanguageRegistration[]>>()
   private readonly pending = new Set<Promise<unknown>>()
   // Callers waiting on shared acquisition settle when the service goes; the acquisition itself
   // belongs to no single caller.
@@ -205,7 +195,7 @@ class EditorHighlightingService implements HighlightingService {
   private readonly documentThemes = new Map<string, { revision: string; name: string }>()
   // The exact registration each worker name was given, captured with its revision: resolving the
   // id again later could return newer content under an older revision's name.
-  private readonly documentThemeContent = new Map<string, ShikiWorkerThemeRegistration>()
+  private readonly documentThemeContent = new Map<string, VscodeThemeRegistration>()
   // The latest notification per id; an acquisition that a newer one overtook publishes nothing.
   private readonly documentThemeRefreshes = new Map<string, number>()
   private disposeTask: Promise<void> | null = null
@@ -227,7 +217,7 @@ class EditorHighlightingService implements HighlightingService {
     this.assertLive()
     if (this.treeSitterProvider) return this.treeSitterProvider
 
-    const backend = createTreeSitterWorkerOwner({ workerFactory: this.options.treeSitterWorker })
+    const backend = this.ensureTreeSitterBackend()
     const provider = createTreeSitterSyntaxProvider({
       workerOwner: backend,
       warmLanguages: () => this.treeSitterPreload(),
@@ -235,7 +225,6 @@ class EditorHighlightingService implements HighlightingService {
     for (const contribution of TREE_SITTER_LANGUAGE_CONTRIBUTIONS) {
       provider.registerLanguage(contribution, { replace: true })
     }
-    this.treeSitterBackend = backend
     this.treeSitterProvider = provider
     return provider
   }
@@ -245,14 +234,16 @@ class EditorHighlightingService implements HighlightingService {
     const existing = this.highlighterProviders.get(theme)
     if (existing) return existing
 
-    const provider = createShikiHighlighterProvider({
+    const syntax = this.syntaxProvider()
+    const provider = createTreeSitterHighlighterProvider({
       languages: HIGHLIGHTING_DOCUMENT_LANGUAGES,
-      preloadLanguages: () => this.shikiPreload(),
+      languageResolver: syntax,
+      warmLanguages: () => this.highlightPreload(),
       onThemeChanged: theme.subscribe && ((listener) => this.onDocumentTheme(theme, listener)),
-      resolveLanguage: (language) => this.grammar(language),
       resolveTheme: (name) => this.importedTheme(name),
       theme: () => this.documentThemeName(this.importedThemeId(theme)),
-      workerOwner: this.shiki(),
+      workerOwner: this.ensureTreeSitterBackend(),
+      maxTokenizationLineLength: this.options.maxTokenizationLineLength,
     })
     this.highlighterProviders.set(theme, provider)
     return provider
@@ -301,17 +292,11 @@ class EditorHighlightingService implements HighlightingService {
 
   public async awaitIdle(): Promise<void> {
     await Promise.allSettled(this.pending)
-    await Promise.all([
-      this.treeSitterBackend?.awaitIdleFence?.() ?? Promise.resolve(),
-      this.shikiOwner?.awaitIdleFence() ?? Promise.resolve(),
-    ])
+    await (this.treeSitterBackend?.awaitIdleFence?.() ?? Promise.resolve())
   }
 
   public async awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
-    await Promise.all([
-      this.treeSitterBackend?.awaitRuntimeSessionIdle?.(runtimeSessionId) ?? Promise.resolve(),
-      this.shikiOwner?.awaitRuntimeSessionIdle(runtimeSessionId) ?? Promise.resolve(),
-    ])
+    await (this.treeSitterBackend?.awaitRuntimeSessionIdle?.(runtimeSessionId) ?? Promise.resolve())
   }
 
   public inspect(): HighlightingServiceSnapshot {
@@ -320,7 +305,7 @@ class EditorHighlightingService implements HighlightingService {
       pendingHighlights: this.pending.size,
       snippetSessions: this.snippetSessions,
       diffs: this.diffs.inspect(),
-      shiki: this.shikiOwner?.inspect() ?? null,
+      treeSitter: this.treeSitterBackend?.inspect() ?? null,
     }
   }
 
@@ -331,19 +316,16 @@ class EditorHighlightingService implements HighlightingService {
     this.disposeTask = completion.promise
     this.lifetime.abort()
     const pending = [...this.pending]
-    const shiki = this.shikiOwner
     const treeSitter = this.treeSitterBackend
-    this.shikiOwner = null
     this.treeSitterBackend = null
     this.treeSitterProvider = null
     this.defaultTheme = null
-    this.grammars.clear()
     this.documentThemes.clear()
     this.documentThemeContent.clear()
     this.documentThemeRefreshes.clear()
     this.diffs.dispose()
     void Promise.allSettled(pending)
-      .then(() => Promise.allSettled([shiki?.dispose(), treeSitter?.dispose?.()]))
+      .then(() => Promise.allSettled([treeSitter?.dispose?.()]))
       .then(() => completion.resolve(), completion.reject)
     return this.disposeTask
   }
@@ -359,38 +341,29 @@ class EditorHighlightingService implements HighlightingService {
     }
     const theme = resolveHighlightTheme(requested)
     const grammar = highlightingGrammar(highlight.language)
-    // An unknown language is documented plain text; a known grammar that fails to load is an
-    // outage the caller must not cache as a result.
-    const languageRegistrations = grammar
-      ? await this.live(this.grammar(grammar), signal).catch((error: unknown) => {
-          if (error instanceof HighlightingError) throw error
-          throw new HighlightingError('failed', `The ${grammar} grammar did not load`, {
-            cause: error,
-          })
-        })
-      : []
-    const lang = grammar
     this.assertLive()
     const snippet = createSnippetDocument(text, 'as-submitted')
     const analysis = createEditorDocumentAnalysis({
       buffer: snippet.buffer,
       documentId: `highlight-snippet-${this.nextSnippetId++}`,
     })
-    const provider = createShikiHighlighterProvider({
-      workerOwner: this.shiki(),
-      resolveLanguage: async () => languageRegistrations,
+    const syntax = this.syntaxProvider()
+    const provider = createTreeSitterHighlighterProvider({
+      workerOwner: this.ensureTreeSitterBackend(),
+      languageResolver: syntax,
       resolveTheme: async () => ({ ...theme.registration, name: theme.revision }),
       theme: theme.revision,
-      languages: lang ? { [lang]: lang } : {},
+      languages: grammar ? { [grammar]: grammar } : {},
+      maxTokenizationLineLength: this.options.maxTokenizationLineLength,
     })
     this.snippetSessions++
     try {
-      const result = lang
+      const result = grammar
         ? await this.live(
             analysis.contributions
               .request(
                 provider.operation,
-                { languageId: lang },
+                { languageId: grammar },
                 {
                   kind: 'latest',
                   audience: analysis.contributions.createAudience({ signal }),
@@ -409,18 +382,27 @@ class EditorHighlightingService implements HighlightingService {
           )
         : { tokens: [], theme: await this.live(provider.loadTheme!(), signal) }
       this.assertLive()
-      if (!result)
+      if (!result) {
         throw new HighlightingError(
           'unavailable',
           'This environment cannot start a highlighting worker',
         )
+      }
       const tokens = snippet.submittedTokens(result.tokens).map(freezeToken)
       return Object.freeze({
-        language: lang ?? PLAIN_TEXT,
+        language: grammar ?? PLAIN_TEXT,
         themeRevision: theme.revision,
         tokens: Object.freeze(tokens),
-        foreground: result.theme?.foregroundColor ?? theme.registration.fg ?? DEFAULT_FOREGROUND,
-        background: result.theme?.backgroundColor ?? theme.registration.bg ?? DEFAULT_BACKGROUND,
+        foreground:
+          result.theme?.foregroundColor ??
+          theme.registration.colors?.['editor.foreground'] ??
+          theme.registration.fg ??
+          DEFAULT_FOREGROUND,
+        background:
+          result.theme?.backgroundColor ??
+          theme.registration.colors?.['editor.background'] ??
+          theme.registration.bg ??
+          DEFAULT_BACKGROUND,
       })
     } catch (error) {
       if (error instanceof HighlightingError) throw error
@@ -521,7 +503,7 @@ class EditorHighlightingService implements HighlightingService {
   }
 
   private loadDefaultTheme(): Promise<HighlightTheme> {
-    // Import only the default theme so consumer bundlers do not emit every bundled Shiki theme.
+    // Import only the default static theme JSON so consumer bundlers emit zero Shiki runtime.
     this.defaultTheme ??= import('@shikijs/themes/github-dark').then((module): HighlightTheme => ({
       format: 'vscode',
       definition: module.default as unknown as VscodeThemeRegistration,
@@ -538,25 +520,15 @@ class EditorHighlightingService implements HighlightingService {
     return `${this.documentBackend(theme).kind}:${id}`
   }
 
-  private shiki(): ShikiWorkerOwner {
+  private ensureTreeSitterBackend(): TreeSitterWorkerOwner {
     this.assertLive()
-    if (this.shikiOwner) return this.shikiOwner
+    if (this.treeSitterBackend) return this.treeSitterBackend
 
-    this.shikiOwner = createShikiWorkerOwner({
-      workerFactory: this.options.shikiWorker,
+    this.treeSitterBackend = createTreeSitterWorkerOwner({
+      workerFactory: this.options.treeSitterWorker,
       maxTokenizationLineLength: this.options.maxTokenizationLineLength,
     })
-    return this.shikiOwner
-  }
-
-  private grammar(language: string): Promise<readonly ShikiWorkerLanguageRegistration[]> {
-    const existing = this.grammars.get(language)
-    if (existing) return existing
-
-    const pending = loadGrammar(language)
-    this.grammars.set(language, pending)
-    void pending.catch(() => this.grammars.delete(language))
-    return pending
+    return this.treeSitterBackend
   }
 
   // `name` is the id, or the id's revision name after its content changed.
@@ -628,17 +600,19 @@ class EditorHighlightingService implements HighlightingService {
     throw new Error('Documents requested imported-theme colors under a built-in palette')
   }
 
-  private shikiPreload(): readonly string[] {
+  private highlightPreload(): readonly string[] {
     const languages = this.options.preloadLanguages?.()
     if (!languages) return DEFAULT_PRELOAD_GRAMMARS
 
     const grammars = new Set<string>()
     for (const language of languages) {
-      const grammar = shikiLanguageForDocument(
+      const resolved = treeSitterHighlightLanguageForDocument(
         { documentId: language.documentId ?? '', languageId: language.languageId },
         HIGHLIGHTING_DOCUMENT_LANGUAGES,
       )
-      if (grammar) grammars.add(grammar)
+      if (!resolved) continue
+      const canonical = TREE_SITTER_ALIASES.get(resolved.languageId.toLowerCase())
+      if (canonical) grammars.add(canonical)
     }
     return [...grammars]
   }
@@ -659,7 +633,7 @@ class EditorHighlightingService implements HighlightingService {
   }
 }
 
-/** The Tree-sitter language a label or alias names; languages it lacks stay with Shiki. */
+/** The Tree-sitter language a label or alias names. */
 function structureLanguage(language: string): string | null {
   return TREE_SITTER_ALIASES.get(language.trim().toLowerCase()) ?? null
 }

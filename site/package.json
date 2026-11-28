@@ -31,6 +31,7 @@
     "@singapore-editor/plugin-ui": "workspace:*",
     "@singapore-editor/react": "workspace:*",
     "@singapore-editor/scope-lines": "workspace:*",
+    "@singapore-editor/shiki": "workspace:*",
     "@singapore-editor/solid": "workspace:*",
     "@singapore-editor/spellcheck": "workspace:*",
     "@singapore-editor/textbuffer": "workspace:*",

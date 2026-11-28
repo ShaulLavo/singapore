@@ -1,0 +1,69 @@
+{
+  "name": "@singapore-editor/shiki",
+  "version": "0.1.0",
+  "description": "Optional Shiki and TextMate syntax highlighter for Singapore editors. Tree-sitter is the default.",
+  "keywords": [
+    "browser",
+    "editor",
+    "shiki",
+    "singapore",
+    "syntax-highlighting",
+    "textmate",
+    "typescript"
+  ],
+  "homepage": "https://singapore.shaulavo.dev/docs/reference/api/shiki/overview/",
+  "bugs": {
+    "url": "https://github.com/ShaulLavo/singapore/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShaulLavo/singapore.git"
+  },
+  "files": [
+    "README.md",
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "build": "bun ../../scripts/build-package.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@shikijs/engine-oniguruma": "4.4.3",
+    "shiki": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@shikijs/langs": "4.4.3",
+    "@shikijs/themes": "4.4.3",
+    "@singapore-editor/core": "workspace:*",
+    "@types/node": "^26.6.3",
+    "@vitest/browser-playwright": "5.0.2",
+    "happy-dom": "^20.14.5",
+    "oxfmt": "0.70.0",
+    "oxlint": "1.85.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.2"
+  },
+  "peerDependencies": {
+    "@singapore-editor/core": "workspace:*"
+  }
+}

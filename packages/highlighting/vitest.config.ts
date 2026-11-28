@@ -62,13 +62,9 @@ export default defineConfig({
         },
       },
       {
-        // The real Shiki worker and grammars.
+        // The real Tree-sitter worker, scope-compat WASM, and grammars.
         optimizeDeps: {
-          include: [
-            '@singapore-editor/core > @shikijs/engine-oniguruma',
-            '@singapore-editor/core > @shikijs/engine-oniguruma/wasm-inlined',
-            'shiki/core',
-          ],
+          exclude: ['web-tree-sitter', 'tree-sitter-md', '@shaulavo/tree-sitter-scope-compat'],
         },
         plugins: [browserTestResponses(), grammarOutages],
         test: {

@@ -21,6 +21,12 @@ describe('highlighting service without a worker', () => {
     expect(failure.name).toBe('AbortError')
   })
 
+  test('returns null for Object.prototype property names in highlightingGrammar', () => {
+    expect(highlightingGrammar('constructor')).toBeNull()
+    expect(highlightingGrammar('__proto__')).toBeNull()
+    expect(highlightingGrammar('toString')).toBeNull()
+  })
+
   test('refuses work after disposal, and disposing twice is safe', async () => {
     const service = createHighlightingService()
     await service.dispose()
@@ -111,13 +117,13 @@ describe('highlighting service without a worker', () => {
 })
 
 describe('highlightingGrammar', () => {
-  test('keeps the wide Shiki language set and its aliases', () => {
+  test('resolves Tree-sitter languages and aliases without Shiki', () => {
     expect(highlightingGrammar('ts')).toBe('typescript')
     expect(highlightingGrammar('typescriptreact')).toBe('tsx')
     expect(highlightingGrammar('javascriptreact')).toBe('jsx')
-    expect(highlightingGrammar(' Shell ')).toBe('shellscript')
-    // Languages only Shiki supplies stay available to fences.
-    expect(highlightingGrammar('haskell')).toBe('haskell')
+    expect(highlightingGrammar(' Bash ')).toBe('shellscript')
+    expect(highlightingGrammar('rs')).toBe('rust')
+    expect(highlightingGrammar('py')).toBe('python')
     expect(highlightingGrammar('no-such-language')).toBeNull()
   })
 })

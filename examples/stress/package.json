@@ -38,6 +38,7 @@
     "@singapore-editor/minimap": "workspace:*",
     "@singapore-editor/paged": "workspace:*",
     "@singapore-editor/scope-lines": "workspace:*",
+    "@singapore-editor/shiki": "workspace:*",
     "@singapore-editor/tree-sitter": "workspace:*",
     "@singapore-editor/tree-sitter-languages": "workspace:*",
     "evlog": "^2.29.0"
