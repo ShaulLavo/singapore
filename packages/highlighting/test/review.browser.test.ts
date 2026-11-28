@@ -1,5 +1,5 @@
 import { retainHighlighter } from './fixtures/document'
-import type { VscodeThemeRegistration } from '@singapore-editor/core/shiki'
+import type { VscodeThemeRegistration } from '@singapore-editor/core/rendering'
 import {
   createTextDiff,
   type PreparedDiffSyntaxInput,
@@ -186,13 +186,13 @@ describe('grammar acquisition', () => {
   test('a known grammar that fails to load rejects instead of answering plain text', async () => {
     const highlighting = service()
     const theme: HighlightTheme = { format: 'vscode', definition: keywordTheme('#ff0000') }
-    await commands.blockRequests('erlang')
+    await commands.blockRequests('php')
     try {
       await expect(
-        highlighting.highlight('-module(a).', { language: 'erlang', theme }),
+        highlighting.highlight('<?php echo 1;', { language: 'php', theme }),
       ).rejects.toMatchObject({ code: 'failed' })
     } finally {
-      await commands.unblockRequests('erlang')
+      await commands.unblockRequests('php')
     }
     const other = await highlighting.highlight('fn main() {}', { language: 'rust', theme })
     expect(other.language).toBe('rust')
@@ -209,10 +209,10 @@ describe('grammar acquisition', () => {
 
   test('disposal settles a highlight waiting on grammar acquisition', async () => {
     const highlighting = service()
-    await commands.holdRequests('ruby')
+    await commands.holdRequests('lua')
     try {
-      const pending = highlighting.highlight('puts 1', {
-        language: 'ruby',
+      const pending = highlighting.highlight('local x = 1', {
+        language: 'lua',
         theme: { format: 'vscode', definition: keywordTheme('#ff0000') },
       })
       const settled = pending.then(
@@ -224,7 +224,7 @@ describe('grammar acquisition', () => {
       expect(highlighting.inspect().pendingHighlights).toBe(0)
       expect(await settled).toBe('disposed')
     } finally {
-      await commands.releaseRequests('ruby')
+      await commands.releaseRequests('lua')
     }
   })
 })

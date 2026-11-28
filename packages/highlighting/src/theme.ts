@@ -1,9 +1,10 @@
-import { effectiveEditorTheme, type EditorTheme } from '@singapore-editor/core/rendering'
 import {
-  editorThemeToShikiTheme,
-  type ShikiWorkerThemeRegistration,
+  EDITOR_VSCODE_SYNTAX_SCOPE_MAPPINGS,
+  effectiveEditorTheme,
+  type EditorTheme,
   type VscodeThemeRegistration,
-} from '@singapore-editor/core/shiki'
+  type VscodeThemeTokenSetting,
+} from '@singapore-editor/core/rendering'
 
 /** Theme data for a highlight: an Editor palette or an imported VS Code theme. */
 export type HighlightTheme =
@@ -13,7 +14,7 @@ export type HighlightTheme =
 export type ResolvedHighlightTheme = {
   /** Changes whenever the theme's content changes, not only its name. */
   readonly revision: string
-  readonly registration: ShikiWorkerThemeRegistration
+  readonly registration: VscodeThemeRegistration
 }
 
 /**
@@ -25,7 +26,7 @@ export function resolveHighlightTheme(theme: HighlightTheme): ResolvedHighlightT
   // A palette's contributed colors never reach the TextMate conversion, so its revision hashes
   // the palette itself.
   const content = theme.format === 'editor' ? theme.definition : registration
-  return { revision: revisionName(registration.name, content), registration }
+  return { revision: revisionName(registration.name ?? 'editor', content), registration }
 }
 
 /** A worker theme name that changes whenever `content` does. */
@@ -33,11 +34,11 @@ export function revisionName(name: string, content: unknown): string {
   return `${name}@${contentHash(JSON.stringify(content))}`
 }
 
-/** A registration Shiki may normalize in place: owned arrays, no undefined colors. */
+/** A normalized registration with owned arrays and no undefined color entries. */
 export function workerThemeRegistration(
   registration: VscodeThemeRegistration,
   name = registration.name,
-): ShikiWorkerThemeRegistration {
+): VscodeThemeRegistration {
   if (!name) throw new Error('Highlight themes require a name')
 
   return {
@@ -46,25 +47,54 @@ export function workerThemeRegistration(
     colors: definedColors(registration.colors),
     settings: registration.settings?.map(copyThemeSetting),
     tokenColors: registration.tokenColors?.map(copyThemeSetting),
-  } as ShikiWorkerThemeRegistration
+  }
 }
 
-function themeRegistration(theme: HighlightTheme): ShikiWorkerThemeRegistration {
+function themeRegistration(theme: HighlightTheme): VscodeThemeRegistration {
   if (theme.format === 'vscode') return workerThemeRegistration(theme.definition)
 
   const name = theme.name ?? 'editor'
   const type = theme.definition.type === 'light' ? 'light' : 'dark'
   const palette = effectiveEditorTheme(theme.definition)
-  return workerThemeRegistration(editorThemeToShikiTheme(palette, { name, type }), name)
+  return workerThemeRegistration(editorThemeToVscodeRegistration(palette, name, type), name)
 }
 
-type ThemeSetting = NonNullable<VscodeThemeRegistration['tokenColors']>[number]
+function editorThemeToVscodeRegistration(
+  theme: EditorTheme,
+  name: string,
+  type: 'light' | 'dark',
+): VscodeThemeRegistration {
+  const colors: Record<string, string> = {}
+  if (theme.backgroundColor) colors['editor.background'] = theme.backgroundColor
+  if (theme.foregroundColor) colors['editor.foreground'] = theme.foregroundColor
+  if (theme.caretColor) colors['editorCursor.foreground'] = theme.caretColor
+  if (theme.selectionColor) colors['editor.selectionBackground'] = theme.selectionColor
 
-function copyThemeSetting(setting: ThemeSetting) {
+  const tokenColors: VscodeThemeTokenSetting[] = []
+  const syntax = theme.syntax
+  if (syntax) {
+    for (const { key, scopes } of EDITOR_VSCODE_SYNTAX_SCOPE_MAPPINGS) {
+      const color = syntax[key]
+      if (!color) continue
+      tokenColors.push({ scope: [...scopes], settings: { foreground: color } })
+    }
+  }
+
+  return {
+    name,
+    type,
+    bg: theme.backgroundColor,
+    fg: theme.foregroundColor,
+    colors,
+    tokenColors,
+  }
+}
+
+function copyThemeSetting(setting: VscodeThemeTokenSetting): VscodeThemeTokenSetting {
   return {
     ...setting,
     scope: typeof setting.scope === 'string' ? setting.scope : setting.scope?.slice(),
-    settings: { ...setting.settings },
+    settings: setting.settings ? { ...setting.settings } : undefined,
   }
 }
 

@@ -179,7 +179,7 @@ describe('standalone highlighting in the real worker', () => {
     await highlighting.awaitIdle()
     expect(highlighting.inspect()).toMatchObject({
       pendingHighlights: 0,
-      shiki: { pendingRequests: 0 },
+      treeSitter: { pendingRequests: 0 },
     })
   })
 
@@ -191,7 +191,7 @@ describe('standalone highlighting in the real worker', () => {
     })
     await highlighting.dispose()
     await expect(pending).rejects.toBeInstanceOf(Error)
-    expect(highlighting.inspect().shiki).toBeNull()
+    expect(highlighting.inspect().treeSitter).toBeNull()
   })
 
   test('highlights with the default github-dark theme when no theme is provided', async () => {

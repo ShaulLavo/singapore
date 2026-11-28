@@ -111,13 +111,13 @@ describe('highlighting service without a worker', () => {
 })
 
 describe('highlightingGrammar', () => {
-  test('keeps the wide Shiki language set and its aliases', () => {
+  test('resolves Tree-sitter languages and aliases without Shiki', () => {
     expect(highlightingGrammar('ts')).toBe('typescript')
     expect(highlightingGrammar('typescriptreact')).toBe('tsx')
     expect(highlightingGrammar('javascriptreact')).toBe('jsx')
-    expect(highlightingGrammar(' Shell ')).toBe('shellscript')
-    // Languages only Shiki supplies stay available to fences.
-    expect(highlightingGrammar('haskell')).toBe('haskell')
+    expect(highlightingGrammar(' Bash ')).toBe('shellscript')
+    expect(highlightingGrammar('rs')).toBe('rust')
+    expect(highlightingGrammar('py')).toBe('python')
     expect(highlightingGrammar('no-such-language')).toBeNull()
   })
 })

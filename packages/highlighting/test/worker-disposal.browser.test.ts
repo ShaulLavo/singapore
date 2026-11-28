@@ -1,8 +1,8 @@
 import { expect, test, vi } from 'vitest'
 import {
-  createShikiWorkerOwner,
-  createShikiHighlighterProvider,
-} from '@singapore-editor/core/shiki'
+  createTreeSitterHighlighterProvider,
+  createTreeSitterWorkerOwner,
+} from '@singapore-editor/tree-sitter'
 import { retainHighlighter } from './fixtures/document'
 import { createHighlightingService } from '../src/index'
 
@@ -21,18 +21,14 @@ function busyWorker() {
 test('normal browser-worker requests answer before idempotent owner disposal', async () => {
   const { worker } = busyWorker()
   const terminate = vi.spyOn(worker, 'terminate')
-  const owner = createShikiWorkerOwner({ workerFactory: () => worker })
+  const owner = createTreeSitterWorkerOwner({ workerFactory: () => worker })
+  const provider = createTreeSitterHighlighterProvider({
+    workerOwner: owner,
+    theme: 'fixture',
+    resolveTheme: async () => ({ name: 'fixture' }),
+  })
   try {
-    await expect(
-      owner.loadTheme({
-        theme: 'fixture',
-        registrations: {
-          languageRegistrations: [],
-          themeRegistration: { name: 'fixture' },
-          themeRegistrations: [],
-        },
-      }),
-    ).resolves.toEqual({ backgroundColor: 'ready' })
+    await expect(provider.loadTheme?.()).resolves.toEqual({ backgroundColor: 'ready' })
     const disposal = owner.dispose()
     expect(owner.dispose()).toBe(disposal)
     await disposal
@@ -46,15 +42,12 @@ test('normal browser-worker requests answer before idempotent owner disposal', a
 test('owner terminates a synchronously busy browser worker and settles its request and idle fence', async () => {
   const { worker, started } = busyWorker()
   const terminate = vi.spyOn(worker, 'terminate')
-  const owner = createShikiWorkerOwner({ workerFactory: () => worker })
+  const owner = createTreeSitterWorkerOwner({ workerFactory: () => worker })
   const retained = retainHighlighter(
-    createShikiHighlighterProvider({
+    createTreeSitterHighlighterProvider({
       workerOwner: owner,
       theme: 'fixture',
       resolveTheme: async () => ({ name: 'fixture' }),
-      resolveLanguage: async () => [
-        { name: 'typescript', scopeName: 'source.typescript', patterns: [] },
-      ],
     }),
     'const a = 1',
   )
@@ -67,7 +60,7 @@ test('owner terminates a synchronously busy browser worker and settles its reque
     const disposal = owner.dispose()
     expect(terminate).toHaveBeenCalledOnce()
     await disposal
-    expect(await result).toMatchObject({ name: 'AbortError' })
+    expect(await result).toBeInstanceOf(Error)
     await idle
     expect(owner.inspect()).toMatchObject({ lifecycle: 'disposed', pendingRequests: 0 })
   } finally {
@@ -79,7 +72,7 @@ test('owner terminates a synchronously busy browser worker and settles its reque
 test('service disposal settles callers and idle while its browser worker cannot answer', async () => {
   const { worker, started } = busyWorker()
   const terminate = vi.spyOn(worker, 'terminate')
-  const service = createHighlightingService({ shikiWorker: () => worker })
+  const service = createHighlightingService({ treeSitterWorker: () => worker })
   try {
     const result = service
       .highlight('const a = 1', {
@@ -95,7 +88,11 @@ test('service disposal settles callers and idle while its browser worker cannot 
     await vi.waitFor(() => expect(terminate).toHaveBeenCalledOnce())
     await disposal
     await idle
-    expect(service.inspect()).toMatchObject({ disposed: true, pendingHighlights: 0, shiki: null })
+    expect(service.inspect()).toMatchObject({
+      disposed: true,
+      pendingHighlights: 0,
+      treeSitter: null,
+    })
   } finally {
     worker.terminate()
   }

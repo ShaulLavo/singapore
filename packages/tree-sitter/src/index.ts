@@ -1,5 +1,15 @@
 export { createTreeSitterInputEdits } from './treeSitter/edits'
 export {
+  createTreeSitterHighlighterPlugin,
+  createTreeSitterHighlighterProvider,
+  treeSitterHighlightLanguageForDocument,
+  type ResolvedTreeSitterHighlightLanguage,
+  type TreeSitterHighlightLanguageMap,
+  type TreeSitterHighlighterPluginOptions,
+  type TreeSitterHighlighterProviderOptions,
+  type TreeSitterThemeRegistrationResolver,
+} from './highlighter'
+export {
   createTreeSitterSliceHighlighter,
   TreeSitterSliceHighlighter,
   type TreeSitterHighlightedSlice,
@@ -43,11 +53,13 @@ export type {
   TreeSitterWorkerRetentionSnapshot,
 } from './treeSitter/types'
 export {
+  DEFAULT_TREE_SITTER_MAX_TOKENIZATION_LINE_LENGTH,
   canUseTreeSitterWorker,
   createTreeSitterWorkerOwner,
   TreeSitterWorkerOwner,
   type TreeSitterWorkerCacheSnapshot,
   type TreeSitterWorkerLifecycleState,
+  type TreeSitterWorkerOwnerOptions,
   type TreeSitterWorkerOwnerSnapshot,
   type TreeSitterMergeUnitPayload,
   type TreeSitterProjectedMergeUnitsPayload,
@@ -359,6 +371,23 @@ const retainLanguage = (
   }
 }
 
+const disposeContributionsInReverse = (
+  contributions: readonly { readonly dispose: () => void }[],
+): { readonly hasError: boolean; readonly firstError: unknown } => {
+  let firstError: unknown
+  let hasError = false
+  for (const contribution of contributions.toReversed()) {
+    try {
+      contribution.dispose()
+    } catch (error) {
+      if (hasError) continue
+      firstError = error
+      hasError = true
+    }
+  }
+  return { hasError, firstError }
+}
+
 const releaseSyntaxProvider = (
   context: EditorPluginContext,
   registration: TreeSitterProviderRegistration,
@@ -371,23 +400,13 @@ const releaseSyntaxProvider = (
 
   registration.contextReferences.delete(context)
   registration.activeContexts = Math.max(0, registration.activeContexts - 1)
-  let firstError: unknown
-  let hasError = false
+  let outcome: { readonly hasError: boolean; readonly firstError: unknown }
   try {
-    for (const contribution of reference.contributions.toReversed()) {
-      try {
-        contribution.dispose()
-      } catch (error) {
-        if (!hasError) {
-          firstError = error
-          hasError = true
-        }
-      }
-    }
+    outcome = disposeContributionsInReverse(reference.contributions)
   } finally {
     scheduleIdleDisposeIfUnused(registration)
   }
-  if (hasError) throw firstError
+  if (outcome.hasError) throw outcome.firstError
 }
 
 const releaseLanguage = (registration: TreeSitterProviderRegistration, key: string): void => {

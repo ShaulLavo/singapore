@@ -23,10 +23,10 @@ editor.setText('Hello, theme\n')
 
 ## 2. Convert existing VS Code colours
 
-The `/shiki` entry point converts VS Code theme definitions. It supplies theme colours; language features still come from plugins.
+The `/rendering` entry point converts VS Code theme definitions without loading Shiki. It supplies theme colours; language features still come from plugins.
 
 ```ts
-import { editorThemeFromVscodeTheme } from '@singapore-editor/core/shiki'
+import { editorThemeFromVscodeTheme } from '@singapore-editor/core/rendering'
 
 const theme = editorThemeFromVscodeTheme({
   colors: { 'editor.background': '#18202b', 'editor.foreground': '#dce5ef' },

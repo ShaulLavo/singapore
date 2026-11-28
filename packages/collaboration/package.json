@@ -91,6 +91,6 @@
     "oxlint": "1.85.0",
     "typescript": "7.0.2",
     "vitest": "5.0.2",
-    "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#33a55c7dabb47ea24b56fe63fc70c7555665fd65"
+    "web-tree-sitter": "github:ShaulLavo/tree-sitter-x#235d18bff9e7942bcb4a0554a3477ab7ba82f24c"
   }
 }

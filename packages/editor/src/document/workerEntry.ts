@@ -3,3 +3,5 @@
 // along; they are exported here rather than from the reader, which the analysis code imports.
 export * from './workerReader'
 export { defineHighlighterOperation, defineStructuralOperation } from '../editor/syntaxOperations'
+export type { HighlighterOperationContext } from '../editor/operationDefinitions'
+export type { EditorHighlighterRuntime } from '../syntax/highlighter'

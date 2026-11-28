@@ -399,7 +399,7 @@
       "file": "packages/lsp-plugin/src/lspConnection.ts",
       "id": "packages/lsp-plugin/src/lspConnection.ts:setTimeout:c9d15becad",
       "justification": "A reconnect backoff, not rendering work: the handle is kept, cleared on dispose, and a disposed connection ignores it.",
-      "line": 272,
+      "line": 389,
       "snippet": "this.reconnectTimer = setTimeout(() => {"
     },
     {
@@ -407,7 +407,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:queueMicrotask:1d59545f0f",
       "justification": "Replays pooled connection state after `acquire` returns so callbacks cannot run inside the contribution constructor. The closure verifies that the lease is still active, and each acquisition schedules at most one replay.",
-      "line": 248,
+      "line": 315,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -415,7 +415,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:setTimeout:ad7334dc0b",
       "justification": "Keeps a connection reusable for the configured grace period after its final lease releases. A new acquisition cancels the timer, and `#closeIdle` rechecks both the lease count and pool identity before disposal.",
-      "line": 263,
+      "line": 330,
       "snippet": "entry.idleTimer = setTimeout(() => this.#closeIdle(entry), this.#idleGraceMs)"
     },
     {
@@ -455,7 +455,7 @@
       "file": "packages/paged/src/window.ts",
       "id": "packages/paged/src/window.ts:setTimeout:79c0cb252b",
       "justification": "A task boundary lets input and cancellation run during cached decoding.",
-      "line": 266,
+      "line": 269,
       "snippet": "return new Promise<void>((resolve) => setTimeout(resolve, 0))"
     },
     {
@@ -471,7 +471,7 @@
       "file": "packages/plugin-ui/src/hoverController.ts",
       "id": "packages/plugin-ui/src/hoverController.ts:setTimeout:017e4b5257",
       "justification": "Enforces the hover dwell before paint; the pointer leaving the target clears it.",
-      "line": 235,
+      "line": 348,
       "snippet": "current.revealTimer = setTimeout(() => {"
     },
     {
@@ -479,7 +479,7 @@
       "file": "packages/plugin-ui/src/hoverController.ts",
       "id": "packages/plugin-ui/src/hoverController.ts:setTimeout:ceab8e0fd3",
       "justification": "Delays the loading row until the participants are observably slow; every target change cancels it.",
-      "line": 221,
+      "line": 334,
       "snippet": "current.loadingTimer = setTimeout(() => revealLoading(current), HOVER_LOADING_DELAY_MS)"
     },
     {
@@ -487,7 +487,7 @@
       "file": "packages/plugin-ui/src/hoverController.ts",
       "id": "packages/plugin-ui/src/hoverController.ts:setTimeout:f83b59645d",
       "justification": "Starts server work midway through the pointer dwell so transient targets are skipped while network time overlaps the rest of the dwell.",
-      "line": 230,
+      "line": 343,
       "snippet": "current.dispatchTimer = setTimeout(() => {"
     },
     {
@@ -495,7 +495,7 @@
       "file": "packages/plugin-ui/src/tooltip.ts",
       "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:89686cb98f",
       "justification": "A pointer grace period before the hover goes away, cancelled by re-entry; it schedules no editor work.",
-      "line": 192,
+      "line": 225,
       "snippet": "hideTimer = setTimeout(() => {"
     },
     {
@@ -503,7 +503,7 @@
       "file": "packages/plugin-ui/src/tooltip.ts",
       "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:8ff275af18",
       "justification": "Resets the copy button's label after the user has had time to read it; DOM only.",
-      "line": 655,
+      "line": 759,
       "snippet": "setTimeout(() => {"
     },
     {
@@ -535,7 +535,7 @@
       "file": "packages/tree-sitter/src/index.ts",
       "id": "packages/tree-sitter/src/index.ts:setTimeout:ec2643b7b0",
       "justification": "Keeps the shared default Tree-sitter worker warm across brief SPA route transitions after the final editor context and language registrations release. Re-acquiring cancels the timer, and disposal rechecks active context and language counts plus global registration identity before terminating the worker.",
-      "line": 425,
+      "line": 444,
       "snippet": "const timer = setTimeout(() => {"
     },
     {
@@ -543,7 +543,7 @@
       "file": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts",
       "id": "packages/tree-sitter/src/treeSitter/treeSitter.worker.ts:setTimeout:12f91c71b2",
       "justification": "One quiet round before a closed document is freed. A timer, not a posted message: it has to outlast the round trips between the requests of a document opened in its place. `waitForQuiet` bounds the rounds.",
-      "line": 4852,
+      "line": 5066,
       "snippet": "setTimeout(resolve, DOCUMENT_RELEASE_QUIET_MS)"
     },
     {

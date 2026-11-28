@@ -104,7 +104,11 @@ import {
 } from '@singapore-editor/core/extensions'
 import { serializeEditorViewSnapshot } from '@singapore-editor/core/extensions'
 import { createStringTextSnapshot } from '@singapore-editor/core/document'
-import { applyEditorTheme, type EditorTheme } from '@singapore-editor/core/rendering'
+import {
+  applyEditorTheme,
+  editorThemeFromVscodeTheme,
+  type EditorTheme,
+} from '@singapore-editor/core/rendering'
 import {
   createEditorSecondaryTextView,
   EditorSecondaryViewScheduler,
@@ -619,6 +623,8 @@ describe('public API facade', () => {
     expect(findFeature.openFind()).toBe(false)
     expect(token.id).toBe('test.capability')
     expect(applyEditorTheme).toBeTypeOf('function')
+    expect(editorThemeFromVscodeTheme).toBeTypeOf('function')
+    expect(core.editorThemeFromVscodeTheme).toBe(editorThemeFromVscodeTheme)
     expect(theme.foregroundColor).toBe('red')
     expect(treeSitterCapturesToEditorTokens([])).toEqual([])
     expect(syntax.tokens).toEqual([])

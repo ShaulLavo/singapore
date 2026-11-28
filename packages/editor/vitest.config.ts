@@ -65,14 +65,7 @@ export default defineConfig({
             'micromark-util-decode-string',
             'micromark-util-normalize-identifier',
           ],
-          include: [
-            'evlog/client',
-            '@shaulavo/hotkeys',
-            'diff',
-            '@shikijs/engine-oniguruma',
-            '@shikijs/engine-oniguruma/wasm-inlined',
-            'shiki/core',
-          ],
+          include: ['evlog/client', '@shaulavo/hotkeys', 'diff'],
         },
         test: {
           name: 'browser',

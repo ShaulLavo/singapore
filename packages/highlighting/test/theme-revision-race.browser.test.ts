@@ -1,5 +1,5 @@
 import { retainHighlighter } from './fixtures/document'
-import type { VscodeThemeRegistration } from '@singapore-editor/core/shiki'
+import type { VscodeThemeRegistration } from '@singapore-editor/core/rendering'
 import { createTextDiff, type DiffSyntaxSourceReader } from '@singapore-editor/diff'
 import { expect, test, vi } from 'vitest'
 import { createHighlightingService, type HighlightingThemeSource } from '../src/index'

@@ -1,5 +1,5 @@
 import { Editor } from '@singapore-editor/core'
-import type { VscodeThemeRegistration } from '@singapore-editor/core/shiki'
+import type { VscodeThemeRegistration } from '@singapore-editor/core/rendering'
 import type { EditorToken } from '@singapore-editor/core/syntax'
 import {
   createDiffEditorOptions,
@@ -9,7 +9,7 @@ import {
   type DiffGutterSide,
   type DiffPlugin,
 } from '@singapore-editor/diff'
-import { bundledThemes } from 'shiki/themes'
+import githubDarkTheme from '@shikijs/themes/github-dark'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import {
@@ -50,7 +50,7 @@ const DIFFS = {
 
 const THEMES: Record<string, HighlightingThemeSelection> = {
   'tree-sitter palette': { format: 'editor' },
-  'shiki theme': { format: 'vscode', id: 'github-dark' },
+  'vscode theme': { format: 'vscode', id: 'github-dark' },
 }
 
 const SIDES: readonly DiffGutterSide[] = ['stacked', 'old', 'new']
@@ -68,8 +68,7 @@ function service(): HighlightingService {
 }
 
 async function githubDark(): Promise<VscodeThemeRegistration> {
-  const module = await bundledThemes['github-dark']()
-  return module.default as unknown as VscodeThemeRegistration
+  return githubDarkTheme as unknown as VscodeThemeRegistration
 }
 
 function themeSource(selection: HighlightingThemeSelection): HighlightingThemeSource {

@@ -7,8 +7,13 @@ import { workspaceRoot } from './workspace-root'
 
 const root = resolve(import.meta.dir, '..')
 const runtimeRevision = await remoteRevision('tree-sitter-x', 'refs/heads/web-tree-sitter')
+const scopeCompatRevision = await remoteRevision(
+  'tree-sitter-x',
+  'refs/heads/tree-sitter-scope-compat',
+)
 const markdownRevision = await remoteRevision('tree-sitter-md', 'HEAD')
 const runtime = `github:ShaulLavo/tree-sitter-x#${runtimeRevision}`
+const scopeCompat = `github:ShaulLavo/tree-sitter-x#${scopeCompatRevision}`
 const markdown = `github:ShaulLavo/tree-sitter-md#${markdownRevision}`
 const response = await fetch(
   `https://raw.githubusercontent.com/ShaulLavo/tree-sitter-md/${markdownRevision}/package.json`,
@@ -56,7 +61,14 @@ const updates: { path: string; before: string; text: string }[] = []
 for (const path of paths) {
   const before = await readFile(path, 'utf8')
   const text = before
-    .replace(/github:ShaulLavo\/tree-sitter-x#[0-9a-f]+/g, runtime)
+    .replace(
+      /"web-tree-sitter":\s*"github:ShaulLavo\/tree-sitter-x#[0-9a-f]+"/g,
+      `"web-tree-sitter": "${runtime}"`,
+    )
+    .replace(
+      /"@shaulavo\/tree-sitter-scope-compat":\s*"github:ShaulLavo\/tree-sitter-x#[0-9a-f]+"/g,
+      `"@shaulavo/tree-sitter-scope-compat": "${scopeCompat}"`,
+    )
     .replace(/github:ShaulLavo\/tree-sitter-md#[0-9a-f]+/g, markdown)
   if (text !== before) updates.push({ path, before, text })
 }

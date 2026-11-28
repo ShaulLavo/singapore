@@ -21,6 +21,7 @@ const PACKAGE_DIRS = [
   'packages/paged',
   'packages/react',
   'packages/scope-lines',
+  'packages/shiki',
   'packages/solid',
   'packages/spellcheck',
   'packages/tree-sitter',

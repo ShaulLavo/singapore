@@ -1,9 +1,6 @@
 import { createEditorTextBuffer, createEditorBufferSession } from '@singapore-editor/core/document'
 import { createEditorDocumentAnalysis } from '@singapore-editor/core/editor'
-import {
-  createShikiWorkerOwner,
-  createShikiHighlighterProvider,
-} from '@singapore-editor/core/shiki'
+import { createShikiWorkerOwner, createShikiHighlighterProvider } from '@singapore-editor/shiki'
 import { observeWorkerTransport } from './workerObservation'
 import { createError } from '@singapore-editor/core/logging/evlog'
 

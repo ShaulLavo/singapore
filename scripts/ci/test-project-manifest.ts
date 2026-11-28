@@ -39,7 +39,7 @@ const defaultConfigurations: Configuration[] = [
 ]
   .map((name) => ordinary(`packages/${name}`))
   .concat(
-    ['find', 'plugin-ui', 'react', 'scope-lines'].map((name) =>
+    ['find', 'plugin-ui', 'react', 'scope-lines', 'shiki'].map((name) =>
       ordinary(`packages/${name}`, domBrowser),
     ),
   )

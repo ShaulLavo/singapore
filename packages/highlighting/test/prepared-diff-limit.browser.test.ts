@@ -16,9 +16,9 @@ test('prepared diff sessions use the configured cap and recolor under the next r
   const sent: { type: string; maxLineLength?: number; theme?: string }[] = []
   const errors: string[] = []
   const service = createHighlightingService({
-    shikiWorker: () => {
+    treeSitterWorker: () => {
       const worker = new Worker(
-        new URL('../../editor/src/shiki/shiki.worker.ts', import.meta.url),
+        new URL('../../tree-sitter/src/treeSitter/treeSitter.worker.ts', import.meta.url),
         { type: 'module' },
       )
       worker.addEventListener('message', (event) => {
@@ -29,7 +29,7 @@ test('prepared diff sessions use the configured cap and recolor under the next r
         sent.push({
           type: message.payload.type,
           maxLineLength: message.payload.maxLineLength,
-          theme: message.payload.theme,
+          theme: message.payload.themeRevision,
         })
         postMessage(message)
       }
@@ -53,7 +53,7 @@ test('prepared diff sessions use the configured cap and recolor under the next r
   const changed = new Set<DiffSyntaxSourceReader>()
   try {
     expect(await service.prepareDiff(file, source)).toBe(true)
-    expect(service.inspect().shiki?.untokenizedLines).toBe(2)
+    expect(service.inspect().treeSitter?.untokenizedLines).toBe(2)
     shown = service.showDiff(
       {
         setFile: (_file, prepared = []) => {
@@ -78,7 +78,7 @@ test('prepared diff sessions use the configured cap and recolor under the next r
     await expect
       .poll(
         () => ({
-          count: service.inspect().shiki?.untokenizedLines,
+          count: service.inspect().treeSitter?.untokenizedLines,
           requests: sent.filter((value) => value.maxLineLength === 100).length,
           errors,
         }),

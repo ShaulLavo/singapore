@@ -44,6 +44,7 @@ import type { PackedEditorTokens } from '@singapore-editor/core/syntax'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
 import type { MarkdownDocument } from 'tree-sitter-md'
 import type * as MarkdownSupportModule from './markdown'
+import type * as ScopeCompatSupportModule from './scopeCompat'
 import type { TreeSitterLanguageDescriptor } from './registry'
 import {
   createTreeSitterInput,
@@ -83,8 +84,13 @@ import type {
   TreeSitterWorkerResult,
   TreeSitterWorkerResponse,
   TreeSitterWorkerRetentionSnapshot,
+  TreeSitterHighlightEditRequest,
+  TreeSitterHighlightOpenRequest,
+  TreeSitterHighlightRecolorRequest,
+  TreeSitterHighlightResult,
   TreeSitterHighlightSliceRequest,
   TreeSitterHighlightSliceResult,
+  TreeSitterHighlightThemeRequest,
   TreeSitterPrepareSliceLanguageRequest,
   TreeSitterPrepareSliceLanguageResult,
 } from './types'
@@ -342,6 +348,14 @@ const warmLanguages = async (languageIds: readonly TreeSitterLanguageId[]): Prom
 
 type MarkdownSupport = typeof MarkdownSupportModule
 let markdownSupport: MarkdownSupport | undefined
+type ScopeCompatSupport = typeof ScopeCompatSupportModule
+let scopeCompatSupport: ScopeCompatSupport | undefined
+
+const loadScopeCompat = async (): Promise<ScopeCompatSupport> => {
+  await ensureParserRuntime()
+  scopeCompatSupport ??= await import('./scopeCompat')
+  return scopeCompatSupport
+}
 
 // Markdown support, tree-sitter-md's document model and the code around it, is about a twelfth of
 // this worker and only Markdown and MDX documents use it, so it loads with the first of them.
@@ -449,11 +463,203 @@ const ensureInjectionQuery = (runtime: Runtime): Query | null => {
 
 // Capture before any parser await; later source deliveries may advance the same document.
 const resolveRequestSource = (
-  request: TreeSitterParseRequest | TreeSitterEditRequest | TreeSitterProjectedMergeUnitsRequest,
+  request:
+    | TreeSitterParseRequest
+    | TreeSitterEditRequest
+    | TreeSitterProjectedMergeUnitsRequest
+    | TreeSitterHighlightOpenRequest
+    | TreeSitterHighlightEditRequest,
 ): TreeSitterPieceTableInput => {
   const read = sourceReader.acquire(request.source)
   if (!read) throw new DOMException('Document source read is unavailable', 'AbortError')
   return createTreeSitterInput(read)
+}
+
+const ensureScopeThemeRuntime = async (
+  languageId: TreeSitterLanguageId,
+): Promise<ScopeCompatSupportModule.ScopeThemeRuntime | null> => {
+  if (!languageDescriptors.has(languageId)) return null
+  const runtime = await ensureRuntime(languageId)
+  const highlightQuery = ensureQuery(runtime, 'highlight')
+  const injectionQuery = ensureQuery(runtime, 'injection')
+  return {
+    language: runtime.language,
+    parser: runtime.parser,
+    highlightQuery,
+    hasInjections: injectionQuery !== null || languageId === 'mdx',
+  }
+}
+
+const disposePreparedLayers = (prepared: ParsedDocument): void => {
+  for (const layer of prepared.layers) disposeLayer(layer)
+  prepared.source.dispose()
+}
+
+const collectMarkdownScopeCaptures = async (
+  languageId: TreeSitterLanguageId,
+  source: TreeSitterPieceTableInput,
+  text: string,
+  context: CancellationContext,
+): Promise<readonly TreeSitterCapture[]> => {
+  await ensureParserRuntime()
+  const support = await loadMarkdown()
+  const document = new support.MarkdownDocument({ frontmatter: true })
+  try {
+    document.setText(text)
+    const parsed: ParsedDocument = {
+      readOnly: true,
+      markdown: document,
+      snapshotVersion: 0,
+      languageId,
+      source: source.retain(),
+      layers: [],
+      degraded: [],
+      missingLanguages: [],
+      size: text.length,
+      lastUsed: nextUse++,
+    }
+    const prepared = await parseMarkdownFences(parsed, context, null, [])
+    try {
+      const flattened = await flattenDocument(prepared, context, false, true)
+      return flattened.captures
+    } finally {
+      disposePreparedLayers(prepared)
+    }
+  } finally {
+    document.dispose()
+  }
+}
+
+const collectScopeFallbackCaptures = async (
+  languageId: TreeSitterLanguageId,
+  source: TreeSitterPieceTableInput,
+  text: string,
+): Promise<readonly TreeSitterCapture[]> => {
+  const context: CancellationContext = {
+    startedAt: nowMs(),
+    budgetMs: PARSE_BUDGET_MS,
+    flag: null,
+  }
+  if (languageId === 'markdown') {
+    return collectMarkdownScopeCaptures(languageId, source, text, context)
+  }
+  if (!languageDescriptors.has(languageId)) return []
+  const runtime = await ensureRuntime(languageId)
+  const rootLayer = parseRootLayer(runtime, source, null, context)
+  let parsedDoc: ParsedDocument | null = null
+  try {
+    const degraded: TreeSitterDegradedState[] = []
+    const mdxMarkdown =
+      languageId === 'mdx'
+        ? await prepareMdxMarkdown(
+            {
+              type: 'parse',
+              documentId: '',
+              runtimeSessionId: '',
+              snapshotVersion: 0,
+              languageId,
+              includeHighlights: false,
+              source: {
+                identity: {
+                  documentId: '',
+                  documentGeneration: 1,
+                  endpointGeneration: 1,
+                  registrationId: 1,
+                },
+                point: { segment: 'scope', revision: 0, textVersion: 0 },
+                readId: 'scope',
+              },
+              generation: 0,
+            },
+            source,
+            rootLayer,
+          )
+        : undefined
+    parsedDoc = await parseParsedDocument({
+      readOnly: true,
+      documentId: '',
+      snapshotVersion: 0,
+      languageId,
+      source: source.retain(),
+      rootLayer,
+      markdown: mdxMarkdown,
+      context,
+      oldDocument: null,
+      inputEdits: [],
+      injectionRanges: null,
+      degraded,
+    })
+    const flattened = await flattenDocument(parsedDoc, context, false, true)
+    return flattened.captures
+  } finally {
+    if (parsedDoc) disposeCachedSnapshot(parsedDoc)
+    else rootLayer.tree.delete()
+  }
+}
+
+const highlightThemeOpen = async (
+  request: TreeSitterHighlightOpenRequest,
+  source: TreeSitterPieceTableInput,
+): Promise<TreeSitterHighlightResult> => {
+  const support = await loadScopeCompat()
+  const text = readTreeSitterInputRange(source, 0, source.length)
+  return support.openScopeDocument({
+    runtimeSessionId: request.runtimeSessionId,
+    languageId: request.languageId,
+    packLanguageId: request.packLanguageId,
+    text,
+    themeRevision: request.themeRevision,
+    themeRegistration: request.themeRegistration,
+    maxLineLength: request.maxLineLength,
+    registryVersion: languageRegistryVersion,
+    ensureRuntime: ensureScopeThemeRuntime,
+    collectCaptures: (langId, sanitizedText) =>
+      collectScopeFallbackCaptures(langId, source, sanitizedText),
+  })
+}
+
+const highlightThemeEdit = async (
+  request: TreeSitterHighlightEditRequest,
+  source: TreeSitterPieceTableInput,
+): Promise<TreeSitterHighlightResult> => {
+  const support = await loadScopeCompat()
+  const text = readTreeSitterInputRange(source, 0, source.length)
+  return support.editScopeDocument({
+    runtimeSessionId: request.runtimeSessionId,
+    languageId: request.languageId,
+    packLanguageId: request.packLanguageId,
+    text,
+    themeRevision: request.themeRevision,
+    themeRegistration: request.themeRegistration,
+    maxLineLength: request.maxLineLength,
+    registryVersion: languageRegistryVersion,
+    edits: request.edits,
+    inputEdits: request.inputEdits,
+    ensureRuntime: ensureScopeThemeRuntime,
+    collectCaptures: (langId, sanitizedText) =>
+      collectScopeFallbackCaptures(langId, source, sanitizedText),
+  })
+}
+
+const highlightThemeRecolor = async (
+  request: TreeSitterHighlightRecolorRequest,
+): Promise<TreeSitterHighlightResult | undefined> => {
+  const support = await loadScopeCompat()
+  const result = await support.recolorScopeDocument({
+    runtimeSessionId: request.runtimeSessionId,
+    themeRevision: request.themeRevision,
+    themeRegistration: request.themeRegistration,
+    maxLineLength: request.maxLineLength,
+  })
+  return result ?? undefined
+}
+
+const highlightThemeLoad = async (
+  request: TreeSitterHighlightThemeRequest,
+): Promise<TreeSitterHighlightResult> => {
+  const support = await loadScopeCompat()
+  const theme = await support.loadScopeTheme(request.themeRevision, request.themeRegistration)
+  return { theme }
 }
 
 const parseMarkdownDocument = async (
@@ -2028,6 +2234,16 @@ const rootLayerForTree = (runtime: Runtime, tree: Tree): ParsedLayer => {
   }
 }
 
+const recordAvailableReusableLayerRanges = (
+  reusableLayers: readonly ReusableLayer[],
+  layerInvalidationRanges: TreeSitterSyntaxRange[],
+): void => {
+  for (const reusable of reusableLayers) {
+    if (reusable.state !== 'available') continue
+    recordLayerRanges(layerInvalidationRanges, reusable.layer.ranges)
+  }
+}
+
 const parseParsedDocument = async (
   options: ParseParsedDocumentOptions,
 ): Promise<ParsedDocument> => {
@@ -2046,10 +2262,7 @@ const parseParsedDocument = async (
       await appendCarriedLayers(parsedLayers, context)
     }
     if (options.layerInvalidationRanges) {
-      for (const reusable of reusableLayers) {
-        if (reusable.state !== 'available') continue
-        recordLayerRanges(options.layerInvalidationRanges, reusable.layer.ranges)
-      }
+      recordAvailableReusableLayerRanges(reusableLayers, options.layerInvalidationRanges)
     }
     const layers = orderParsedLayers(options.rootLayer, parsedLayers)
 
@@ -4808,6 +5021,7 @@ let requestsReceived = 0
  * (the new document's complete parse, later range queries) runs between the releases.
  */
 const releaseDocument = async (runtimeSessionId: string): Promise<undefined> => {
+  scopeCompatSupport?.disposeScopeDocument(runtimeSessionId)
   const snapshots = detachDocument(runtimeSessionId)
   if (snapshots.length === 0) return undefined
 
@@ -4886,6 +5100,7 @@ const disposeCachedSnapshotsMatchingLanguage = (
 }
 
 const disposeAll = (): void => {
+  scopeCompatSupport?.disposeAllScopeCompat()
   for (const runtimeSessionId of bootstrapDocuments.keys()) disposeBootstrap(runtimeSessionId)
   latestSnapshotVersions.clear()
   activeDocumentRequestIds.clear()
@@ -4929,6 +5144,7 @@ const disposeRuntime = (runtime: Runtime): void => {
 }
 
 const disposeRuntimeForLanguage = (languageId: TreeSitterLanguageId): void => {
+  scopeCompatSupport?.disposeScopePacksForLanguage(languageId)
   const runtime = runtimePromises.get(languageId)
   if (!runtime) return
 
@@ -5075,6 +5291,10 @@ const handleRequest = async (
     disposeSliceLanguage(payload.sliceLanguageId)
     return undefined
   }
+  if (payload.type === 'highlightOpen') return highlightThemeOpen(payload, source!)
+  if (payload.type === 'highlightEdit') return highlightThemeEdit(payload, source!)
+  if (payload.type === 'highlightRecolor') return highlightThemeRecolor(payload)
+  if (payload.type === 'highlightTheme') return highlightThemeLoad(payload)
 
   if (payload.type === 'parse') return parseDocument(payload, source!, request.id)
   if (payload.type === 'edit') return editDocument(payload, source!, request.id)
@@ -5129,7 +5349,11 @@ const executeRequest = async (
 
   const runtimeSessionId = runtimeSessionIdForRequest(payload)
   const source =
-    payload.type === 'parse' || payload.type === 'edit' || payload.type === 'projectMergeUnits'
+    payload.type === 'parse' ||
+    payload.type === 'edit' ||
+    payload.type === 'projectMergeUnits' ||
+    payload.type === 'highlightOpen' ||
+    payload.type === 'highlightEdit'
       ? resolveRequestSource(payload)
       : undefined
   const isDocumentRequest = payload.type === 'parse' || payload.type === 'edit'
@@ -5142,8 +5366,15 @@ const executeRequest = async (
   }
   const markdown =
     'languageId' in payload && (payload.languageId === 'markdown' || payload.languageId === 'mdx')
+  const isSerializedHighlight =
+    payload.type === 'highlightOpen' ||
+    payload.type === 'highlightEdit' ||
+    payload.type === 'highlightRecolor'
   const task =
-    (markdown || payload.type === 'projectMergeUnits' || payload.type === 'reviewBatch') &&
+    (markdown ||
+      isSerializedHighlight ||
+      payload.type === 'projectMergeUnits' ||
+      payload.type === 'reviewBatch') &&
     runtimeSessionId
       ? awaitRuntimeTasks(runtimeSessionId).then(() => handleRequest(request, source))
       : handleRequest(request, source)

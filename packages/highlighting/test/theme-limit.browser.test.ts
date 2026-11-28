@@ -39,7 +39,7 @@ test.each(['cap only', 'theme only', 'theme then cap', 'cap and theme'] as const
       expect(initial.tokens.toTokens()).toEqual([
         { start: 0, end: text.length, style: { color: '#EEEEEE' } },
       ])
-      expect(service.inspect().shiki?.untokenizedLines).toBe(1)
+      expect(service.inspect().treeSitter?.untokenizedLines).toBe(1)
       if (operation !== 'cap only') {
         const notification = new Promise<void>((resolve) => {
           unsubscribe = session.onDidChangeTheme?.(resolve) ?? undefined
@@ -55,7 +55,7 @@ test.each(['cap only', 'theme only', 'theme then cap', 'cap and theme'] as const
       if (operation !== 'theme only') limit = 100
       const result = await session.refresh(textSnapshot)
       const expectedCount = operation === 'theme only' ? 1 : 0
-      expect(service.inspect().shiki?.untokenizedLines).toBe(expectedCount)
+      expect(service.inspect().treeSitter?.untokenizedLines).toBe(expectedCount)
       if (operation !== 'theme only') expect(result.tokens.length).toBeGreaterThan(1)
     } finally {
       unsubscribe?.()

@@ -23,6 +23,7 @@ const EXPECTED_PACKAGE_DIRS = [
   'packages/plugin-ui',
   'packages/react',
   'packages/scope-lines',
+  'packages/shiki',
   'packages/solid',
   'packages/spellcheck',
   'packages/textbuffer',

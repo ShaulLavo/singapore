@@ -8,7 +8,7 @@ export const javascriptContribution: TreeSitterLanguageContribution = {
   id: 'javascript',
   extensions: ['.cjs', '.js', '.jsx', '.mjs'],
   filenames: [],
-  aliases: ['js', 'jsx', 'node'],
+  aliases: ['javascriptreact', 'js', 'jsx', 'node'],
   injectionDependencies: ['regex', 'jsdoc'],
   async load() {
     const assets = await import('./javascript.assets.generated')

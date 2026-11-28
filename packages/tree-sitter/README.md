@@ -33,7 +33,8 @@ Tree-sitter and native Markdown parsing need Chromium 144, Firefox 145, Safari 2
 
 ## API highlights
 
-- `createTreeSitterLanguagePlugin()` installs language contributions.
+- `createTreeSitterLanguagePlugin()` installs language contributions for structural parsing and editor palette colors.
+- `createTreeSitterHighlighterPlugin()` and `createTreeSitterHighlighterProvider()` paint VS Code themes through `@shaulavo/tree-sitter-scope-compat` on the same worker.
 - `createTreeSitterSyntaxProvider()` registers custom grammars.
 - `expandTreeSitterSelection()` selects a larger syntax node.
 

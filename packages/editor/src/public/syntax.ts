@@ -3,11 +3,13 @@ export {
   createEditorRuntimeSessionId,
   createEmptySyntaxResult,
   createEmptySyntaxSession,
+  createPackedEditorTokenWriter,
   createSyntaxLanguageConfiguration,
   createSyntaxProjectionTag,
   createSnippetDocument,
   createSyntaxSnapshotTag,
   EditorTokenStore,
+  finishPackedEditorTokenWriter,
   isEditorSyntaxLanguage,
   packEditorTokens,
   packedEditorTokenTransfers,
@@ -15,12 +17,14 @@ export {
   toEditorTokenStore,
   treeSitterCapturesToEditorTokens,
   unpackEditorTokens,
+  writePackedEditorToken,
 } from '../syntax'
 export type {
   EditorTokenInput,
   EditorTokenStoreOrigin,
   PackedEditorTokenPatch,
   PackedEditorTokens,
+  PackedEditorTokenWriter,
 } from '../syntax'
 export type {
   BracketInfo,

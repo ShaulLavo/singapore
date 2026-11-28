@@ -1,4 +1,5 @@
 import type { TextEdit } from '@singapore-editor/core/document'
+import type { EditorTheme, VscodeThemeRegistration } from '@singapore-editor/core/rendering'
 import type {
   EditorToken,
   PackedEditorTokens,
@@ -6,6 +7,7 @@ import type {
 } from '@singapore-editor/core/syntax'
 import type { TreeSitterLanguageDescriptor, TreeSitterLanguageId } from './registry'
 import type {
+  DocumentWorkerPoint,
   DocumentWorkerReadReference,
   DocumentWorkerSourceCommand,
   DocumentWorkerSourceResult,
@@ -381,6 +383,53 @@ type TreeSitterDisposeRequest = {
   readonly type: 'dispose'
 }
 
+export type TreeSitterHighlightOpenRequest = {
+  readonly type: 'highlightOpen'
+  readonly documentId: string
+  readonly runtimeSessionId: string
+  readonly languageId: TreeSitterLanguageId
+  readonly packLanguageId?: string
+  readonly themeRevision: string
+  readonly themeRegistration: VscodeThemeRegistration
+  readonly maxLineLength: number
+  readonly source: DocumentWorkerReadReference
+}
+
+export type TreeSitterHighlightEditRequest = {
+  readonly type: 'highlightEdit'
+  readonly documentId: string
+  readonly runtimeSessionId: string
+  readonly languageId: TreeSitterLanguageId
+  readonly packLanguageId?: string
+  readonly themeRevision: string
+  readonly themeRegistration: VscodeThemeRegistration
+  readonly maxLineLength: number
+  readonly source: DocumentWorkerReadReference
+  readonly previousPoint: DocumentWorkerPoint
+  readonly edits: readonly TextEdit[]
+  readonly inputEdits: readonly TreeSitterInputEdit[]
+}
+
+export type TreeSitterHighlightRecolorRequest = {
+  readonly type: 'highlightRecolor'
+  readonly runtimeSessionId: string
+  readonly themeRevision: string
+  readonly themeRegistration: VscodeThemeRegistration
+  readonly maxLineLength?: number
+}
+
+export type TreeSitterHighlightThemeRequest = {
+  readonly type: 'highlightTheme'
+  readonly themeRevision: string
+  readonly themeRegistration: VscodeThemeRegistration
+}
+
+export type TreeSitterHighlightResult = {
+  readonly tokensPacked?: PackedEditorTokens
+  readonly theme?: EditorTheme
+  readonly untokenizedLines?: number
+}
+
 export type TreeSitterWorkerRequestPayload =
   | { readonly type: 'source'; readonly command: DocumentWorkerSourceCommand }
   | TreeSitterInitRequest
@@ -389,6 +438,10 @@ export type TreeSitterWorkerRequestPayload =
   | TreeSitterPrepareSliceLanguageRequest
   | TreeSitterHighlightSliceRequest
   | TreeSitterDisposeSliceLanguageRequest
+  | TreeSitterHighlightOpenRequest
+  | TreeSitterHighlightEditRequest
+  | TreeSitterHighlightRecolorRequest
+  | TreeSitterHighlightThemeRequest
   | TreeSitterParseRequest
   | TreeSitterEditRequest
   | TreeSitterRangeRequest
@@ -414,6 +467,7 @@ export type TreeSitterWorkerResult =
   | TreeSitterReviewBatchResult
   | TreeSitterHighlightSliceResult
   | TreeSitterPrepareSliceLanguageResult
+  | TreeSitterHighlightResult
   | { readonly retention: TreeSitterWorkerRetentionSnapshot }
   | undefined
 

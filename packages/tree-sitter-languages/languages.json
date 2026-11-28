@@ -5,7 +5,7 @@
       "id": "javascript",
       "extensions": [".cjs", ".js", ".jsx", ".mjs"],
       "filenames": [],
-      "aliases": ["js", "jsx", "node"],
+      "aliases": ["javascriptreact", "js", "jsx", "node"],
       "wasm": "tree-sitter-javascript/tree-sitter-javascript.wasm",
       "queries": {
         "highlights": [

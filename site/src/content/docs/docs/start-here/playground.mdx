@@ -39,7 +39,7 @@ With no theme the editor is black text on white with the current line shaded, as
 
 A theme is every colour the editor paints: the background and text, the gutter, selections, popups, and the colour of each kind of syntax. Syntax highlighting, which arrives in step 3, only decides what each word is, a keyword or a string or a type. The theme decides what colour that is.
 
-A theme is a plain object, and you only set the colours you want to change. Here the editor takes the warm dark of this site's code blocks. `type: 'dark'` picks dark defaults for everything else, including the syntax colours and the hover popup in step 5. To reuse a VS Code theme instead, convert it with `editorThemeFromVscodeTheme` from `@singapore-editor/core/shiki`.
+A theme is a plain object, and you only set the colours you want to change. Here the editor takes the warm dark of this site's code blocks. `type: 'dark'` picks dark defaults for everything else, including the syntax colours and the hover popup in step 5. To reuse a VS Code theme instead, convert it with `editorThemeFromVscodeTheme` from `@singapore-editor/core/rendering`.
 
 <PlaygroundStep step='2-theme' source={step2} label='Step 2: themed editor' />
 
